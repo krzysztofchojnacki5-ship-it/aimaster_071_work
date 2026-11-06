@@ -34,6 +34,28 @@ class TaskCheckpointStoreTest {
         assertTrue(TaskCheckpointStore.latest(context).single().detail.contains("UNAVAILABLE"))
     }
 
+    @Test fun singleChatRequestCheckpointRetainsProviderAndIdempotencyForRestartRecovery() {
+        val event = TaskCheckpointStore.Event(
+            taskId = "chat-chat-123-request-456", agentId = "MASTER", status = "REQUESTING",
+            detail = "single chat POST", timestamp = 100L, providerId = "openrouter",
+            model = "model-x", attempts = 2, processId = "previous-process",
+            estimatedInputTokens = 320L, estimatedOutputTokens = 4_096L,
+            idempotencyKey = "chat:chat-chat-123-request-456:openrouter",
+            baseUrl = "https://openrouter.ai"
+        )
+        assertTrue(TaskCheckpointStore.record(context, event))
+        var recovered: TaskCheckpointStore.Event? = null
+        assertEquals(1, TaskCheckpointStore.recoverStaleRunning(context, 200L) {
+            recovered = it
+            true
+        })
+        assertEquals("openrouter", recovered?.providerId)
+        assertEquals("model-x", recovered?.model)
+        assertEquals("chat:chat-chat-123-request-456:openrouter", recovered?.idempotencyKey)
+        assertEquals("https://openrouter.ai", recovered?.baseUrl)
+        assertEquals(4_096L, recovered?.estimatedOutputTokens)
+    }
+
     @Test fun failedUnknownUsageRecoveryRemainsPendingAndCanBeRetried() {
         assertTrue(TaskCheckpointStore.record(context, TaskCheckpointStore.Event(
             taskId = "task-pending-usage", agentId = "RESEARCHER", status = "REQUESTING",
