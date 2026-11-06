@@ -149,7 +149,10 @@ class MainActivity : Activity() {
                 }
             })
         }.getOrDefault(0)
-        if (recoveredTasks > 0) android.util.Log.w("AIMasterRecovery", "Oznaczono $recoveredTasks przerwanych zadań jako INTERRUPTED.")
+        if (recoveredTasks > 0) android.util.Log.w(
+            "AIMasterRecovery",
+            "Odzyskano stan $recoveredTasks przerwanych zadań; niektóre mogą nadal oczekiwać na trwałe księgowanie UNAVAILABLE."
+        )
         seedDefaultProviders()
         selectedProviderId = chatPrefs.getString("selected_provider", "gemini") ?: "gemini"
         restoreMessages()
