@@ -532,6 +532,9 @@ object ApiTokenTracker {
         require(monthly.isFinite() && monthly >= 0.0) { "Miesięczny limit kosztów musi być skończony i nieujemny." }
         val monthlyFloat = monthly.toFloat()
         require(monthlyFloat.isFinite()) { "Miesięczny limit kosztów przekracza zakres zapisu ustawień." }
+        require(monthly == 0.0 || monthlyFloat > 0.0f) {
+            "Dodatni miesięczny limit kosztów jest zbyt mały dla zapisu ustawień; nie może zostać zaokrąglony do zera, które wyłącza limit."
+        }
         val prefs = context.getSharedPreferences(LIMITS_PREFS, Context.MODE_PRIVATE)
         prefs.edit()
             .putLong("daily_token_limit", daily.coerceAtLeast(1L))
