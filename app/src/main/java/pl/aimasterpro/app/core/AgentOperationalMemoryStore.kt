@@ -25,7 +25,7 @@ object AgentOperationalMemoryStore {
         val confidence: String
     )
 
-    @Synchronized fun all(context: Context): List<Entry> = read(context)
+    @Synchronized fun all(context: Context): List<Entry> = read(context) ?: emptyList()
 
     @Synchronized fun addApproved(
         context: Context, agentId: String, text: String, category: String = "",
@@ -34,7 +34,7 @@ object AgentOperationalMemoryStore {
         val agent = agentId.trim().take(100)
         val clean = text.trim().replace(Regex("[\\t ]+"), " ").take(MAX_ENTRY_CHARS)
         if (agent.isBlank() || clean.length < 8) return null
-        val entries = read(context).toMutableList()
+        val entries = read(context)?.toMutableList() ?: return null
         val duplicateIndex = entries.indexOfFirst { it.agentId.equals(agent, true) && it.text.equals(clean, true) }
         if (duplicateIndex >= 0) {
             val duplicate = entries[duplicateIndex]
@@ -44,27 +44,25 @@ object AgentOperationalMemoryStore {
                 confidence = if (duplicate.confidence == confidence) confidence.take(40) else "wielokrotnie zatwierdzona"
             )
             entries[duplicateIndex] = merged
-            write(context, entries)
-            return merged
+            return if (write(context, entries)) merged else null
         }
         val item = Entry(UUID.randomUUID().toString(), agent, clean, category.trim().take(80),
             System.currentTimeMillis(), sourceTaskIds.filter(String::isNotBlank).distinct().take(30), confidence.take(40))
         entries.add(0, item)
-        write(context, entries.take(MAX_ENTRIES))
-        return item
+        return if (write(context, entries.take(MAX_ENTRIES))) item else null
     }
 
     @Synchronized fun remove(context: Context, id: String): Boolean {
-        val entries = read(context)
+        val entries = read(context) ?: return false
         val remaining = entries.filterNot { it.id == id }
         if (remaining.size == entries.size) return false
-        write(context, remaining)
-        return true
+        return write(context, remaining)
     }
 
     @Synchronized fun removeBySource(context: Context, sourceTaskId: String) {
         if (sourceTaskId.isBlank()) return
-        val updated = read(context).mapNotNull { entry ->
+        val entries = read(context) ?: return
+        val updated = entries.mapNotNull { entry ->
             if (sourceTaskId !in entry.sourceTaskIds) return@mapNotNull entry
             val remainingSources = entry.sourceTaskIds.filterNot { it == sourceTaskId }
             if (remainingSources.isEmpty()) null
@@ -95,28 +93,36 @@ object AgentOperationalMemoryStore {
 
     private fun terms(value: String): Set<String> = termRegex.findAll(value.lowercase(Locale.ROOT)).map { it.value }.filterNot { it in stopWords }.toSet()
 
-    private fun read(context: Context): List<Entry> = runCatching {
-        val array = JSONArray(context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString(KEY, "[]") ?: "[]")
-        (0 until array.length()).mapNotNull { i ->
-            val o = array.optJSONObject(i) ?: return@mapNotNull null
+    /** Null means malformed persisted data; mutators must not treat it as an empty library. */
+    private fun read(context: Context): List<Entry>? = runCatching {
+        val raw = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString(KEY, null) ?: "[]"
+        val array = JSONArray(raw)
+        (0 until array.length()).map { i ->
+            val o = array.getJSONObject(i)
+            val id = o.optString("id").trim()
             val agent = o.optString("agentId").trim()
             val text = o.optString("text").trim()
-            if (agent.isBlank() || text.isBlank()) null else Entry(
-                o.optString("id").ifBlank { UUID.randomUUID().toString() }, agent, text.take(MAX_ENTRY_CHARS),
-                o.optString("category").take(80), o.optLong("createdAt"),
-                strings(o.optJSONArray("sourceTaskIds")), o.optString("confidence").take(40)
+            require(id.isNotBlank() && agent.isNotBlank() && text.isNotBlank()) {
+                "Operational memory entry is missing its identity or content."
+            }
+            require(o.opt("createdAt") is Number) { "Operational memory timestamp is invalid." }
+            Entry(
+                id, agent, text.take(MAX_ENTRY_CHARS), o.optString("category").take(80),
+                o.optLong("createdAt"), strings(o.optJSONArray("sourceTaskIds")),
+                o.optString("confidence").take(40)
             )
         }
-    }.getOrDefault(emptyList())
+    }.getOrNull()
 
-    private fun write(context: Context, entries: List<Entry>) {
+    private fun write(context: Context, entries: List<Entry>): Boolean {
         val array = JSONArray()
         entries.take(MAX_ENTRIES).forEach { e ->
             array.put(JSONObject().put("id", e.id).put("agentId", e.agentId).put("text", e.text)
                 .put("category", e.category).put("createdAt", e.createdAt)
                 .put("sourceTaskIds", JSONArray(e.sourceTaskIds)).put("confidence", e.confidence))
         }
-        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putString(KEY, array.toString()).apply()
+        return context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
+            .putString(KEY, array.toString()).commit()
     }
 
     private fun strings(array: JSONArray?): List<String> = if (array == null) emptyList() else
