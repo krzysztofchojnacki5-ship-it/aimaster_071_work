@@ -77,6 +77,40 @@ class TeamRunEngineNetworkTest {
         } finally { server.stop(0) }
     }
     @Test
+    fun usagePersistenceFailureDoesNotRetrySuccessfulProviderRequest() {
+        ProviderQuotaScheduler.resetForTests()
+        val server = TestHttpServer { _, _ ->
+            200 to """{"choices":[{"message":{"content":"valid-agent-report"}}],"usage":{"prompt_tokens":4,"completion_tokens":3,"total_tokens":7}}"""
+        }
+        try {
+            val primary = ProviderConfig(
+                "primary-test", "Primary test", ProviderKind.OPENAI_COMPATIBLE,
+                "http://127.0.0.1:${server.address.port}/v1", "test-model", ""
+            )
+            val fallback = primary.copy(id = "fallback-test", name = "Fallback test", model = "fallback-model")
+            val logs = Collections.synchronizedList(mutableListOf<String>())
+            val result = TeamRunEngine(ProviderClient()).runBatch(
+                tasks = listOf(TeamTask("usage-task", "qa-architect", "Usage persistence test", "Return a report")),
+                provider = primary,
+                agentProvidersMap = mapOf("qa-architect" to primary),
+                fallbackProviders = listOf(fallback),
+                isFreeProvider = { true },
+                mode = WorkMode.PLANNING,
+                onLog = { _, _, message, status -> logs.add("$status $message") },
+                onUsage = { _, _, _, _ -> throw IllegalStateException("simulated local storage failure") }
+            ).single()
+
+            assertEquals(TeamTaskResult.Status.COMPLETED, result.status)
+            assertEquals("valid-agent-report", result.report)
+            assertEquals("A successful response must not trigger a second provider request", 1, server.requestCount.get())
+            assertTrue("The local accounting failure must remain visible", logs.any { it.contains("USAGE_RECORD_FAILED") })
+        } finally {
+            ProviderQuotaScheduler.resetForTests()
+            server.stop(0)
+        }
+    }
+
+    @Test
     fun peerReviewTargetIsVisibleInTheActualOutboundRequestAndResult() {
         val server = TestHttpServer { _, _ ->
             200 to """{"choices":[{"message":{"content":"review-report"}}],"usage":{"prompt_tokens":5,"completion_tokens":4,"total_tokens":9}}"""
