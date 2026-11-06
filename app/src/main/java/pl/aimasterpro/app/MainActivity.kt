@@ -1292,6 +1292,8 @@ class MainActivity : Activity() {
         }
 
         var lastErr: Throwable? = null
+        var requestAttempt = 0
+        val estimatedRequestInput = (systemPrompt.length.toLong() + userText.length.toLong() + 2L) / 3L
         try {
             for (cfg in ordered) {
                 if (Thread.currentThread().isInterrupted) throw ProviderException(null, "Żądanie anulowane przez użytkownika.", category = "CANCELLED")
@@ -1317,7 +1319,30 @@ class MainActivity : Activity() {
                     continue
                 }
                 var modelCallStartedAt = 0L
+                var requestIdempotencyKey = ""
+                var safeCheckpointBaseUrl = ""
                 try {
+                    requestAttempt++
+                    requestIdempotencyKey = "chat:$requestTaskId:${cfg.id}".take(240)
+                    safeCheckpointBaseUrl = runCatching {
+                        java.net.URL(cfg.baseUrl).let { url ->
+                            "${url.protocol}://${url.host}" + if (url.port >= 0) ":${url.port}" else ""
+                        }
+                    }.getOrDefault("")
+                    val requestCheckpointSaved = pl.aimasterpro.app.core.TaskCheckpointStore.record(
+                        this,
+                        pl.aimasterpro.app.core.TaskCheckpointStore.Event(
+                            taskId = requestTaskId, agentId = requestAgentId, status = "REQUESTING",
+                            detail = "Pojedyncze żądanie czatu wysyłane do providera.",
+                            timestamp = System.currentTimeMillis(), providerId = cfg.id, model = cfg.model,
+                            attempts = requestAttempt, estimatedInputTokens = estimatedRequestInput,
+                            estimatedOutputTokens = 4_096L, idempotencyKey = requestIdempotencyKey,
+                            baseUrl = safeCheckpointBaseUrl
+                        )
+                    )
+                    if (!requestCheckpointSaved) {
+                        throw IllegalStateException("Nie udało się trwale zapisać checkpointu żądania; HTTP nie został wysłany.")
+                    }
                     modelCallStartedAt = System.currentTimeMillis()
                     val res = client.chat(cfg, systemPrompt, userText, mime, b64, requestScope)
                     // A successful provider response may already be billable. Local telemetry or
@@ -1334,15 +1359,28 @@ class MainActivity : Activity() {
                     }.onFailure { error ->
                         runCatching { logAgentForChat(requestChatId, "[LOCAL USAGE WARNING] Nie zapisano lokalnej historii wywołania: ${error.message ?: error.javaClass.simpleName}") }
                     }
-                    runCatching {
+                    val usagePersisted = runCatching {
                         pl.aimasterpro.app.core.ApiTokenTracker.recordQuery(
                             this, cfg.id, cfg.model, requestAgentId, requestTaskId,
                             res.usage.inputTokens, res.usage.outputTokens, res.usage.reasoningTokens,
-                            res.usage.cachedTokens, res.usage.status, cfg.baseUrl, effectiveBudgetReservationId
+                            res.usage.cachedTokens, res.usage.status, cfg.baseUrl, effectiveBudgetReservationId,
+                            requestIdempotencyKey
                         )
                     }.onFailure { error ->
                         runCatching { logAgentForChat(requestChatId, "[USAGE_RECORD_FAILED] Odpowiedź API mogła zostać rozliczona, ale zapis tokenów nie powiódł się: ${error.message ?: error.javaClass.simpleName}") }
-                    }
+                    }.isSuccess
+                    pl.aimasterpro.app.core.TaskCheckpointStore.record(
+                        this,
+                        pl.aimasterpro.app.core.TaskCheckpointStore.Event(
+                            taskId = requestTaskId, agentId = requestAgentId,
+                            status = if (usagePersisted) "USAGE_RECORDED" else "USAGE_PENDING",
+                            detail = if (usagePersisted) "Rzeczywiste usage zapisano trwale." else "Odpowiedź odebrana; trwałe księgowanie usage wymaga odzyskania.",
+                            timestamp = System.currentTimeMillis(), providerId = cfg.id, model = cfg.model,
+                            attempts = requestAttempt, estimatedInputTokens = estimatedRequestInput,
+                            estimatedOutputTokens = 4_096L, idempotencyKey = requestIdempotencyKey,
+                            baseUrl = safeCheckpointBaseUrl
+                        )
+                    )
                     if (Thread.currentThread().isInterrupted) {
                         throw ProviderException(null, "Odpowiedź odebrano po anulowaniu; wykorzystanie API zostało rozliczone.", category = "CANCELLED")
                     }
@@ -1387,20 +1425,45 @@ class MainActivity : Activity() {
                     val providerFailure = t as? ProviderException
 
                     if (providerFailure?.requestMayHaveBeenProcessed == true) {
-                        val estimatedInput = (systemPrompt.length.toLong() + userText.length.toLong() + 2L) / 3L
-                        runCatching {
+                        val unknownUsagePersisted = runCatching {
                             pl.aimasterpro.app.core.ApiTokenTracker.recordQuery(
                                 this, cfg.id, cfg.model, requestAgentId, requestTaskId,
-                                estimatedInput, 4_096L, status = "UNAVAILABLE",
-                                baseUrl = cfg.baseUrl, reservationId = effectiveBudgetReservationId
+                                estimatedRequestInput, 4_096L, status = "UNAVAILABLE",
+                                baseUrl = cfg.baseUrl, reservationId = effectiveBudgetReservationId,
+                                idempotencyKey = requestIdempotencyKey
                             )
                         }.onFailure { error ->
                             runCatching { logAgentForChat(requestChatId,
                                 "[UNKNOWN USAGE RECORD FAILED] POST mógł zostać rozliczony; zapis UNAVAILABLE nie powiódł się: ${error.message ?: error.javaClass.simpleName}") }
-                        }
+                        }.isSuccess
+                        pl.aimasterpro.app.core.TaskCheckpointStore.record(
+                            this,
+                            pl.aimasterpro.app.core.TaskCheckpointStore.Event(
+                                taskId = requestTaskId, agentId = requestAgentId,
+                                status = if (unknownUsagePersisted) "USAGE_RECORDED" else "USAGE_PENDING",
+                                detail = if (unknownUsagePersisted) "Niejednoznaczne zużycie zapisano jako UNAVAILABLE." else "Niejednoznaczne zużycie oczekuje na trwałe księgowanie.",
+                                timestamp = System.currentTimeMillis(), providerId = cfg.id, model = cfg.model,
+                                attempts = requestAttempt, estimatedInputTokens = estimatedRequestInput,
+                                estimatedOutputTokens = 4_096L, idempotencyKey = requestIdempotencyKey,
+                                baseUrl = safeCheckpointBaseUrl
+                            )
+                        )
                         logAgentForChat(requestChatId,
                             "[UNKNOWN USAGE] POST mógł dotrzeć do providera (faza ${providerFailure.phase}); nie uruchamiam fallbacku, aby uniknąć podwójnego rozliczenia.")
                         throw t
+                    }
+
+                    val preProcessingCheckpointSaved = pl.aimasterpro.app.core.TaskCheckpointStore.record(
+                        this,
+                        pl.aimasterpro.app.core.TaskCheckpointStore.Event(
+                            taskId = requestTaskId, agentId = requestAgentId, status = "RUNNING",
+                            detail = "Poprzednia próba zakończyła się przed możliwym przetworzeniem POST.",
+                            timestamp = System.currentTimeMillis(), providerId = cfg.id, model = cfg.model,
+                            attempts = requestAttempt
+                        )
+                    )
+                    if (!preProcessingCheckpointSaved) {
+                        throw IllegalStateException("Nie udało się zapisać stanu przed fallbackiem; kolejny provider nie zostanie wywołany.", t)
                     }
 
                     if (isAuthOrClientError) {
@@ -1461,6 +1524,18 @@ class MainActivity : Activity() {
         val gen = ++requestGen
         val requestId = UUID.randomUUID().toString()
         val requestTaskId = "chat-$chatId-$requestId"
+        val queuedCheckpointSaved = pl.aimasterpro.app.core.TaskCheckpointStore.record(
+            this,
+            pl.aimasterpro.app.core.TaskCheckpointStore.Event(
+                taskId = requestTaskId, agentId = chosenRole.name, status = "QUEUED",
+                detail = "Wiadomość zapisana; oczekiwanie na rozpoczęcie obsługi żądania.",
+                timestamp = System.currentTimeMillis(), providerId = safeConfig.id, model = safeConfig.model, attempts = 0
+            )
+        )
+        if (!queuedCheckpointSaved) {
+            toast("Nie udało się trwale zapisać checkpointu. Żądanie API nie zostało wysłane.")
+            return
+        }
         val requestStartedAt = System.currentTimeMillis()
         val modeForRequest = currentWorkMode()
         val responseScreen = if (screen == "Asystent") "Asystent" else "Czat"
