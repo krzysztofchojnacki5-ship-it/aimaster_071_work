@@ -44,4 +44,16 @@ class TaskCheckpointStoreTest {
         assertTrue(saved)
         assertEquals("RUNNING", TaskCheckpointStore.latest(context).single().status)
     }
+    @Test fun lateWorkerCancellationDoesNotOverwriteCoordinatorTimeout() {
+        assertTrue(TaskCheckpointStore.record(
+            context,
+            TaskCheckpointStore.Event("task-timeout", "tester", "TIMED_OUT", "deadline", 300L, "", "", 1)
+        ))
+        assertTrue(TaskCheckpointStore.record(
+            context,
+            TaskCheckpointStore.Event("task-timeout", "tester", "CANCELLED", "worker interrupted", 400L, "", "", 1)
+        ))
+        assertEquals("TIMED_OUT", TaskCheckpointStore.latest(context).single().status)
+    }
+
 }
