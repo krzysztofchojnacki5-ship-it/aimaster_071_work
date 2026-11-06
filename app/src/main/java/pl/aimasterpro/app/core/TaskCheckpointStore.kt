@@ -21,7 +21,10 @@ object TaskCheckpointStore {
         val providerId: String,
         val model: String,
         val attempts: Int,
-        val processId: String = ""
+        val processId: String = "",
+        val estimatedInputTokens: Long = 0L,
+        val estimatedOutputTokens: Long = 0L,
+        val idempotencyKey: String = ""
     )
 
     /**
@@ -45,7 +48,10 @@ object TaskCheckpointStore {
                 providerId = event.providerId.take(100),
                 model = event.model.take(160),
                 attempts = event.attempts.coerceAtLeast(0),
-                processId = event.processId.ifBlank { processId }
+                processId = event.processId.ifBlank { processId },
+                estimatedInputTokens = event.estimatedInputTokens.coerceAtLeast(0L),
+                estimatedOutputTokens = event.estimatedOutputTokens.coerceAtLeast(0L),
+                idempotencyKey = event.idempotencyKey.take(240)
             )
         )
         return save(context, rows.take(MAX_EVENTS))
@@ -75,32 +81,43 @@ object TaskCheckpointStore {
                 o.optString("provider"),
                 o.optString("model"),
                 o.optInt("attempts"),
-                o.optString("processId")
+                o.optString("processId"),
+                o.optLong("estimatedInputTokens"),
+                o.optLong("estimatedOutputTokens"),
+                o.optString("idempotencyKey")
             )
         }
     }.getOrNull()
 
     /** At process startup, queued/running work from another process cannot be resumed safely. */
     @Synchronized
-    fun recoverStaleRunning(context: Context, now: Long = System.currentTimeMillis()): Int {
-        val stale = latest(context).filter {
-            it.status in setOf("QUEUED", "RUNNING") && it.processId != processId
+    fun recoverStaleRunning(
+        context: Context,
+        now: Long = System.currentTimeMillis(),
+        onAmbiguousRequest: (Event) -> Boolean = { true }
+    ): Int {
+        val stale = latest(context).filter { event ->
+            (event.status in setOf("QUEUED", "RUNNING", "REQUESTING") && event.processId != processId) ||
+                event.status == "INTERRUPTED_USAGE_PENDING"
         }
         var recovered = 0
         stale.forEach { event ->
-            val saved = record(
-                context,
-                event.copy(
-                    status = "INTERRUPTED",
-                    detail = "Proces aplikacji zakończył się przed zapisaniem wyniku.",
-                    timestamp = now,
-                    processId = processId
-                )
-            )
-            if (saved) {
-                recovered++
-            } else {
-                android.util.Log.e("AIMasterRecovery", "Nie udało się trwale zapisać stanu INTERRUPTED dla zadania.")
+            val needsUsageRecovery = event.status == "REQUESTING" || event.status == "INTERRUPTED_USAGE_PENDING"
+            val usageRecovered = !needsUsageRecovery || runCatching { onAmbiguousRequest(event) }.getOrDefault(false)
+            val nextStatus = when {
+                needsUsageRecovery && !usageRecovered -> "INTERRUPTED_USAGE_PENDING"
+                else -> "INTERRUPTED"
+            }
+            val detail = when {
+                needsUsageRecovery && usageRecovered -> "Proces zakończył się po rozpoczęciu żądania; nieznane zużycie API zabezpieczono jako UNAVAILABLE."
+                needsUsageRecovery -> "Proces zakończył się po rozpoczęciu żądania; księgowanie UNAVAILABLE oczekuje na ponowienie."
+                else -> "Proces aplikacji zakończył się przed zapisaniem wyniku."
+            }
+            val saved = record(context, event.copy(
+                status = nextStatus, detail = detail, timestamp = now, processId = processId
+            ))
+            if (saved) recovered++ else {
+                android.util.Log.e("AIMasterRecovery", "Nie udało się trwale zapisać stanu odzyskiwania zadania.")
             }
         }
         return recovered
@@ -132,6 +149,9 @@ object TaskCheckpointStore {
                     .put("model", e.model)
                     .put("attempts", e.attempts)
                     .put("processId", e.processId)
+                    .put("estimatedInputTokens", e.estimatedInputTokens)
+                    .put("estimatedOutputTokens", e.estimatedOutputTokens)
+                    .put("idempotencyKey", e.idempotencyKey)
             )
         }
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
