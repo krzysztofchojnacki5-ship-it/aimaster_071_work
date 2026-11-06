@@ -2530,12 +2530,13 @@ onRequestStarting = { task, actualProvider, estimatedInput, estimatedOutput, ide
     private fun togglePinned(id: String) { if (id.isBlank()) return; val set = pinnedIds(); if (!set.add(id)) set.remove(id); chatPrefs.edit().putStringSet("pinned_chats", set).apply() }
 
     private fun showLibrary() {
-        val chats = pl.aimasterpro.app.core.ChatHistoryStore.readRoot(this)?.optJSONObject("chats")
+        val root = pl.aimasterpro.app.core.ChatHistoryStore.readRoot(this)
             ?: run {
                 AlertDialog.Builder(this).setTitle("Biblioteka").setMessage("Historia rozmów jest uszkodzona lub niedostępna. Dane nie zostały nadpisane.")
                     .setPositiveButton("Zamknij", null).show()
                 return
             }
+        val chats = root.optJSONObject("chats") ?: JSONObject()
         val items = mutableListOf<String>()
         val it = chats.keys()
         while (it.hasNext()) { val o = chats.optJSONObject(it.next()) ?: continue; val arr = o.optJSONArray("messages") ?: continue; for (i in 0 until arr.length()) { val m = arr.optJSONObject(i) ?: continue; val t = m.optString("text"); if (t.contains("📎 Załącznik:")) items.add(t.substringAfter("📎 Załącznik:").trim().take(100)) } }
