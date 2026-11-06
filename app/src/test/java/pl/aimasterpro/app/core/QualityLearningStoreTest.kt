@@ -43,6 +43,20 @@ class QualityLearningStoreTest {
         assertEquals("APPROVED", QualityLearningStore.proposals(context).single().status)
     }
 
+    @Test fun approvedSharedMemoryIsReconciledAfterInterruptedApprovalWrite() {
+        val proposal = QualityLearningStore.addProposal(
+            context, "Odtwarzalna zatwierdzona reguła pamięci", 9, "wstępna",
+            listOf("task-recovery"), listOf("coder"), emptyList()
+        )
+        assertTrue(QualityLearningStore.setProposalStatus(context, proposal.id, "APPROVED"))
+        val memoryEntry = "[UCZENIE ZATWIERDZONE ${proposal.id.take(8)}; dowody=${proposal.evidenceCount}; pewność=${proposal.confidence}] ${proposal.text}".take(1000)
+        assertTrue(AiMemoryStore.removeMemory(context, memoryEntry))
+        assertFalse(AiMemoryStore.getMemories(context).contains(memoryEntry))
+        QualityLearningStore.syncApprovedAgentMemories(context)
+        assertTrue(AiMemoryStore.getMemories(context).contains(memoryEntry))
+        assertTrue(AgentOperationalMemoryStore.all(context).any { "task-recovery" in it.sourceTaskIds })
+    }
+
     @Test fun proposalCannotRemainApprovedWhenDurableSharedMemoryWriteFails() {
         val proposal = QualityLearningStore.addProposal(
             context, "Reguła wymagająca trwałego zapisu", 7, "wstępna", emptyList(), emptyList(), emptyList()
