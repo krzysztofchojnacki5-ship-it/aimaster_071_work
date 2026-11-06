@@ -325,3 +325,20 @@ Pliki zmienione w tym etapie:
 Stan po zapisaniu kodu, przed aktualizacją tego checkpointu:
 - HEAD branch: 7e7b44fe5f8e9dba5cf95ab0f845c468f864b26d
 - HEAD main: 752149d40186144b0f458a32b5826c8928349c3a
+
+
+### Dodatkowa kontrola — współdzielony cennik i cykl życia rezerwacji
+
+Po podstawowych poprawkach sprawdzono wszystkie widoczne wywołania `planBatch()` i `releaseBatchReservation()` w `MainActivity.kt`:
+
+- główny batch agentów zwalnia rezerwację w `finally`;
+- etap Peer Review zwalnia rezerwację zarówno przy braku dopuszczonych recenzji, jak i po uruchomieniu recenzji w `finally`;
+- końcowa synteza MASTER-a zwalnia własną rezerwację w `finally`, a odmowę budżetu obsługuje przed wysłaniem żądania;
+- niezależny Patch Peer Review zwalnia rezerwację przy zablokowaniu pełnego składu oraz w `finally` po uruchomieniu;
+- nie znaleziono w tych czterech ścieżkach normalnego wyjścia bez jawnego zwolnienia rezerwacji.
+
+Dodatkowo wykryto, że `getPricing()` zwracało bezpośrednią referencję do mutowalnego obiektu z prywatnej listy cen domyślnych. Zewnętrzny caller mógł zmienić stawkę na NaN lub wartość ujemną i wpłynąć na kolejne obliczenia. Funkcja zwraca teraz kopię obiektu cennika, a test `mutatingReturnedPricingDoesNotChangeSharedDefaults` chroni ten przypadek.
+
+Rozszerzono `reservationIsConsumedOnlyByTheProviderThatWasBudgeted` o przypadki różnego modelu i różnego adresu bazowego. Rezerwację konsumuje dopiero dokładnie zgodny provider + model + baseUrl.
+
+Status testów bez zmian: **NOT RUN**. Kontrola cyklu życia rezerwacji była statycznym przeglądem widocznych call-site'ów; nie jest testem runtime ani potwierdzeniem zachowania przy śmierci procesu.
