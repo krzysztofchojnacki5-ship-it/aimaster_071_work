@@ -229,7 +229,7 @@ class TeamRunEngine(
                                         }
                                         onLog("MASTER", agent.name, requestTrace, "REQUEST")
                                         val estimatedRequestInput = (system.length.toLong() + user.length.toLong() + 2L) / 3L
-                                        val requestIdempotencyKey = "team:${task.id}:${prov.id}"
+                                        val requestIdempotencyKey = "team:${task.id}:${prov.id}".take(240)
                                         check(onRequestStarting(
                                             task, prov, estimatedRequestInput,
                                             unknownOutputEstimateTokens.coerceAtLeast(0L), requestIdempotencyKey
