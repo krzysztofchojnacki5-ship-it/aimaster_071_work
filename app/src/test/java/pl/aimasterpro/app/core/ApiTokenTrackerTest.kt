@@ -18,12 +18,12 @@ class ApiTokenTrackerTest {
 
     @Before fun setUp() {
         context = RuntimeEnvironment.getApplication()
-        ApiTokenTracker.clearRecords(context)
+        ApiTokenTracker.clearRecords(context, clearInFlightReservations = true)
         ApiTokenTracker.setLimits(context, 100_000L, 50.0, 50_000L)
     }
 
     @After fun tearDown() {
-        ApiTokenTracker.clearRecords(context)
+        ApiTokenTracker.clearRecords(context, clearInFlightReservations = true)
     }
 
     @Test fun successfulUsageIsPersistedAndVisibleInMonitorPeriods() {
@@ -147,6 +147,47 @@ class ApiTokenTrackerTest {
             ApiTokenTracker.recordQuery(context, "provider", "gpt-4o-mini", "MASTER", "overflow", Long.MAX_VALUE, 1)
         }
         assertTrue(overflow.isFailure)
+    }
+
+    @Test fun deferredReservationReleaseWaitsForLateWorkerUsageAndCompletion() {
+        val plan = ApiTokenTracker.planBatch(
+            context,
+            listOf(BudgetRequest("late-worker", "RESEARCHER", "ollama",
+                "http://127.0.0.1:11434/v1", "llama3", 100L, 100L))
+        )
+        assertTrue(plan.allowedTaskIds.contains("late-worker"))
+
+        ApiTokenTracker.requestBatchReservationRelease(plan.reservationId)
+        assertEquals("Release request must retain tokens while worker may still return usage",
+            200L, ApiTokenTracker.activeReservationStats().tokens)
+
+        ApiTokenTracker.recordQuery(
+            context, "ollama", "llama3", "RESEARCHER", "late-worker",
+            inputTokens = 30L, outputTokens = 20L, status = "REAL",
+            baseUrl = "http://127.0.0.1:11434/v1", reservationId = plan.reservationId
+        )
+        assertEquals("Late usage must still consume its matching reservation",
+            150L, ApiTokenTracker.activeReservationStats().tokens)
+
+        ApiTokenTracker.completeReservationTask(plan.reservationId, "late-worker")
+        assertEquals("Reservation is released only after the worker exits",
+            0L, ApiTokenTracker.activeReservationStats().tokens)
+    }
+
+    @Test fun clearingUsageHistoryDoesNotFreeInFlightBudgetReservations() {
+        val plan = ApiTokenTracker.planBatch(
+            context,
+            listOf(BudgetRequest("clear-during-run", "MASTER", "ollama",
+                "http://127.0.0.1:11434/v1", "llama3", 40L, 60L))
+        )
+        assertTrue(plan.allowedTaskIds.contains("clear-during-run"))
+        assertTrue(ApiTokenTracker.clearRecords(context))
+        assertEquals("Clear history must not release a running task's budget",
+            100L, ApiTokenTracker.activeReservationStats().tokens)
+
+        ApiTokenTracker.completeReservationTask(plan.reservationId, "clear-during-run")
+        ApiTokenTracker.requestBatchReservationRelease(plan.reservationId)
+        assertEquals(0L, ApiTokenTracker.activeReservationStats().tokens)
     }
 
     @Test fun concurrentBatchPlanningCannotReserveTheSameDailyBudgetTwice() {
