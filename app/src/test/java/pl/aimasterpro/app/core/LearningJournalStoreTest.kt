@@ -43,6 +43,17 @@ class LearningJournalStoreTest {
         assertTrue(summary.contains("3s"))
     }
 
+    @Test fun malformedOperationalJournalIsPreservedWhenNewEventIsRecorded() {
+        val prefs = context.getSharedPreferences("ai_learning_journal_v1", Context.MODE_PRIVATE)
+        val corrupt = """[{"kind":"agent","agent":"coder"},null]"""
+        assertTrue(prefs.edit().putString("events", corrupt).commit())
+        LearningJournalStore.record(
+            context, LearningJournalStore.Event(300L, "agent", "tester", "groq", "model", "COMPLETED", 100L, 1, "")
+        )
+        assertEquals(corrupt, prefs.getString("events", null))
+        assertTrue(LearningJournalStore.load(context).isEmpty())
+    }
+
     @Test fun clearRemovesJournalWithoutTouchingApprovedMemory() {
         AiMemoryStore.addMemory(context, "TEST_APPROVED_MEMORY")
         LearningJournalStore.record(context, LearningJournalStore.Event(1L, "chat", "MASTER", "groq", "model-a", "COMPLETED", 10L, 1, ""))
