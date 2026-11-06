@@ -188,4 +188,23 @@ class ProjectWorkspaceStoreApplyTest {
         assertEquals(after, store.currentIdentity())
     }
 
+
+    @Test fun refusesImportWhilePatchReceiptIsAwaitingChangeSetReconciliation() {
+        val (store, root) = store("README.md" to "before\n", "src/A.kt" to "old\n")
+        val diff = "--- a/src/A.kt\n+++ b/src/A.kt\n@@ -1 +1 @@\n-old\n+new\n"
+        val patch = preview(store, "src/A.kt", "old\n", diff)
+        assertTrue(patch.accepted)
+        val applied = store.applyPreview(patch, changeSetId = "changeset-pending", chatId = "chat-pending")
+
+        val nextArchive = ByteArrayInputStream(zip("README.md" to "replacement\n"))
+        val importResult = runCatching { store.importZip(nextArchive, "replacement.zip") }
+
+        assertTrue("import must not replace a workspace with an unacknowledged patch receipt", importResult.isFailure)
+        assertEquals("new\n", store.readTextFile("src/A.kt").content)
+        assertEquals(applied.workspaceIdentity, store.currentIdentity())
+        assertTrue("pending receipt must remain available for host reconciliation", store.hasPendingWorkspaceTransaction())
+        assertTrue(store.verifyCurrentWorkspace().valid)
+        assertTrue(root.isDirectory)
+    }
+
 }
