@@ -53,6 +53,15 @@ class ChatHistoryStoreTest {
         assertNull(ChatHistoryStore.readRoot(context))
     }
 
+    @Test fun malformedAgentActivityOrTaskIdsBlocksHistoryRestore() {
+        val corrupt = JSONObject().put("chats", JSONObject().put("chat-1", JSONObject()
+            .put("messages", JSONArray())
+            .put("assistantTaskIds", JSONArray().put(42)))).toString()
+        assertTrue(prefs.edit().putString("chats_v2", corrupt).commit())
+        assertNull(ChatHistoryStore.readRoot(context))
+        assertEquals(corrupt, prefs.getString("chats_v2", null))
+    }
+
     @Test fun legacyMessagesAndTaskAlignmentMetadataRemainReadable() {
         val legacy = JSONObject().put("currentId", "chat-legacy")
             .put("chats", JSONObject().put("chat-legacy", JSONObject()
