@@ -190,6 +190,10 @@ class ProviderClientNetworkTest {
             assertTrue("Cancelled request should stop promptly", !worker.isAlive)
             assertTrue(failure.get() is ProviderException)
             assertEquals("CANCELLED", (failure.get() as ProviderException).category)
+            assertTrue("Cancellation after the POST reached the server must preserve unknown billing state",
+                (failure.get() as ProviderException).requestMayHaveBeenProcessed)
+            assertTrue("Cancellation must retain the transport phase",
+                (failure.get() as ProviderException).phase in setOf("WAIT_RESPONSE", "READ_RESPONSE"))
             assertEquals("Cancelled POST must not be replayed", 1, server.requestCount.get())
             client.beginRequestScope() // a new user task must not revive the old batch token
             try {
