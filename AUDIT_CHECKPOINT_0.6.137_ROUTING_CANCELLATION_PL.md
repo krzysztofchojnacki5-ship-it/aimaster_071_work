@@ -1030,3 +1030,12 @@ Weryfikacja:
 - run `42311354989` oraz pośrednie runy wyzwolone kolejnymi commitami zostały anulowane przez nowsze uruchomienia;
 - `main` pozostaje na `752149d40186144b0f458a32b5826c8928349c3a`; branch roboczy jest 227 commitów ahead, 0 behind;
 - nie wykonano merge, APK, release ani zmian na `main`; Companion Transport pozostaje **BLOCKED**.
+
+
+### Stan repozytorium po aktualizacji checkpointu
+
+- Aktualny HEAD brancha roboczego: `952b367479657e094cb944068b4ed2b13b293ac9` (aktualizacja dokumentacji audytu).
+- Ostatni commit kodu/testu objęty najnowszym runem CI: `21b532705940f04fe30850ee08605abacdb620af`.
+- Porównanie z `main`: 228 commits ahead, 0 behind.
+- `main` nadal: `752149d40186144b0f458a32b5826c8928349c3a`.
+- Run CI `42311168794` pozostaje `in_progress` na kroku Gradle; najnowszy run `42312323287` pozostaje `pending` w kolejce. Brak potwierdzonego wyniku testów i kompilacji.
