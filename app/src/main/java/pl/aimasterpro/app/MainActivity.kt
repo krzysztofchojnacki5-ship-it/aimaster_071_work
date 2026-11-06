@@ -3244,7 +3244,7 @@ class MainActivity : Activity() {
                 usage.status, config.baseUrl, reservationId
             )
         }.onFailure {
-            android.util.Log.e("AIMasterBudget", "Nie udało się zapisać użycia testu modelu.", it)
+            android.util.Log.e("AIMasterBudget", "Nie udało się zapisać użycia testu $testLabel.", it)
         }
     }
 
