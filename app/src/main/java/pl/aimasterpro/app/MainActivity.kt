@@ -1562,6 +1562,8 @@ class MainActivity : Activity() {
             activeWorkerGeneration = gen
             val result = runCatching {
                 if (chosenRole == AgentRole.MASTER) {
+                    // Reconcile approved memory after any prior process interruption before composing context.
+                    pl.aimasterpro.app.core.QualityLearningStore.syncApprovedAgentMemories(this)
                     val mode = modeForRequest
                     val qualityEvidenceByAgent = pl.aimasterpro.app.core.QualityLearningStore.feedback(this)
                         .filter { it.targetType == "AGENT" && it.agentId.isNotBlank() }
@@ -1617,7 +1619,6 @@ class MainActivity : Activity() {
                         resp.text + if (check.warnings.isNotEmpty()) "\n\n_Uwaga kontroli jakości: ${check.warnings.joinToString("; ")}_" else ""
                     } else {
                     val selectedSpecs = routing.agents
-                    pl.aimasterpro.app.core.QualityLearningStore.syncApprovedAgentMemories(this)
                     val sharedLearningContext = pl.aimasterpro.app.core.AiMemoryStore.contextString(this, prompt, maxChars = 1_800)
                     val tasks = selectedSpecs.mapIndexed { index, spec ->
                         val agentMemory = pl.aimasterpro.app.core.AgentOperationalMemoryStore.contextString(
