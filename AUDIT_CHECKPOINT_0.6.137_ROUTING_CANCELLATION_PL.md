@@ -342,3 +342,80 @@ Dodatkowo wykryto, że `getPricing()` zwracało bezpośrednią referencję do mu
 Rozszerzono `reservationIsConsumedOnlyByTheProviderThatWasBudgeted` o przypadki różnego modelu i różnego adresu bazowego. Rezerwację konsumuje dopiero dokładnie zgodny provider + model + baseUrl.
 
 Status testów bez zmian: **NOT RUN**. Kontrola cyklu życia rezerwacji była statycznym przeglądem widocznych call-site'ów; nie jest testem runtime ani potwierdzeniem zachowania przy śmierci procesu.
+
+
+## Uzupełnienie — wyścigi równoległych batchy i opóźnione zwalnianie rezerwacji (2026-11-06)
+
+### Ustalenia audytu
+
+1. Metody księgowania i planowania były już synchronizowane na poziomie obiektu `ApiTokenTracker`, ale odczyt/zapis cennika, kursu USD/PLN i konfiguracji limitów nie używał tego samego monitora. Konkurencyjna zmiana ustawień mogła wejść w trakcie odczytu parametrów planowania.
+2. `setLimits()` przechowywało miesięczny limit w `Float`. Wcześniejsza walidacja sprawdzała skończoność wejściowego `Double`, ale nie skończoność wartości po konwersji. Bardzo duży, choć skończony `Double` mógł zostać zapisany jako `Float.POSITIVE_INFINITY`.
+3. Ważniejszy wyścig występował na granicy `TeamRunEngine` / `MainActivity`: `Future.cancel(true)` może oznaczyć Future jako anulowany, zanim kod workera rzeczywiście zakończy wykonywanie. `runBatch()` wywoływał `shutdownNow()` bez oczekiwania na zakończenie wszystkich callable, a `MainActivity` natychmiast zwalniało rezerwację w `finally`. Worker, który jeszcze kończył obsługę odpowiedzi HTTP, mógł więc zaksięgować późne użycie już po zwolnieniu rezerwacji.
+4. `clearRecords()` usuwało także aktywne rezerwacje w pamięci. Ręczne czyszczenie historii podczas pracy agentów mogło chwilowo uwolnić budżet, który nadal należał do uruchomionych zadań.
+
+### Poprawki wprowadzone
+
+#### ApiTokenTracker.kt
+
+- `getPricing()`, `getExchangeRate()`, `setExchangeRate()`, `getLimits()` i `setLimits()` korzystają teraz z `@Synchronized`, wspólnego z `planBatch()`, `recordQuery()`, `clearRecords()` i operacjami rezerwacji.
+- `setLimits()` sprawdza również wynik konwersji miesięcznego limitu do `Float`; wartość, która przepełniłaby format przechowywania, jest odrzucana.
+- Dodano stan zakończenia do każdej rezerwacji zadania oraz znacznik żądania zwolnienia całego batcha.
+- `requestBatchReservationRelease()` nie usuwa rezerwacji, dopóki wszystkie przypisane do niej workery nie zgłoszą rzeczywistego zakończenia.
+- `completeReservationTask()` oznacza zakończenie pojedynczego workera i usuwa rezerwację dopiero wtedy, gdy release został zażądany i wszystkie zadania są zakończone.
+- Dotychczasowe `releaseBatchReservation()` pozostaje natychmiastowym zwolnieniem dla ścieżek, w których zadania nie zostały wysłane (np. wszystkie zostały zablokowane przez budżet).
+- `clearRecords()` usuwa historię trwałą i sesyjną, ale **nie usuwa aktywnych rezerwacji**. Nie może więc uwolnić budżetu nadal używanego przez workery.
+- Dodano wyłącznie testowy, wewnętrzny `resetInMemoryStateForTests()`, aby izolować stan singletonu między testami bez udostępniania aplikacji funkcji czyszczenia aktywnych rezerwacji.
+
+#### TeamRunEngine.kt
+
+- Dodano callback `onTaskFinished(taskId)`, wywoływany z `finally` callable workera — po zakończeniu obsługi odpowiedzi/usage, także przy błędzie i przerwaniu.
+- Każde zadanie ma atomowy stan cyklu życia: queued (0), running (1), finished/cancelled-before-start (2).
+- Przy timeout lub przerwaniu koordynator anuluje Future i oznacza jako zakończone tylko zadanie, które nie zdążyło wystartować. Jeśli worker już działa, rezerwacja pozostaje aktywna aż do jego własnego `finally`.
+- Końcowy `finally` obsługuje również wyjątek przed wysłaniem wszystkich zadań: nieuruchomione zadania dostają callback zakończenia, a aktywne zakresy HTTP są anulowane przed `shutdownNow()`.
+- Walidacja zadań została przeniesiona do chronionego bloku `try/finally`, aby nawet błąd przed submission nie pozostawiał rezerwacji bez callbacku zakończenia.
+
+#### MainActivity.kt
+
+- Główny batch agentów, Peer Review i niezależny Patch Peer Review przekazują `onTaskFinished` do `ApiTokenTracker.completeReservationTask()`.
+- Ich bloki `finally` wywołują teraz `requestBatchReservationRelease()`, a nie natychmiastowe usunięcie rezerwacji.
+- Ścieżki bez wysłanych workerów oraz synchroniczna synteza MASTER-a nadal używają natychmiastowego zwolnienia, ponieważ nie mają aktywnego callable, które mogłoby później zaksięgować użycie.
+
+### Testy regresyjne
+
+W `ApiTokenTrackerTest.kt` dodano:
+
+- `deferredReservationReleaseWaitsForLateWorkerUsageAndCompletion` — rezerwacja pozostaje aktywna po żądaniu zwolnienia, przyjmuje późne usage i znika dopiero po callbacku zakończenia;
+- `clearingUsageHistoryDoesNotFreeInFlightBudgetReservations` — czyszczenie historii nie uwalnia budżetu aktywnego zadania;
+- `concurrentBatchPlanningCannotReserveTheSameDailyBudgetTwice` — dwa równoległe planowania nie rezerwują podwójnie tych samych tokenów;
+- `concurrentUsageWritesAreSerializedAndBothRecordsPersist` — dwa równoległe zapisy usage zachowują oba rekordy;
+- `monthlyLimitThatOverflowsFloatStorageIsRejected` — konwersja do Float nie może zapisać nieskończonego limitu.
+
+W `TeamRunEngineNetworkTest.kt`:
+
+- rozszerzono test awarii lokalnego księgowania, aby potwierdzić kolejność callbacków usage → zakończenie workera;
+- `preSubmitValidationFailureStillSignalsTaskCompletion` — błąd walidacji przed submission nie pozostawia rezerwacji bez zakończenia;
+- rozszerzono `coordinatorInterruptionMarksQueuedTasksCancelled`, aby sprawdzić callback zakończenia zarówno dla workera aktywnego, jak i oczekującego.
+
+Liczba testów w aktualnych plikach:
+- `ApiTokenTrackerTest.kt`: 19 testów;
+- `TeamRunEngineNetworkTest.kt`: 7 testów.
+
+### Zakres ochrony i ograniczenia
+
+- W `AndroidManifest.xml` nie znaleziono jawnych deklaracji `android:process`; obecne komponenty aplikacji działają w domyślnym procesie. `@Synchronized` chroni więc konkurencję wewnątrz bieżącego procesu aplikacji.
+- To nie jest blokada międzyprocesowa. Gdyby w przyszłości komponenty budżetowe zostały uruchomione w osobnych procesach, SharedPreferences + monitor JVM nie zapewnią transakcyjnego read-modify-write; wtedy potrzebna będzie baza z transakcjami (np. SQLite/Room) lub inny mechanizm międzyprocesowy.
+- Jeśli worker ignoruje przerwanie i nie kończy się, jego rezerwacja pozostaje zajęta do rzeczywistego zakończenia lub śmierci procesu. Jest to celowe zachowanie fail-safe: lepiej tymczasowo zablokować część limitu niż uwolnić budżet, który może jeszcze zostać zużyty.
+- Po śmierci procesu rezerwacje in-memory znikają. Zgodnie z wcześniejszym audytem zadania QUEUED/RUNNING są odzyskiwane jako INTERRUPTED i nie są automatycznie odtwarzane; trwały rejestr usage pozostaje osobny.
+- Testy: **NOT RUN**. Nie uruchomiono Gradle/JUnit/Robolectric ani kompilacji Android. Nie deklarować PASS.
+
+### Pliki zmienione w tym etapie
+
+- `app/src/main/java/pl/aimasterpro/app/core/ApiTokenTracker.kt`
+- `app/src/test/java/pl/aimasterpro/app/core/ApiTokenTrackerTest.kt`
+- `app/src/main/java/pl/aimasterpro/app/agents/TeamRunEngine.kt`
+- `app/src/test/java/pl/aimasterpro/app/agents/TeamRunEngineNetworkTest.kt`
+- `app/src/main/java/pl/aimasterpro/app/MainActivity.kt`
+
+Stan referencyjny po zapisaniu kodu, przed aktualizacją tego checkpointu:
+- HEAD branch: 4f270eb2efd38929da0df4ffc30bbc37565d8cdd
+- HEAD main: 752149d40186144b0f458a32b5826c8928349c3a
