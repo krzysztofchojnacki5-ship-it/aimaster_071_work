@@ -924,3 +924,15 @@ Stan przed aktualizacją checkpointu:
 - Oba nowe testy pozostają **NOT RUN**.
 - Nie należy sumować tych liczb z poprzednimi sekcjami changeloga jako unikalnej liczby testów całego projektu — część zestawów była już wcześniej opisywana w checkpointach.
 - Brak kompilacji, APK i potwierdzonego uruchomienia JUnit/Robolectric pozostaje blokadą uznania poprawek za zweryfikowane.
+
+
+## Korekta audytu — usunięcie zduplikowanej adnotacji synchronizacji (2026-11-07)
+
+Kontrola zmian z ostatniego etapu wykazała błąd wprowadzony przy dodawaniu synchronizacji `loadAllRecordsFromStorage()`: przed deklaracją metody znalazły się dwie identyczne adnotacje `@Synchronized`. Jedna adnotacja jest wystarczająca; duplikat usunięto, zachowując synchronizację odczytu z zapisami i rezerwacjami korzystającymi z monitora obiektu.
+
+Plik:
+- `app/src/main/java/pl/aimasterpro/app/core/ApiTokenTracker.kt`
+
+Commit poprawki: `58e519a1e723999913649ede892ab73d43960774`.
+
+Weryfikacja: poprawkę zapisano na branchu roboczym. Nie uruchomiono kompilacji Kotlin/Gradle ani testów; nie oznaczać jako potwierdzonego rozwiązania błędu kompilacji do czasu uruchomienia builda. Test `concurrentUsageSnapshotsAreSerializedWithSessionRecordWrites` pozostaje NOT RUN.
