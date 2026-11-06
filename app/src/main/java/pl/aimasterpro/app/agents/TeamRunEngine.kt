@@ -213,15 +213,25 @@ class TeamRunEngine(
                                     val chatRes = client.chat(prov, system, user, attachmentMime, attachmentBase64, requestScope)
                                     pl.aimasterpro.app.core.ProviderQuotaScheduler.markSuccess(quotaKey)
                                     runCatching { onProviderSuccess(prov) }
-                                    onProviderHealth(prov, true, "", System.currentTimeMillis() - callStartedAt)
+                                    // Local persistence/telemetry callbacks must never turn a successful,
+                                    // potentially billable provider response into a provider failure or
+                                    // trigger a second paid request through fallback.
+                                    runCatching {
+                                        onProviderHealth(prov, true, "", System.currentTimeMillis() - callStartedAt)
+                                    }.onFailure { error ->
+                                        runCatching { onLog("SYSTEM", agent.name, "[HEALTH RECORD WARNING] ${error.message ?: error.javaClass.simpleName}", "BOOKKEEPING_WARNING") }
+                                    }
                                     // A successful HTTP response can consume tokens even when its text is empty.
                                     // Record usage before validating the report so the budget cannot undercount it.
-                                    onUsage(agent.id, task.id, prov, chatRes.usage)
+                                    val usageRecorded = runCatching { onUsage(agent.id, task.id, prov, chatRes.usage) }
+                                    usageRecorded.onFailure { error ->
+                                        runCatching { onLog("SYSTEM", agent.name, "[USAGE RECORD FAILED] Odpowiedź API mogła zostać rozliczona przez dostawcę, ale lokalny zapis użycia nie powiódł się: ${error.message ?: error.javaClass.simpleName}", "USAGE_RECORD_FAILED") }
+                                    }
                                     // The HTTP response may arrive just after the caller timed out and
                                     // interrupted this worker. Preserve usage accounting, but do not let
                                     // a cancelled/timed-out task publish a late successful result.
                                     if (Thread.currentThread().isInterrupted) {
-                                        throw InterruptedException("Odpowiedź dotarła po anulowaniu zadania; wykorzystanie API zostało rozliczone.")
+                                        throw InterruptedException("Odpowiedź dotarła po anulowaniu zadania; zapis użycia został podjęty.")
                                     }
                                     report = chatRes.text
                                     if (report.isNotBlank()) {
