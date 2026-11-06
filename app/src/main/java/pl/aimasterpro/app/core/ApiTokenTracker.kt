@@ -422,6 +422,10 @@ object ApiTokenTracker {
             activeReservations.values.sumOf { r ->
                 r.globalReserveCostPln + r.tasks.sumOf { it.costPlnRemaining.coerceAtLeast(0.0) }
             } + globalReserveCostPln
+        if (limits.monthlyCostPlnLimit > 0.0 && monthlyCostUsed > limits.monthlyCostPlnLimit) {
+            val reason = "Wstrzymano: sama rezerwa kosztowa wraz z dotychczasowym użyciem przekracza miesięczny limit."
+            return BatchBudgetPlan(emptySet(), requests.associate { it.taskId to reason }, 0L, 0.0)
+        }
         val allowed = linkedSetOf<String>()
         val blocked = linkedMapOf<String, String>()
         var reservedTokens = 0L
