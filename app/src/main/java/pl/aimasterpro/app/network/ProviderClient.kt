@@ -21,7 +21,11 @@ class ProviderException(
     val httpCode: Int?,
     message: String,
     val responseBody: String = "",
-    val category: String = "UNKNOWN"
+    val category: String = "UNKNOWN",
+    /** Transport phase at failure; empty for failures before an HTTP request was started. */
+    val phase: String = "",
+    /** True only when a POST may have reached the provider but its outcome is unknown. */
+    val requestMayHaveBeenProcessed: Boolean = false
 ) : Exception(message)
 
 /** Synchronous transport with strict error classification, retry, and token usage extraction. */
@@ -163,16 +167,16 @@ class ProviderClient(
                 }
                 throw ProviderException(code, "Dostawca zwrócił HTTP $code (${category}): ${text.take(200)}", text.take(2500), category = category)
             }
-            if (text.isBlank()) throw ProviderException(code, "Dostawca zwrócił pustą odpowiedź HTTP $code.", category = "EMPTY_RESPONSE")
+            if (text.isBlank()) throw ProviderException(code, "Dostawca zwrócił pustą odpowiedź HTTP $code.", category = "EMPTY_RESPONSE", phase = phase, requestMayHaveBeenProcessed = method.equals("POST", true))
             return try { JSONObject(text) } catch (e: Exception) {
-                throw ProviderException(code, "Nieprawidłowy JSON od dostawcy: ${e.message}", text.take(2500), category = "INVALID_RESPONSE")
+                throw ProviderException(code, "Nieprawidłowy JSON od dostawcy: ${e.message}", text.take(2500), category = "INVALID_RESPONSE", phase = phase, requestMayHaveBeenProcessed = method.equals("POST", true))
             }
         } catch (e: ProviderException) {
             if (isCancelled(scope)) throw cancelledException()
             throw e
         } catch (e: UnknownHostException) {
             if (isCancelled(scope)) throw cancelledException()
-            throw ProviderException(null, "DNS_ERROR podczas $phase dla hosta ${parsedUrl.host}: ${e.message ?: "UnknownHostException"}", category = "DNS_ERROR")
+            throw ProviderException(null, "DNS_ERROR podczas $phase dla hosta ${parsedUrl.host}: ${e.message ?: "UnknownHostException"}", category = "DNS_ERROR", phase = phase)
         } catch (e: SocketTimeoutException) {
             if (isCancelled(scope)) throw cancelledException()
             val category = when (phase) {
@@ -180,22 +184,22 @@ class ProviderClient(
                 "WAIT_RESPONSE" -> "RESPONSE_TIMEOUT"
                 else -> "READ_TIMEOUT"
             }
-            throw ProviderException(null, "$category podczas $phase dla ${parsedUrl.host}: ${e.message ?: "SocketTimeoutException"}", category = category)
+            throw ProviderException(null, "$category podczas $phase dla ${parsedUrl.host}: ${e.message ?: "SocketTimeoutException"}", category = category, phase = phase, requestMayHaveBeenProcessed = method.equals("POST", true) && phase != "CONNECT")
         } catch (e: ConnectException) {
             if (isCancelled(scope)) throw cancelledException()
-            throw ProviderException(null, "CONNECT_ERROR dla ${parsedUrl.host}: ${e.message ?: "ConnectException"}", category = "CONNECT_ERROR")
+            throw ProviderException(null, "CONNECT_ERROR dla ${parsedUrl.host}: ${e.message ?: "ConnectException"}", category = "CONNECT_ERROR", phase = phase)
         } catch (e: BoundedResponseReader.ResponseTooLargeException) {
             if (isCancelled(scope)) throw cancelledException()
-            throw ProviderException(null, e.message ?: "Odpowiedź dostawcy jest zbyt duża.", category = "RESPONSE_TOO_LARGE")
+            throw ProviderException(null, e.message ?: "Odpowiedź dostawcy jest zbyt duża.", category = "RESPONSE_TOO_LARGE", phase = phase, requestMayHaveBeenProcessed = method.equals("POST", true))
         } catch (e: BoundedResponseReader.InvalidUtf8Exception) {
             if (isCancelled(scope)) throw cancelledException()
-            throw ProviderException(null, e.message ?: "Nieprawidłowe kodowanie odpowiedzi.", category = "INVALID_RESPONSE_ENCODING")
+            throw ProviderException(null, e.message ?: "Nieprawidłowe kodowanie odpowiedzi.", category = "INVALID_RESPONSE_ENCODING", phase = phase, requestMayHaveBeenProcessed = method.equals("POST", true))
         } catch (e: IOException) {
             if (isCancelled(scope)) throw cancelledException()
-            throw ProviderException(null, "NETWORK_IO podczas $phase dla ${parsedUrl.host}: ${e.message ?: "IOException"}", category = "NETWORK_IO")
+            throw ProviderException(null, "NETWORK_IO podczas $phase dla ${parsedUrl.host}: ${e.message ?: "IOException"}", category = "NETWORK_IO", phase = phase, requestMayHaveBeenProcessed = method.equals("POST", true) && phase != "CONNECT")
         } catch (e: Exception) {
             if (isCancelled(scope)) throw cancelledException()
-            throw ProviderException(null, "NETWORK_ERROR podczas $phase dla ${parsedUrl.host}: ${e.message ?: e.javaClass.simpleName}", category = "NETWORK_ERROR")
+            throw ProviderException(null, "NETWORK_ERROR podczas $phase dla ${parsedUrl.host}: ${e.message ?: e.javaClass.simpleName}", category = "NETWORK_ERROR", phase = phase, requestMayHaveBeenProcessed = method.equals("POST", true) && phase != "CONNECT")
         } finally {
             activeConnections.remove(conn)
             conn.disconnect()
