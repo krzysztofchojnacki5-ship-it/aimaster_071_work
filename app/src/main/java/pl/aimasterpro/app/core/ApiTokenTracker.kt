@@ -262,6 +262,8 @@ object ApiTokenTracker {
             val costUsd = o.optDouble("usd")
             val costPln = o.optDouble("pln")
             require(input >= 0L && output >= 0L && total >= 0L && reasoning >= 0L && cached >= 0L) { "Usage record has negative token counts." }
+            val expectedTotal = Math.addExact(input, output)
+            require(total == expectedTotal) { "Usage record total does not match input plus output token counts." }
             require(costUsd.isFinite() && costPln.isFinite() && costUsd >= 0.0 && costPln >= 0.0) { "Usage record has invalid cost values." }
             require(o.has("tot") && o.has("qId")) { "Usage record is missing required fields." }
             list.add(TokenRecord(
