@@ -170,7 +170,12 @@ class ProviderClient(
                     in 500..599 -> "SERVER_ERROR"
                     else -> "HTTP_ERROR"
                 }
-                throw ProviderException(code, "Dostawca zwrócił HTTP $code (${category}): ${text.take(200)}", text.take(2500), category = category)
+                val ambiguousServerOutcome = method.equals("POST", true) && (code == 408 || code in 500..599)
+                throw ProviderException(
+                    code, "Dostawca zwrócił HTTP $code (${category}): ${text.take(200)}",
+                    text.take(2500), category = category, phase = phase,
+                    requestMayHaveBeenProcessed = ambiguousServerOutcome
+                )
             }
             if (text.isBlank()) throw ProviderException(code, "Dostawca zwrócił pustą odpowiedź HTTP $code.", category = "EMPTY_RESPONSE", phase = phase, requestMayHaveBeenProcessed = method.equals("POST", true))
             return try { JSONObject(text) } catch (e: Exception) {
