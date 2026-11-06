@@ -869,3 +869,27 @@ Stan po zapisaniu poprawki:
 - HEAD main: `752149d40186144b0f458a32b5826c8928349c3a` (bez zmian)
 - liczba testów w ośmiu plikach z poprzedniego etapu: 68; wszystkie **NOT RUN**.
 - APK, bump wersji, merge i Companion Transport: bez zmian; Companion Transport pozostaje **BLOCKED**.
+
+
+## Uzupełnienie — anulowanie agenta podczas trwającego POST (2026-11-07)
+
+Kontynuując zakres timeout/anulowanie, dodano osobną regresję dla przypadku, którego nie pokrywał dotychczasowy test timeoutu odpowiedzi: jawne anulowanie nadrzędnego zakresu, gdy serwer już odebrał POST agenta, ale jeszcze nie zwrócił odpowiedzi.
+
+Test `cancellingInFlightPostRecordsUnknownUsageAndNeverStartsFallback`:
+- uruchamia lokalny serwer testowy i czeka na odebranie pełnego POST;
+- anuluje nadrzędny `RequestScope`, który obejmuje zakres potomny agenta;
+- zwalnia odpowiedź serwera po anulowaniu;
+- sprawdza, że koordynator kończy pracę, usage trafia do ścieżki `UNAVAILABLE` przez `onUnknownUsage`, a drugi provider/fallback nie otrzymuje żądania.
+
+Plik:
+- `app/src/test/java/pl/aimasterpro/app/agents/TeamRunEngineNetworkTest.kt`
+
+Weryfikacja:
+- test dodany do repozytorium, ale **NOT RUN**;
+- nie deklaruję PASS ani poprawności runtime bez uruchomienia Gradle/Robolectric.
+
+Stan przed aktualizacją checkpointu:
+- testowy commit: `232aaed0da6b815274d0619cda53c3247aa7aa45`
+- HEAD main pozostaje `752149d40186144b0f458a32b5826c8928349c3a`;
+- nie zmieniono wersji aplikacji, APK ani main;
+- Companion Transport nadal pozostaje **BLOCKED**.
