@@ -43,6 +43,18 @@ class QualityLearningStoreTest {
         assertEquals("APPROVED", QualityLearningStore.proposals(context).single().status)
     }
 
+    @Test fun proposalCannotRemainApprovedWhenDurableSharedMemoryWriteFails() {
+        val proposal = QualityLearningStore.addProposal(
+            context, "Reguła wymagająca trwałego zapisu", 7, "wstępna", emptyList(), emptyList(), emptyList()
+        )
+        val memoryPrefs = context.getSharedPreferences("ai_master_memory_store_v1", Context.MODE_PRIVATE)
+        val corrupt = """["valid entry",null]"""
+        assertTrue(memoryPrefs.edit().putString("memories", corrupt).commit())
+        assertFalse(QualityLearningStore.setProposalStatus(context, proposal.id, "APPROVED"))
+        assertEquals("PROPOSAL", QualityLearningStore.proposals(context).single().status)
+        assertEquals(corrupt, memoryPrefs.getString("memories", null))
+    }
+
     @Test fun revokingApprovalRemovesThePreviouslyInjectedRule() {
         val proposal = QualityLearningStore.addProposal(context, "Reguła do cofnięcia", 6, "wstępna", emptyList(), emptyList(), emptyList())
         QualityLearningStore.setProposalStatus(context, proposal.id, "APPROVED")
