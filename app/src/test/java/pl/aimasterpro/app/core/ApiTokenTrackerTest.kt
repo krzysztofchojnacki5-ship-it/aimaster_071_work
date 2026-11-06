@@ -78,10 +78,11 @@ class ApiTokenTrackerTest {
         assertEquals(0L, ApiTokenTracker.activeReservationStats().tokens)
     }
 
-    @Test fun clearRecordsRemovesPersistedUsage() {
+    @Test fun clearRecordsRemovesPersistedUsageOnlyAfterDurableCommit() {
         ApiTokenTracker.recordQuery(context, "ollama", "llama3", "MASTER", "chat-1", 10, 5, status = "REAL", baseUrl = "http://127.0.0.1:11434/v1")
-        ApiTokenTracker.clearRecords(context)
+        assertTrue(ApiTokenTracker.clearRecords(context))
         assertTrue(ApiTokenTracker.loadAllRecordsFromStorage(context).isEmpty())
+        assertTrue(context.getSharedPreferences("api_token_tracker_records_v1", Context.MODE_PRIVATE).getString("records", null).isNullOrBlank())
     }
     @Test fun corruptUsageLedgerIsNotOverwrittenByNewUsageRecord() {
         val prefs = context.getSharedPreferences("api_token_tracker_records_v1", Context.MODE_PRIVATE)
