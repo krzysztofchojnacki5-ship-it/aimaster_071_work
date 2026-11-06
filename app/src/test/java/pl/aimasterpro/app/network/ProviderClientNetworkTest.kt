@@ -358,7 +358,7 @@ class ProviderClientNetworkTest {
     }
 
     @Test
-    fun beginningNewChatScopeDoesNotCancelUnscopedModelDiscovery() {
+    fun beginningNewChatScopeDoesNotCancelIndependentModelDiscovery() {
         val entered = CountDownLatch(1)
         val server = TestHttpServer { _, _ ->
             entered.countDown()
@@ -376,7 +376,7 @@ class ProviderClientNetworkTest {
             assertTrue("Discovery did not reach local server", entered.await(2, TimeUnit.SECONDS))
             client.beginRequestScope()
             worker.join(2_000L)
-            assertTrue("Unscoped discovery should complete", !worker.isAlive)
+            assertTrue("Independent model discovery should complete", !worker.isAlive)
             assertEquals(null, failure.get())
         } finally {
             worker.interrupt()
