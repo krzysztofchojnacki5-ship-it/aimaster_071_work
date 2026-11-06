@@ -76,6 +76,8 @@ class ProviderClientNetworkTest {
                 throw AssertionError("Expected oversized response rejection")
             } catch (e: ProviderException) {
                 assertEquals("RESPONSE_TOO_LARGE", e.category)
+                assertEquals("READ_RESPONSE", e.phase)
+                assertTrue("A successful POST response that cannot be read may still be billable", e.requestMayHaveBeenProcessed)
             }
             assertEquals(1, count.get())
         } finally { server.stop(0) }
@@ -137,6 +139,8 @@ class ProviderClientNetworkTest {
                 throw AssertionError("Expected read timeout")
             } catch (e: ProviderException) {
                 assertTrue("Expected READ_TIMEOUT or RESPONSE_TIMEOUT but got ${e.category}", e.category == "READ_TIMEOUT" || e.category == "RESPONSE_TIMEOUT")
+                assertEquals("READ_RESPONSE", e.phase)
+                assertTrue("A timed-out POST after submission has an unknown billing outcome", e.requestMayHaveBeenProcessed)
             }
             // A timed-out POST may already have been processed: never replay it.
             assertEquals(1, count.get())
@@ -150,6 +154,8 @@ class ProviderClientNetworkTest {
             throw AssertionError("Expected DNS failure")
         } catch (e: ProviderException) {
             assertEquals("DNS_ERROR", e.category)
+            assertEquals("CONNECT", e.phase)
+            assertTrue("DNS failure occurs before a billable POST can reach the provider", !e.requestMayHaveBeenProcessed)
             assertTrue(e.message.orEmpty().contains("this-host-must-not-exist.invalid"))
         }
     }
