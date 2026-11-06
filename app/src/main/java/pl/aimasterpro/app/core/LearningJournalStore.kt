@@ -27,7 +27,10 @@ object LearningJournalStore {
 
     @Synchronized
     fun record(context: Context, event: Event) {
-        val all = load(context).toMutableList()
+        val all = readStrict(context)?.toMutableList() ?: run {
+            android.util.Log.e("AIMasterLearning", "Nie zapisano zdarzenia: dziennik operacyjny jest uszkodzony.")
+            return
+        }
         all.add(0, event.copy(
             kind = event.kind.take(40), agentId = event.agentId.take(80),
             providerId = event.providerId.take(80), model = event.model.take(120),
@@ -42,21 +45,39 @@ object LearningJournalStore {
                 .put("category", e.category).put("taskId", e.taskId)
                 .put("inputTokens", e.inputTokens.coerceAtLeast(0L)).put("outputTokens", e.outputTokens.coerceAtLeast(0L)))
         }
-        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putString(KEY, json.toString()).apply()
+        val saved = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
+            .putString(KEY, json.toString()).commit()
+        if (!saved) android.util.Log.e("AIMasterLearning", "Nie udało się trwale zapisać dziennika operacyjnego.")
     }
 
     @Synchronized
-    fun load(context: Context): List<Event> {
+    fun load(context: Context): List<Event> = readStrict(context) ?: emptyList()
+
+    /** Corrupt rows are not dropped: writers must preserve the original journal for recovery. */
+    private fun readStrict(context: Context): List<Event>? {
         val raw = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString(KEY, null) ?: return emptyList()
         return runCatching {
             val arr = JSONArray(raw)
-            (0 until arr.length()).mapNotNull { i ->
-                val o = arr.optJSONObject(i) ?: return@mapNotNull null
+            (0 until arr.length()).map { i ->
+                val o = arr.getJSONObject(i)
+                require(o.opt("ts") is Number && o.opt("duration") is Number &&
+                    o.opt("attempts") is Number && o.opt("inputTokens") is Number &&
+                    o.opt("outputTokens") is Number) { "Learning journal row has invalid numeric fields." }
+                require(listOf("kind", "agent", "provider", "model", "status", "category").all { o.opt(it) is String }) {
+                    "Learning journal row has invalid text fields."
+                }
+                val duration = o.optLong("duration")
+                val attempts = o.optInt("attempts")
+                val input = o.optLong("inputTokens")
+                val output = o.optLong("outputTokens")
+                require(duration >= 0L && attempts >= 0 && input >= 0L && output >= 0L) {
+                    "Learning journal row has negative counters."
+                }
                 Event(o.optLong("ts"), o.optString("kind"), o.optString("agent"), o.optString("provider"),
-                    o.optString("model"), o.optString("status"), o.optLong("duration"), o.optInt("attempts"), o.optString("category"), o.optString("taskId"),
-                    o.optLong("inputTokens"), o.optLong("outputTokens"))
+                    o.optString("model"), o.optString("status"), duration, attempts, o.optString("category"),
+                    o.optString("taskId"), input, output)
             }
-        }.getOrDefault(emptyList())
+        }.getOrNull()
     }
 
     fun contextString(context: Context): String {
