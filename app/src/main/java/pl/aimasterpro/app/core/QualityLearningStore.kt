@@ -145,7 +145,7 @@ object QualityLearningStore {
         return true
     }
 
-    /** Idempotently backfills agent-scoped memory from already-approved proposals after upgrades. */
+    /** Idempotently rebuilds shared and agent-scoped memory from approved proposals after interruptions/upgrades. */
     @Synchronized fun syncApprovedAgentMemories(context: Context): Int {
         var synchronized = 0
         proposals(context).filter { it.status == "APPROVED" }.forEach { proposal ->
