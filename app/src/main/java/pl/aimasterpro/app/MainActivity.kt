@@ -878,6 +878,7 @@ class MainActivity : Activity() {
         requestGen++
         activeWorkerGeneration = -1
         activeRequestScope?.let { scope -> client.cancelRequestScope(scope) }
+        activeRequestScope = null
         activeWorkerThread?.interrupt()
         activeWorkerThread = null
         isThinking = false
