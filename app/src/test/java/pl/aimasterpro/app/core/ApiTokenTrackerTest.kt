@@ -417,6 +417,41 @@ class ApiTokenTrackerTest {
         assertEquals(0L, ApiTokenTracker.activeReservationStats().tokens)
     }
 
+    @Test fun globalSynthesisReserveAlsoProtectsMasterPerAgentLimit() {
+        ApiTokenTracker.setLimits(context, daily = 10_000L, monthly = 0.0, perAgent = 100L)
+        val first = ApiTokenTracker.planBatch(
+            context,
+            listOf(BudgetRequest("specialist-a", "RESEARCHER", "ollama", "http://127.0.0.1:11434/v1", "llama3", 10L, 10L)),
+            globalReserveTokens = 80L,
+            globalReserveAgentId = "MASTER"
+        )
+        assertTrue(first.allowedTaskIds.contains("specialist-a"))
+        assertEquals(100L, ApiTokenTracker.activeReservationStats().tokens)
+
+        val synthesis = ApiTokenTracker.planBatch(
+            context,
+            listOf(BudgetRequest("master-synthesis", "MASTER", "ollama", "http://127.0.0.1:11434/v1", "llama3", 15L, 10L))
+        )
+        assertFalse("The reserved synthesis allowance must count against MASTER's per-agent cap",
+            synthesis.allowedTaskIds.contains("master-synthesis"))
+        assertTrue(synthesis.blockedReasons.getValue("master-synthesis").contains("limit"))
+        ApiTokenTracker.releaseBatchReservation(first.reservationId)
+    }
+
+    @Test fun currentGlobalSynthesisReserveIsIncludedBeforePlanningMasterTasks() {
+        ApiTokenTracker.setLimits(context, daily = 10_000L, monthly = 0.0, perAgent = 100L)
+        val plan = ApiTokenTracker.planBatch(
+            context,
+            listOf(BudgetRequest("master-task", "MASTER", "ollama", "http://127.0.0.1:11434/v1", "llama3", 30L, 20L)),
+            globalReserveTokens = 80L,
+            globalReserveAgentId = "MASTER"
+        )
+        assertFalse("The current batch must not spend tokens already reserved for MASTER synthesis",
+            plan.allowedTaskIds.contains("master-task"))
+        assertEquals(80L, ApiTokenTracker.activeReservationStats().tokens)
+        ApiTokenTracker.releaseBatchReservation(plan.reservationId)
+    }
+
     @Test fun corruptUsageLedgerBlocksLegacyLimitCheckAndReportsUnknownBudget() {
         val prefs = context.getSharedPreferences("api_token_tracker_records_v1", Context.MODE_PRIVATE)
         assertTrue(prefs.edit().putString("records", """[broken""").commit())
