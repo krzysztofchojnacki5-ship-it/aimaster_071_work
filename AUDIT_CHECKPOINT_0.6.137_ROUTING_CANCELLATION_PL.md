@@ -1067,3 +1067,20 @@ Weryfikacja:
 - zmiany zapisane na branchu audytowym;
 - test nowej regresji i kompilacja nadal **NOT RUN / NOT VERIFIED** — oczekujemy na GitHub Actions;
 - nie zmieniono `main`, nie wykonano merge, APK ani release; Companion Transport pozostaje **BLOCKED**.
+
+
+### CI — usunięcie blokady kolejki przez zawieszony run
+
+Run `42311168794` pozostawał w stanie `in_progress` bez aktualizacji od `2026-11-06T23:20:01Z`, mimo że nowsze runy były anulowane lub pozostawały w kolejce. Najnowszy run dla kodu rejestru tokenów (`42312958184`) został anulowany po pojawieniu się kolejnego push, a run dla aktualnej konfiguracji workflow (`42313016805`) jest `pending` i nie ma jeszcze utworzonego joba.
+
+Zmiana:
+- `cancel-in-progress` zmieniono z `false` na `true` w grupie concurrency workflow;
+- `paths-ignore` dla Markdown pozostaje aktywne, więc aktualizacje checkpointu nie powinny anulować ani uruchamiać builda;
+- celem jest automatyczne zastępowanie starszych, nieaktualnych uruchomień przez najnowszy audyt, zamiast blokowania kolejki przez zawieszony run.
+
+Commit workflow: `046eefc3707964d4d39ecba0ff38a88a75a8c042`.
+
+Stan po zmianie:
+- run `42313016805` dla HEAD workflow: `pending`; brak jobów, zatem brak wyniku Gradle;
+- stary run `42311168794` nadal raportuje `in_progress`, bez zmiany statusu;
+- nie ma jeszcze potwierdzonego test/build PASS. Jeśli kolejka pozostanie zablokowana, potrzebna będzie ręczna interwencja w GitHub Actions (anulowanie zawieszonego runu) lub alternatywne uruchomienie CI.
