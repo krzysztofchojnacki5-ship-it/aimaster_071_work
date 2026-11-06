@@ -419,3 +419,21 @@ Liczba testów w aktualnych plikach:
 Stan referencyjny po zapisaniu kodu, przed aktualizacją tego checkpointu:
 - HEAD branch: 4f270eb2efd38929da0df4ffc30bbc37565d8cdd
 - HEAD main: 752149d40186144b0f458a32b5826c8928349c3a
+
+
+### Dodatkowe testy wyścigów po przeglądzie końcowym
+
+Doprecyzowano test czyszczenia historii podczas aktywnego workera: po wyczyszczeniu historii test wykonuje jeszcze późny zapis usage przez zachowaną rezerwację, sprawdza trwały rekord i zmniejszenie rezerwy, a dopiero potem kończy worker i zwalnia batch.
+
+Dodano również:
+- `concurrentReservationReleaseAndCompletionAlwaysRetireTheBatch` — dwa wątki równolegle zgłaszają żądanie zwolnienia batcha i zakończenie workera. Niezależnie od kolejności operacji rezerwacja ma zostać usunięta po obu zdarzeniach.
+
+Po rozszerzeniu:
+- `ApiTokenTrackerTest.kt`: 20 testów;
+- `TeamRunEngineNetworkTest.kt`: 7 testów.
+
+Testy nadal **NOT RUN**. Nie wykonano kompilacji ani uruchomienia JUnit/Robolectric.
+
+Stan referencyjny kodu przed zapisaniem tego uzupełnienia:
+- HEAD branch: 5d88924de636ca95f39fba8382096742de9895ea
+- HEAD main: 752149d40186144b0f458a32b5826c8928349c3a
