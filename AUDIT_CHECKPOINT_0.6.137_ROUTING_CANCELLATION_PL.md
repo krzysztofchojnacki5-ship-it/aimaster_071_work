@@ -980,3 +980,19 @@ Dodatkowo ustawiono `cancel-in-progress: false`, aby kolejne commity dokumentacy
 Commit korekty workflow: `354e3b73aed8a2f7f726ce51c84cf9c9ef64bf58`.
 
 Wciąż brak wyniku Gradle/JUnit. Runy 1–4 nie potwierdzają kompilacji ani testów: pierwszy został anulowany, kolejne dwa zakończyły się błędem konfiguracji SDK, a run 4 był próbą tej drugiej konfiguracji.
+
+
+## Etap 8 — zamykanie żądań HTTP przy niszczeniu Activity (2026-11-07)
+
+Kontrola lifecycle MainActivity wykazała, że `onDestroy()` przerywał executor przez `shutdownNow()`, ale nie rozłączał jawnie połączeń `HttpURLConnection`. Sam interrupt wątku nie gwarantuje natychmiastowego przerwania blokującego odczytu sieciowego; żądanie mogło więc pozostać aktywne do timeoutu transportu po zniszczeniu Activity.
+
+Poprawka w `MainActivity.onDestroy()`:
+- jeśli ProviderClient został zainicjalizowany, wywołuje `cancelActiveRequests()`, aby unieważnić zakresy i rozłączyć aktywne połączenia należące do tej instancji Activity;
+- czyści referencję aktywnego zakresu czatu;
+- przerywa referencję aktywnego workera;
+- dopiero potem wyłącza executor.
+
+Plik: `app/src/main/java/pl/aimasterpro/app/MainActivity.kt`.
+Commit: `403f595895094714f66fc4aa258af01b2ab5dfa7`.
+
+Uzasadnienie: ProviderClient ma już osobne testy sieciowe globalnego anulowania i rozłączania aktywnych POST; nie dodano duplikującego testu transportu. Integracja lifecycle MainActivity nie została jeszcze potwierdzona testem Robolectric. Weryfikacja pozostaje NOT VERIFIED do wyniku CI.
