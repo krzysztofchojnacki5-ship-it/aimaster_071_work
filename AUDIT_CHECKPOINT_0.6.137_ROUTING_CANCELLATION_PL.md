@@ -1106,3 +1106,13 @@ Weryfikacja:
 - kompilacja Kotlin/Gradle nadal **NOT VERIFIED** do czasu wykonania CI;
 - workflow ma `cancel-in-progress: true`, aby nowszy kod zastępował nieaktualne runy; `paths-ignore` dla Markdown chroni przed niepotrzebnym restartem przy aktualizacji tego checkpointu;
 - brak merge, APK, release i zmian `main`; Companion Transport pozostaje **BLOCKED**.
+
+
+### CI po usunięciu zduplikowanego argumentu
+
+- Workflow run: `42313083194` — [GitHub Actions](https://github.com/krzysztofchojnacki5-ship-it/aimaster_071_work/actions/runs/42313083194).
+- SHA uruchomienia: `8387ee627add4ef86e37b901aea0fa3d8a627dbc` (zawiera usunięcie podwójnego `onRequestStarting` oraz wcześniejsze poprawki rejestru tokenów).
+- JDK 17, Android SDK API 36, instalacja pakietów SDK i Gradle 8.13: **SUCCESS**.
+- Krok `Run unit tests and compile debug variant`: **IN_PROGRESS** przy ostatnim odczycie; nie ma jeszcze raportu testów ani wyniku kompilacji.
+- Aktualny HEAD brancha po dopisaniu dokumentacji: `a0c5d4ec10f8295980db92940b829b177b11cc8a`.
+- Porównanie z `main`: 236 commits ahead, 0 behind; `main` nadal `752149d40186144b0f458a32b5826c8928349c3a`.
