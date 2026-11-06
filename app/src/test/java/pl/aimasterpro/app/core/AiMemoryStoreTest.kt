@@ -33,6 +33,22 @@ class AiMemoryStoreTest {
         assertTrue(text.indexOf("Kotlinie") < text.indexOf("fotografii") || !text.contains("fotografii"))
     }
 
+    @Test fun malformedMemoryJournalIsNotOverwrittenByAddOrRemove() {
+        val prefs = context.getSharedPreferences("ai_master_memory_store_v1", Context.MODE_PRIVATE)
+        val corrupt = """["valid memory",{"unexpected":"object"}]"""
+        assertTrue(prefs.edit().putString("memories", corrupt).commit())
+        AiMemoryStore.addMemory(context, "Nowa zatwierdzona zasada pamięci.")
+        AiMemoryStore.removeMemory(context, "valid memory")
+        assertEquals(corrupt, prefs.getString("memories", null))
+    }
+
+    @Test fun validMemoryMutationIsCommittedAndReadable() {
+        val prefs = context.getSharedPreferences("ai_master_memory_store_v1", Context.MODE_PRIVATE)
+        AiMemoryStore.addMemory(context, "Zatwierdzona pamięć do testu trwałego zapisu.")
+        assertTrue(prefs.getString("memories", null).orEmpty().contains("trwałego zapisu"))
+        assertTrue(AiMemoryStore.getMemories(context).contains("Zatwierdzona pamięć do testu trwałego zapisu."))
+    }
+
     @Test fun operationalSummaryIsOptIn() {
         val defaultContext = AiMemoryStore.contextString(context, "", maxChars = 2_000)
         assertFalse(defaultContext.contains("METRYKI OPERACYJNE"))
