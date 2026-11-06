@@ -1341,7 +1341,7 @@ class MainActivity : Activity() {
                         )
                     )
                     if (!requestCheckpointSaved) {
-                        throw IllegalStateException("Nie udało się trwale zapisać checkpointu żądania; HTTP nie został wysłany.")
+                        throw ProviderException(null, "Nie udało się trwale zapisać checkpointu żądania; HTTP nie został wysłany.", category = "CHECKPOINT_FAILED")
                     }
                     modelCallStartedAt = System.currentTimeMillis()
                     val res = client.chat(cfg, systemPrompt, userText, mime, b64, requestScope)
@@ -1423,6 +1423,7 @@ class MainActivity : Activity() {
                     val isAuthOrClientError = httpCode != null && httpCode in 400..499 && httpCode != 429
                     val isTokenOrRateLimit = httpCode == 429 || msg.contains("429") || msg.contains("quota") || msg.contains("limit") || msg.contains("token") || msg.contains("exhausted") || msg.contains("overloaded") || msg.contains("rate")
                     val providerFailure = t as? ProviderException
+                    if (providerFailure?.category == "CHECKPOINT_FAILED") throw t
 
                     if (providerFailure?.requestMayHaveBeenProcessed == true) {
                         val unknownUsagePersisted = runCatching {
