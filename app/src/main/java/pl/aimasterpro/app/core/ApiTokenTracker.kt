@@ -259,9 +259,9 @@ object ApiTokenTracker {
         }
         val lower = modelName.lowercase(Locale.ROOT)
         for (p in defaultPricing) {
-            if (lower.contains(p.modelKey)) return p
+            if (lower.contains(p.modelKey)) return p.copy()
         }
-        return defaultPricing.last()
+        return defaultPricing.last().copy()
     }
 
     fun getExchangeRate(context: Context): Double {
