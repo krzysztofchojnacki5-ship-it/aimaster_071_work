@@ -1366,6 +1366,24 @@ class MainActivity : Activity() {
                     val httpCode = (t as? ProviderException)?.httpCode
                     val isAuthOrClientError = httpCode != null && httpCode in 400..499 && httpCode != 429
                     val isTokenOrRateLimit = httpCode == 429 || msg.contains("429") || msg.contains("quota") || msg.contains("limit") || msg.contains("token") || msg.contains("exhausted") || msg.contains("overloaded") || msg.contains("rate")
+                    val providerFailure = t as? ProviderException
+
+                    if (providerFailure?.requestMayHaveBeenProcessed == true) {
+                        val estimatedInput = (systemPrompt.length.toLong() + userText.length.toLong() + 2L) / 3L
+                        runCatching {
+                            pl.aimasterpro.app.core.ApiTokenTracker.recordQuery(
+                                this, cfg.id, cfg.model, requestAgentId, requestTaskId,
+                                estimatedInput, 4_096L, status = "UNAVAILABLE",
+                                baseUrl = cfg.baseUrl, reservationId = effectiveBudgetReservationId
+                            )
+                        }.onFailure { error ->
+                            runCatching { logAgentForChat(requestChatId,
+                                "[UNKNOWN USAGE RECORD FAILED] POST mógł zostać rozliczony; zapis UNAVAILABLE nie powiódł się: ${error.message ?: error.javaClass.simpleName}") }
+                        }
+                        logAgentForChat(requestChatId,
+                            "[UNKNOWN USAGE] POST mógł dotrzeć do providera (faza ${providerFailure.phase}); nie uruchamiam fallbacku, aby uniknąć podwójnego rozliczenia.")
+                        throw t
+                    }
 
                     if (isAuthOrClientError) {
                         logAgentForChat(requestChatId, "❌ Błąd autoryzacji/konfiguracji dla ${cfg.name} (HTTP $httpCode): ${t.message}. Nie wykonuję failoveru dla błędu klienta.")
@@ -1612,6 +1630,14 @@ class MainActivity : Activity() {
                             onLog = { sender, recipient, msg, status -> logAgentDialogueForChat(chatId, sender, recipient, msg, status) },
                             onUsage = { agentId, taskId, actualProvider, usage ->
                                 pl.aimasterpro.app.core.ApiTokenTracker.recordQuery(this, actualProvider.id, actualProvider.model, agentId, taskId, usage.inputTokens, usage.outputTokens, usage.reasoningTokens, usage.cachedTokens, usage.status, actualProvider.baseUrl, budgetPlan.reservationId)
+                            },
+                            unknownOutputEstimateTokens = adaptivePlan.outputTokensPerAgent,
+                            onUnknownUsage = { agentId, taskId, actualProvider, estimatedInput, estimatedOutput ->
+                                pl.aimasterpro.app.core.ApiTokenTracker.recordQuery(
+                                    this, actualProvider.id, actualProvider.model, agentId, taskId,
+                                    estimatedInput, estimatedOutput, status = "UNAVAILABLE",
+                                    baseUrl = actualProvider.baseUrl, reservationId = budgetPlan.reservationId
+                                )
                             },
                             rankProviders = { candidates -> pl.aimasterpro.app.core.ModelHealthTracker.rank(this, candidates) },
                             onProviderHealth = { model, success, category, latency ->
@@ -3226,6 +3252,8 @@ class MainActivity : Activity() {
         testLabel: String,
         taskId: String,
         reservationId: String,
+        estimatedInputTokens: Long,
+        estimatedOutputTokens: Long,
         error: Throwable? = null
     ) {
         // Provider health telemetry must not prevent accounting after a billable response.
@@ -3236,7 +3264,22 @@ class MainActivity : Activity() {
                 0L
             )
         }
-        val usage = response?.usage ?: return
+        val usage = response?.usage
+        if (usage == null) {
+            val providerFailure = error as? ProviderException
+            if (providerFailure?.requestMayHaveBeenProcessed == true) {
+                runCatching {
+                    pl.aimasterpro.app.core.ApiTokenTracker.recordQuery(
+                        this, config.id, config.model, "TEST", taskId,
+                        estimatedInputTokens, estimatedOutputTokens, status = "UNAVAILABLE",
+                        baseUrl = config.baseUrl, reservationId = reservationId
+                    )
+                }.onFailure {
+                    android.util.Log.e("AIMasterBudget", "Nie udało się zapisać niejednoznacznego usage testu $testLabel.", it)
+                }
+            }
+            return
+        }
         runCatching {
             pl.aimasterpro.app.core.ApiTokenTracker.recordQuery(
                 this, config.id, config.model, "TEST", taskId,
@@ -3282,7 +3325,8 @@ class MainActivity : Activity() {
         }
         return try {
             val result = runCatching { client.chat(config, systemPrompt, userPrompt, scope = scope) }
-            recordModelTestUsage(config, result.getOrNull(), testLabel, taskId, plan.reservationId, result.exceptionOrNull())
+            recordModelTestUsage(config, result.getOrNull(), testLabel, taskId, plan.reservationId,
+                estimatedInput, 256L, result.exceptionOrNull())
             result
         } finally {
             pl.aimasterpro.app.core.ApiTokenTracker.releaseBatchReservation(plan.reservationId)
