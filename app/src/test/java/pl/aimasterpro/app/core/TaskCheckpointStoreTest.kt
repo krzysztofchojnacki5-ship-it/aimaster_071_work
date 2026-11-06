@@ -56,4 +56,33 @@ class TaskCheckpointStoreTest {
         assertEquals("TIMED_OUT", TaskCheckpointStore.latest(context).single().status)
     }
 
+    @Test fun corruptJournalIsNotSilentlyReplacedByAnEmptyHistory() {
+        val prefs = context.getSharedPreferences("task_checkpoints_v1", Context.MODE_PRIVATE)
+        val corrupt = """{"events":[broken"""
+        assertTrue(prefs.edit().putString("events", corrupt).commit())
+
+        assertFalse(
+            TaskCheckpointStore.record(
+                context,
+                TaskCheckpointStore.Event("task-after-corruption", "tester", "RUNNING", "", 500L, "", "", 0)
+            )
+        )
+        assertEquals(corrupt, prefs.getString("events", null))
+        assertTrue(TaskCheckpointStore.load(context).isEmpty())
+    }
+
+    @Test fun malformedJournalRowAlsoBlocksAppendInsteadOfDroppingUnknownData() {
+        val prefs = context.getSharedPreferences("task_checkpoints_v1", Context.MODE_PRIVATE)
+        val malformed = """[{"task":"valid-row"},{"agent":"missing-task-id"}]"""
+        assertTrue(prefs.edit().putString("events", malformed).commit())
+
+        assertFalse(
+            TaskCheckpointStore.record(
+                context,
+                TaskCheckpointStore.Event("task-new", "tester", "RUNNING", "", 600L, "", "", 0)
+            )
+        )
+        assertEquals(malformed, prefs.getString("events", null))
+    }
+
 }
