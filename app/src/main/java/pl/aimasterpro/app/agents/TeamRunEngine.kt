@@ -304,6 +304,17 @@ class TeamRunEngine(
                                         val isAuthOrClientError = httpCode != null && httpCode in setOf(400, 401, 403, 404)
                                         val isTokenLimit = httpCode == 429 || category == "RATE_LIMIT_QUOTA"
                                         val providerFailure = t as? ProviderException
+                                        if (providerFailure?.requestMayHaveBeenProcessed != true) {
+                                            // A known pre-processing failure must clear REQUESTING before
+                                            // a fallback is attempted; otherwise a crash in this gap would
+                                            // conservatively charge a request that never reached the provider.
+                                            runCatching {
+                                                onTaskState(
+                                                    task, "RUNNING", "Poprzednia próba nie została przetworzona przez providera.",
+                                                    prov.id, prov.model, attemptCount
+                                                )
+                                            }
+                                        }
                                         if (providerFailure?.requestMayHaveBeenProcessed == true) {
                                             val estimatedInput = (system.length.toLong() + user.length.toLong() + 2L) / 3L
                                             val unknownUsageSaved = runCatching {
