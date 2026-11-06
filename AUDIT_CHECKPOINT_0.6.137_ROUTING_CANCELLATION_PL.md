@@ -62,3 +62,21 @@ Dodatkowe pliki zmienione:
 - `app/src/test/java/pl/aimasterpro/app/core/ApiTokenTrackerTest.kt`
 
 Weryfikacja pozostaje NOT RUN: nie wykonano kompilacji Android ani JUnit/Robolectric. Powyższe zmiany wymagają uruchomienia testów przed uznaniem ich za poprawne.
+
+## Uzupełnienie — izolacja skutków ubocznych po odpowiedzi (2026-11-06)
+
+Dalsza kontrola wykazała, że nie tylko zapis tokenów, ale również callbacki logowania i telemetrii po udanej odpowiedzi mogły wejść do bloku obsługi błędów providera. W konsekwencji lokalny błąd mógł uruchomić fallback mimo odebrania poprawnej odpowiedzi.
+
+Wprowadzone poprawki:
+- `TeamRunEngine`: po udanym HTTP zapis kondycji, scheduler, zapis użycia oraz logi COMPLETE/FAILOVER/REPORT są odizolowane od ścieżki błędu dostawcy. Błąd telemetrii nie powinien powodować ponownego wywołania modelu.
+- `TeamRunEngine`: zapis nieudanej kondycji modelu jest odporny na wyjątek lokalnego callbacku.
+- `MainActivity.chatWithFallback()`: ten sam wzorzec izolacji obejmuje zapis kondycji, cooldownu, historii użycia i tokenów; odmowa lease przez lokalny scheduler nie obniża kondycji providera.
+- Końcowa synteza MASTER-a ma własną rezerwację budżetu utworzoną po rozliczeniu agentów i recenzji. Rezerwacja jest przekazywana do zapisu faktycznego użycia i zwalniana w `finally`.
+- Dodano test regresyjny, w którym lokalne logowanie COMPLETE/REPORT rzuca wyjątek, a zadanie ma nadal pozostać COMPLETED bez ponownego HTTP.
+
+Dodatkowe testy dodane w tym etapie:
+- `ProviderClientNetworkTest.cancellingOneChildScopeDisconnectsOnlyThatAgentRequest`
+- `TeamRunEngineNetworkTest.postResponseLoggingFailureDoesNotRetrySuccessfulAgentRequest`
+- `ApiTokenTrackerTest.synthesisReservationIsConsumedByActualMasterUsageAndReleased`
+
+Wszystkie pozostają NOT RUN do czasu uruchomienia JUnit/Robolectric i kompilacji Android.
