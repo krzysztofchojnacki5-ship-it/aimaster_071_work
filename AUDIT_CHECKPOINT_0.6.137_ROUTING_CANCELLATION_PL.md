@@ -107,3 +107,13 @@ Poprawka:
 - nie zapisuje dowolnej treści komunikatu wyjątku do metadanych odzyskiwania.
 
 Dodatkowy przegląd potwierdził, że ID zadań zespołu są budowane z identyfikatora czatu, żądania, indeksu i roli agenta, co ogranicza kolizje pomiędzy równoległymi czatami.
+
+## Uzupełnienie — przerwanie koordynatora (2026-11-06)
+
+Dodatkowo zabezpieczono przypadek, w którym przerwany zostaje wątek koordynatora odbierający wyniki z `Future`:
+- przy `InterruptedException` silnik anuluje zakres konkretnego agenta, wywołuje `future.cancel(true)` i przywraca flagę przerwania wątku;
+- dzięki temu anulowanie nie kończy się wyłącznie na przerwaniu oczekiwania na wynik — rozłączane jest również aktywne żądanie HTTP tego agenta;
+- pozostałe zakresy są anulowane przy dalszym przetwarzaniu przerwanego batcha, a nadrzędny zakres czatu propaguje anulowanie do dzieci.
+
+Kod gałęzi roboczej zweryfikowany po tych zmianach: `dac290b1f3684778c9a46b6bd5c7f782beb8eccb`.
+`main` nadal pozostaje na `752149d40186144b0f458a32b5826c8928349c3a`.
