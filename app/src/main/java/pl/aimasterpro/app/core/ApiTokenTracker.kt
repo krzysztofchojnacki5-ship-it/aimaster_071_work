@@ -453,10 +453,14 @@ object ApiTokenTracker {
     }
 
     @Synchronized
-    fun clearRecords(context: Context) {
-        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit().remove("records").apply()
+    fun clearRecords(context: Context): Boolean {
+        // Do not report success or discard the in-memory recovery copy until disk confirms deletion.
+        val committed = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            .edit().remove("records").commit()
+        if (!committed) return false
         sessionRecords.clear()
         activeReservations.clear()
+        return true
     }
 
     data class LimitCheckResult(
