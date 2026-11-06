@@ -958,3 +958,14 @@ Dodano workflow `.github/workflows/android-audit.yml`:
 Commit workflow: `7a461943b57f0102c3b6c50b3dd37890ddb23bfd`.
 
 Status: dodanie workflow nie jest równoznaczne z zaliczeniem builda. Oczekujemy na rzeczywisty wynik GitHub Actions; do tego czasu testy i kompilacja pozostają NOT VERIFIED. Brak wrapper JAR nadal pozostaje w repozytorium, a workflow świadomie używa zainstalowanego Gradle 8.13 bezpośrednio.
+
+
+### Korekta konfiguracji CI po pierwszym uruchomieniu
+
+Pierwszy run workflow (`42310934463`) zakończył się błędem na kroku `Set up Android SDK`, zanim uruchomiono Gradle. Log potwierdził, że akcja `android-actions/setup-android@v3` domyślnie próbowała instalować usunięty pakiet SDK `tools` (`Failed to find package 'tools'`). Nie jest to wynik kompilacji aplikacji ani testów.
+
+Skorygowano workflow: jawnie ustawiono `accept-android-sdk-licenses: true` oraz pakiety `platforms;android-36`, `build-tools;36.0.0` i `platform-tools`, wyłączając przestarzały domyślny pakiet `tools`.
+
+Commit korekty CI: `4bdf543b032a723704970ccb10169700b2a7be7e`.
+
+Oczekiwany jest kolejny run na najnowszym HEAD. Dopiero wynik kroków Gradle będzie miarodajny dla kompilacji i testów.
