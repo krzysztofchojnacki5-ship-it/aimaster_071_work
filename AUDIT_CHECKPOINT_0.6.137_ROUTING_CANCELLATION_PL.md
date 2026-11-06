@@ -1084,3 +1084,25 @@ Stan po zmianie:
 - run `42313016805` dla HEAD workflow: `pending`; brak jobów, zatem brak wyniku Gradle;
 - stary run `42311168794` nadal raportuje `in_progress`, bez zmiany statusu;
 - nie ma jeszcze potwierdzonego test/build PASS. Jeśli kolejka pozostanie zablokowana, potrzebna będzie ręczna interwencja w GitHub Actions (anulowanie zawieszonego runu) lub alternatywne uruchomienie CI.
+
+
+## Etap 10 — usunięcie zduplikowanego callbacku w integracji TeamRunEngine (2026-11-07)
+
+Przegląd miejsca wywołania `TeamRunEngine.runBatch()` w `MainActivity.kt` wykazał dwa identyczne argumenty nazwane `onRequestStarting` w jednym wywołaniu. Kotlin nie dopuszcza wielokrotnego przekazania tego samego argumentu nazwanego — jest to błąd kompilacji.
+
+Zmiana:
+- usunięto zduplikowany callback;
+- pozostawiono pojedynczy callback, który zapisuje trwały checkpoint `REQUESTING` przed rozpoczęciem żądania HTTP;
+- zachowano pola identyfikacji zadania, providera, modelu, estymacji tokenów, klucza idempotencji i bezpiecznego Base URL;
+- potwierdzono w odczytanym pliku, że w wywołaniu głównego `runBatch()` pozostało dokładnie jedno `onRequestStarting`. Drugie wystąpienie w pliku należy do odrębnego wywołania peer review.
+
+Plik:
+- `app/src/main/java/pl/aimasterpro/app/MainActivity.kt`
+
+Commit: `8387ee627add4ef86e37b901aea0fa3d8a627dbc`.
+
+Weryfikacja:
+- poprawka zapisana na branchu audytowym;
+- kompilacja Kotlin/Gradle nadal **NOT VERIFIED** do czasu wykonania CI;
+- workflow ma `cancel-in-progress: true`, aby nowszy kod zastępował nieaktualne runy; `paths-ignore` dla Markdown chroni przed niepotrzebnym restartem przy aktualizacji tego checkpointu;
+- brak merge, APK, release i zmian `main`; Companion Transport pozostaje **BLOCKED**.
