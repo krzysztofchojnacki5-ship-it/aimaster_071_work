@@ -38,6 +38,8 @@ object TaskResultCache {
 
     @Synchronized fun put(context: Context, fingerprint: String, report: String, now: Long = System.currentTimeMillis()): Boolean {
         if (fingerprint.isBlank() || report.isBlank()) return false
+        val safeReport = CommunicationLogSanitizer.sanitize(report)
+        if (safeReport.isBlank()) return false
         val old = read(context, now) ?: run {
             android.util.Log.e("AIMasterTaskCache", "Nie zapisano wyniku: cache zawiera uszkodzone dane.")
             return false
@@ -47,7 +49,7 @@ object TaskResultCache {
             val row = old.getJSONObject(i)
             if (row.optString("fingerprint") != fingerprint) next.put(row)
         }
-        next.put(JSONObject().put("fingerprint", fingerprint).put("report", report).put("createdAt", now))
+        next.put(JSONObject().put("fingerprint", fingerprint).put("report", safeReport).put("createdAt", now))
         val trimmed = JSONArray()
         val start = (next.length() - MAX_ENTRIES).coerceAtLeast(0)
         for (i in start until next.length()) trimmed.put(next.getJSONObject(i))
