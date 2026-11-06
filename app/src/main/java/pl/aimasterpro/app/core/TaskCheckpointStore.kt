@@ -24,7 +24,8 @@ object TaskCheckpointStore {
         val processId: String = "",
         val estimatedInputTokens: Long = 0L,
         val estimatedOutputTokens: Long = 0L,
-        val idempotencyKey: String = ""
+        val idempotencyKey: String = "",
+        val baseUrl: String = ""
     )
 
     /**
@@ -51,7 +52,8 @@ object TaskCheckpointStore {
                 processId = event.processId.ifBlank { processId },
                 estimatedInputTokens = event.estimatedInputTokens.coerceAtLeast(0L),
                 estimatedOutputTokens = event.estimatedOutputTokens.coerceAtLeast(0L),
-                idempotencyKey = event.idempotencyKey.take(240)
+                idempotencyKey = event.idempotencyKey.take(240),
+                baseUrl = event.baseUrl.take(300)
             )
         )
         return save(context, rows.take(MAX_EVENTS))
@@ -84,7 +86,8 @@ object TaskCheckpointStore {
                 o.optString("processId"),
                 o.optLong("estimatedInputTokens"),
                 o.optLong("estimatedOutputTokens"),
-                o.optString("idempotencyKey")
+                o.optString("idempotencyKey"),
+                o.optString("baseUrl")
             )
         }
     }.getOrNull()
@@ -152,6 +155,7 @@ object TaskCheckpointStore {
                     .put("estimatedInputTokens", e.estimatedInputTokens)
                     .put("estimatedOutputTokens", e.estimatedOutputTokens)
                     .put("idempotencyKey", e.idempotencyKey)
+                    .put("baseUrl", e.baseUrl)
             )
         }
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
