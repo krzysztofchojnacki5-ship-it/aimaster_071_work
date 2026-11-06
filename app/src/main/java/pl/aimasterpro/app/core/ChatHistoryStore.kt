@@ -41,13 +41,17 @@ object ChatHistoryStore {
                         }
                     }
                     if (chat.has("assistantTaskIds")) {
-                        require(chat.optJSONArray("assistantTaskIds") != null) {
-                            "Chat history contains invalid assistant task IDs."
+                        val taskIds = chat.optJSONArray("assistantTaskIds")
+                            ?: error("Chat history contains invalid assistant task IDs.")
+                        for (i in 0 until taskIds.length()) require(taskIds.opt(i) is String) {
+                            "Chat history contains a non-text assistant task ID."
                         }
                     }
                     if (chat.has("agentActivity")) {
-                        require(chat.optJSONArray("agentActivity") != null) {
-                            "Chat history contains invalid agent activity."
+                        val activity = chat.optJSONArray("agentActivity")
+                            ?: error("Chat history contains invalid agent activity.")
+                        for (i in 0 until activity.length()) require(activity.opt(i) is String) {
+                            "Chat history contains a non-text agent activity row."
                         }
                     }
                 }
@@ -87,8 +91,14 @@ object ChatHistoryStore {
                     require(row.opt("role") is String && row.opt("text") is String)
                 }
             }
-            if (chat.has("assistantTaskIds")) require(chat.optJSONArray("assistantTaskIds") != null)
-            if (chat.has("agentActivity")) require(chat.optJSONArray("agentActivity") != null)
+            if (chat.has("assistantTaskIds")) {
+                val ids = chat.optJSONArray("assistantTaskIds") ?: error("Invalid assistant task IDs.")
+                for (i in 0 until ids.length()) require(ids.opt(i) is String)
+            }
+            if (chat.has("agentActivity")) {
+                val activity = chat.optJSONArray("agentActivity") ?: error("Invalid agent activity.")
+                for (i in 0 until activity.length()) require(activity.opt(i) is String)
+            }
         }
         if (root.has("currentId")) require(root.opt("currentId") is String)
     }
