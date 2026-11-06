@@ -13,6 +13,56 @@ class TaskCheckpointStoreTest {
     private val context get() = RuntimeEnvironment.getApplication()
     @Before fun reset() { context.getSharedPreferences("task_checkpoints_v1", Context.MODE_PRIVATE).edit().clear().commit() }
 
+    @Test fun staleRequestingTaskReconcilesUnknownUsageBeforeMarkingInterrupted() {
+        val event = TaskCheckpointStore.Event(
+            taskId = "task-request-in-flight", agentId = "RESEARCHER", status = "REQUESTING",
+            detail = "request started", timestamp = 100L, providerId = "openai", model = "gpt-4o-mini",
+            attempts = 1, processId = "previous-process", estimatedInputTokens = 450L,
+            estimatedOutputTokens = 1_200L, idempotencyKey = "team:task-request-in-flight:openai",
+            baseUrl = "https://api.openai.com"
+        )
+        assertTrue(TaskCheckpointStore.record(context, event))
+        var recoveredEvent: TaskCheckpointStore.Event? = null
+        assertEquals(1, TaskCheckpointStore.recoverStaleRunning(context, 200L) {
+            recoveredEvent = it
+            true
+        })
+        assertEquals(450L, recoveredEvent?.estimatedInputTokens)
+        assertEquals(1_200L, recoveredEvent?.estimatedOutputTokens)
+        assertEquals("team:task-request-in-flight:openai", recoveredEvent?.idempotencyKey)
+        assertEquals("INTERRUPTED", TaskCheckpointStore.latest(context).single().status)
+        assertTrue(TaskCheckpointStore.latest(context).single().detail.contains("UNAVAILABLE"))
+    }
+
+    @Test fun failedUnknownUsageRecoveryRemainsPendingAndCanBeRetried() {
+        assertTrue(TaskCheckpointStore.record(context, TaskCheckpointStore.Event(
+            taskId = "task-pending-usage", agentId = "RESEARCHER", status = "REQUESTING",
+            detail = "", timestamp = 100L, providerId = "openai", model = "gpt-4o-mini",
+            attempts = 1, processId = "previous-process", estimatedInputTokens = 200L,
+            estimatedOutputTokens = 500L, idempotencyKey = "team:task-pending-usage:openai"
+        )))
+        assertEquals(1, TaskCheckpointStore.recoverStaleRunning(context, 200L) { false })
+        assertEquals("INTERRUPTED_USAGE_PENDING", TaskCheckpointStore.latest(context).single().status)
+        assertEquals(1, TaskCheckpointStore.recoverStaleRunning(context, 300L) { true })
+        assertEquals("INTERRUPTED", TaskCheckpointStore.latest(context).single().status)
+    }
+
+    @Test fun usageRecordedTaskIsMarkedInterruptedWithoutDuplicateRecoveryCallback() {
+        assertTrue(TaskCheckpointStore.record(context, TaskCheckpointStore.Event(
+            taskId = "task-usage-done", agentId = "RESEARCHER", status = "USAGE_RECORDED",
+            detail = "usage saved", timestamp = 100L, providerId = "openai", model = "gpt-4o-mini",
+            attempts = 1, processId = "previous-process", estimatedInputTokens = 200L,
+            estimatedOutputTokens = 500L, idempotencyKey = "team:task-usage-done:openai"
+        )))
+        var callbackCalled = false
+        assertEquals(1, TaskCheckpointStore.recoverStaleRunning(context, 200L) {
+            callbackCalled = true
+            false
+        })
+        assertFalse(callbackCalled)
+        assertEquals("INTERRUPTED", TaskCheckpointStore.latest(context).single().status)
+    }
+
     @Test fun startupMarksRunningTasksInterruptedWithoutSavingPrompts() {
         TaskCheckpointStore.record(context, TaskCheckpointStore.Event("task-1", "tester", "RUNNING", "", 100L, "", "", 0, "previous-process"))
         TaskCheckpointStore.record(context, TaskCheckpointStore.Event("task-2", "analyst", "COMPLETED", "done", 200L, "p", "m", 1))
