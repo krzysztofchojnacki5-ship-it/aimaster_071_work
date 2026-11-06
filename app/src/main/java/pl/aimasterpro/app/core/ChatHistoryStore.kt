@@ -64,6 +64,8 @@ object ChatHistoryStore {
         // Re-validate before writing so callers cannot persist malformed chat structures.
         val serialized = root.toString()
         val validated = runCatching {
+            // Never allow a caller to replace an unreadable existing history with a fresh document.
+            if (readRoot(context) == null) return false
             val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
             val candidate = JSONObject(serialized)
             validate(candidate)
