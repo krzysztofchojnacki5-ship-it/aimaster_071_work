@@ -276,6 +276,9 @@ class ProjectWorkspaceStore(private val root: File) {
         require(archiveName.isNotBlank()) { "Brak nazwy archiwum." }
         require(root.exists() || root.mkdirs()) { "Nie można utworzyć prywatnego katalogu projektu." }
         recoverInterruptedSwap()
+        require(!patchReceiptFile.exists()) {
+            "Import zablokowany: poprzedni patch nie został jeszcze uzgodniony z rejestrem ChangeSet."
+        }
         val id = UUID.randomUUID().toString()
         val staging = File(root, ".staging-$id")
         val stagedManifest = File(root, ".staging-$id.manifest")
