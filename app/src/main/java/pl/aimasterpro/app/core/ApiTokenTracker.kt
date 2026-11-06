@@ -142,7 +142,10 @@ object ApiTokenTracker {
 
     private fun saveRecordToStorage(context: Context, record: TokenRecord): Boolean {
         val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-        val all = loadAllRecordsFromStorage(context).toMutableList()
+        // Never turn an unreadable usage ledger into an empty one: the old records may
+        // represent billable calls and must remain intact until explicitly repaired.
+        val persisted = readPersistedRecords(context) ?: return false
+        val all = (persisted + sessionRecords).distinctBy { it.queryId }.toMutableList()
         all.add(0, record)
         // Keep last 2000 records
         val trimmed = if (all.size > 2000) all.take(2000) else all
@@ -170,37 +173,50 @@ object ApiTokenTracker {
         return prefs.edit().putString("records", arr.toString()).commit()
     }
 
+    /**
+     * Returns null when the persisted ledger cannot be parsed or validated.
+     * Null is intentionally different from an empty ledger so budget enforcement
+     * and writes can fail closed instead of undercounting or overwriting usage.
+     */
+    private fun readPersistedRecords(context: Context): List<TokenRecord>? = runCatching {
+        val raw = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).getString("records", null)
+        if (raw.isNullOrBlank()) return@runCatching emptyList()
+        val arr = JSONArray(raw)
+        val list = mutableListOf<TokenRecord>()
+        for (i in 0 until arr.length()) {
+            val o = arr.getJSONObject(i)
+            val queryId = o.optString("qId")
+            require(queryId.isNotBlank()) { "Usage record has no query id." }
+            val total = o.optLong("tot")
+            val input = o.optLong("in")
+            val output = o.optLong("out")
+            require(input >= 0L && output >= 0L && total >= 0L) { "Usage record has negative token counts." }
+            require(o.has("tot") && o.has("qId")) { "Usage record is missing required fields." }
+            list.add(TokenRecord(
+                queryId = queryId,
+                timestamp = o.optLong("ts"),
+                providerId = o.optString("prov"),
+                modelName = o.optString("model"),
+                agentId = o.optString("agent"),
+                taskId = o.optString("task", "general"),
+                inputTokens = input,
+                outputTokens = output,
+                totalTokens = total,
+                reasoningTokens = o.optLong("reas"),
+                cachedTokens = o.optLong("cache"),
+                status = o.optString("status", "ESTIMATED"),
+                costUsd = o.optDouble("usd"),
+                costPln = o.optDouble("pln")
+            ))
+        }
+        list
+    }.getOrNull()
+
     @Synchronized
     fun loadAllRecordsFromStorage(context: Context): List<TokenRecord> {
-        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-        val raw = prefs.getString("records", null)
-        val persisted = if (raw.isNullOrBlank()) emptyList() else runCatching {
-            val arr = JSONArray(raw)
-            val list = mutableListOf<TokenRecord>()
-            for (i in 0 until arr.length()) {
-                val o = arr.getJSONObject(i)
-                list.add(TokenRecord(
-                    queryId = o.optString("qId"),
-                    timestamp = o.optLong("ts"),
-                    providerId = o.optString("prov"),
-                    modelName = o.optString("model"),
-                    agentId = o.optString("agent"),
-                    taskId = o.optString("task", "general"),
-                    inputTokens = o.optLong("in"),
-                    outputTokens = o.optLong("out"),
-                    totalTokens = o.optLong("tot"),
-                    reasoningTokens = o.optLong("reas"),
-                    cachedTokens = o.optLong("cache"),
-                    status = o.optString("status", "ESTIMATED"),
-                    costUsd = o.optDouble("usd"),
-                    costPln = o.optDouble("pln")
-                ))
-            }
-            list
-        }.getOrDefault(emptyList())
-
-        // Merge process-local records that could not be committed to disk. Query IDs prevent
-        // successful persisted records from being counted twice.
+        // UI/monitor can still display process-local records if disk data is damaged.
+        // Budget enforcement and append operations use readPersistedRecords() directly.
+        val persisted = readPersistedRecords(context).orEmpty()
         val merged = persisted.toMutableList()
         val knownIds = persisted.mapTo(hashSetOf()) { it.queryId }
         sessionRecords.forEach { record ->
@@ -300,7 +316,17 @@ object ApiTokenTracker {
         globalReserveTokens: Long = 0L
     ): BatchBudgetPlan {
         val limits = getLimits(context)
-        val all = loadAllRecordsFromStorage(context)
+        val persisted = readPersistedRecords(context)
+        if (persisted == null) {
+            val reason = "Wstrzymano: rejestr użycia API jest uszkodzony lub nieczytelny; nie można bezpiecznie obliczyć pozostałego budżetu."
+            return BatchBudgetPlan(emptySet(), requests.associate { it.taskId to reason }, 0L, 0.0)
+        }
+        if (requests.any { it.taskId.isBlank() || it.agentId.isBlank() } ||
+            requests.map { it.taskId }.distinct().size != requests.size) {
+            val reason = "Wstrzymano: zadania budżetowe muszą mieć niepuste i unikalne identyfikatory oraz agentów."
+            return BatchBudgetPlan(emptySet(), requests.associate { it.taskId to reason }, 0L, 0.0)
+        }
+        val all = (persisted + sessionRecords).distinctBy { it.queryId }
         val today = filterRecords(all, "Dzisiaj")
         val recent = filterRecords(all, "30 dni")
         // Keep a reserve for the MASTER's final synthesis after specialist reports return.
@@ -373,7 +399,8 @@ object ApiTokenTracker {
         val recorded30DayCostPln: Double,
         val activeReservedCostPln: Double,
         val monthlyCostLimitPln: Double,
-        val perAgentLimitTokens: Long
+        val perAgentLimitTokens: Long,
+        val ledgerHealthy: Boolean = true
     )
 
     @Synchronized
@@ -400,7 +427,8 @@ object ApiTokenTracker {
             recorded30DayCostPln = recentCost,
             activeReservedCostPln = reservations.costPln,
             monthlyCostLimitPln = limits.monthlyCostPlnLimit,
-            perAgentLimitTokens = limits.agentTokenLimit
+            perAgentLimitTokens = limits.agentTokenLimit,
+            ledgerHealthy = readPersistedRecords(context) != null
         )
     }
 
@@ -438,6 +466,9 @@ object ApiTokenTracker {
     @Synchronized
     fun checkLimits(context: Context, agentId: String, estimatedTokens: Long): LimitCheckResult {
         val limits = getLimits(context)
+        if (readPersistedRecords(context) == null) {
+            return LimitCheckResult(false, "Rejestr użycia API jest uszkodzony lub nieczytelny. Zapytanie wstrzymano, aby nie przekroczyć nieznanego budżetu.")
+        }
         val all = loadAllRecordsFromStorage(context)
         val todayRecords = filterRecords(all, "Dzisiaj")
         val todayTokens = todayRecords.sumOf { it.totalTokens.coerceAtLeast(0L) } +
