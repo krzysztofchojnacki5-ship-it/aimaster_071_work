@@ -101,6 +101,13 @@ class ApiTokenTrackerTest {
 
         ApiTokenTracker.recordQuery(
             context, "provider-a", "gpt-4o-mini", "RESEARCHER", "fallback-task",
+            inputTokens = 10, outputTokens = 5, status = "REAL",
+            baseUrl = "https://different.invalid/v1", reservationId = plan.reservationId
+        )
+        assertEquals("A different endpoint must not consume the reserved endpoint's estimate", 200L, ApiTokenTracker.activeReservationStats().tokens)
+
+        ApiTokenTracker.recordQuery(
+            context, "provider-a", "gpt-4o-mini", "RESEARCHER", "fallback-task",
             inputTokens = 30, outputTokens = 20, status = "REAL",
             baseUrl = "https://a.invalid/v1", reservationId = plan.reservationId
         )
