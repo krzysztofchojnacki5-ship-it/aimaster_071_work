@@ -133,12 +133,11 @@ object TaskCheckpointStore {
         return recovered
     }
 
-    /** The journal is newest-first; first occurrence is authoritative even if timestamps collide. */
+    /** The journal is newest-first; first occurrence is authoritative regardless of wall-clock changes. */
     @Synchronized
     fun latest(context: Context): List<Event> {
         val seen = hashSetOf<String>()
         return load(context).filter { seen.add(it.taskId) }
-            .sortedByDescending { it.timestamp }
     }
 
     fun clear(context: Context) {
