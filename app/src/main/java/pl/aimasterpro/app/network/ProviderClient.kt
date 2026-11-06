@@ -245,6 +245,16 @@ class ProviderClient(
         return try {
             if (isCancelled(scope)) throw cancelledException()
             chatInternal(config, systemPrompt, userText, attachmentMime, attachmentBase64)
+        } catch (e: ProviderException) {
+            // Schema/shape validation happens after a successful HTTP response; that POST may
+            // already be billable even though the provider payload cannot be consumed.
+            if (e.category == "INVALID_RESPONSE" && !e.requestMayHaveBeenProcessed) {
+                throw ProviderException(
+                    e.httpCode, e.message ?: "Nieprawidłowa odpowiedź dostawcy.", e.responseBody,
+                    e.category, e.phase.ifBlank { "READ_RESPONSE" }, requestMayHaveBeenProcessed = true
+                )
+            }
+            throw e
         } finally {
             requestScopeLocal.remove()
         }
