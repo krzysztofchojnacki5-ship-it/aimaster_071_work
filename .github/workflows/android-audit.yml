@@ -4,9 +4,15 @@ on:
   push:
     branches:
       - audit/0.6.137-routing-hardening
+    paths-ignore:
+      - '**/*.md'
+      - '*.md'
   pull_request:
     branches:
       - main
+    paths-ignore:
+      - '**/*.md'
+      - '*.md'
   workflow_dispatch:
 
 permissions:
@@ -14,7 +20,7 @@ permissions:
 
 concurrency:
   group: android-audit-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   test-and-compile:
@@ -35,10 +41,10 @@ jobs:
         uses: android-actions/setup-android@v3
         with:
           accept-android-sdk-licenses: true
-          packages: |
-            platforms;android-36
-            build-tools;36.0.0
-            platform-tools
+          packages: ''
+
+      - name: Install Android API 36
+        run: sdkmanager --install "platforms;android-36" "build-tools;36.0.0" "platform-tools"
 
       - name: Set up Gradle 8.13
         uses: gradle/actions/setup-gradle@v4
