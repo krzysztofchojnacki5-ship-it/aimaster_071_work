@@ -18,12 +18,14 @@ class ApiTokenTrackerTest {
 
     @Before fun setUp() {
         context = RuntimeEnvironment.getApplication()
-        ApiTokenTracker.clearRecords(context, clearInFlightReservations = true)
+        ApiTokenTracker.resetInMemoryStateForTests()
+        ApiTokenTracker.clearRecords(context)
         ApiTokenTracker.setLimits(context, 100_000L, 50.0, 50_000L)
     }
 
     @After fun tearDown() {
-        ApiTokenTracker.clearRecords(context, clearInFlightReservations = true)
+        ApiTokenTracker.resetInMemoryStateForTests()
+        ApiTokenTracker.clearRecords(context)
     }
 
     @Test fun successfulUsageIsPersistedAndVisibleInMonitorPeriods() {
