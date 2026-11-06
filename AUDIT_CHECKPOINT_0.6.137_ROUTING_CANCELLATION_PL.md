@@ -696,3 +696,65 @@ Testy i kompilacja nadal **NOT RUN**. Kosztowa rezerwa jest etapowa: przed wła�
 - Końcowa synteza wykonuje własny, świeży `planBatch()`; jeżeli w czasie wcześniejszych etapów limit ulegnie zmianie, synteza zostanie bezpiecznie zablokowana zamiast przekroczyć limit.
 - Nie ma potwierdzenia kompilacji ani działania runtime; zmiany wymagają pełnej weryfikacji Gradle/JUnit przed wydaniem.
 
+
+
+## Uzupełnienie — odzyskiwanie księgowania po śmierci procesu (2026-11-06)
+
+Audyt trwałości wykazał lukę pomiędzy wysłaniem POST do providera a zapisem rekordu usage. Proces mógł zakończyć się po stronie aplikacji w tym oknie; po restarcie zadanie było oznaczane jako przerwane, ale potencjalny koszt żądania nie trafiał do rejestru budżetu.
+
+### Nowy cykl trwałego checkpointu
+
+- `TeamRunEngine` wywołuje teraz `onRequestStarting` bezpośrednio przed `ProviderClient.chat()`.
+- `MainActivity` zapisuje wtedy synchronicznie checkpoint `REQUESTING`, zawierający task/agent/provider/model, estymację input/output, stabilny klucz idempotencji i zredukowany adres endpointu (schemat + host + port; bez ścieżki, query, klucza API ani treści promptu).
+- Jeśli zapis checkpointu nie powiedzie się, żądanie HTTP nie jest wysyłane.
+- Po trwałym zapisie usage zadanie otrzymuje stan `USAGE_RECORDED`; po zakończeniu `COMPLETED`/inny status końcowy.
+- Jeżeli provider odpowiedział, ale lokalny zapis usage nie powiódł się, zadanie pozostaje w stanie `USAGE_PENDING`, a nie terminalnym `COMPLETED`/ `FAILED`.
+- Gdy próba została jednoznacznie odrzucona przed możliwym przetworzeniem, checkpoint wraca do `RUNNING` przed próbą fallbacku. Zapobiega to późniejszemu uznaniu poprzedniego, nieprzetworzonego żądania za billable.
+
+### Odzyskiwanie po restarcie
+
+- Przy starcie aplikacji `recoverStaleRunning()` obsługuje teraz `REQUESTING`, `USAGE_PENDING`, `USAGE_RECORDED`, a także wcześniejsze `QUEUED`/`RUNNING`.
+- Dla `REQUESTING` i `USAGE_PENDING` aplikacja zapisuje konserwatywne usage ze statusem `UNAVAILABLE`. Jeżeli trwały zapis rejestru usage się nie powiedzie, checkpoint pozostaje `INTERRUPTED_USAGE_PENDING` i jest ponawiany przy kolejnym starcie.
+- Dla `USAGE_RECORDED` nie dodaje się drugiego wpisu; zadanie jest jedynie oznaczane jako przerwane, bo usage zostało już utrwalone.
+- Zadania nie są automatycznie wznawiane ani ponownie wysyłane do providera. Odzyskiwany jest stan i rozliczenie; raport zadania, którego proces nie dokończył, pozostaje przerwany.
+
+### Idempotentny rejestr usage
+
+- `ApiTokenTracker.recordQuery()` przyjmuje stabilny `idempotencyKey` i używa go jako `queryId`.
+- Ponowne księgowanie tego samego task/provider zwraca istniejący rekord zamiast tworzyć duplikat. Jeśli rekord istniał tylko w pamięci sesji po nieudanym commicie, próba odzyskania ponawia jego trwały zapis.
+- Ponowne użycie klucza dla innego task/agent/provider/model jest odrzucane.
+- Przy odzyskiwaniu istniejącego rekordu nie przeliczamy go według bieżącego cennika ani kursu — zachowujemy oryginalny koszt i status (np. `REAL` zamiast zastąpienia go przez `UNAVAILABLE`).
+- `TeamRunEngine` domyślnie zgłasza błąd, jeśli nie ma callbacku trwałego księgowania nieznanego usage; nie może po cichu uznać braku callbacku za poprawne rozliczenie.
+
+### Testy regresyjne dodane/rozszerzone
+
+- `TaskCheckpointStoreTest`: odtworzenie REQUESTING z estymacjami i kluczem idempotencji; retry stanu `INTERRUPTED_USAGE_PENDING`; obsługa `USAGE_RECORDED`; odrzucenie ujemnych estymacji z uszkodzonego dziennika.
+- `ApiTokenTrackerTest`: brak podwójnego naliczania po powtórzeniu klucza; zakaz użycia tego samego klucza dla innej tożsamości zadania.
+- `TeamRunEngineNetworkTest`: checkpoint musi zostać zapisany przed HTTP; brak zapisu blokuje wysłanie; błąd trwałego księgowania po udanej odpowiedzi pozostawia `USAGE_PENDING`.
+
+### Ograniczenia i ostrożność
+
+- Estymacja `UNAVAILABLE` może zawyżyć zużycie, jeśli proces zakończył się już po zapisaniu `REQUESTING`, ale jeszcze przed faktycznym wysłaniem POST. To celowy wariant fail-safe; checkpoint jest zapisywany bezpośrednio przed wywołaniem transportu.
+- Gdy rejestr usage jest uszkodzony lub niedostępny, stan pozostaje pending i budżet nadal działa fail-closed; aplikacja nie usuwa ani nie nadpisuje uszkodzonej historii.
+- Checkpoint nie zawiera promptów, odpowiedzi, załączników ani kluczy API.
+- Zadania po awarii są oznaczane jako przerwane; automatyczne wznowienie pracy nie zostało włączone, aby uniknąć niejawnego ponownego wykonania lub kosztów.
+
+### Aktualne liczby testów
+
+- `ApiTokenTrackerTest.kt`: 28.
+- `TaskCheckpointStoreTest.kt`: 11.
+- `TeamRunEngineNetworkTest.kt`: 9.
+- `ProviderClientNetworkTest.kt`: 14.
+- Łącznie w tych czterech plikach: 62 testy; wszystkie **NOT RUN**.
+
+### Status weryfikacji
+
+- Kompilacja Android / Gradle: **NOT RUN**.
+- JUnit/Robolectric: **NOT RUN**.
+- Nie utworzono APK, nie zmieniono wersji, nie wykonano merge.
+- Zmiany pozostają na branchu roboczym; `main` nie był modyfikowany.
+- Companion Transport pozostaje BLOCKED.
+
+Stan przed zapisaniem tego uzupełnienia:
+- HEAD branch: b68a0733c774668b70128350a93fbc9731ed6a9a
+- HEAD main: 752149d40186144b0f458a32b5826c8928349c3a
