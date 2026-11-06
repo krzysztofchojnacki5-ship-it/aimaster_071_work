@@ -1230,7 +1230,7 @@ class MainActivity : Activity() {
 
     private fun chatWithFallback(config: ProviderConfig, systemPrompt: String, userText: String, mime: String, b64: String,
                                  requestTaskId: String, requestAgentId: String, requestChatId: String,
-                                 requestScope: ProviderClient.RequestScope): ChatResponse {
+                                 requestScope: ProviderClient.RequestScope, budgetReservationId: String = ""): ChatResponse {
         val allConfigs = store.allConfigs().mapNotNull { j -> runCatching { loadProvider(j.optString("id")) }.getOrNull() }
         val primaryBaseId = config.parentProviderId.ifBlank { config.id }
         val freeBackups = allConfigs.filter {
@@ -1247,12 +1247,14 @@ class MainActivity : Activity() {
         if (ordered.isEmpty()) {
             throw IllegalStateException("Brak skonfigurowanego, zweryfikowanego darmowego modelu. Nie wysłano żądania do płatnego lub niezweryfikowanego API.")
         }
-        val estimatedInput = ((systemPrompt.length + userText.length + 2) / 3).toLong()
-        val budgetCheck = pl.aimasterpro.app.core.ApiTokenTracker.checkLimits(
-            this, requestAgentId, estimatedInput + 4096L
-        )
-        if (!budgetCheck.allowed) throw IllegalStateException(budgetCheck.warningMessage ?: "Przekroczono budżet tokenów.")
-        budgetCheck.warningMessage?.let { logAgentForChat(requestChatId, "⚠️ Budżet tokenów: $it") }
+        if (budgetReservationId.isBlank()) {
+            val estimatedInput = ((systemPrompt.length + userText.length + 2) / 3).toLong()
+            val budgetCheck = pl.aimasterpro.app.core.ApiTokenTracker.checkLimits(
+                this, requestAgentId, estimatedInput + 4096L
+            )
+            if (!budgetCheck.allowed) throw IllegalStateException(budgetCheck.warningMessage ?: "Przekroczono budżet tokenów.")
+            budgetCheck.warningMessage?.let { logAgentForChat(requestChatId, "⚠️ Budżet tokenów: $it") }
+        }
 
         var lastErr: Throwable? = null
         for (cfg in ordered) {
@@ -1272,7 +1274,7 @@ class MainActivity : Activity() {
                 if (gate.reason == "INTERRUPTED" || Thread.currentThread().isInterrupted) {
                     throw ProviderException(null, "Przerwano oczekiwanie na dostępność modelu.", category = "CANCELLED")
                 }
-                pl.aimasterpro.app.core.ModelHealthTracker.record(this, cfg, false, gate.reason ?: "MODEL_BUSY", 0L)
+                // Scheduler contention/cooldown is local coordination, not provider health evidence.
                 val note = "${cfg.name}/${cfg.model}: model chwilowo zajęty lub w cooldown (${gate.reason ?: "LIMIT"}, ${gate.waitMs} ms)."
                 logAgentForChat(requestChatId, "⏳ Smart Scheduler: $note Przechodzę do kolejnego skonfigurowanego modelu.")
                 lastErr = IllegalStateException(note)
@@ -1282,11 +1284,32 @@ class MainActivity : Activity() {
             try {
                 modelCallStartedAt = System.currentTimeMillis()
                 val res = client.chat(cfg, systemPrompt, userText, mime, b64, requestScope)
-                pl.aimasterpro.app.core.ModelHealthTracker.record(this, cfg, true, "", System.currentTimeMillis() - modelCallStartedAt)
-                pl.aimasterpro.app.core.ProviderQuotaScheduler.markSuccess(quotaKey)
+                // A successful provider response may already be billable. Local telemetry or
+                // persistence failures must not be treated as provider failures or trigger fallback.
+                runCatching {
+                    pl.aimasterpro.app.core.ModelHealthTracker.record(this, cfg, true, "", System.currentTimeMillis() - modelCallStartedAt)
+                }.onFailure { error ->
+                    runCatching { logAgentForChat(requestChatId, "[HEALTH RECORD WARNING] ${error.message ?: error.javaClass.simpleName}") }
+                }
+                runCatching { pl.aimasterpro.app.core.ProviderQuotaScheduler.markSuccess(quotaKey) }
                 runCatching { pl.aimasterpro.app.core.ProviderCooldownStore.markSuccess(this, cfg) }
-                TokenTracker.recordUsage(this, cfg.id, systemPrompt + "\n" + userText, res.text, "OK", "Aktywny / Działa")
-                pl.aimasterpro.app.core.ApiTokenTracker.recordQuery(this, cfg.id, cfg.model, requestAgentId, requestTaskId, res.usage.inputTokens, res.usage.outputTokens, res.usage.reasoningTokens, res.usage.cachedTokens, res.usage.status, cfg.baseUrl)
+                runCatching {
+                    TokenTracker.recordUsage(this, cfg.id, systemPrompt + "\n" + userText, res.text, "OK", "Aktywny / Działa")
+                }.onFailure { error ->
+                    runCatching { logAgentForChat(requestChatId, "[LOCAL USAGE WARNING] Nie zapisano lokalnej historii wywołania: ${error.message ?: error.javaClass.simpleName}") }
+                }
+                runCatching {
+                    pl.aimasterpro.app.core.ApiTokenTracker.recordQuery(
+                        this, cfg.id, cfg.model, requestAgentId, requestTaskId,
+                        res.usage.inputTokens, res.usage.outputTokens, res.usage.reasoningTokens,
+                        res.usage.cachedTokens, res.usage.status, cfg.baseUrl, budgetReservationId
+                    )
+                }.onFailure { error ->
+                    runCatching { logAgentForChat(requestChatId, "[USAGE_RECORD_FAILED] Odpowiedź API mogła zostać rozliczona, ale zapis tokenów nie powiódł się: ${error.message ?: error.javaClass.simpleName}") }
+                }
+                if (Thread.currentThread().isInterrupted) {
+                    throw ProviderException(null, "Odpowiedź odebrano po anulowaniu; wykorzystanie API zostało rozliczone.", category = "CANCELLED")
+                }
                 if (cfg.id != config.id) {
                     logAgentForChat(requestChatId, "🧭 Smart Routing: wybrano profil ${cfg.name} (${cfg.model}) zamiast pierwotnego ${config.name} na podstawie dostępności i historii kondycji.")
                     logAgentDialogueForChat(requestChatId, "SYSTEM", "MASTER", "Routing wybrał profil ${cfg.name} na podstawie dostępności, limitów i lokalnej historii kondycji modeli.", "SMART_ROUTING")
