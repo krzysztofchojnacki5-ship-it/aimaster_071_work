@@ -187,6 +187,15 @@ class ApiTokenTrackerTest {
         assertEquals("Clear history must not release a running task's budget",
             100L, ApiTokenTracker.activeReservationStats().tokens)
 
+        ApiTokenTracker.recordQuery(
+            context, "ollama", "llama3", "MASTER", "clear-during-run",
+            inputTokens = 10L, outputTokens = 10L, status = "REAL",
+            baseUrl = "http://127.0.0.1:11434/v1", reservationId = plan.reservationId
+        )
+        assertEquals("Late usage after clear must still be persisted",
+            1, ApiTokenTracker.loadAllRecordsFromStorage(context).count { it.taskId == "clear-during-run" })
+        assertEquals(80L, ApiTokenTracker.activeReservationStats().tokens)
+
         ApiTokenTracker.completeReservationTask(plan.reservationId, "clear-during-run")
         ApiTokenTracker.requestBatchReservationRelease(plan.reservationId)
         assertEquals(0L, ApiTokenTracker.activeReservationStats().tokens)
@@ -222,6 +231,43 @@ class ApiTokenTrackerTest {
         assertEquals("Only one 60-token reservation fits a 100-token daily budget",
             1, plans.sumOf { it.allowedTaskIds.size })
         plans.forEach { ApiTokenTracker.releaseBatchReservation(it.reservationId) }
+    }
+
+    @Test fun concurrentReservationReleaseAndCompletionAlwaysRetireTheBatch() {
+        val plan = ApiTokenTracker.planBatch(
+            context,
+            listOf(BudgetRequest("release-race", "MASTER", "ollama",
+                "http://127.0.0.1:11434/v1", "llama3", 20L, 20L))
+        )
+        assertTrue(plan.allowedTaskIds.contains("release-race"))
+        val ready = CountDownLatch(2)
+        val start = CountDownLatch(1)
+        val failures = java.util.Collections.synchronizedList(mutableListOf<Throwable>())
+        val release = Thread {
+            ready.countDown()
+            try {
+                start.await()
+                ApiTokenTracker.requestBatchReservationRelease(plan.reservationId)
+            } catch (error: Throwable) { failures += error }
+        }
+        val finish = Thread {
+            ready.countDown()
+            try {
+                start.await()
+                ApiTokenTracker.completeReservationTask(plan.reservationId, "release-race")
+            } catch (error: Throwable) { failures += error }
+        }
+        release.start()
+        finish.start()
+        ready.await()
+        start.countDown()
+        release.join(5_000L)
+        finish.join(5_000L)
+
+        assertTrue("Reservation lifecycle threads must finish", !release.isAlive && !finish.isAlive)
+        assertTrue("Reservation lifecycle thread failed: $failures", failures.isEmpty())
+        assertEquals("Either ordering of release and completion must retire the reservation",
+            0L, ApiTokenTracker.activeReservationStats().tokens)
     }
 
     @Test fun concurrentUsageWritesAreSerializedAndBothRecordsPersist() {
