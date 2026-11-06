@@ -141,6 +141,17 @@ class ApiTokenTrackerTest {
         assertTrue(overflow.isFailure)
     }
 
+    @Test fun mutatingReturnedPricingDoesNotChangeSharedDefaults() {
+        val first = ApiTokenTracker.getPricing(context, "gpt-4o-mini")
+        first.inputPer1MUsd = Double.NaN
+        first.outputPer1MUsd = -100.0
+
+        val second = ApiTokenTracker.getPricing(context, "gpt-4o-mini")
+        assertTrue(second.inputPer1MUsd.isFinite())
+        assertTrue(second.outputPer1MUsd >= 0.0)
+        assertTrue(second.inputPer1MUsd > 0.0)
+    }
+
     @Test fun invalidExchangeRatesAreRejected() {
         assertTrue(runCatching { ApiTokenTracker.setExchangeRate(context, Double.NaN) }.isFailure)
         assertTrue(runCatching { ApiTokenTracker.setExchangeRate(context, 0.0) }.isFailure)
