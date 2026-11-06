@@ -9,6 +9,7 @@ object TaskCheckpointStore {
     private const val PREFS = "task_checkpoints_v1"
     private const val KEY = "events"
     private const val MAX_EVENTS = 800
+    private val TERMINAL_STATUSES = setOf("COMPLETED", "FAILED", "BLOCKED", "TIMED_OUT", "CANCELLED", "INTERRUPTED")
     private val processId = java.util.UUID.randomUUID().toString()
 
     data class Event(
@@ -31,6 +32,10 @@ object TaskCheckpointStore {
     fun record(context: Context, event: Event): Boolean {
         if (event.taskId.isBlank()) return false
         val rows = load(context).toMutableList()
+        // A late worker callback must not overwrite a terminal result already recorded by
+        // the coordinator (for example TIMED_OUT followed by the worker's CANCELLED callback).
+        val current = rows.firstOrNull { it.taskId == event.taskId }
+        if (current?.status in TERMINAL_STATUSES) return true
         rows.add(
             0,
             event.copy(
