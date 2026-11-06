@@ -70,13 +70,13 @@ class TeamRunEngine(
         requestScope: ProviderClient.RequestScope? = null,
         onTaskFinished: (String) -> Unit = { }
     ): List<TeamTaskResult> {
-        validate(tasks, mode)
         if (tasks.isEmpty()) return emptyList()
 
         val pool = Executors.newFixedThreadPool(maxParallel.coerceIn(1, 8).coerceAtMost(tasks.size))
         val workerStates = tasks.map { AtomicInteger(0) } // 0=queued, 1=running, 2=finished/cancelled-before-start
         var taskScopes: List<ProviderClient.RequestScope> = emptyList()
         return try {
+            validate(tasks, mode)
             // Every agent gets a child request scope: cancelling one timed-out agent
             // disconnects only its HTTP connection and leaves sibling agents untouched.
             val batchScope = requestScope ?: client.beginRequestScope()
