@@ -201,6 +201,61 @@ class ProviderClientNetworkTest {
     }
 
     @Test
+    fun cancellingOneChildScopeDisconnectsOnlyThatAgentRequest() {
+        val bothEntered = CountDownLatch(2)
+        val cancelledEntered = CountDownLatch(1)
+        val keptEntered = CountDownLatch(1)
+        val server = TestHttpServer { body, _ ->
+            bothEntered.countDown()
+            if (body.contains("cancel-me")) {
+                cancelledEntered.countDown()
+                Thread.sleep(3_000L)
+                200 to """{"choices":[{"message":{"content":"cancelled-late"}}]}"""
+            } else {
+                keptEntered.countDown()
+                Thread.sleep(250L)
+                200 to """{"choices":[{"message":{"content":"sibling-survived"}}]}"""
+            }
+        }
+        val client = ProviderClient(connectTimeoutMs = 1_000, readTimeoutMs = 5_000)
+        val parent = client.beginRequestScope()
+        val cancelledScope = client.childRequestScope(parent)
+        val survivingScope = client.childRequestScope(parent)
+        val cancelledFailure = AtomicReference<Throwable?>(null)
+        val survivingResult = AtomicReference<String?>(null)
+        val cancelledWorker = Thread {
+            try {
+                client.chat(config("http://127.0.0.1:${server.address.port}/v1"), "system", "cancel-me", scope = cancelledScope)
+            } catch (t: Throwable) { cancelledFailure.set(t) }
+        }
+        val survivingWorker = Thread {
+            try {
+                survivingResult.set(client.chat(config("http://127.0.0.1:${server.address.port}/v1"), "system", "keep-me", scope = survivingScope).text)
+            } catch (t: Throwable) { survivingResult.set("ERROR:${t.javaClass.simpleName}:${t.message}") }
+        }
+        try {
+            cancelledWorker.start()
+            survivingWorker.start()
+            assertTrue("Both requests should reach the local server", bothEntered.await(2, TimeUnit.SECONDS))
+            assertTrue(cancelledEntered.await(1, TimeUnit.SECONDS))
+            assertTrue(keptEntered.await(1, TimeUnit.SECONDS))
+            client.cancelRequestScope(cancelledScope)
+            cancelledWorker.join(1_500L)
+            survivingWorker.join(2_500L)
+            assertTrue("Cancelled child should stop promptly", !cancelledWorker.isAlive)
+            assertTrue("Sibling request must be allowed to complete", !survivingWorker.isAlive)
+            assertEquals("CANCELLED", (cancelledFailure.get() as? ProviderException)?.category)
+            assertEquals("sibling-survived", survivingResult.get())
+            assertEquals("Only the two original agent POSTs should be sent", 2, server.requestCount.get())
+        } finally {
+            client.cancelActiveRequests()
+            cancelledWorker.interrupt()
+            survivingWorker.interrupt()
+            server.stop(0)
+        }
+    }
+
+    @Test
     fun beginningNewChatScopeDoesNotCancelUnscopedModelDiscovery() {
         val entered = CountDownLatch(1)
         val server = TestHttpServer { _, _ ->
