@@ -30,36 +30,46 @@ object TaskResultCache {
     }
 
     @Synchronized fun get(context: Context, fingerprint: String, now: Long = System.currentTimeMillis()): Cached? {
-        val rows = read(context, now)
+        val rows = read(context, now) ?: return null
         val row = (0 until rows.length()).map { rows.optJSONObject(it) }.filterNotNull()
             .firstOrNull { it.optString("fingerprint") == fingerprint } ?: return null
         return Cached(row.optString("report"), row.optLong("createdAt"))
     }
 
-    @Synchronized fun put(context: Context, fingerprint: String, report: String, now: Long = System.currentTimeMillis()) {
-        if (report.isBlank()) return
-        val old = read(context, now)
+    @Synchronized fun put(context: Context, fingerprint: String, report: String, now: Long = System.currentTimeMillis()): Boolean {
+        if (fingerprint.isBlank() || report.isBlank()) return false
+        val old = read(context, now) ?: run {
+            android.util.Log.e("AIMasterTaskCache", "Nie zapisano wyniku: cache zawiera uszkodzone dane.")
+            return false
+        }
         val next = JSONArray()
         for (i in 0 until old.length()) {
-            val row = old.optJSONObject(i) ?: continue
+            val row = old.getJSONObject(i)
             if (row.optString("fingerprint") != fingerprint) next.put(row)
         }
         next.put(JSONObject().put("fingerprint", fingerprint).put("report", report).put("createdAt", now))
         val trimmed = JSONArray()
         val start = (next.length() - MAX_ENTRIES).coerceAtLeast(0)
         for (i in start until next.length()) trimmed.put(next.getJSONObject(i))
-        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putString(KEY, trimmed.toString()).apply()
+        return context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
+            .putString(KEY, trimmed.toString()).commit()
     }
 
-    private fun read(context: Context, now: Long): JSONArray {
-        val source = runCatching { JSONArray(context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString(KEY, "[]")) }.getOrDefault(JSONArray())
-        val valid = JSONArray()
-        for (i in 0 until source.length()) {
-            val row = source.optJSONObject(i) ?: continue
-            val age = now - row.optLong("createdAt", 0L)
-            if (age in 0..TTL_MS && row.optString("fingerprint").isNotBlank() && row.optString("report").isNotBlank()) valid.put(row)
-        }
-        if (valid.length() != source.length()) context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putString(KEY, valid.toString()).apply()
-        return valid
+    /** Corrupt cache rows are not dropped or replaced by an empty cache during a write. */
+    private fun read(context: Context, now: Long): JSONArray? {
+        val raw = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString(KEY, null) ?: return JSONArray()
+        return runCatching {
+            val source = JSONArray(raw)
+            val valid = JSONArray()
+            for (i in 0 until source.length()) {
+                val row = source.getJSONObject(i)
+                require(row.opt("fingerprint") is String && row.optString("fingerprint").isNotBlank())
+                require(row.opt("report") is String && row.optString("report").isNotBlank())
+                require(row.opt("createdAt") is Number)
+                val age = now - row.optLong("createdAt")
+                if (age in 0..TTL_MS) valid.put(row)
+            }
+            valid
+        }.getOrNull()
     }
 }
