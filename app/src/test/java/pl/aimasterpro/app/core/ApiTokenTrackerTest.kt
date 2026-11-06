@@ -339,6 +339,14 @@ class ApiTokenTrackerTest {
         }.isFailure)
     }
 
+    @Test fun positiveMonthlyLimitThatUnderflowsFloatStorageIsRejected() {
+        assertTrue(runCatching {
+            ApiTokenTracker.setLimits(context, daily = 1_000L, monthly = 1.0e-50, perAgent = 1_000L)
+        }.isFailure)
+        assertEquals("A rejected tiny positive limit must not silently disable the cost gate",
+            50.0, ApiTokenTracker.getLimits(context).monthlyCostPlnLimit, 0.0)
+    }
+
     @Test fun mutatingReturnedPricingDoesNotChangeSharedDefaults() {
         val first = ApiTokenTracker.getPricing(context, "gpt-4o-mini")
         first.inputPer1MUsd = Double.NaN
