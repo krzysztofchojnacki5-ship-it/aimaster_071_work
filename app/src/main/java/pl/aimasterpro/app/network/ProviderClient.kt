@@ -39,41 +39,61 @@ class ProviderClient(
     private val connectTimeoutMs: Int = 15_000,
     private val readTimeoutMs: Int = 45_000
 ) {
-    data class RequestScope internal constructor(val epoch: Long)
+    class RequestScope internal constructor(val epoch: Long) {
+        internal val cancelled = AtomicBoolean(false)
+    }
+
+    private data class ActiveRequest(val epoch: Long, val scope: RequestScope?)
 
     private val cancellationEpoch = AtomicLong(0L)
-    private val requestEpoch = ThreadLocal<Long>()
-    private val activeConnections = ConcurrentHashMap<HttpURLConnection, Long>()
+    private val requestScopeLocal = ThreadLocal<RequestScope?>()
+    private val activeConnections = ConcurrentHashMap<HttpURLConnection, ActiveRequest>()
     private val unscopedEpoch = Long.MIN_VALUE
 
-    /** Starts a fresh top-level chat scope. Every parallel agent must reuse this exact token. */
+    /** Starts a fresh top-level chat scope and invalidates older top-level scopes. */
     fun beginRequestScope(): RequestScope {
         val newEpoch = cancellationEpoch.incrementAndGet()
         disconnectOlderScopes(newEpoch)
         return RequestScope(newEpoch)
     }
 
-    /** Immediately disconnects in-flight HTTP calls and invalidates every call in the old scope. */
+    /** Creates an independently cancellable child for one agent within a batch. */
+    fun childRequestScope(parent: RequestScope): RequestScope {
+        if (isCancelled(parent)) throw cancelledException()
+        return RequestScope(parent.epoch)
+    }
+
+    /** Cancels only this agent's in-flight calls; sibling scopes in the same batch remain active. */
+    fun cancelRequestScope(scope: RequestScope) {
+        scope.cancelled.set(true)
+        activeConnections.entries.toList().forEach { (connection, active) ->
+            if (active.scope === scope) runCatching { connection.disconnect() }
+        }
+    }
+
+    /** Immediately disconnects in-flight HTTP calls and invalidates every scoped call. */
     fun cancelActiveRequests() {
         val newEpoch = cancellationEpoch.incrementAndGet()
         disconnectOlderScopes(newEpoch)
     }
 
     private fun disconnectOlderScopes(newEpoch: Long) {
-        activeConnections.entries.toList().forEach { (connection, epoch) ->
-            if (epoch != unscopedEpoch && epoch < newEpoch) runCatching { connection.disconnect() }
+        activeConnections.entries.toList().forEach { (connection, active) ->
+            if (active.epoch != unscopedEpoch && active.epoch < newEpoch) runCatching { connection.disconnect() }
         }
     }
 
-    private fun isCancelled(epoch: Long): Boolean =
-        (epoch != unscopedEpoch && epoch != cancellationEpoch.get()) || Thread.currentThread().isInterrupted
+    private fun isCancelled(scope: RequestScope?): Boolean =
+        (scope != null && (scope.cancelled.get() || scope.epoch != cancellationEpoch.get())) ||
+            Thread.currentThread().isInterrupted
 
     private fun cancelledException(): ProviderException =
         ProviderException(null, "Żądanie anulowane przez użytkownika.", category = "CANCELLED")
 
     private fun request(url: String, method: String, apiKey: String, body: JSONObject? = null, authHeader: String = "Authorization", extraHeaders: Map<String, String> = emptyMap()): JSONObject {
-        val epoch = requestEpoch.get() ?: unscopedEpoch
-        if (isCancelled(epoch)) throw cancelledException()
+        val scope = requestScopeLocal.get()
+        val epoch = scope?.epoch ?: unscopedEpoch
+        if (isCancelled(scope)) throw cancelledException()
         val endpoint = ProviderEndpointPolicy.validate(url, apiKey)
         if (!endpoint.allowed) throw ProviderException(null, endpoint.message, category = endpoint.category)
         val parsedUrl = endpoint.url ?: throw ProviderException(null, "Nie udało się zweryfikować endpointu.", category = "INVALID_ENDPOINT")
@@ -88,26 +108,26 @@ class ProviderClient(
             extraHeaders.forEach { (name, value) -> setRequestProperty(name, value) }
             if (body != null) { doOutput = true; setRequestProperty("Content-Type", "application/json; charset=utf-8") }
         }
-        activeConnections[conn] = epoch
-        if (isCancelled(epoch)) {
+        activeConnections[conn] = ActiveRequest(epoch, scope)
+        if (isCancelled(scope)) {
             activeConnections.remove(conn)
             conn.disconnect()
             throw cancelledException()
         }
         var phase = "CONNECT"
         try {
-            if (isCancelled(epoch)) throw cancelledException()
+            if (isCancelled(scope)) throw cancelledException()
             if (body != null) {
                 phase = "WRITE_REQUEST"
                 conn.outputStream.use { it.write(body.toString().toByteArray(Charsets.UTF_8)); it.flush() }
             }
-            if (isCancelled(epoch)) throw cancelledException()
+            if (isCancelled(scope)) throw cancelledException()
             phase = "WAIT_RESPONSE"
             val code = conn.responseCode
             val stream = if (code in 200..299) conn.inputStream else conn.errorStream
             phase = "READ_RESPONSE"
             val text = stream?.use { BoundedResponseReader.readUtf8(it) }.orEmpty()
-            if (isCancelled(epoch)) throw cancelledException()
+            if (isCancelled(scope)) throw cancelledException()
 
             if (code !in 200..299) {
                 val category = when (code) {
@@ -127,13 +147,13 @@ class ProviderClient(
                 throw ProviderException(code, "Nieprawidłowy JSON od dostawcy: ${e.message}", text.take(2500), category = "INVALID_RESPONSE")
             }
         } catch (e: ProviderException) {
-            if (isCancelled(epoch)) throw cancelledException()
+            if (isCancelled(scope)) throw cancelledException()
             throw e
         } catch (e: UnknownHostException) {
-            if (isCancelled(epoch)) throw cancelledException()
+            if (isCancelled(scope)) throw cancelledException()
             throw ProviderException(null, "DNS_ERROR podczas $phase dla hosta ${parsedUrl.host}: ${e.message ?: "UnknownHostException"}", category = "DNS_ERROR")
         } catch (e: SocketTimeoutException) {
-            if (isCancelled(epoch)) throw cancelledException()
+            if (isCancelled(scope)) throw cancelledException()
             val category = when (phase) {
                 "CONNECT", "WRITE_REQUEST" -> "CONNECT_TIMEOUT"
                 "WAIT_RESPONSE" -> "RESPONSE_TIMEOUT"
@@ -141,19 +161,19 @@ class ProviderClient(
             }
             throw ProviderException(null, "$category podczas $phase dla ${parsedUrl.host}: ${e.message ?: "SocketTimeoutException"}", category = category)
         } catch (e: ConnectException) {
-            if (isCancelled(epoch)) throw cancelledException()
+            if (isCancelled(scope)) throw cancelledException()
             throw ProviderException(null, "CONNECT_ERROR dla ${parsedUrl.host}: ${e.message ?: "ConnectException"}", category = "CONNECT_ERROR")
         } catch (e: BoundedResponseReader.ResponseTooLargeException) {
-            if (isCancelled(epoch)) throw cancelledException()
+            if (isCancelled(scope)) throw cancelledException()
             throw ProviderException(null, e.message ?: "Odpowiedź dostawcy jest zbyt duża.", category = "RESPONSE_TOO_LARGE")
         } catch (e: BoundedResponseReader.InvalidUtf8Exception) {
-            if (isCancelled(epoch)) throw cancelledException()
+            if (isCancelled(scope)) throw cancelledException()
             throw ProviderException(null, e.message ?: "Nieprawidłowe kodowanie odpowiedzi.", category = "INVALID_RESPONSE_ENCODING")
         } catch (e: IOException) {
-            if (isCancelled(epoch)) throw cancelledException()
+            if (isCancelled(scope)) throw cancelledException()
             throw ProviderException(null, "NETWORK_IO podczas $phase dla ${parsedUrl.host}: ${e.message ?: "IOException"}", category = "NETWORK_IO")
         } catch (e: Exception) {
-            if (isCancelled(epoch)) throw cancelledException()
+            if (isCancelled(scope)) throw cancelledException()
             throw ProviderException(null, "NETWORK_ERROR podczas $phase dla ${parsedUrl.host}: ${e.message ?: e.javaClass.simpleName}", category = "NETWORK_ERROR")
         } finally {
             activeConnections.remove(conn)
@@ -165,14 +185,14 @@ class ProviderClient(
      * failed before an HTTP connection could be established; read timeouts are never replayed. */
     private fun requestWithRetry(url: String, method: String, apiKey: String, body: JSONObject? = null, authHeader: String = "Authorization", extraHeaders: Map<String, String> = emptyMap()): JSONObject {
         val maxAttempts = 3
-        val epoch = requestEpoch.get() ?: unscopedEpoch
+        val scope = requestScopeLocal.get()
         var lastException: ProviderException? = null
         for (attempt in 1..maxAttempts) {
-            if (isCancelled(epoch)) throw cancelledException()
+            if (isCancelled(scope)) throw cancelledException()
             try {
                 return request(url, method, apiKey, body, authHeader, extraHeaders)
             } catch (e: ProviderException) {
-                if (e.category == "CANCELLED" || isCancelled(epoch)) throw cancelledException()
+                if (e.category == "CANCELLED" || isCancelled(scope)) throw cancelledException()
                 lastException = e
                 val safeNetworkFailure = e.category in setOf("DNS_ERROR", "CONNECT_ERROR")
                 val retryableRead = method.equals("GET", ignoreCase = true) &&
@@ -182,7 +202,7 @@ class ProviderClient(
                 if (!retryable || attempt >= maxAttempts) throw e
                 val exponential = (350L * (1L shl (attempt - 1))).coerceAtMost(2_000L)
                 val jitter = ThreadLocalRandom.current().nextLong(0L, 251L)
-                if (isCancelled(epoch)) throw cancelledException()
+                if (isCancelled(scope)) throw cancelledException()
                 try { Thread.sleep(exponential + jitter) } catch (interrupted: InterruptedException) {
                     Thread.currentThread().interrupt()
                     throw ProviderException(null, "Przerwano oczekiwanie przed ponowieniem: ${e.message}", category = "INTERRUPTED")
@@ -194,14 +214,14 @@ class ProviderClient(
 
     fun chat(config: ProviderConfig, systemPrompt: String, userText: String, attachmentMime: String = "", attachmentBase64: String = "",
              scope: RequestScope? = null): ChatResponse {
-        val epoch = scope?.epoch ?: unscopedEpoch
-        if (isCancelled(epoch)) throw cancelledException()
-        requestEpoch.set(epoch)
+        val requestScope = scope
+        if (isCancelled(requestScope)) throw cancelledException()
+        requestScopeLocal.set(requestScope)
         return try {
-            if (isCancelled(epoch)) throw cancelledException()
+            if (isCancelled(scope)) throw cancelledException()
             chatInternal(config, systemPrompt, userText, attachmentMime, attachmentBase64)
         } finally {
-            requestEpoch.remove()
+            requestScopeLocal.remove()
         }
     }
 
