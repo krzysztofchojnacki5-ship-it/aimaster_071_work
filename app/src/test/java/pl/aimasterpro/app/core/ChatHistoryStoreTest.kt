@@ -66,6 +66,15 @@ class ChatHistoryStoreTest {
         assertEquals("Agent started", chat.getJSONArray("agentActivity").getString(0))
     }
 
+    @Test fun validCandidateCannotReplaceAnAlreadyCorruptHistory() {
+        val corrupt = """{"chats":{"lost":"""
+        assertTrue(prefs.edit().putString("chats_v2", corrupt).commit())
+        val candidate = JSONObject().put("chats", JSONObject().put("new-chat", JSONObject()
+            .put("messages", JSONArray().put(JSONObject().put("role", "user").put("text", "replacement")))))
+        assertFalse(ChatHistoryStore.writeRoot(context, candidate))
+        assertEquals(corrupt, prefs.getString("chats_v2", null))
+    }
+
     @Test fun writeRejectsStructurallyInvalidCandidate() {
         val root = JSONObject().put("chats", JSONObject().put("chat-1", JSONObject()
             .put("messages", JSONArray().put(JSONObject().put("role", 7).put("text", "bad")))))
