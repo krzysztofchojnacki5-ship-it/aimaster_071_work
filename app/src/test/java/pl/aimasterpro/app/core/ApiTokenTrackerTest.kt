@@ -10,6 +10,7 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
+import java.util.concurrent.CountDownLatch
 
 @RunWith(RobolectricTestRunner::class)
 class ApiTokenTrackerTest {
@@ -146,6 +147,74 @@ class ApiTokenTrackerTest {
             ApiTokenTracker.recordQuery(context, "provider", "gpt-4o-mini", "MASTER", "overflow", Long.MAX_VALUE, 1)
         }
         assertTrue(overflow.isFailure)
+    }
+
+    @Test fun concurrentBatchPlanningCannotReserveTheSameDailyBudgetTwice() {
+        ApiTokenTracker.setLimits(context, daily = 100L, monthly = 0.0, perAgent = 1_000L)
+        val ready = CountDownLatch(2)
+        val start = CountDownLatch(1)
+        val plans = java.util.Collections.synchronizedList(mutableListOf<BatchBudgetPlan>())
+        val failures = java.util.Collections.synchronizedList(mutableListOf<Throwable>())
+        val workers = (1..2).map { index ->
+            Thread {
+                ready.countDown()
+                try {
+                    start.await()
+                    plans += ApiTokenTracker.planBatch(
+                        context,
+                        listOf(BudgetRequest("parallel-$index", "MASTER", "ollama",
+                            "http://127.0.0.1:11434/v1", "llama3", 30L, 30L))
+                    )
+                } catch (error: Throwable) {
+                    failures += error
+                }
+            }.apply { start() }
+        }
+        ready.await()
+        start.countDown()
+        workers.forEach { it.join(5_000L) }
+
+        assertTrue("Concurrent planner threads must finish", workers.none { it.isAlive })
+        assertTrue("Planner thread failed: $failures", failures.isEmpty())
+        assertEquals("Only one 60-token reservation fits a 100-token daily budget",
+            1, plans.sumOf { it.allowedTaskIds.size })
+        plans.forEach { ApiTokenTracker.releaseBatchReservation(it.reservationId) }
+    }
+
+    @Test fun concurrentUsageWritesAreSerializedAndBothRecordsPersist() {
+        val ready = CountDownLatch(2)
+        val start = CountDownLatch(1)
+        val failures = java.util.Collections.synchronizedList(mutableListOf<Throwable>())
+        val workers = (1..2).map { index ->
+            Thread {
+                ready.countDown()
+                try {
+                    start.await()
+                    ApiTokenTracker.recordQuery(
+                        context, "ollama", "llama3", "MASTER", "parallel-write-$index",
+                        inputTokens = 10, outputTokens = 5, status = "REAL",
+                        baseUrl = "http://127.0.0.1:11434/v1"
+                    )
+                } catch (error: Throwable) {
+                    failures += error
+                }
+            }.apply { start() }
+        }
+        ready.await()
+        start.countDown()
+        workers.forEach { it.join(5_000L) }
+
+        assertTrue("Usage writer threads must finish", workers.none { it.isAlive })
+        assertTrue("Usage writer failed: $failures", failures.isEmpty())
+        val parallelRecords = ApiTokenTracker.loadAllRecordsFromStorage(context)
+            .filter { it.taskId.startsWith("parallel-write-") }
+        assertEquals("Both serialized writes must remain in the durable ledger", 2, parallelRecords.size)
+    }
+
+    @Test fun monthlyLimitThatOverflowsFloatStorageIsRejected() {
+        assertTrue(runCatching {
+            ApiTokenTracker.setLimits(context, daily = 1_000L, monthly = Double.MAX_VALUE, perAgent = 1_000L)
+        }.isFailure)
     }
 
     @Test fun mutatingReturnedPricingDoesNotChangeSharedDefaults() {
