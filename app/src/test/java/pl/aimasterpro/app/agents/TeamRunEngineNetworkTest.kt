@@ -1,6 +1,7 @@
 package pl.aimasterpro.app.agents
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -412,6 +413,63 @@ class TeamRunEngineNetworkTest {
         }
     }
 
+
+    @Test
+    fun cancellingInFlightPostRecordsUnknownUsageAndNeverStartsFallback() {
+        val requestEntered = CountDownLatch(1)
+        val allowResponse = CountDownLatch(1)
+        val primaryServer = TestHttpServer { _, _ ->
+            requestEntered.countDown()
+            allowResponse.await(3, TimeUnit.SECONDS)
+            200 to """{"choices":[{"message":{"content":"late-cancelled-report"}}]}"""
+        }
+        val fallbackServer = TestHttpServer { _, _ ->
+            200 to """{"choices":[{"message":{"content":"fallback-must-not-run"}}]}"""
+        }
+        try {
+            val primary = ProviderConfig(
+                "cancel-primary", "Cancel primary", ProviderKind.OPENAI_COMPATIBLE,
+                "http://127.0.0.1:${primaryServer.address.port}/v1", "test-model", ""
+            )
+            val fallback = ProviderConfig(
+                "cancel-fallback", "Cancel fallback", ProviderKind.OPENAI_COMPATIBLE,
+                "http://127.0.0.1:${fallbackServer.address.port}/v1", "backup-model", ""
+            )
+            val client = ProviderClient(connectTimeoutMs = 1_000, readTimeoutMs = 5_000)
+            val parentScope = client.beginRequestScope()
+            val unknownUsage = Collections.synchronizedList(mutableListOf<String>())
+            val resultRef = AtomicReference<List<TeamTaskResult>?>(null)
+            val coordinator = Thread {
+                resultRef.set(TeamRunEngine(client).runBatch(
+                    tasks = listOf(TeamTask("cancel-post-task", "qa-architect", "Cancel POST", "Return a report")),
+                    provider = primary,
+                    agentProvidersMap = mapOf("qa-architect" to primary),
+                    fallbackProviders = listOf(fallback),
+                    isFreeProvider = { true },
+                    mode = WorkMode.PLANNING,
+                    onLog = { _, _, _, _ -> },
+                    requestScope = parentScope,
+                    onUnknownUsage = { agentId, taskId, _, _, _ ->
+                        unknownUsage.add("$agentId:$taskId")
+                    }
+                ))
+            }
+            coordinator.start()
+            assertTrue("Primary provider did not receive the POST", requestEntered.await(3, TimeUnit.SECONDS))
+            client.cancelRequestScope(parentScope)
+            allowResponse.countDown()
+            coordinator.join(5_000)
+            assertFalse("Coordinator did not finish after request cancellation", coordinator.isAlive)
+            assertEquals(1, primaryServer.requestCount.get())
+            assertEquals("Cancellation after POST must never invoke a fallback", 0, fallbackServer.requestCount.get())
+            assertEquals(listOf("qa-architect:cancel-post-task"), unknownUsage.toList())
+            assertEquals(TeamTaskResult.Status.FAILED, resultRef.get()?.single()?.status)
+        } finally {
+            allowResponse.countDown()
+            primaryServer.stop(0)
+            fallbackServer.stop(0)
+        }
+    }
 
     @Test
     fun ambiguousPostOutcomeIsAccountedAsUnavailableAndDoesNotFallback() {
