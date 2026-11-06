@@ -198,3 +198,26 @@ Weryfikacja: zmiany i testy zapisano na branchu roboczym. Testy pozostają NOT R
 Stan referencyjny przed zapisem tego uzupełnienia:
 - HEAD branch: 4acdf6f1ac597403954cfec64d61c5e138ef3654
 - HEAD main: 752149d40186144b0f458a32b5826c8928349c3a
+
+## Uzupełnienie — terminalny status dla zadań oczekujących po przerwaniu koordynatora (2026-11-06)
+
+Dalsza analiza TeamRunEngine wykazała wyścig w ścieżce InterruptedException koordynatora. Future zadania mogło zostać wysłane do puli, ale worker nie musiał jeszcze rozpocząć wykonywania. W takim przypadku nie uruchamiał się workerowy catch, który zapisuje CANCELLED, a checkpoint pozostawał w stanie QUEUED do następnego uruchomienia aplikacji.
+
+Poprawka:
+- w obsłudze InterruptedException koordynator nadal anuluje zakres HTTP konkretnego agenta i Future;
+- dodatkowo zapisuje terminalny stan CANCELLED dla zadania, za które aktualnie odbierał wynik;
+- spóźniony callback workera nie nadpisze już tego terminalnego statusu dzięki ochronie w TaskCheckpointStore;
+- kolejne Future w przerwanym batchu również przechodzą przez obsługę InterruptedException i dostają terminalny checkpoint, zamiast pozostawać QUEUED.
+
+Dodano test regresyjny:
+- coordinatorInterruptionMarksQueuedTasksCancelled — uruchamia batch z jednym workerem, czeka na pierwsze żądanie HTTP, przerywa koordynator i sprawdza terminalny status zarówno zadania aktywnego, jak i oczekującego.
+
+Pliki zmienione:
+- app/src/main/java/pl/aimasterpro/app/agents/TeamRunEngine.kt
+- app/src/test/java/pl/aimasterpro/app/agents/TeamRunEngineNetworkTest.kt
+
+Test pozostaje NOT RUN. Nie wykonano kompilacji ani JUnit/Robolectric; test wymaga potwierdzenia w środowisku Gradle/Android.
+
+Stan referencyjny przed zapisem tego uzupełnienia:
+- HEAD branch: 949cd5d1cceefa1cff2a8dbf2fc07966f888ea0d
+- HEAD main: 752149d40186144b0f458a32b5826c8928349c3a
