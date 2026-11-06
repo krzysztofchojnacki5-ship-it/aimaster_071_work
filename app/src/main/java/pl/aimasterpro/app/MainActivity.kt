@@ -5065,15 +5065,21 @@ class MainActivity : Activity() {
                 .setMessage("Usunięte zostaną lokalne wpisy tokenów, historia kondycji modeli i metryki efektywności agentów. Nie zmieni to kluczy API, modeli ani historii rozmów.")
                 .setNegativeButton("Anuluj", null)
                 .setPositiveButton("Wyczyść") { _, _ ->
-                    val usageCleared = pl.aimasterpro.app.core.ApiTokenTracker.clearRecords(this)
-                    pl.aimasterpro.app.core.ModelHealthTracker.clear(this)
-                    pl.aimasterpro.app.core.AgentEfficiencyTracker.clear(this)
-                    toast(
-                        if (usageCleared) "Wyczyszczono historię Monitor API i metryki modeli/agentów."
-                        else "Nie potwierdzono trwałego usunięcia historii użycia API. Dane sesyjne zachowano; spróbuj ponownie."
-                    )
-                    showShell("Monitor API")
-                    showApiMonitoringScreen()
+                    Thread {
+                        val usageCleared = pl.aimasterpro.app.core.ApiTokenTracker.clearRecords(this@MainActivity)
+                        if (usageCleared) {
+                            pl.aimasterpro.app.core.ModelHealthTracker.clear(this@MainActivity)
+                            pl.aimasterpro.app.core.AgentEfficiencyTracker.clear(this@MainActivity)
+                        }
+                        runOnUiThread {
+                            toast(
+                                if (usageCleared) "Wyczyszczono historię Monitor API i metryki modeli/agentów."
+                                else "Nie potwierdzono trwałego usunięcia historii użycia API. Dane i pozostałe metryki zachowano; spróbuj ponownie."
+                            )
+                            showShell("Monitor API")
+                            showApiMonitoringScreen()
+                        }
+                    }.start()
                 }.show()
         }
     }
