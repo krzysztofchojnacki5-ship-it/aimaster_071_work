@@ -461,3 +461,35 @@ Stan referencyjny kodu przed zapisaniem tego uzupełnienia:
 - HEAD main: 752149d40186144b0f458a32b5826c8928349c3a
 
 Testy pozostają **NOT RUN**.
+
+
+### Dodatkowe zabezpieczenie — ręczne testy modeli i providerów
+
+Audyt wszystkich wywołań `client.chat()` w `MainActivity.kt` wykazał trzy ręczne ścieżki diagnostyczne, które wcześniej wysyłały żądanie bez wcześniejszej rezerwacji budżetu:
+- test pojedynczego modelu;
+- test połączenia providera;
+- test połączenia agenta.
+
+Wprowadzono wspólny helper `runBudgetedModelTest()`:
+
+- każda próba otrzymuje unikalny `taskId` i rezerwację przez `planBatch()`;
+- wszystkie testy diagnostyczne są grupowane pod agentem budżetowym `TEST`, więc nie rozdzielają limitu per-agent między różne etykiety testów;
+- rezerwacja uwzględnia estymowany input i 256 tokenów output oraz koszt modelu/provider-a;
+- żądanie HTTP nie jest wysyłane, jeśli rezerwacja została zablokowana;
+- rzeczywiste usage jest zapisywane z tym samym `reservationId`;
+- rezerwacja jest zwalniana w `finally`;
+- zapis kondycji modelu jest best-effort i nie może przerwać księgowania usage po odpowiedzi.
+
+W efekcie jedynym bezpośrednim `client.chat()` poza helperem testowym w `MainActivity` pozostaje ścieżka `chatWithFallback()`, która również ma atomową rezerwację. W tym pliku nie ma już wywołań `ApiTokenTracker.checkLimits()` jako bramki przed pojedynczym żądaniem.
+
+Dodano test `monthlyCostBudgetIncludesActiveReservationsAndRecordedUsage`: potwierdza, że koszt aktywnej rezerwacji blokuje kolejny płatny batch, a po zaksięgowaniu realnego usage koszt nadal blokuje kolejny batch po zwolnieniu rezerwacji.
+
+Aktualna liczba testów:
+- `ApiTokenTrackerTest.kt`: 21;
+- `TeamRunEngineNetworkTest.kt`: 7.
+
+Testy nadal **NOT RUN** — nie uruchomiono Gradle/JUnit/Robolectric ani kompilacji Android.
+
+Stan referencyjny kodu przed zapisaniem tego uzupełnienia:
+- HEAD branch: 38c45669e73dd75d59e509ebaa0a0b430629dfdb
+- HEAD main: 752149d40186144b0f458a32b5826c8928349c3a
