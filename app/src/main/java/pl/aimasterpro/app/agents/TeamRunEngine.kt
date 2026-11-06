@@ -12,6 +12,7 @@ import java.util.concurrent.Callable
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.TimeoutException
+import java.util.concurrent.atomic.AtomicInteger
 
 data class TeamTask(
     val id: String,
@@ -66,17 +67,20 @@ class TeamRunEngine(
         onRateLimited: (ProviderConfig) -> Long = { 0L },
         onProviderSuccess: (ProviderConfig) -> Unit = { },
         onTaskState: (TeamTask, String, String, String, String, Int) -> Unit = { _, _, _, _, _, _ -> },
-        requestScope: ProviderClient.RequestScope? = null
+        requestScope: ProviderClient.RequestScope? = null,
+        onTaskFinished: (String) -> Unit = { }
     ): List<TeamTaskResult> {
         validate(tasks, mode)
         if (tasks.isEmpty()) return emptyList()
 
         val pool = Executors.newFixedThreadPool(maxParallel.coerceIn(1, 8).coerceAtMost(tasks.size))
+        val workerStates = tasks.map { AtomicInteger(0) } // 0=queued, 1=running, 2=finished/cancelled-before-start
+        var taskScopes: List<ProviderClient.RequestScope> = emptyList()
         return try {
             // Every agent gets a child request scope: cancelling one timed-out agent
             // disconnects only its HTTP connection and leaves sibling agents untouched.
             val batchScope = requestScope ?: client.beginRequestScope()
-            val taskScopes = tasks.map { client.childRequestScope(batchScope) }
+            taskScopes = tasks.map { client.childRequestScope(batchScope) }
             // Measure each deadline from submission, not from sequential result collection.
             val submittedAtNanos = mutableListOf<Long>()
             val futures = tasks.mapIndexed { taskIndex, task ->
@@ -84,6 +88,13 @@ class TeamRunEngine(
                 runCatching { onTaskState(task, "QUEUED", "", "", "", 0) }
                 submittedAtNanos += System.nanoTime()
                 pool.submit(Callable {
+                    // Coordinate cancellation with the worker's real lifecycle, not Future.isDone.
+                    // A cancelled Future can still have a callable executing on its worker thread.
+                    if (!workerStates[taskIndex].compareAndSet(0, 1)) {
+                        return@Callable TeamTaskResult(task.id, task.agentId, TeamTaskResult.Status.FAILED,
+                            "Zadanie anulowano przed rozpoczęciem workera.", reviewOfAgentId = task.reviewOfAgentId)
+                    }
+                    try {
                     val taskStartedAt = System.currentTimeMillis()
                     var attemptCount = 0
                     var actualProviderId = ""
@@ -365,6 +376,10 @@ class TeamRunEngine(
                         }
                         TeamTaskResult(task.id, task.agentId, TeamTaskResult.Status.FAILED, err, System.currentTimeMillis() - taskStartedAt, attemptCount, actualProviderId, actualModel, task.reviewOfAgentId)
                     }
+                    } finally {
+                        workerStates[taskIndex].set(2)
+                        runCatching { onTaskFinished(task.id) }
+                    }
                 })
             }
 
@@ -378,6 +393,7 @@ class TeamRunEngine(
                     // A timed-out future must not keep running and later issue another fallback request.
                     client.cancelRequestScope(taskScopes[index])
                     future.cancel(true)
+                    if (workerStates[index].compareAndSet(0, 2)) runCatching { onTaskFinished(tasks[index].id) }
                     runCatching { onTaskState(tasks[index], "TIMED_OUT", "Przekroczono limit 90 s; zadanie anulowano.", "", "", 0) }
                     TeamTaskResult(tasks[index].id, tasks[index].agentId, TeamTaskResult.Status.FAILED,
                         "Przekroczono limit 90 s dla agenta. Zadanie anulowano; automatyczny fallback nie będzie kontynuowany.", reviewOfAgentId = tasks[index].reviewOfAgentId)
@@ -388,6 +404,7 @@ class TeamRunEngine(
                         // and never enter its worker body, so it cannot persist its own cancellation.
                         client.cancelRequestScope(taskScopes[index])
                         future.cancel(true)
+                        if (workerStates[index].compareAndSet(0, 2)) runCatching { onTaskFinished(tasks[index].id) }
                         runCatching {
                             onTaskState(tasks[index], "CANCELLED", "Koordynator został przerwany; zadanie anulowano.", "", "", 0)
                         }
@@ -415,6 +432,16 @@ class TeamRunEngine(
 
             taskResults
         } finally {
+            // Retain the reservation for any callable still running after Future cancellation.
+            // Queued tasks that never started are completed here; running tasks release their
+            // reservation only from the callable's own finally block.
+            workerStates.forEachIndexed { index, state ->
+                if (state.compareAndSet(0, 2)) {
+                    runCatching { onTaskFinished(tasks[index].id) }
+                } else if (state.get() == 1 && index < taskScopes.size) {
+                    client.cancelRequestScope(taskScopes[index])
+                }
+            }
             pool.shutdownNow()
         }
     }
