@@ -217,6 +217,12 @@ class TeamRunEngine(
                                     // A successful HTTP response can consume tokens even when its text is empty.
                                     // Record usage before validating the report so the budget cannot undercount it.
                                     onUsage(agent.id, task.id, prov, chatRes.usage)
+                                    // The HTTP response may arrive just after the caller timed out and
+                                    // interrupted this worker. Preserve usage accounting, but do not let
+                                    // a cancelled/timed-out task publish a late successful result.
+                                    if (Thread.currentThread().isInterrupted) {
+                                        throw InterruptedException("Odpowiedź dotarła po anulowaniu zadania; wykorzystanie API zostało rozliczone.")
+                                    }
                                     report = chatRes.text
                                     if (report.isNotBlank()) {
                                         val completeLog = """
