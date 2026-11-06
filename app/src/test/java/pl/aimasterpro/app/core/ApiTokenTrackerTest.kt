@@ -126,4 +126,17 @@ class ApiTokenTrackerTest {
         assertEquals(0L, ApiTokenTracker.activeReservationStats().tokens)
     }
 
+    @Test fun corruptUsageLedgerBlocksLegacyLimitCheckAndReportsUnknownBudget() {
+        val prefs = context.getSharedPreferences("api_token_tracker_records_v1", Context.MODE_PRIVATE)
+        assertTrue(prefs.edit().putString("records", """[broken""").commit())
+
+        val check = ApiTokenTracker.checkLimits(context, "MASTER", 1L)
+        assertFalse(check.allowed)
+        assertTrue(check.warningMessage.orEmpty().contains("Rejestr użycia API"))
+
+        val snapshot = ApiTokenTracker.budgetUsageSnapshot(context)
+        assertFalse(snapshot.ledgerHealthy)
+        assertEquals(0L, snapshot.remainingTokens)
+    }
+
 }
