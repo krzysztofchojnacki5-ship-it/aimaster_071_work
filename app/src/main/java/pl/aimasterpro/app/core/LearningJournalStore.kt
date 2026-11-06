@@ -61,8 +61,10 @@ object LearningJournalStore {
             (0 until arr.length()).map { i ->
                 val o = arr.getJSONObject(i)
                 require(o.opt("ts") is Number && o.opt("duration") is Number &&
-                    o.opt("attempts") is Number && o.opt("inputTokens") is Number &&
-                    o.opt("outputTokens") is Number) { "Learning journal row has invalid numeric fields." }
+                    o.opt("attempts") is Number) { "Learning journal row has invalid numeric fields." }
+                // Token totals were added after the first journal schema; absence is a valid legacy row.
+                if (o.has("inputTokens")) require(o.opt("inputTokens") is Number)
+                if (o.has("outputTokens")) require(o.opt("outputTokens") is Number)
                 require(listOf("kind", "agent", "provider", "model", "status", "category").all { o.opt(it) is String }) {
                     "Learning journal row has invalid text fields."
                 }
