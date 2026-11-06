@@ -556,3 +556,41 @@ Samo oznaczenie niejednoznacznego POST nie księguje jeszcze estymowanego usage.
 Stan przed zapisem tego uzupełnienia:
 - HEAD branch: 74ca9402c38291be1c76859a432dd736c9dfaa90
 - HEAD main: 752149d40186144b0f458a32b5826c8928349c3a
+
+
+## Uzupełnienie — księgowanie nieznanego usage po niejednoznacznym POST (2026-11-06)
+
+Dokończono obsługę błędów, w których żądanie POST mogło dotrzeć do providera, ale aplikacja nie odebrała wiarygodnej odpowiedzi.
+
+### Zmiany
+
+- `ProviderException` zawiera fazę transportu oraz flagę `requestMayHaveBeenProcessed`.
+- Flaga jest ustawiana dla POST po rozpoczęciu wysyłania, gdy timeout/IO/anulowanie uniemożliwia ustalenie wyniku, oraz przy pustej, niepoprawnej, zbyt dużej lub nieprawidłowo zakodowanej odpowiedzi.
+- Błąd DNS/połączenia przed wysłaniem nie jest klasyfikowany jako możliwe rozliczenie.
+- Gdy poprawny HTTP 2xx został odebrany, ale treść odpowiedzi nie przechodzi walidacji schematu, również zachowujemy informację o możliwym rozliczeniu.
+- `requestWithRetry()` zachowuje znacznik niejednoznacznego wyniku podczas anulowania. POST nie jest ponawiany.
+- `TeamRunEngine` zapisuje estymację wejścia oraz przydzielony limit wyjścia jako `UNAVAILABLE` przez callback księgowania; po niejednoznacznym POST zatrzymuje routing dla tego zadania i nie uruchamia fallbacku.
+- `MainActivity.chatWithFallback()` zapisuje estymowane usage `UNAVAILABLE` i kończy próbę bez przełączania providera.
+- Ręczne testy modelu/providera również zapisują estymację `UNAVAILABLE`, gdy wynik POST jest niejednoznaczny.
+- Anulowanie po wysłaniu POST nie gubi już tej informacji: jeśli transport został przerwany w fazie WRITE_REQUEST/WAIT_RESPONSE/READ_RESPONSE, wyjątek CANCELLED zachowuje flagę możliwego rozliczenia. Anulowanie przed wysłaniem pozostaje niebillowalne.
+
+### Testy dodane/rozszerzone
+
+- `ProviderClientNetworkTest`: faza i niejednoznaczne usage po timeout, zbyt dużej odpowiedzi, DNS oraz anulowaniu POST.
+- `TeamRunEngineNetworkTest.ambiguousPostOutcomeIsAccountedAsUnavailableAndDoesNotFallback`: timeout odpowiedzi ma uruchomić callback UNAVAILABLE i nie wysłać drugiego POST do fallbacku.
+- Testy nie zostały uruchomione; pozostają **NOT RUN**.
+
+### Ograniczenia estymacji
+
+`UNAVAILABLE` oznacza, że rzeczywiste usage providera nie zostało odebrane. Do budżetu zapisujemy konserwatywną estymację wejścia z promptu i wyjścia zarezerwowanego dla danego etapu (lub 4096 tokenów dla pojedynczego czatu, 256 dla testu modelu). To nie jest rzeczywisty licznik dostawcy ani potwierdzenie naliczenia opłaty. W przypadku niezgodnego profilu fallback rezerwacja pierwotnego profilu pozostaje aktywna do zwolnienia batcha, a rekord UNAVAILABLE nadal obciąża globalny i per-agent usage.
+
+### Status
+
+- Zmiany wyłącznie na branchu roboczym.
+- Kompilacja Android i JUnit/Robolectric: **NOT RUN**.
+- Nie utworzono APK, nie zmieniono wersji i nie wykonano merge.
+- Companion Transport pozostaje BLOCKED.
+
+Stan przed zapisem tego uzupełnienia:
+- HEAD branch: 7e626942b2d1af233d82cf66e90265643f059dc5
+- HEAD main: 752149d40186144b0f458a32b5826c8928349c3a
