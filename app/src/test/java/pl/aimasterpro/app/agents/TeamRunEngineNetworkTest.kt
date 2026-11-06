@@ -130,6 +130,57 @@ class TeamRunEngineNetworkTest {
     }
 
     @Test
+    fun completedReportIsPersistedBeforeTerminalCheckpoint() {
+        ProviderQuotaScheduler.resetForTests()
+        val server = TestHttpServer { _, _ ->
+            200 to """{"choices":[{"message":{"content":"durable-agent-report"}}],"usage":{"prompt_tokens":5,"completion_tokens":4,"total_tokens":9}}"""
+        }
+        try {
+            val config = ProviderConfig(
+                "result-persist-test", "Result persistence test", ProviderKind.OPENAI_COMPATIBLE,
+                "http://127.0.0.1:${server.address.port}/v1", "test-model", ""
+            )
+            val events = Collections.synchronizedList(mutableListOf<String>())
+            val result = TeamRunEngine(ProviderClient()).runBatch(
+                tasks = listOf(TeamTask("result-task", "qa-architect", "Persist report", "Return report")),
+                provider = config,
+                agentProvidersMap = mapOf("qa-architect" to config),
+                isFreeProvider = { true },
+                mode = WorkMode.PLANNING,
+                onTaskResult = { completed ->
+                    assertEquals("result-task", completed.taskId)
+                    assertTrue(completed.report.contains("durable-agent-report"))
+                    events.add("result-persisted")
+                    true
+                },
+                onTaskState = { _, state, _, _, _, _ ->
+                    if (state == "COMPLETED") events.add("terminal-checkpoint")
+                }
+            ).single()
+            assertEquals(TeamTaskResult.Status.COMPLETED, result.status)
+            assertTrue(events.indexOf("result-persisted") >= 0)
+            assertTrue(events.indexOf("terminal-checkpoint") > events.indexOf("result-persisted"))
+
+            ProviderQuotaScheduler.resetForTests()
+            var pendingState = ""
+            val notPersisted = TeamRunEngine(ProviderClient()).runBatch(
+                tasks = listOf(TeamTask("result-pending-task", "qa-architect", "Persist report", "Return report")),
+                provider = config,
+                agentProvidersMap = mapOf("qa-architect" to config),
+                isFreeProvider = { true },
+                mode = WorkMode.PLANNING,
+                onTaskResult = { false },
+                onTaskState = { _, state, _, _, _, _ -> if (state == "RESULT_PERSIST_PENDING") pendingState = state }
+            ).single()
+            assertEquals(TeamTaskResult.Status.COMPLETED, notPersisted.status)
+            assertEquals("RESULT_PERSIST_PENDING", pendingState)
+        } finally {
+            ProviderQuotaScheduler.resetForTests()
+            server.stop(0)
+        }
+    }
+
+    @Test
     fun usagePersistenceFailureDoesNotRetrySuccessfulProviderRequest() {
         ProviderQuotaScheduler.resetForTests()
         val server = TestHttpServer { _, _ ->
