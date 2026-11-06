@@ -1278,121 +1278,121 @@ class MainActivity : Activity() {
         var lastErr: Throwable? = null
         try {
             for (cfg in ordered) {
-            if (Thread.currentThread().isInterrupted) throw ProviderException(null, "Żądanie anulowane przez użytkownika.", category = "CANCELLED")
-            if (!providerReady(cfg)) continue
-            val quotaKey = pl.aimasterpro.app.core.ProviderQuotaScheduler.key(cfg.parentProviderId.ifBlank { cfg.id }, cfg.baseUrl, cfg.model)
-            val persistedWait = runCatching { pl.aimasterpro.app.core.ProviderCooldownStore.remainingMs(this, cfg) }.getOrDefault(0L)
-            if (persistedWait > 0L) {
-                val note = "${cfg.name}/${cfg.model}: zapisany cooldown po HTTP 429 (${persistedWait / 1000}s)."
-                logAgentForChat(requestChatId, "⏸️ Smart Scheduler: $note Pomijam profil bez wysyłania żądania.")
-                lastErr = IllegalStateException(note)
-                continue
-            }
-            val gate = pl.aimasterpro.app.core.ProviderQuotaScheduler.acquire(quotaKey, isVerifiedFreeConfig(cfg))
-            val lease = gate.lease
-            if (lease == null) {
-                if (gate.reason == "INTERRUPTED" || Thread.currentThread().isInterrupted) {
-                    throw ProviderException(null, "Przerwano oczekiwanie na dostępność modelu.", category = "CANCELLED")
+                if (Thread.currentThread().isInterrupted) throw ProviderException(null, "Żądanie anulowane przez użytkownika.", category = "CANCELLED")
+                if (!providerReady(cfg)) continue
+                val quotaKey = pl.aimasterpro.app.core.ProviderQuotaScheduler.key(cfg.parentProviderId.ifBlank { cfg.id }, cfg.baseUrl, cfg.model)
+                val persistedWait = runCatching { pl.aimasterpro.app.core.ProviderCooldownStore.remainingMs(this, cfg) }.getOrDefault(0L)
+                if (persistedWait > 0L) {
+                    val note = "${cfg.name}/${cfg.model}: zapisany cooldown po HTTP 429 (${persistedWait / 1000}s)."
+                    logAgentForChat(requestChatId, "⏸️ Smart Scheduler: $note Pomijam profil bez wysyłania żądania.")
+                    lastErr = IllegalStateException(note)
+                    continue
                 }
-                // Scheduler contention/cooldown is local coordination, not provider health evidence.
-                val note = "${cfg.name}/${cfg.model}: model chwilowo zajęty lub w cooldown (${gate.reason ?: "LIMIT"}, ${gate.waitMs} ms)."
-                logAgentForChat(requestChatId, "⏳ Smart Scheduler: $note Przechodzę do kolejnego skonfigurowanego modelu.")
-                lastErr = IllegalStateException(note)
-                continue
-            }
-            var modelCallStartedAt = 0L
-            try {
-                modelCallStartedAt = System.currentTimeMillis()
-                val res = client.chat(cfg, systemPrompt, userText, mime, b64, requestScope)
-                // A successful provider response may already be billable. Local telemetry or
-                // persistence failures must not be treated as provider failures or trigger fallback.
-                runCatching {
-                    pl.aimasterpro.app.core.ModelHealthTracker.record(this, cfg, true, "", System.currentTimeMillis() - modelCallStartedAt)
-                }.onFailure { error ->
-                    runCatching { logAgentForChat(requestChatId, "[HEALTH RECORD WARNING] ${error.message ?: error.javaClass.simpleName}") }
+                val gate = pl.aimasterpro.app.core.ProviderQuotaScheduler.acquire(quotaKey, isVerifiedFreeConfig(cfg))
+                val lease = gate.lease
+                if (lease == null) {
+                    if (gate.reason == "INTERRUPTED" || Thread.currentThread().isInterrupted) {
+                        throw ProviderException(null, "Przerwano oczekiwanie na dostępność modelu.", category = "CANCELLED")
+                    }
+                    // Scheduler contention/cooldown is local coordination, not provider health evidence.
+                    val note = "${cfg.name}/${cfg.model}: model chwilowo zajęty lub w cooldown (${gate.reason ?: "LIMIT"}, ${gate.waitMs} ms)."
+                    logAgentForChat(requestChatId, "⏳ Smart Scheduler: $note Przechodzę do kolejnego skonfigurowanego modelu.")
+                    lastErr = IllegalStateException(note)
+                    continue
                 }
-                runCatching { pl.aimasterpro.app.core.ProviderQuotaScheduler.markSuccess(quotaKey) }
-                runCatching { pl.aimasterpro.app.core.ProviderCooldownStore.markSuccess(this, cfg) }
-                runCatching {
-                    TokenTracker.recordUsage(this, cfg.id, systemPrompt + "\n" + userText, res.text, "OK", "Aktywny / Działa")
-                }.onFailure { error ->
-                    runCatching { logAgentForChat(requestChatId, "[LOCAL USAGE WARNING] Nie zapisano lokalnej historii wywołania: ${error.message ?: error.javaClass.simpleName}") }
-                }
-                runCatching {
-                    pl.aimasterpro.app.core.ApiTokenTracker.recordQuery(
-                        this, cfg.id, cfg.model, requestAgentId, requestTaskId,
-                        res.usage.inputTokens, res.usage.outputTokens, res.usage.reasoningTokens,
-                        res.usage.cachedTokens, res.usage.status, cfg.baseUrl, effectiveBudgetReservationId
-                    )
-                }.onFailure { error ->
-                    runCatching { logAgentForChat(requestChatId, "[USAGE_RECORD_FAILED] Odpowiedź API mogła zostać rozliczona, ale zapis tokenów nie powiódł się: ${error.message ?: error.javaClass.simpleName}") }
-                }
-                if (Thread.currentThread().isInterrupted) {
-                    throw ProviderException(null, "Odpowiedź odebrano po anulowaniu; wykorzystanie API zostało rozliczone.", category = "CANCELLED")
-                }
-                if (cfg.id != config.id) {
+                var modelCallStartedAt = 0L
+                try {
+                    modelCallStartedAt = System.currentTimeMillis()
+                    val res = client.chat(cfg, systemPrompt, userText, mime, b64, requestScope)
+                    // A successful provider response may already be billable. Local telemetry or
+                    // persistence failures must not be treated as provider failures or trigger fallback.
                     runCatching {
-                        logAgentForChat(requestChatId, "🧭 Smart Routing: wybrano profil ${cfg.name} (${cfg.model}) zamiast pierwotnego ${config.name} na podstawie dostępności i historii kondycji.")
+                        pl.aimasterpro.app.core.ModelHealthTracker.record(this, cfg, true, "", System.currentTimeMillis() - modelCallStartedAt)
+                    }.onFailure { error ->
+                        runCatching { logAgentForChat(requestChatId, "[HEALTH RECORD WARNING] ${error.message ?: error.javaClass.simpleName}") }
+                    }
+                    runCatching { pl.aimasterpro.app.core.ProviderQuotaScheduler.markSuccess(quotaKey) }
+                    runCatching { pl.aimasterpro.app.core.ProviderCooldownStore.markSuccess(this, cfg) }
+                    runCatching {
+                        TokenTracker.recordUsage(this, cfg.id, systemPrompt + "\n" + userText, res.text, "OK", "Aktywny / Działa")
+                    }.onFailure { error ->
+                        runCatching { logAgentForChat(requestChatId, "[LOCAL USAGE WARNING] Nie zapisano lokalnej historii wywołania: ${error.message ?: error.javaClass.simpleName}") }
                     }
                     runCatching {
-                        logAgentDialogueForChat(requestChatId, "SYSTEM", "MASTER", "Routing wybrał profil ${cfg.name} na podstawie dostępności, limitów i lokalnej historii kondycji modeli.", "SMART_ROUTING")
+                        pl.aimasterpro.app.core.ApiTokenTracker.recordQuery(
+                            this, cfg.id, cfg.model, requestAgentId, requestTaskId,
+                            res.usage.inputTokens, res.usage.outputTokens, res.usage.reasoningTokens,
+                            res.usage.cachedTokens, res.usage.status, cfg.baseUrl, effectiveBudgetReservationId
+                        )
+                    }.onFailure { error ->
+                        runCatching { logAgentForChat(requestChatId, "[USAGE_RECORD_FAILED] Odpowiedź API mogła zostać rozliczona, ale zapis tokenów nie powiódł się: ${error.message ?: error.javaClass.simpleName}") }
                     }
-                    runCatching {
-                        runOnUiThread {
-                            status.text = "🔄 Failover: Przełączono na ${cfg.name}"
-                            status.setTextColor(cyan)
+                    if (Thread.currentThread().isInterrupted) {
+                        throw ProviderException(null, "Odpowiedź odebrano po anulowaniu; wykorzystanie API zostało rozliczone.", category = "CANCELLED")
+                    }
+                    if (cfg.id != config.id) {
+                        runCatching {
+                            logAgentForChat(requestChatId, "🧭 Smart Routing: wybrano profil ${cfg.name} (${cfg.model}) zamiast pierwotnego ${config.name} na podstawie dostępności i historii kondycji.")
+                        }
+                        runCatching {
+                            logAgentDialogueForChat(requestChatId, "SYSTEM", "MASTER", "Routing wybrał profil ${cfg.name} na podstawie dostępności, limitów i lokalnej historii kondycji modeli.", "SMART_ROUTING")
+                        }
+                        runCatching {
+                            runOnUiThread {
+                                status.text = "🔄 Failover: Przełączono na ${cfg.name}"
+                                status.setTextColor(cyan)
+                            }
                         }
                     }
-                }
-                return res.copy(providerId = cfg.id, model = cfg.model)
-            } catch (t: Throwable) {
-                if ((t as? ProviderException)?.category == "CANCELLED" || Thread.currentThread().isInterrupted) throw t
-                lastErr = t
-                runCatching {
-                    pl.aimasterpro.app.core.ModelHealthTracker.record(
-                        this, cfg, false, if ((t as? ProviderException)?.httpCode == 429) "HTTP_429" else (t as? ProviderException)?.category ?: "UNKNOWN",
-                        if (modelCallStartedAt > 0L) System.currentTimeMillis() - modelCallStartedAt else 0L
-                    )
-                }.onFailure { error ->
-                    runCatching { logAgentForChat(requestChatId, "[HEALTH RECORD WARNING] Nie udało się zapisać błędu providera: ${error.message ?: error.javaClass.simpleName}") }
-                }
-                if ((t as? ProviderException)?.httpCode == 429) {
-                    val processCooldown = pl.aimasterpro.app.core.ProviderQuotaScheduler.markRateLimited(quotaKey)
-                    val persistedCooldown = runCatching { pl.aimasterpro.app.core.ProviderCooldownStore.markRateLimited(this, cfg) }.getOrDefault(0L)
-                    val cooldown = maxOf(processCooldown, persistedCooldown)
-                    logAgentForChat(requestChatId, "⏸️ Smart Scheduler: ${cfg.name}/${cfg.model} otrzymał HTTP 429. Wstrzymuję ten model na ${cooldown / 1000}s; blokada przetrwa restart aplikacji.")
-                }
-                val msg = (t.message.orEmpty() + " " + (t as? ProviderException)?.responseBody.orEmpty()).lowercase()
-                val httpCode = (t as? ProviderException)?.httpCode
-                val isAuthOrClientError = httpCode != null && httpCode in 400..499 && httpCode != 429
-                val isTokenOrRateLimit = httpCode == 429 || msg.contains("429") || msg.contains("quota") || msg.contains("limit") || msg.contains("token") || msg.contains("exhausted") || msg.contains("overloaded") || msg.contains("rate")
+                    return res.copy(providerId = cfg.id, model = cfg.model)
+                } catch (t: Throwable) {
+                    if ((t as? ProviderException)?.category == "CANCELLED" || Thread.currentThread().isInterrupted) throw t
+                    lastErr = t
+                    runCatching {
+                        pl.aimasterpro.app.core.ModelHealthTracker.record(
+                            this, cfg, false, if ((t as? ProviderException)?.httpCode == 429) "HTTP_429" else (t as? ProviderException)?.category ?: "UNKNOWN",
+                            if (modelCallStartedAt > 0L) System.currentTimeMillis() - modelCallStartedAt else 0L
+                        )
+                    }.onFailure { error ->
+                        runCatching { logAgentForChat(requestChatId, "[HEALTH RECORD WARNING] Nie udało się zapisać błędu providera: ${error.message ?: error.javaClass.simpleName}") }
+                    }
+                    if ((t as? ProviderException)?.httpCode == 429) {
+                        val processCooldown = pl.aimasterpro.app.core.ProviderQuotaScheduler.markRateLimited(quotaKey)
+                        val persistedCooldown = runCatching { pl.aimasterpro.app.core.ProviderCooldownStore.markRateLimited(this, cfg) }.getOrDefault(0L)
+                        val cooldown = maxOf(processCooldown, persistedCooldown)
+                        logAgentForChat(requestChatId, "⏸️ Smart Scheduler: ${cfg.name}/${cfg.model} otrzymał HTTP 429. Wstrzymuję ten model na ${cooldown / 1000}s; blokada przetrwa restart aplikacji.")
+                    }
+                    val msg = (t.message.orEmpty() + " " + (t as? ProviderException)?.responseBody.orEmpty()).lowercase()
+                    val httpCode = (t as? ProviderException)?.httpCode
+                    val isAuthOrClientError = httpCode != null && httpCode in 400..499 && httpCode != 429
+                    val isTokenOrRateLimit = httpCode == 429 || msg.contains("429") || msg.contains("quota") || msg.contains("limit") || msg.contains("token") || msg.contains("exhausted") || msg.contains("overloaded") || msg.contains("rate")
 
-                if (isAuthOrClientError) {
-                    logAgentForChat(requestChatId, "❌ Błąd autoryzacji/konfiguracji dla ${cfg.name} (HTTP $httpCode): ${t.message}. Nie wykonuję failoveru dla błędu klienta.")
-                    logAgentDialogueForChat(requestChatId, cfg.name, "SYSTEM", "Błąd klucza/konfiguracji (HTTP $httpCode): ${t.message}. Sprawdź ten profil; nie zmieniam dostawcy automatycznie.", "CONFIG_ERROR")
-                    throw t
-                } else if (cfg != ordered.last()) {
-                    if (isTokenOrRateLimit) {
-                        TokenTracker.recordUsage(this, cfg.id, systemPrompt + "\n" + userText, "", "RATE_LIMITED_429", "Limit wyczerpany • 429 / Quota")
-                        logAgentForChat(requestChatId, "⚠️ ${cfg.name}: limit/quota (HTTP ${httpCode ?: "brak"}). Sprawdzam wyłącznie potwierdzony darmowy profil zapasowy.")
-                        logAgentDialogueForChat(requestChatId, cfg.name, "SYSTEM", "Limit lub awaria dostawcy: ${t.message}. Następny jest wyłącznie zweryfikowany darmowy model.", "TOKEN_LIMIT_FALLBACK")
+                    if (isAuthOrClientError) {
+                        logAgentForChat(requestChatId, "❌ Błąd autoryzacji/konfiguracji dla ${cfg.name} (HTTP $httpCode): ${t.message}. Nie wykonuję failoveru dla błędu klienta.")
+                        logAgentDialogueForChat(requestChatId, cfg.name, "SYSTEM", "Błąd klucza/konfiguracji (HTTP $httpCode): ${t.message}. Sprawdź ten profil; nie zmieniam dostawcy automatycznie.", "CONFIG_ERROR")
+                        throw t
+                    } else if (cfg != ordered.last()) {
+                        if (isTokenOrRateLimit) {
+                            TokenTracker.recordUsage(this, cfg.id, systemPrompt + "\n" + userText, "", "RATE_LIMITED_429", "Limit wyczerpany • 429 / Quota")
+                            logAgentForChat(requestChatId, "⚠️ ${cfg.name}: limit/quota (HTTP ${httpCode ?: "brak"}). Sprawdzam wyłącznie potwierdzony darmowy profil zapasowy.")
+                            logAgentDialogueForChat(requestChatId, cfg.name, "SYSTEM", "Limit lub awaria dostawcy: ${t.message}. Następny jest wyłącznie zweryfikowany darmowy model.", "TOKEN_LIMIT_FALLBACK")
+                        } else {
+                            TokenTracker.recordUsage(this, cfg.id, systemPrompt + "\n" + userText, "", "ERROR", t.message ?: "Błąd")
+                            logAgentForChat(requestChatId, "⚠️ ${cfg.name}: błąd dostawcy/sieci. Próbuję zweryfikowanego darmowego profilu zapasowego.")
+                        }
+                        continue
                     } else {
-                        TokenTracker.recordUsage(this, cfg.id, systemPrompt + "\n" + userText, "", "ERROR", t.message ?: "Błąd")
-                        logAgentForChat(requestChatId, "⚠️ ${cfg.name}: błąd dostawcy/sieci. Próbuję zweryfikowanego darmowego profilu zapasowego.")
+                        if (isTokenOrRateLimit) {
+                            TokenTracker.recordUsage(this, cfg.id, systemPrompt + "\n" + userText, "", "RATE_LIMITED_429", "Limit wyczerpany • 429 / Quota")
+                            logAgentForChat(requestChatId, "⛔ ${cfg.name}: limit/quota wyczerpany i brak kolejnego zweryfikowanego darmowego modelu. Nie używam płatnego fallbacku.")
+                        } else {
+                            TokenTracker.recordUsage(this, cfg.id, systemPrompt + "\n" + userText, "", "ERROR", t.message ?: "Błąd")
+                        }
+                        throw t
                     }
-                    continue
-                } else {
-                    if (isTokenOrRateLimit) {
-                        TokenTracker.recordUsage(this, cfg.id, systemPrompt + "\n" + userText, "", "RATE_LIMITED_429", "Limit wyczerpany • 429 / Quota")
-                        logAgentForChat(requestChatId, "⛔ ${cfg.name}: limit/quota wyczerpany i brak kolejnego zweryfikowanego darmowego modelu. Nie używam płatnego fallbacku.")
-                    } else {
-                        TokenTracker.recordUsage(this, cfg.id, systemPrompt + "\n" + userText, "", "ERROR", t.message ?: "Błąd")
-                    }
-                    throw t
+                } finally {
+                    lease.close()
                 }
-            } finally {
-                lease.close()
-            }
             }
             throw lastErr ?: IllegalStateException("Wszystkie skonfigurowane modele wyczerpały limity tokenów lub zawiodły.")
         } finally {
