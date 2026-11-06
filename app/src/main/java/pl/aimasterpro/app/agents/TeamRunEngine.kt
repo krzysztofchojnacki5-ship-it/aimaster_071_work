@@ -214,7 +214,7 @@ class TeamRunEngine(
                                     }
                                     onLog("MASTER", agent.name, requestTrace, "REQUEST")
                                     val chatRes = client.chat(prov, system, user, attachmentMime, attachmentBase64, taskScope)
-                                    pl.aimasterpro.app.core.ProviderQuotaScheduler.markSuccess(quotaKey)
+                                    runCatching { pl.aimasterpro.app.core.ProviderQuotaScheduler.markSuccess(quotaKey) }
                                     runCatching { onProviderSuccess(prov) }
                                     // Local persistence/telemetry callbacks must never turn a successful,
                                     // potentially billable provider response into a provider failure or
@@ -249,10 +249,10 @@ class TeamRunEngine(
                                             Input tokens: ${if (chatRes.usage.status == "REAL") chatRes.usage.inputTokens else "BRAK DANYCH"}
                                             Output tokens: ${if (chatRes.usage.status == "REAL") chatRes.usage.outputTokens else "BRAK DANYCH"}
                                         """.trimIndent()
-                                        onLog(agent.name, "MASTER", completeLog, "COMPLETE")
+                                        runCatching { onLog(agent.name, "MASTER", completeLog, "COMPLETE") }
 
                                         if (prov.id != agentProvider.id) {
-                                            onLog("SYSTEM", agent.name, "Agent użył profilu ${prov.name}/${prov.model} zamiast przypisanego ${agentProvider.name}/${agentProvider.model} (routing kondycji lub fallback).", "FAILOVER")
+                                            runCatching { onLog("SYSTEM", agent.name, "Agent użył profilu ${prov.name}/${prov.model} zamiast przypisanego ${agentProvider.name}/${agentProvider.model} (routing kondycji lub fallback).", "FAILOVER") }
                                         }
                                     }
                                 } catch (t: Throwable) {
@@ -263,7 +263,8 @@ class TeamRunEngine(
                                         break@providerLoop
                                     }
                                     val categoryForHealth = if ((t as? ProviderException)?.httpCode == 429) "HTTP_429" else (t as? ProviderException)?.category ?: "UNKNOWN"
-                                    onProviderHealth(prov, false, categoryForHealth, if (callStartedAt > 0L) System.currentTimeMillis() - callStartedAt else 0L)
+                                    runCatching { onProviderHealth(prov, false, categoryForHealth, if (callStartedAt > 0L) System.currentTimeMillis() - callStartedAt else 0L) }
+                                        .onFailure { error -> runCatching { onLog("SYSTEM", agent.name, "[HEALTH RECORD WARNING] ${error.message ?: error.javaClass.simpleName}", "BOOKKEEPING_WARNING") } }
                                     lastException = t
                                     val httpCode = (t as? ProviderException)?.httpCode
                                     val category = (t as? ProviderException)?.category ?: "UNKNOWN"
