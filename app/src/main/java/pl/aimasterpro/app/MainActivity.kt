@@ -4003,9 +4003,8 @@ class MainActivity : Activity() {
                                     task.id, task.agentId, state, detail, System.currentTimeMillis(), providerId, model, attempts
                                 )
                             )
-                        
                             if (!saved) android.util.Log.e("AIMasterRecovery", "Nie udało się trwale zapisać checkpointu zadania.")
-},
+                        },
                         requestScope = client.beginRequestScope()
                     )
                 }
