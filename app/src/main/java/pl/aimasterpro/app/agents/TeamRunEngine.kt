@@ -256,7 +256,7 @@ class TeamRunEngine(
                                         }
                                     }
                                 } catch (t: Throwable) {
-                                    if (t is InterruptedException || Thread.currentThread().isInterrupted) {
+                                    if (t is InterruptedException || (t as? ProviderException)?.category == "CANCELLED" || Thread.currentThread().isInterrupted) {
                                         Thread.currentThread().interrupt()
                                         lastException = t
                                         onLog("SYSTEM", agent.name, "[CANCELLED] Przerwano zadanie; nie uruchamiam fallbacku, aby nie wysłać kolejnego płatnego żądania.", "CANCELLED")
