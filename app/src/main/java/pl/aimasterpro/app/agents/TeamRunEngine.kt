@@ -347,7 +347,22 @@ class TeamRunEngine(
                     } catch (t: Throwable) {
                         val err = "${t.javaClass.simpleName}: ${t.message ?: "Nieznany błąd"}"
                         onLog(agent.name, "MASTER", err, "ERROR")
-                        runCatching { onTaskState(task, if (t is InterruptedException || (t as? ProviderException)?.category == "CANCELLED" || Thread.currentThread().isInterrupted) "CANCELLED" else "FAILED", err, actualProviderId, actualModel, attemptCount) }
+                        // Checkpoints are durable recovery metadata, not a second error log.
+                        // Do not persist arbitrary exception messages that may contain server data.
+                        val checkpointError = (t as? ProviderException)?.let { providerError ->
+                            "ProviderException: ${providerError.category ?: "UNKNOWN"}" +
+                                (providerError.httpCode?.let { " (HTTP $it)" } ?: "")
+                        } ?: t.javaClass.simpleName
+                        runCatching {
+                            onTaskState(
+                                task,
+                                if (t is InterruptedException || (t as? ProviderException)?.category == "CANCELLED" || Thread.currentThread().isInterrupted) "CANCELLED" else "FAILED",
+                                checkpointError,
+                                actualProviderId,
+                                actualModel,
+                                attemptCount
+                            )
+                        }
                         TeamTaskResult(task.id, task.agentId, TeamTaskResult.Status.FAILED, err, System.currentTimeMillis() - taskStartedAt, attemptCount, actualProviderId, actualModel, task.reviewOfAgentId)
                     }
                 })
