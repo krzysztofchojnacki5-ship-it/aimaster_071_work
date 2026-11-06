@@ -684,3 +684,15 @@ Testy dodane w `ApiTokenTrackerTest`:
 - `globalSynthesisCostReserveAloneCannotExceedMonthlyLimit`.
 
 Testy i kompilacja nadal **NOT RUN**. Kosztowa rezerwa jest etapowa: przed właściwą syntezą końcową wykonywany jest osobny plan tej konkretnej operacji, który ponownie sprawdza bieżący limit i rezerwuje jej rzeczywisty szacunek. Rezerwa etapowa nie jest przedstawiana jako rzeczywisty koszt providera.
+
+
+### Aktualny stan po uzupełnieniu rezerwy kosztowej
+
+- `ApiTokenTrackerTest.kt`: 26 testów.
+- `TeamRunEngineNetworkTest.kt`: 8 testów.
+- `ProviderClientNetworkTest.kt`: 14 testów.
+- Łącznie w tych trzech plikach: 48 testów; wszystkie **NOT RUN**.
+- Główna ścieżka zespołu tworzy rezerwę syntezy również przy pełnym wykorzystaniu cache.
+- Końcowa synteza wykonuje własny, świeży `planBatch()`; jeżeli w czasie wcześniejszych etapów limit ulegnie zmianie, synteza zostanie bezpiecznie zablokowana zamiast przekroczyć limit.
+- Nie ma potwierdzenia kompilacji ani działania runtime; zmiany wymagają pełnej weryfikacji Gradle/JUnit przed wydaniem.
+
