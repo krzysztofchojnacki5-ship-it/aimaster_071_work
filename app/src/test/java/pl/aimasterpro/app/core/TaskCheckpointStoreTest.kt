@@ -69,6 +69,24 @@ class TaskCheckpointStoreTest {
         assertEquals("INTERRUPTED", TaskCheckpointStore.latest(context).single().status)
     }
 
+    @Test fun resultPersistencePendingTaskIsRecoveredWithoutRebilling() {
+        assertTrue(TaskCheckpointStore.record(context, TaskCheckpointStore.Event(
+            taskId = "task-result-pending", agentId = "RESEARCHER", status = "RESULT_PERSIST_PENDING",
+            detail = "report cache write failed", timestamp = 100L, providerId = "openai",
+            model = "gpt-4o-mini", attempts = 1, processId = "previous-process",
+            estimatedInputTokens = 200L, estimatedOutputTokens = 500L,
+            idempotencyKey = "team:task-result-pending:openai"
+        )))
+        var usageRecoveryCalled = false
+        assertEquals(1, TaskCheckpointStore.recoverStaleRunning(context, 200L) {
+            usageRecoveryCalled = true
+            false
+        })
+        assertFalse(usageRecoveryCalled)
+        assertEquals("INTERRUPTED", TaskCheckpointStore.latest(context).single().status)
+        assertTrue(TaskCheckpointStore.latest(context).single().detail.contains("trwały zapis wyniku"))
+    }
+
     @Test fun usageRecordedTaskIsMarkedInterruptedWithoutDuplicateRecoveryCallback() {
         assertTrue(TaskCheckpointStore.record(context, TaskCheckpointStore.Event(
             taskId = "task-usage-done", agentId = "RESEARCHER", status = "USAGE_RECORDED",
