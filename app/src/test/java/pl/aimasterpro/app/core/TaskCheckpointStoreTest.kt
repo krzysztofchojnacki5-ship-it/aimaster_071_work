@@ -126,6 +126,12 @@ class TaskCheckpointStoreTest {
         assertEquals("RUNNING", TaskCheckpointStore.latest(context).single().status)
     }
 
+    @Test fun latestUsesJournalOrderWhenWallClockMovesBackwards() {
+        TaskCheckpointStore.record(context, TaskCheckpointStore.Event("task-clock", "tester", "QUEUED", "", 900L, "", "", 0))
+        TaskCheckpointStore.record(context, TaskCheckpointStore.Event("task-clock", "tester", "RUNNING", "", 100L, "", "", 0))
+        assertEquals("RUNNING", TaskCheckpointStore.latest(context).single().status)
+    }
+
     @Test fun recordReportsSuccessfulDurableWrite() {
         val saved = TaskCheckpointStore.record(
             context,
