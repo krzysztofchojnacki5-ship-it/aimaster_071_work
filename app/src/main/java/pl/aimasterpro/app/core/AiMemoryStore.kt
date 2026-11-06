@@ -30,28 +30,41 @@ object AiMemoryStore {
         }.getOrDefault(defaultMemories())
     }
 
+    /**
+     * A missing preference is a valid first-run state. Corrupt JSON is not an empty memory
+     * library: mutation callers must stop rather than replace the unreadable source.
+     */
+    private fun readStoredMemories(context: Context): List<String>? {
+        val raw = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).getString("memories", null)
+            ?: return defaultMemories()
+        return runCatching {
+            val arr = JSONArray(raw)
+            (0 until arr.length()).map { index ->
+                val value = arr.get(index)
+                require(value is String) { "Memory entry must be a string." }
+                value
+            }
+        }.getOrNull()
+    }
+
     fun addMemory(context: Context, memory: String) {
         if (memory.isBlank()) return
         val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-        val list = getMemories(context).toMutableList()
+        val list = readStoredMemories(context)?.toMutableList() ?: return
         if (!list.contains(memory)) {
             list.add(0, memory)
             val arr = JSONArray()
             list.take(100).forEach { arr.put(it) }
-            prefs.edit().putString("memories", arr.toString()).apply()
+            prefs.edit().putString("memories", arr.toString()).commit()
         }
     }
 
     fun removeMemory(context: Context, exactMemory: String) {
         val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-        val raw = prefs.getString("memories", null) ?: return
-        val remaining = runCatching {
-            val arr = JSONArray(raw)
-            (0 until arr.length()).mapNotNull { arr.optString(it).takeIf { value -> value != exactMemory } }
-        }.getOrDefault(emptyList())
+        val remaining = readStoredMemories(context)?.filterNot { it == exactMemory } ?: return
         val arr = JSONArray()
         remaining.forEach { arr.put(it) }
-        prefs.edit().putString("memories", arr.toString()).apply()
+        prefs.edit().putString("memories", arr.toString()).commit()
     }
 
     /**
