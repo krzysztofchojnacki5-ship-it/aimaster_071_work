@@ -78,6 +78,80 @@ class ApiTokenTrackerTest {
         assertEquals(0L, ApiTokenTracker.activeReservationStats().tokens)
     }
 
+    @Test fun reservationIsConsumedOnlyByTheProviderThatWasBudgeted() {
+        val plan = ApiTokenTracker.planBatch(
+            context,
+            listOf(BudgetRequest("fallback-task", "RESEARCHER", "provider-a", "https://a.invalid/v1", "gpt-4o-mini", 100, 100))
+        )
+        assertTrue(plan.allowedTaskIds.contains("fallback-task"))
+
+        ApiTokenTracker.recordQuery(
+            context, "provider-b", "gpt-4o-mini", "RESEARCHER", "fallback-task",
+            inputTokens = 40, outputTokens = 20, status = "REAL",
+            baseUrl = "https://b.invalid/v1", reservationId = plan.reservationId
+        )
+        assertEquals("A fallback must not consume another provider's reservation", 200L, ApiTokenTracker.activeReservationStats().tokens)
+
+        ApiTokenTracker.recordQuery(
+            context, "provider-a", "gpt-4o-mini", "RESEARCHER", "fallback-task",
+            inputTokens = 30, outputTokens = 20, status = "REAL",
+            baseUrl = "https://a.invalid/v1", reservationId = plan.reservationId
+        )
+        assertEquals(150L, ApiTokenTracker.activeReservationStats().tokens)
+        ApiTokenTracker.releaseBatchReservation(plan.reservationId)
+    }
+
+    @Test fun actualUsageAboveEstimateIsStillCountedAgainstTheNextBatch() {
+        ApiTokenTracker.setLimits(context, daily = 30L, monthly = 0.0, perAgent = 30L)
+        val plan = ApiTokenTracker.planBatch(
+            context,
+            listOf(BudgetRequest("underestimated", "RESEARCHER", "ollama", "http://127.0.0.1:11434/v1", "llama3", 5, 5))
+        )
+        assertTrue(plan.allowedTaskIds.contains("underestimated"))
+        ApiTokenTracker.recordQuery(
+            context, "ollama", "llama3", "RESEARCHER", "underestimated",
+            inputTokens = 15, outputTokens = 10, status = "REAL",
+            baseUrl = "http://127.0.0.1:11434/v1", reservationId = plan.reservationId
+        )
+        ApiTokenTracker.releaseBatchReservation(plan.reservationId)
+
+        val next = ApiTokenTracker.planBatch(
+            context,
+            listOf(BudgetRequest("next-task", "RESEARCHER", "ollama", "http://127.0.0.1:11434/v1", "llama3", 4, 2))
+        )
+        assertFalse("Actual overage must reduce the next available budget", next.allowedTaskIds.contains("next-task"))
+    }
+
+    @Test fun negativeUsageAndTokenOverflowAreRejected() {
+        val negative = runCatching {
+            ApiTokenTracker.recordQuery(context, "provider", "gpt-4o-mini", "MASTER", "negative", -1, 2)
+        }
+        assertTrue(negative.isFailure)
+
+        val overflow = runCatching {
+            ApiTokenTracker.recordQuery(context, "provider", "gpt-4o-mini", "MASTER", "overflow", Long.MAX_VALUE, 1)
+        }
+        assertTrue(overflow.isFailure)
+    }
+
+    @Test fun invalidExchangeRatesAreRejected() {
+        assertTrue(runCatching { ApiTokenTracker.setExchangeRate(context, Double.NaN) }.isFailure)
+        assertTrue(runCatching { ApiTokenTracker.setExchangeRate(context, 0.0) }.isFailure)
+        assertTrue(runCatching { ApiTokenTracker.setExchangeRate(context, Double.POSITIVE_INFINITY) }.isFailure)
+    }
+
+    @Test fun negativePersistedCostMakesUsageLedgerUnhealthy() {
+        val prefs = context.getSharedPreferences("api_token_tracker_records_v1", Context.MODE_PRIVATE)
+        val corrupt = """[{"qId":"bad-cost","ts":1,"prov":"p","model":"m","agent":"MASTER","task":"x","in":1,"out":1,"tot":2,"reas":0,"cache":0,"status":"REAL","usd":-1.0,"pln":-4.0}]"""
+        assertTrue(prefs.edit().putString("records", corrupt).commit())
+        val plan = ApiTokenTracker.planBatch(
+            context,
+            listOf(BudgetRequest("must-block", "MASTER", "provider", "https://p.invalid/v1", "gpt-4o-mini", 1, 1))
+        )
+        assertTrue(plan.allowedTaskIds.isEmpty())
+        assertTrue(plan.blockedReasons.getValue("must-block").contains("rejestr użycia API"))
+    }
+
     @Test fun clearRecordsRemovesPersistedUsageOnlyAfterDurableCommit() {
         ApiTokenTracker.recordQuery(context, "ollama", "llama3", "MASTER", "chat-1", 10, 5, status = "REAL", baseUrl = "http://127.0.0.1:11434/v1")
         assertTrue(ApiTokenTracker.clearRecords(context))
