@@ -300,6 +300,37 @@ class ApiTokenTrackerTest {
         assertEquals("Both serialized writes must remain in the durable ledger", 2, parallelRecords.size)
     }
 
+    @Test fun monthlyCostBudgetIncludesActiveReservationsAndRecordedUsage() {
+        ApiTokenTracker.setLimits(context, daily = 100_000L, monthly = 0.0005, perAgent = 50_000L)
+        val request = BudgetRequest(
+            "paid-monthly-task", "MASTER", "openai", "https://api.openai.com/v1",
+            "gpt-4o-mini", 100L, 100L
+        )
+        val first = ApiTokenTracker.planBatch(context, listOf(request))
+        assertTrue(first.allowedTaskIds.contains(request.taskId))
+
+        val whileReserved = ApiTokenTracker.planBatch(
+            context, listOf(request.copy(taskId = "second-paid-task"))
+        )
+        assertFalse("An active reservation must count against the monthly cost limit",
+            whileReserved.allowedTaskIds.contains("second-paid-task"))
+        assertTrue(whileReserved.blockedReasons.getValue("second-paid-task").contains("miesięczny budżet"))
+
+        ApiTokenTracker.recordQuery(
+            context, "openai", "gpt-4o-mini", "MASTER", request.taskId,
+            inputTokens = 100L, outputTokens = 100L, status = "REAL",
+            baseUrl = "https://api.openai.com/v1", reservationId = first.reservationId
+        )
+        ApiTokenTracker.releaseBatchReservation(first.reservationId)
+
+        val afterRecordedUsage = ApiTokenTracker.planBatch(
+            context, listOf(request.copy(taskId = "third-paid-task"))
+        )
+        assertFalse("Persisted real usage must continue to count after reservation release",
+            afterRecordedUsage.allowedTaskIds.contains("third-paid-task"))
+        assertTrue(afterRecordedUsage.blockedReasons.getValue("third-paid-task").contains("miesięczny budżet"))
+    }
+
     @Test fun monthlyLimitThatOverflowsFloatStorageIsRejected() {
         assertTrue(runCatching {
             ApiTokenTracker.setLimits(context, daily = 1_000L, monthly = Double.MAX_VALUE, perAgent = 1_000L)
