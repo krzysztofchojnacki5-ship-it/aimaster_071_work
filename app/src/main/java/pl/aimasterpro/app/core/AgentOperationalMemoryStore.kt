@@ -59,16 +59,16 @@ object AgentOperationalMemoryStore {
         return write(context, remaining)
     }
 
-    @Synchronized fun removeBySource(context: Context, sourceTaskId: String) {
-        if (sourceTaskId.isBlank()) return
-        val entries = read(context) ?: return
+    @Synchronized fun removeBySource(context: Context, sourceTaskId: String): Boolean {
+        if (sourceTaskId.isBlank()) return false
+        val entries = read(context) ?: return false
         val updated = entries.mapNotNull { entry ->
             if (sourceTaskId !in entry.sourceTaskIds) return@mapNotNull entry
             val remainingSources = entry.sourceTaskIds.filterNot { it == sourceTaskId }
             if (remainingSources.isEmpty()) null
             else entry.copy(sourceTaskIds = remainingSources)
         }
-        write(context, updated)
+        return if (updated == entries) true else write(context, updated)
     }
 
     /** Bounded relevance retrieval for one agent; never mixes another agent's private lessons. */
