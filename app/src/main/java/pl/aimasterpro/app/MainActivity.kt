@@ -1603,10 +1603,11 @@ class MainActivity : Activity() {
                                         System.currentTimeMillis(), providerId, model, attempts))
                                 if (!saved) android.util.Log.e("AIMasterRecovery", "Nie udało się trwale zapisać checkpointu zadania.")
                             },
-                            requestScope = requestScope
+                            requestScope = requestScope,
+                            onTaskFinished = { taskId -> pl.aimasterpro.app.core.ApiTokenTracker.completeReservationTask(budgetPlan.reservationId, taskId) }
                         )
                     } finally {
-                        if (budgetPlan.reservationId.isNotBlank()) pl.aimasterpro.app.core.ApiTokenTracker.releaseBatchReservation(budgetPlan.reservationId)
+                        if (budgetPlan.reservationId.isNotBlank()) pl.aimasterpro.app.core.ApiTokenTracker.requestBatchReservationRelease(budgetPlan.reservationId)
                     }
                     freshResults.filter { it.status == pl.aimasterpro.app.agents.TeamTaskResult.Status.COMPLETED }.forEach { fresh ->
                         val fingerprint = cacheFingerprints[fresh.taskId] ?: return@forEach
@@ -1734,13 +1735,14 @@ class MainActivity : Activity() {
                                                 System.currentTimeMillis(), providerId, model, attempts))
                                         if (!saved) android.util.Log.e("AIMasterRecovery", "Nie udało się trwale zapisać checkpointu zadania.")
                                     },
-                                    requestScope = requestScope
+                                    requestScope = requestScope,
+                                    onTaskFinished = { taskId -> pl.aimasterpro.app.core.ApiTokenTracker.completeReservationTask(reviewBudget.reservationId, taskId) }
                                 )
                             } catch (reviewError: Throwable) {
                                 logAgentForChat(chatId, "⚠️ Peer Review nie powiódł się; zachowuję raporty pierwszego etapu. ${reviewError.message ?: reviewError.javaClass.simpleName}")
                                 emptyList<pl.aimasterpro.app.agents.TeamTaskResult>()
                             } finally {
-                                if (reviewBudget.reservationId.isNotBlank()) pl.aimasterpro.app.core.ApiTokenTracker.releaseBatchReservation(reviewBudget.reservationId)
+                                if (reviewBudget.reservationId.isNotBlank()) pl.aimasterpro.app.core.ApiTokenTracker.requestBatchReservationRelease(reviewBudget.reservationId)
                             }
                         }
                     }
@@ -4007,7 +4009,8 @@ class MainActivity : Activity() {
                             )
                             if (!saved) android.util.Log.e("AIMasterRecovery", "Nie udało się trwale zapisać checkpointu zadania.")
                         },
-                        requestScope = client.beginRequestScope()
+                        requestScope = client.beginRequestScope(),
+                        onTaskFinished = { taskId -> pl.aimasterpro.app.core.ApiTokenTracker.completeReservationTask(reviewBudget.reservationId, taskId) }
                     )
                 }
             } catch (error: Exception) {
@@ -4015,7 +4018,7 @@ class MainActivity : Activity() {
                 emptyList()
             } finally {
                 if (reviewBudget.reservationId.isNotBlank()) {
-                    pl.aimasterpro.app.core.ApiTokenTracker.releaseBatchReservation(reviewBudget.reservationId)
+                    pl.aimasterpro.app.core.ApiTokenTracker.requestBatchReservationRelease(reviewBudget.reservationId)
                 }
             }
             val completed = results.filter { it.status == pl.aimasterpro.app.agents.TeamTaskResult.Status.COMPLETED }
