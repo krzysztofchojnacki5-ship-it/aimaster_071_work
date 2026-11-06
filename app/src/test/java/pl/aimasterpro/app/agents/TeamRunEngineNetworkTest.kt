@@ -7,6 +7,7 @@ import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import pl.aimasterpro.app.core.ProviderConfig
 import pl.aimasterpro.app.core.ProviderKind
+import pl.aimasterpro.app.core.ProviderQuotaScheduler
 import pl.aimasterpro.app.core.WorkMode
 import pl.aimasterpro.app.network.ProviderClient
 import pl.aimasterpro.app.network.TestHttpServer
@@ -105,4 +106,43 @@ class TeamRunEngineNetworkTest {
         } finally { server.stop(0) }
     }
 
+    @Test
+    fun schedulerCooldownDoesNotRecordProviderHealthFailure() {
+        ProviderQuotaScheduler.resetForTests()
+        val server = TestHttpServer { _, _ ->
+            200 to """{"choices":[{"message":{"content":"should-not-be-called"}}]}"""
+        }
+        val client = ProviderClient()
+        try {
+            val config = ProviderConfig(
+                "quota-test", "Quota test", ProviderKind.OPENAI_COMPATIBLE,
+                "http://127.0.0.1:${server.address.port}/v1", "test-model", ""
+            )
+            val quotaKey = ProviderQuotaScheduler.key(config.id, config.baseUrl, config.model)
+            ProviderQuotaScheduler.markRateLimited(quotaKey)
+            val healthEvents = Collections.synchronizedList(mutableListOf<Boolean>())
+            val logs = Collections.synchronizedList(mutableListOf<String>())
+
+            val result = TeamRunEngine(client).runBatch(
+                tasks = listOf(TeamTask("quota-task", "qa-architect", "Scheduler test", "Return a report")),
+                provider = config,
+                agentProvidersMap = mapOf("qa-architect" to config),
+                isFreeProvider = { true },
+                mode = WorkMode.PLANNING,
+                onLog = { _, _, message, status -> logs.add("$status $message") },
+                onProviderHealth = { _, success, _, _ -> healthEvents.add(success) },
+                persistedCooldownMs = { 0L },
+                requestScope = client.beginRequestScope()
+            )
+
+            assertEquals(TeamTaskResult.Status.FAILED, result.single().status)
+            assertTrue("Scheduler should explain why the profile was skipped", logs.any { it.contains("MODEL_THROTTLED") })
+            assertTrue("A scheduler cooldown must not be stored as a provider failure", healthEvents.isEmpty())
+            assertEquals("No API request should be sent while the scheduler is in cooldown", 0, server.requestCount.get())
+        } finally {
+            client.cancelActiveRequests()
+            ProviderQuotaScheduler.resetForTests()
+            server.stop(0)
+        }
+    }
 }
