@@ -1346,7 +1346,9 @@ class MainActivity : Activity() {
                     }
                     return res.copy(providerId = cfg.id, model = cfg.model)
                 } catch (t: Throwable) {
-                    if ((t as? ProviderException)?.category == "CANCELLED" || Thread.currentThread().isInterrupted) throw t
+                    val earlyProviderFailure = t as? ProviderException
+                    if ((earlyProviderFailure?.category == "CANCELLED" || Thread.currentThread().isInterrupted) &&
+                        earlyProviderFailure?.requestMayHaveBeenProcessed != true) throw t
                     lastErr = t
                     runCatching {
                         pl.aimasterpro.app.core.ModelHealthTracker.record(
