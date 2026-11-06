@@ -28,6 +28,37 @@ class ApiTokenTrackerTest {
         ApiTokenTracker.clearRecords(context)
     }
 
+    @Test fun repeatedUsageRecoveryWithSameIdempotencyKeyDoesNotDoubleCount() {
+        val first = ApiTokenTracker.recordQuery(
+            context, "openai", "gpt-4o-mini", "RESEARCHER", "task-recovery-1",
+            300L, 120L, status = "REAL", idempotencyKey = "team:task-recovery-1:openai"
+        )
+        val recovered = ApiTokenTracker.recordQuery(
+            context, "openai", "gpt-4o-mini", "RESEARCHER", "task-recovery-1",
+            300L, 4_096L, status = "UNAVAILABLE",
+            idempotencyKey = "team:task-recovery-1:openai"
+        )
+        val all = ApiTokenTracker.loadAllRecordsFromStorage(context)
+        assertEquals(first.queryId, recovered.queryId)
+        assertEquals("REAL", recovered.status)
+        assertEquals(1, all.count { it.queryId == first.queryId })
+        assertEquals(420L, all.single().totalTokens)
+    }
+
+    @Test fun idempotencyKeyCannotBeReusedForAnotherTaskIdentity() {
+        ApiTokenTracker.recordQuery(
+            context, "openai", "gpt-4o-mini", "RESEARCHER", "task-original",
+            100L, 20L, idempotencyKey = "stable-request-key"
+        )
+        assertTrue(runCatching {
+            ApiTokenTracker.recordQuery(
+                context, "openai", "gpt-4o-mini", "RESEARCHER", "task-different",
+                100L, 20L, idempotencyKey = "stable-request-key"
+            )
+        }.isFailure)
+        assertEquals(1, ApiTokenTracker.loadAllRecordsFromStorage(context).size)
+    }
+
     @Test fun successfulUsageIsPersistedAndVisibleInMonitorPeriods() {
         ApiTokenTracker.recordQuery(context, "ollama", "llama3", "MASTER", "chat-1", 120, 30, status = "REAL", baseUrl = "http://127.0.0.1:11434/v1")
         val all = ApiTokenTracker.loadAllRecordsFromStorage(context)
