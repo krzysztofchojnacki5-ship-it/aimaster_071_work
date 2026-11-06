@@ -256,6 +256,50 @@ class ProviderClientNetworkTest {
     }
 
     @Test
+    fun startingIndependentTopLevelScopesDoesNotCancelEarlierRequest() {
+        val bothEntered = CountDownLatch(2)
+        val server = TestHttpServer { body, _ ->
+            bothEntered.countDown()
+            Thread.sleep(250L)
+            val answer = if (body.contains("first-independent")) "first-ok" else "second-ok"
+            200 to """{"choices":[{"message":{"content":"$answer"}}]}"""
+        }
+        val client = ProviderClient(connectTimeoutMs = 1_000, readTimeoutMs = 3_000)
+        val firstScope = client.beginRequestScope()
+        val firstResult = AtomicReference<String?>(null)
+        val secondResult = AtomicReference<String?>(null)
+        val firstWorker = Thread {
+            try {
+                firstResult.set(client.chat(config("http://127.0.0.1:${server.address.port}/v1"), "system", "first-independent", scope = firstScope).text)
+            } catch (t: Throwable) { firstResult.set("ERROR:${t.javaClass.simpleName}:${t.message}") }
+        }
+        val secondWorker = Thread {
+            try {
+                val secondScope = client.beginRequestScope()
+                secondResult.set(client.chat(config("http://127.0.0.1:${server.address.port}/v1"), "system", "second-independent", scope = secondScope).text)
+            } catch (t: Throwable) { secondResult.set("ERROR:${t.javaClass.simpleName}:${t.message}") }
+        }
+        try {
+            firstWorker.start()
+            Thread.sleep(50L)
+            secondWorker.start()
+            assertTrue("Both independent requests should reach the server", bothEntered.await(2, TimeUnit.SECONDS))
+            firstWorker.join(2_000L)
+            secondWorker.join(2_000L)
+            assertTrue("First independent request should complete", !firstWorker.isAlive)
+            assertTrue("Second independent request should complete", !secondWorker.isAlive)
+            assertEquals("first-ok", firstResult.get())
+            assertEquals("second-ok", secondResult.get())
+            assertEquals(2, server.requestCount.get())
+        } finally {
+            client.cancelActiveRequests()
+            firstWorker.interrupt()
+            secondWorker.interrupt()
+            server.stop(0)
+        }
+    }
+
+    @Test
     fun beginningNewChatScopeDoesNotCancelUnscopedModelDiscovery() {
         val entered = CountDownLatch(1)
         val server = TestHttpServer { _, _ ->
