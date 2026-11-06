@@ -1272,7 +1272,7 @@ class MainActivity : Activity() {
             }
             ownedBudgetReservationId = directBudget.reservationId
             effectiveBudgetReservationId = directBudget.reservationId
-            logAgentForChat(requestChatId, "🧠 Smart Budget: zarezerwowano ${directBudget.estimatedReservedTokens} tokenów dla pojedynczego wywołania.")
+            runCatching { logAgentForChat(requestChatId, "🧠 Smart Budget: zarezerwowano ${directBudget.estimatedReservedTokens} tokenów dla pojedynczego wywołania.") }
         }
 
         var lastErr: Throwable? = null
