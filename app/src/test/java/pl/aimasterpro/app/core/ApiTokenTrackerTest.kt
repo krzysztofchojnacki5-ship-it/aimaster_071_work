@@ -334,7 +334,7 @@ class ApiTokenTrackerTest {
         reader.join(10_000)
         assertFalse("Usage writer did not finish", writer.isAlive)
         assertFalse("Usage snapshot reader did not finish", reader.isAlive)
-        assertEquals(null, failure.get())
+        assertTrue("Concurrent usage snapshot failed: ${failure.get()}", failure.get() == null)
         assertEquals(80, ApiTokenTracker.loadAllRecordsFromStorage(context)
             .count { it.queryId.startsWith("snapshot-key-") })
     }
