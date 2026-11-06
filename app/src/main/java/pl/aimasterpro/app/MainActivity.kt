@@ -1579,7 +1579,7 @@ class MainActivity : Activity() {
                         allowedTaskIds = emptySet(), blockedReasons = emptyMap(), estimatedReservedTokens = 0L,
                         estimatedReservedCostPln = 0.0, reservationId = ""
                     ) else pl.aimasterpro.app.core.ApiTokenTracker.planBatch(
-                        this, budgetRequests, globalReserveTokens = masterSynthesisReserve
+                        this, budgetRequests, globalReserveTokens = masterSynthesisReserve, globalReserveAgentId = "MASTER"
                     )
                     budgetPlan.blockedReasons.forEach { (taskId, reason) ->
                         logAgentForChat(chatId, "⛔ Smart Budget: $taskId — $reason")
