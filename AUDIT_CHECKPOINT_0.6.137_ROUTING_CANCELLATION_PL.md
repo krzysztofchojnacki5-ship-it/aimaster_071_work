@@ -758,3 +758,84 @@ Audyt trwałości wykazał lukę pomiędzy wysłaniem POST do providera a zapise
 Stan przed zapisaniem tego uzupełnienia:
 - HEAD branch: b68a0733c774668b70128350a93fbc9731ed6a9a
 - HEAD main: 752149d40186144b0f458a32b5826c8928349c3a
+
+
+## Uzupełnienie — trwałość historii czatów, pamięci i wyników agentów (2026-11-06)
+
+### 1. Historia rozmów — fail-closed i trwały zapis
+
+Dodano `ChatHistoryStore` jako ścisłą warstwę dostępu do istniejącego dokumentu `chat_state/chats_v2` (bez migracji formatu i bez kasowania danych).
+
+- Brak dokumentu jest prawidłowym stanem pierwszego uruchomienia; niepoprawny JSON, uszkodzony rekord rozmowy, wiadomość bez pól `role/text`, niepoprawne tablice ID/aktywności lub nieprawidłowy `currentId` są traktowane jako uszkodzenie.
+- Odczyt uszkodzonego dokumentu zwraca stan błędu; mutacje nazw, usuwanie, dopisywanie wiadomości i aktywności agentów, przywracanie czatu oraz zapisywanie bieżącego ID są blokowane. Nie tworzymy nowego pustego dokumentu w miejsce nieczytelnego.
+- Zapis `chats_v2` używa synchronicznego `commit()`; błędy są raportowane, a metody zapisu zwracają wynik trwałości.
+- Nowa wiadomość użytkownika musi zostać trwale zapisana przed wysłaniem HTTP. Jeśli zapis się nie powiedzie, żądanie API nie jest wysyłane.
+- Odpowiedź agenta/MASTER-a jest oznaczana jako `COMPLETED` lub `FAILED` dopiero po potwierdzeniu zapisu odpowiedzi w odpowiednim czacie. Jeżeli zapis historii nie powiedzie się, checkpoint pozostaje niekońcowy.
+- Poprzedni czat otrzymuje odpowiedź w swoim własnym ID nawet wtedy, gdy użytkownik w międzyczasie otworzył inną rozmowę; jeśli zapis poprzedniego czatu jest niedostępny, nie odtwarzamy go pod błędnym ID.
+
+### 2. Pojedynczy czat — checkpoint i idempotentne rozliczenie
+
+Wcześniejszy mechanizm obejmował głównie batch agentów. Rozszerzono go na zwykłe zapytania czatu:
+
+- Przed uruchomieniem workera zapisywany jest checkpoint `QUEUED`; niepowodzenie zapisu blokuje wysłanie API.
+- Bezpośrednio przed każdym providerowym POST zapisywany jest `REQUESTING` z providerem, modelem, estymacją tokenów, oczyszczonym endpointem i kluczem `chat:<taskId>:<providerId>`.
+- Sukces rozliczenia zapisuje `USAGE_RECORDED`; awaria trwałego księgowania po odpowiedzi zapisuje `USAGE_PENDING`.
+- Niejednoznaczna awaria po możliwym przetworzeniu POST zapisuje estymowane usage jako `UNAVAILABLE` pod tym samym kluczem idempotencji. Nie uruchamia fallbacku po potencjalnie billable POST.
+- Potwierdzona awaria przed przetworzeniem POST przywraca stan `RUNNING` przed ewentualnym fallbackiem. Jeśli nie da się utrwalić tego stanu, kolejny provider nie jest wywoływany.
+- Po zapisaniu odpowiedzi w historii czatu zadanie otrzymuje stan terminalny. `USAGE_PENDING` pozostaje otwarty do odzyskania księgowania.
+
+### 3. Pamięć zatwierdzona i dzienniki — ochrona przed nadpisaniem
+
+Wykryto wspólny wzorzec: kilka magazynów zamieniało uszkodzony JSON na pustą listę, a kolejny zapis mógł bezgłośnie nadpisać wcześniejsze dane.
+
+Zabezpieczono:
+- `AiMemoryStore` — uszkodzona tablica pamięci blokuje add/remove; zapis zatwierdzonych wpisów używa `commit()` i zwraca wynik.
+- `AgentOperationalMemoryStore` — uszkodzony rekord blokuje add/remove/removeBySource; odczyt nie generuje losowych nowych ID; zapis jest synchroniczny.
+- `LearningJournalStore` — strict parser nie odrzuca uszkodzonych wierszy i nie nadpisuje dziennika; zapis jest synchroniczny. Zachowano kompatybilność starszych wpisów, w których pola tokenów jeszcze nie istniały.
+- `QualityLearningStore` — mutacje ocen i propozycji są blokowane, gdy odpowiedni dziennik jest uszkodzony; zapisy używają `commit()`. Status `APPROVED` jest wycofywany, jeżeli nie uda się trwale zapisać pamięci wspólnej lub pamięci agentów.
+- `syncApprovedAgentMemories()` odbudowuje pamięć wspólną i agentową z zatwierdzonych propozycji; jest wywoływana przed budową kontekstu każdego żądania MASTER-a.
+
+### 4. Wyniki agentów — zapis przed terminalnym checkpointem
+
+- `TeamRunEngine` otrzymał callback `onTaskResult`; dla udanego raportu jest wywoływany przed terminalnym statusem zadania.
+- Tuż przed zapisem raportu utrwalany jest stan `RESULT_PERSIST_PENDING`. Po potwierdzeniu zapisu zadanie przechodzi do `COMPLETED`; jeśli zapis wyniku nie powiedzie się, pozostaje w stanie oczekującym.
+- Główny batch MASTER-a zapisuje raporty od razu po zakończeniu poszczególnych agentów do istniejącego `TaskResultCache`, a nie dopiero po zakończeniu całego batcha. Cache nadal wymaga dokładnego fingerprintu, zgodności providera/modelu i zachowuje dotychczasowy TTL 72 h / limit 60 wpisów.
+- Wyniki fallbacku nie zanieczyszczają cache skonfigurowanego profilu; raport pozostaje w dzienniku konkretnej rozmowy.
+- `TaskResultCache` nie zamienia uszkodzonego JSON na pusty cache; niepoprawny wiersz blokuje mutację. Zapis jest synchroniczny, a typowe sekrety providerów są redagowane przed utrwaleniem raportu.
+- Po restarcie `RESULT_PERSIST_PENDING` jest oznaczany jako `INTERRUPTED` bez ponownego księgowania usage. Jeśli cache został zapisany, dokładny fingerprint pozwala użyć istniejącego raportu przy kolejnym przebiegu.
+
+### Testy regresyjne dodane/rozszerzone w tym etapie
+
+| Plik testowy | Testy |
+|---|---:|
+| ChatHistoryStoreTest | 8 |
+| AiMemoryStoreTest | 5 |
+| AgentOperationalMemoryStoreTest | 6 |
+| LearningJournalStoreTest | 4 |
+| QualityLearningStoreTest | 14 |
+| TaskCheckpointStoreTest | 13 |
+| TaskResultCacheFingerprintTest | 7 |
+| TeamRunEngineNetworkTest | 10 |
+| **Razem w tych ośmiu plikach** | **67** |
+
+Wszystkie powyższe testy: **NOT RUN**. Nie deklaruję PASS.
+
+### Ograniczenia i pozostałe ryzyka
+
+- Historia czatów nadal jest przechowywana jako jeden dokument JSON w SharedPreferences. Uszkodzenie dokumentu blokuje mutacje całej historii (fail-closed), a duży rozmiar historii może powodować niepowodzenie zapisu. Docelowo należy rozważyć migrację do Room/SQLite z transakcjami per rozmowa; nie wykonano jej w tym etapie.
+- Dziennik aktywności agentów w każdej rozmowie nadal ma limit 150 wpisów. Cache raportów stanowi dodatkową ścieżkę odzyskiwania dla wyników z dokładnie zgodnym fingerprintem; nie jest to pełne wznowienie przerwanego batcha.
+- Nie zapisujemy promptów ani pełnych raportów w `TaskCheckpointStore`; raporty pozostają w historii rozmowy/cache, a checkpointy przechowują wyłącznie metadane.
+- Zadania po awarii nie są automatycznie ponawiane do providerów. Odzyskiwany jest stan, rozliczenie i możliwość ponownego użycia już zapisanego wyniku.
+
+### Status weryfikacji
+
+- Kompilacja Android / Gradle: **NOT RUN**.
+- JUnit/Robolectric: **NOT RUN**.
+- APK: nie utworzono.
+- `versionName=0.6.54`, `versionCode=80` — bez zmian.
+- Merge / zmiany na `main`: nie wykonano.
+- Companion Transport: nadal **BLOCKED**.
+
+Stan przed zapisaniem tego uzupełnienia:
+- HEAD branch: 49c855f2ce60d59e12c7a86967172d8557cc9ae1
+- HEAD main: 752149d40186144b0f458a32b5826c8928349c3a
