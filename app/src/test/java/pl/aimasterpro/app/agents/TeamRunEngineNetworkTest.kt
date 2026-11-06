@@ -111,6 +111,41 @@ class TeamRunEngineNetworkTest {
     }
 
     @Test
+    fun postResponseLoggingFailureDoesNotRetrySuccessfulAgentRequest() {
+        ProviderQuotaScheduler.resetForTests()
+        val server = TestHttpServer { _, _ ->
+            200 to """{"choices":[{"message":{"content":"report-survives-logging-failure"}}],"usage":{"prompt_tokens":4,"completion_tokens":3,"total_tokens":7}}"""
+        }
+        try {
+            val primary = ProviderConfig(
+                "logging-primary", "Logging primary", ProviderKind.OPENAI_COMPATIBLE,
+                "http://127.0.0.1:${server.address.port}/v1", "test-model", ""
+            )
+            val fallback = primary.copy(id = "logging-fallback", name = "Logging fallback", model = "fallback-model")
+            val result = TeamRunEngine(ProviderClient()).runBatch(
+                tasks = listOf(TeamTask("logging-task", "qa-architect", "Logging isolation", "Return a report")),
+                provider = primary,
+                agentProvidersMap = mapOf("qa-architect" to primary),
+                fallbackProviders = listOf(fallback),
+                isFreeProvider = { true },
+                mode = WorkMode.PLANNING,
+                onLog = { _, _, _, status ->
+                    if (status == "COMPLETE" || status == "REPORT") {
+                        throw IllegalStateException("simulated local logging failure")
+                    }
+                }
+            ).single()
+
+            assertEquals(TeamTaskResult.Status.COMPLETED, result.status)
+            assertEquals("report-survives-logging-failure", result.report)
+            assertEquals("Logging failure must not trigger a second paid request", 1, server.requestCount.get())
+        } finally {
+            ProviderQuotaScheduler.resetForTests()
+            server.stop(0)
+        }
+    }
+
+    @Test
     fun peerReviewTargetIsVisibleInTheActualOutboundRequestAndResult() {
         val server = TestHttpServer { _, _ ->
             200 to """{"choices":[{"message":{"content":"review-report"}}],"usage":{"prompt_tokens":5,"completion_tokens":4,"total_tokens":9}}"""
