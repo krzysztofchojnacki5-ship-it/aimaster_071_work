@@ -224,6 +224,27 @@ class TeamRunEngineNetworkTest {
         }
     }
     @Test
+    fun preSubmitValidationFailureStillSignalsTaskCompletion() {
+        val finished = Collections.synchronizedList(mutableListOf<String>())
+        val config = ProviderConfig(
+            "validation-test", "Validation test", ProviderKind.OPENAI_COMPATIBLE,
+            "http://127.0.0.1:1/v1", "test-model", ""
+        )
+        val result = runCatching {
+            TeamRunEngine(ProviderClient()).runBatch(
+                tasks = listOf(TeamTask("invalid-task", "qa-architect", "", "prompt")),
+                provider = config,
+                isFreeProvider = { true },
+                mode = WorkMode.PLANNING,
+                onTaskFinished = { finished.add(it) }
+            )
+        }
+
+        assertTrue("Invalid task should fail validation before any worker is submitted", result.isFailure)
+        assertEquals("Reservation lifecycle must still close pre-submit tasks", listOf("invalid-task"), finished.toList())
+    }
+
+    @Test
     fun coordinatorInterruptionMarksQueuedTasksCancelled() {
         val requestStarted = CountDownLatch(1)
         val server = TestHttpServer { _, _ ->
