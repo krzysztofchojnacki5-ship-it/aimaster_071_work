@@ -73,8 +73,13 @@ class TeamRunEngine(
 
         val pool = Executors.newFixedThreadPool(maxParallel.coerceIn(1, 8).coerceAtMost(tasks.size))
         return try {
+            // Measure the 90-second task deadline from submission, not from the later
+            // sequential future.get() call. Otherwise queued/later tasks can run far
+            // beyond their advertised timeout while earlier futures are being awaited.
+            val submittedAtNanos = mutableListOf<Long>()
             val futures = tasks.map { task ->
                 runCatching { onTaskState(task, "QUEUED", "", "", "", 0) }
+                submittedAtNanos += System.nanoTime()
                 pool.submit(Callable {
                     val taskStartedAt = System.currentTimeMillis()
                     var attemptCount = 0
@@ -330,7 +335,10 @@ class TeamRunEngine(
 
             val taskResults = futures.mapIndexed { index, future ->
                 try {
-                    future.get(90, TimeUnit.SECONDS)
+                    val elapsedMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - submittedAtNanos[index])
+                    val remainingMs = (90_000L - elapsedMs).coerceAtLeast(0L)
+                    if (remainingMs == 0L) throw TimeoutException("Task deadline expired before result collection.")
+                    future.get(remainingMs, TimeUnit.MILLISECONDS)
                 } catch (t: TimeoutException) {
                     // A timed-out future must not keep running and later issue another fallback request.
                     future.cancel(true)
