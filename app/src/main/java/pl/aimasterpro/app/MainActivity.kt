@@ -137,7 +137,7 @@ class MainActivity : Activity() {
         store = SecureStore(this)
         val recoveredTasks = runCatching {
             pl.aimasterpro.app.core.TaskCheckpointStore.recoverStaleRunning(this, onAmbiguousRequest = { event ->
-                if (event.status != "REQUESTING" && event.status != "INTERRUPTED_USAGE_PENDING") true
+                if (event.status !in setOf("REQUESTING", "USAGE_PENDING", "INTERRUPTED_USAGE_PENDING")) true
                 else {
                     pl.aimasterpro.app.core.ApiTokenTracker.recordQuery(
                         this, event.providerId, event.model, event.agentId, event.taskId,
