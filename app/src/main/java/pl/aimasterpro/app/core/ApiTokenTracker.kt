@@ -252,6 +252,7 @@ object ApiTokenTracker {
         return merged.sortedByDescending { it.timestamp }.take(2000)
     }
 
+    @Synchronized
     fun getPricing(context: Context, modelName: String, providerId: String = "", baseUrl: String = ""): ModelPricing {
         // A verified free/local model must never inherit the generic paid fallback price.
         if (FreeModelsCatalog.isFreeModel(providerId, modelName, baseUrl)) {
@@ -264,11 +265,13 @@ object ApiTokenTracker {
         return defaultPricing.last().copy()
     }
 
+    @Synchronized
     fun getExchangeRate(context: Context): Double {
         val prefs = context.getSharedPreferences(PRICING_PREFS, Context.MODE_PRIVATE)
         return prefs.getFloat("exchange_rate_pln", 4.0f).toDouble()
     }
 
+    @Synchronized
     fun setExchangeRate(context: Context, rate: Double) {
         require(rate.isFinite() && rate in 0.01..1_000.0) { "Kurs USD/PLN musi być skończony i mieścić się w zakresie 0,01–1000." }
         val prefs = context.getSharedPreferences(PRICING_PREFS, Context.MODE_PRIVATE)
@@ -472,6 +475,7 @@ object ApiTokenTracker {
         )
     }
 
+    @Synchronized
     fun getLimits(context: Context): LimitConfig {
         val prefs = context.getSharedPreferences(LIMITS_PREFS, Context.MODE_PRIVATE)
         return LimitConfig(
@@ -481,13 +485,16 @@ object ApiTokenTracker {
         )
     }
 
+    @Synchronized
     fun setLimits(context: Context, daily: Long, monthly: Double, perAgent: Long) {
         require(monthly.isFinite() && monthly >= 0.0) { "Miesięczny limit kosztów musi być skończony i nieujemny." }
+        val monthlyFloat = monthly.toFloat()
+        require(monthlyFloat.isFinite()) { "Miesięczny limit kosztów przekracza zakres zapisu ustawień." }
         val prefs = context.getSharedPreferences(LIMITS_PREFS, Context.MODE_PRIVATE)
         prefs.edit()
             .putLong("daily_token_limit", daily.coerceAtLeast(1L))
             // 0 PLN disables the monetary limit; negative values are never accepted.
-            .putFloat("monthly_cost_limit", monthly.coerceAtLeast(0.0).toFloat())
+            .putFloat("monthly_cost_limit", monthlyFloat)
             .putLong("agent_token_limit", perAgent.coerceAtLeast(1L))
             .apply()
     }
