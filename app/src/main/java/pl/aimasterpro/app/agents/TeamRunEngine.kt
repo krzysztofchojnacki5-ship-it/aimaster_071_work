@@ -382,7 +382,12 @@ class TeamRunEngine(
                     TeamTaskResult(tasks[index].id, tasks[index].agentId, TeamTaskResult.Status.FAILED,
                         "Przekroczono limit 90 s dla agenta. Zadanie anulowano; automatyczny fallback nie będzie kontynuowany.", reviewOfAgentId = tasks[index].reviewOfAgentId)
                 } catch (t: Throwable) {
-                    if (t is InterruptedException) Thread.currentThread().interrupt()
+                    if (t is InterruptedException) {
+                        // Interrupting the coordinator must also disconnect this agent's HTTP call.
+                        client.cancelRequestScope(taskScopes[index])
+                        future.cancel(true)
+                        Thread.currentThread().interrupt()
+                    }
                     TeamTaskResult(tasks[index].id, tasks[index].agentId, TeamTaskResult.Status.FAILED,
                         "Nie odebrano wyniku agenta: ${t.message ?: t.javaClass.simpleName}", reviewOfAgentId = tasks[index].reviewOfAgentId)
                 }
