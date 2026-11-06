@@ -1595,11 +1595,21 @@ class MainActivity : Activity() {
                     }
                     val synthesisReportBudgetChars = minOf(18_000, adaptiveTasks.size * 6_000)
                     val masterSynthesisReserve = ((prompt.length + sharedLearningContext.length + synthesisReportBudgetChars + 1_200 + 2) / 3).toLong() + adaptivePlan.synthesisReserveTokens
+                    val synthesisPricing = pl.aimasterpro.app.core.ApiTokenTracker.getPricing(
+                        this, safeConfig.model, safeConfig.id, safeConfig.baseUrl
+                    )
+                    val synthesisExchangeRate = pl.aimasterpro.app.core.ApiTokenTracker.getExchangeRate(this)
+                    // Conservative cost hold: price the whole synthesis token allowance at the
+                    // higher of input/output rates so parallel stages cannot consume its monthly budget.
+                    val masterSynthesisReserveCostPln =
+                        (masterSynthesisReserve.toDouble() * maxOf(synthesisPricing.inputPer1MUsd, synthesisPricing.outputPer1MUsd) *
+                            synthesisExchangeRate) / 1_000_000.0
                     val budgetPlan = if (budgetRequests.isEmpty()) pl.aimasterpro.app.core.BatchBudgetPlan(
                         allowedTaskIds = emptySet(), blockedReasons = emptyMap(), estimatedReservedTokens = 0L,
                         estimatedReservedCostPln = 0.0, reservationId = ""
                     ) else pl.aimasterpro.app.core.ApiTokenTracker.planBatch(
-                        this, budgetRequests, globalReserveTokens = masterSynthesisReserve, globalReserveAgentId = "MASTER"
+                        this, budgetRequests, globalReserveTokens = masterSynthesisReserve,
+                        globalReserveAgentId = "MASTER", globalReserveCostPln = masterSynthesisReserveCostPln
                     )
                     budgetPlan.blockedReasons.forEach { (taskId, reason) ->
                         logAgentForChat(chatId, "⛔ Smart Budget: $taskId — $reason")
@@ -1743,7 +1753,8 @@ class MainActivity : Activity() {
                             this,
                             reviewBudgetRequests,
                             globalReserveTokens = masterSynthesisReserve + peerReviewTasks.size * 1_000L,
-                            globalReserveAgentId = AgentRole.MASTER.name
+                            globalReserveAgentId = AgentRole.MASTER.name,
+                            globalReserveCostPln = masterSynthesisReserveCostPln
                         )
                         reviewBudget.blockedReasons.forEach { (taskId, reason) ->
                             logAgentForChat(chatId, "⛔ Peer Review — Smart Budget zablokował $taskId: $reason")
