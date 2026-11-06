@@ -56,6 +56,25 @@ class QualityLearningStoreTest {
         QualityLearningStore.setProposalStatus(context, proposal.id, "REJECTED")
         assertFalse(AiMemoryStore.getMemories(context).any { it.contains("Zła reguła") })
     }
+    @Test fun malformedFeedbackJournalIsNotOverwrittenByNewRating() {
+        val prefs = context.getSharedPreferences("ai_quality_learning_v1", Context.MODE_PRIVATE)
+        val corrupt = """[{"id":"rating-1","targetId":"task-1","targetType":"AGENT"},null]"""
+        assertTrue(prefs.edit().putString("feedback", corrupt).commit())
+        QualityLearningStore.rate(context, "task-2", "AGENT", 1, "Nowa ocena", "coder")
+        assertEquals(corrupt, prefs.getString("feedback", null))
+    }
+
+    @Test fun malformedProposalJournalBlocksMutationWithoutReplacingEvidence() {
+        val prefs = context.getSharedPreferences("ai_quality_learning_v1", Context.MODE_PRIVATE)
+        val corrupt = """[{"id":"proposal-1","text":"old proposal"},null]"""
+        assertTrue(prefs.edit().putString("proposals", corrupt).commit())
+        assertFalse(QualityLearningStore.setProposalStatus(context, "proposal-1", "APPROVED"))
+        assertTrue(runCatching {
+            QualityLearningStore.addProposal(context, "new proposal", 1, "low", emptyList(), emptyList(), emptyList())
+        }.isFailure)
+        assertEquals(corrupt, prefs.getString("proposals", null))
+    }
+
     @Test fun sameTargetIdCanHaveDifferentTargetTypes() {
         QualityLearningStore.rate(context, "shared-id", "AGENT", 1, "Raport agenta", "coder", "groq", "model-a")
         QualityLearningStore.rate(context, "shared-id", "CHAT_ANSWER", -1, "Odpowiedź końcowa", "MASTER", "openrouter", "model-b")
