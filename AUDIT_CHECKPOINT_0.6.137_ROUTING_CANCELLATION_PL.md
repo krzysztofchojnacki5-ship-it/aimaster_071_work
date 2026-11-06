@@ -4,7 +4,7 @@ Gałąź: `audit/0.6.137-routing-hardening`
 Zakres: routing, scheduler, rozliczanie użycia API, timeouty i anulowanie agentów.
 
 ## Stan repozytorium
-- HEAD gałęzi roboczej: `cb03f6ed66c0a40d4566f7ea8eb999d911124486`
+- HEAD gałęzi roboczej: `ea0f8f70cc01f0b81f3eaab3752bc92a27862483`
 - HEAD `main`: `752149d40186144b0f458a32b5826c8928349c3a` (bez zmian).
 - `main` nie zawiera zmian z tej gałęzi.
 - Brak `.github/workflows/` oraz `gradle/wrapper/gradle-wrapper.jar`; nie potwierdzono możliwości uruchomienia builda w CI.
