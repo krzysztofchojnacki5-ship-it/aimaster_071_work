@@ -61,6 +61,8 @@ class TeamRunEngine(
         attachmentBase64: String = "",
         onLog: (String, String, String, String) -> Unit = { _, _, _, _ -> },
         onUsage: (String, String, ProviderConfig, TokenUsageResult) -> Unit = { _, _, _, _ -> },
+        unknownOutputEstimateTokens: Long = 4_096L,
+        onUnknownUsage: (String, String, ProviderConfig, Long, Long) -> Unit = { _, _, _, _, _ -> },
         rankProviders: (List<ProviderConfig>) -> List<ProviderConfig> = { it },
         onProviderHealth: (ProviderConfig, Boolean, String, Long) -> Unit = { _, _, _, _ -> },
         persistedCooldownMs: (ProviderConfig) -> Long = { 0L },
@@ -281,6 +283,21 @@ class TeamRunEngine(
                                         val category = (t as? ProviderException)?.category ?: "UNKNOWN"
                                         val isAuthOrClientError = httpCode != null && httpCode in setOf(400, 401, 403, 404)
                                         val isTokenLimit = httpCode == 429 || category == "RATE_LIMIT_QUOTA"
+                                        val providerFailure = t as? ProviderException
+                                        if (providerFailure?.requestMayHaveBeenProcessed == true) {
+                                            val estimatedInput = (system.length.toLong() + user.length.toLong() + 2L) / 3L
+                                            runCatching {
+                                                onUnknownUsage(agent.id, task.id, prov, estimatedInput, unknownOutputEstimateTokens.coerceAtLeast(0L))
+                                            }.onFailure { error ->
+                                                runCatching { onLog("SYSTEM", agent.name,
+                                                    "[UNKNOWN USAGE RECORD FAILED] POST mógł zostać rozliczony; lokalny zapis estymacji UNAVAILABLE nie powiódł się: ${error.message ?: error.javaClass.simpleName}",
+                                                    "USAGE_RECORD_FAILED") }
+                                            }
+                                            runCatching { onLog("SYSTEM", agent.name,
+                                                "[UNKNOWN USAGE] POST mógł dotrzeć do providera (faza ${providerFailure.phase}); nie uruchamiam fallbacku.",
+                                                "USAGE_UNAVAILABLE") }
+                                            break@providerLoop
+                                        }
                                         if (httpCode == 429 || category == "RATE_LIMIT_QUOTA") {
                                             val processCooldown = pl.aimasterpro.app.core.ProviderQuotaScheduler.markRateLimited(quotaKey)
                                             val persisted = runCatching { onRateLimited(prov) }.getOrDefault(0L)
