@@ -526,15 +526,20 @@ object ApiTokenTracker {
     }
 
     @Synchronized
-    fun clearRecords(context: Context, clearInFlightReservations: Boolean = false): Boolean {
+    fun clearRecords(context: Context): Boolean {
         // Clearing historical usage must not free budget still owned by running workers.
-        // Tests or an explicit full reset may opt into clearing in-flight reservations.
         val committed = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
             .edit().remove("records").commit()
         if (!committed) return false
         sessionRecords.clear()
-        if (clearInFlightReservations) activeReservations.clear()
         return true
+    }
+
+    /** Isolated in-memory reset for Robolectric tests; never used by application flows. */
+    @Synchronized
+    internal fun resetInMemoryStateForTests() {
+        sessionRecords.clear()
+        activeReservations.clear()
     }
 
     data class LimitCheckResult(
