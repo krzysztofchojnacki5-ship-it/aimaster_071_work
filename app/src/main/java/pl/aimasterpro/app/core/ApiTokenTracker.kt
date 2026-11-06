@@ -57,7 +57,7 @@ object ApiTokenTracker {
     private val sessionRecords = mutableListOf<TokenRecord>()
     // Session means the current app process, not an in-memory list that disappears from the monitor.
     private val sessionStartedAt = System.currentTimeMillis()
-    private data class ActiveReservationTask(val taskId: String, val agentId: String, val providerId: String, var tokensRemaining: Long, var costPlnRemaining: Double)
+    private data class ActiveReservationTask(val taskId: String, val agentId: String, val providerId: String, val baseUrl: String, val modelName: String, var tokensRemaining: Long, var costPlnRemaining: Double)
     private data class ActiveReservation(val id: String, val tasks: MutableList<ActiveReservationTask>, var globalTokensRemaining: Long)
     private val activeReservations = linkedMapOf<String, ActiveReservation>()
 
@@ -135,12 +135,12 @@ object ApiTokenTracker {
         val persisted = runCatching { saveRecordToStorage(context, record) }.getOrDefault(false)
         sessionRecords.add(0, record)
         if (sessionRecords.size > 2000) sessionRecords.removeAt(sessionRecords.lastIndex)
-        consumeActiveReservation(record, reservationId)
+        consumeActiveReservation(record, reservationId, baseUrl)
         check(persisted) { "Nie udało się trwale zapisać rejestru użycia API." }
         return record
     }
 
-    private fun consumeActiveReservation(record: TokenRecord, reservationId: String) {
+    private fun consumeActiveReservation(record: TokenRecord, reservationId: String, baseUrl: String = "") {
         if (reservationId.isBlank() || record.taskId.isBlank() || record.taskId == "general") return
         val reservation = activeReservations[reservationId] ?: return
         // A fallback provider must not consume the estimate priced for another provider.
@@ -149,7 +149,9 @@ object ApiTokenTracker {
         val task = reservation.tasks.singleOrNull {
             it.taskId == record.taskId &&
                 it.agentId.equals(record.agentId, true) &&
-                it.providerId.equals(record.providerId, true)
+                it.providerId.equals(record.providerId, true) &&
+                it.baseUrl.equals(baseUrl, true) &&
+                it.modelName.equals(record.modelName, true)
         } ?: return
         task.tokensRemaining = (task.tokensRemaining - record.totalTokens.coerceAtLeast(0L)).coerceAtLeast(0L)
         task.costPlnRemaining = (task.costPlnRemaining - record.costPln.coerceAtLeast(0.0)).coerceAtLeast(0.0)
@@ -347,12 +349,14 @@ object ApiTokenTracker {
             val reason = "Wstrzymano: rejestr użycia API jest uszkodzony lub nieczytelny; nie można bezpiecznie obliczyć pozostałego budżetu."
             return BatchBudgetPlan(emptySet(), requests.associate { it.taskId to reason }, 0L, 0.0)
         }
-        if (globalReserveTokens < 0L || requests.any {
+        if (limits.dailyTokenLimit <= 0L || limits.agentTokenLimit <= 0L ||
+            !limits.monthlyCostPlnLimit.isFinite() || limits.monthlyCostPlnLimit < 0.0 ||
+            globalReserveTokens < 0L || requests.any {
                 it.taskId.isBlank() || it.agentId.isBlank() || it.providerId.isBlank() ||
                     it.estimatedInputTokens < 0L || it.estimatedOutputTokens < 0L ||
                     runCatching { Math.addExact(it.estimatedInputTokens, it.estimatedOutputTokens) }.isFailure
             } || requests.map { it.taskId }.distinct().size != requests.size) {
-            val reason = "Wstrzymano: zadania budżetowe muszą mieć niepuste i unikalne identyfikatory oraz agentów."
+            val reason = "Wstrzymano: nieprawidłowa konfiguracja limitów lub danych zadań (identyfikatory, provider, tokeny albo rezerwa globalna)."
             return BatchBudgetPlan(emptySet(), requests.associate { it.taskId to reason }, 0L, 0.0)
         }
         val all = (persisted + sessionRecords).distinctBy { it.queryId }
@@ -370,7 +374,7 @@ object ApiTokenTracker {
             .toMutableMap()
         reservedTasks.forEach { task ->
             val key = task.agentId.lowercase(Locale.ROOT)
-            perAgentUsed[key] = (perAgentUsed[key] ?: 0L) + task.tokensRemaining.coerceAtLeast(0L)
+            perAgentUsed[key] = addTokenCounts(perAgentUsed[key] ?: 0L, task.tokensRemaining)
         }
         var monthlyCostUsed = recent.sumOf { it.costPln.coerceAtLeast(0.0) } +
             activeReservations.values.sumOf { r -> r.tasks.sumOf { it.costPlnRemaining.coerceAtLeast(0.0) } }
@@ -403,7 +407,7 @@ object ApiTokenTracker {
                 monthlyCostUsed += estimatedPln
                 reservedTokens += estimate
                 reservedCost += estimatedPln
-                newReservationTasks += ActiveReservationTask(request.taskId, request.agentId, request.providerId, estimate, estimatedPln)
+                newReservationTasks += ActiveReservationTask(request.taskId, request.agentId, request.providerId, request.baseUrl, request.modelName, estimate, estimatedPln)
             } else {
                 blocked[request.taskId] = reason
             }
@@ -450,10 +454,10 @@ object ApiTokenTracker {
     fun budgetUsageSnapshot(context: Context): BudgetUsageSnapshot {
         val limits = getLimits(context)
         val records = loadAllRecordsFromStorage(context)
-        val todayTokens = filterRecords(records, "Dzisiaj").sumOf { it.totalTokens.coerceAtLeast(0L) }
+        val todayTokens = sumTokenCounts(filterRecords(records, "Dzisiaj").map { it.totalTokens })
         val recentCost = filterRecords(records, "30 dni").sumOf { it.costPln.coerceAtLeast(0.0) }
         val reservations = activeReservationStats()
-        val ledgerHealthy = ledgerHealthy
+        val ledgerHealthy = readPersistedRecords(context) != null
         val usedIncludingReservations = addTokenCounts(todayTokens, reservations.tokens)
         return BudgetUsageSnapshot(
             recordedTodayTokens = todayTokens,
@@ -507,6 +511,10 @@ object ApiTokenTracker {
     @Synchronized
     fun checkLimits(context: Context, agentId: String, estimatedTokens: Long): LimitCheckResult {
         val limits = getLimits(context)
+        if (limits.dailyTokenLimit <= 0L || limits.agentTokenLimit <= 0L ||
+            !limits.monthlyCostPlnLimit.isFinite() || limits.monthlyCostPlnLimit < 0.0) {
+            return LimitCheckResult(false, "Konfiguracja limitów budżetowych jest nieprawidłowa; zapytanie wstrzymano.")
+        }
         if (estimatedTokens < 0L) return LimitCheckResult(false, "Szacowana liczba tokenów nie może być ujemna.")
         if (readPersistedRecords(context) == null) {
             return LimitCheckResult(false, "Rejestr użycia API jest uszkodzony lub nieczytelny. Zapytanie wstrzymano, aby nie przekroczyć nieznanego budżetu.")
