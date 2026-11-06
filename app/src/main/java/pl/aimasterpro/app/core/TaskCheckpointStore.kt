@@ -100,12 +100,12 @@ object TaskCheckpointStore {
         onAmbiguousRequest: (Event) -> Boolean = { true }
     ): Int {
         val stale = latest(context).filter { event ->
-            (event.status in setOf("QUEUED", "RUNNING", "REQUESTING", "USAGE_RECORDED") && event.processId != processId) ||
+            (event.status in setOf("QUEUED", "RUNNING", "REQUESTING", "USAGE_RECORDED", "USAGE_PENDING") && event.processId != processId) ||
                 event.status == "INTERRUPTED_USAGE_PENDING"
         }
         var recovered = 0
         stale.forEach { event ->
-            val needsUsageRecovery = event.status == "REQUESTING" || event.status == "INTERRUPTED_USAGE_PENDING"
+            val needsUsageRecovery = event.status in setOf("REQUESTING", "USAGE_PENDING", "INTERRUPTED_USAGE_PENDING")
             val usageRecovered = !needsUsageRecovery || runCatching { onAmbiguousRequest(event) }.getOrDefault(false)
             val nextStatus = when {
                 needsUsageRecovery && !usageRecovered -> "INTERRUPTED_USAGE_PENDING"
