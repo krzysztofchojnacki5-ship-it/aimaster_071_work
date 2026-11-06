@@ -1039,3 +1039,31 @@ Weryfikacja:
 - Porównanie z `main`: 228 commits ahead, 0 behind.
 - `main` nadal: `752149d40186144b0f458a32b5826c8928349c3a`.
 - Run CI `42311168794` pozostaje `in_progress` na kroku Gradle; najnowszy run `42312323287` pozostaje `pending` w kolejce. Brak potwierdzonego wyniku testów i kompilacji.
+
+
+## Etap 9 — walidacja integralności sum tokenów w trwałym rejestrze (2026-11-07)
+
+Przegląd `ApiTokenTracker.readPersistedRecords()` wykazał lukę w walidacji danych historycznych: parser odrzucał ujemne liczniki i nieprawidłowe koszty, ale akceptował rekord, w którym `totalTokens` nie odpowiadało sumie `inputTokens + outputTokens`. Taki rekord mógł zaniżyć dzienne wykorzystanie limitu, mimo że sam JSON był poprawny.
+
+Zmiana:
+- obliczanie oczekiwanej sumy przez `Math.addExact(input, output)` (również ochrona przed przepełnieniem `Long`);
+- parser odrzuca rekord, jeśli `totalTokens != inputTokens + outputTokens`;
+- ponieważ `readPersistedRecords()` zwraca `null` dla nieprawidłowego rejestru, istniejąca polityka fail-closed blokuje nowe rezerwacje i zapisy zamiast nadpisywać potencjalnie błędne dane.
+
+Test:
+- `inconsistentPersistedTokenTotalMakesLedgerUnhealthyAndBlocksWrites` wstawia syntaktycznie poprawny rekord z niezgodną sumą;
+- sprawdza, że planowanie budżetu blokuje zadanie;
+- sprawdza, że nowy zapis nie nadpisuje uszkodzonego rejestru i oryginalny JSON pozostaje zachowany.
+
+Pliki:
+- `app/src/main/java/pl/aimasterpro/app/core/ApiTokenTracker.kt`
+- `app/src/test/java/pl/aimasterpro/app/core/ApiTokenTrackerTest.kt`
+
+Commity:
+- walidacja: `9ee44f1221c25970834ec3a067d1eec3bf9dd0b6`
+- test: `b861d6a870f01484e5a7aeda03d2bc7bd797de84`
+
+Weryfikacja:
+- zmiany zapisane na branchu audytowym;
+- test nowej regresji i kompilacja nadal **NOT RUN / NOT VERIFIED** — oczekujemy na GitHub Actions;
+- nie zmieniono `main`, nie wykonano merge, APK ani release; Companion Transport pozostaje **BLOCKED**.
