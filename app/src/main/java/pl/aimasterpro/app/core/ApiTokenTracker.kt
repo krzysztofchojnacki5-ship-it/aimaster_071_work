@@ -58,7 +58,7 @@ object ApiTokenTracker {
     // Session means the current app process, not an in-memory list that disappears from the monitor.
     private val sessionStartedAt = System.currentTimeMillis()
     private data class ActiveReservationTask(val taskId: String, val agentId: String, val providerId: String, val baseUrl: String, val modelName: String, var tokensRemaining: Long, var costPlnRemaining: Double, var completed: Boolean = false)
-    private data class ActiveReservation(val id: String, val tasks: MutableList<ActiveReservationTask>, var globalTokensRemaining: Long, var releaseRequested: Boolean = false)
+    private data class ActiveReservation(val id: String, val tasks: MutableList<ActiveReservationTask>, var globalTokensRemaining: Long, val globalReserveAgentId: String = "", var releaseRequested: Boolean = false)
     private val activeReservations = linkedMapOf<String, ActiveReservation>()
 
     private fun addTokenCounts(left: Long, right: Long): Long {
@@ -370,7 +370,8 @@ object ApiTokenTracker {
     fun planBatch(
         context: Context,
         requests: List<BudgetRequest>,
-        globalReserveTokens: Long = 0L
+        globalReserveTokens: Long = 0L,
+        globalReserveAgentId: String = ""
     ): BatchBudgetPlan {
         val limits = getLimits(context)
         val persisted = readPersistedRecords(context)
@@ -380,7 +381,7 @@ object ApiTokenTracker {
         }
         if (limits.dailyTokenLimit <= 0L || limits.agentTokenLimit <= 0L ||
             !limits.monthlyCostPlnLimit.isFinite() || limits.monthlyCostPlnLimit < 0.0 ||
-            globalReserveTokens < 0L || requests.any {
+            globalReserveTokens < 0L || (globalReserveTokens > 0L && globalReserveAgentId.isNotBlank() && globalReserveAgentId.length > 128) || requests.any {
                 it.taskId.isBlank() || it.agentId.isBlank() || it.providerId.isBlank() ||
                     it.estimatedInputTokens < 0L || it.estimatedOutputTokens < 0L ||
                     runCatching { Math.addExact(it.estimatedInputTokens, it.estimatedOutputTokens) }.isFailure
@@ -404,6 +405,16 @@ object ApiTokenTracker {
         reservedTasks.forEach { task ->
             val key = task.agentId.lowercase(Locale.ROOT)
             perAgentUsed[key] = addTokenCounts(perAgentUsed[key] ?: 0L, task.tokensRemaining)
+        }
+        activeReservations.values.forEach { reservation ->
+            if (reservation.globalReserveAgentId.isNotBlank()) {
+                val key = reservation.globalReserveAgentId.lowercase(Locale.ROOT)
+                perAgentUsed[key] = addTokenCounts(perAgentUsed[key] ?: 0L, reservation.globalTokensRemaining)
+            }
+        }
+        if (globalReserveTokens > 0L && globalReserveAgentId.isNotBlank()) {
+            val key = globalReserveAgentId.lowercase(Locale.ROOT)
+            perAgentUsed[key] = addTokenCounts(perAgentUsed[key] ?: 0L, globalReserveTokens)
         }
         var monthlyCostUsed = recent.sumOf { it.costPln.coerceAtLeast(0.0) } +
             activeReservations.values.sumOf { r -> r.tasks.sumOf { it.costPlnRemaining.coerceAtLeast(0.0) } }
@@ -446,7 +457,7 @@ object ApiTokenTracker {
             reservationId = UUID.randomUUID().toString()
         }
         if (allowed.isNotEmpty() || globalReserveTokens > 0L) {
-            activeReservations[reservationId] = ActiveReservation(reservationId, newReservationTasks, globalReserveTokens)
+            activeReservations[reservationId] = ActiveReservation(reservationId, newReservationTasks, globalReserveTokens, globalReserveAgentId.trim())
         } else {
             reservationId = ""
         }
@@ -574,7 +585,10 @@ object ApiTokenTracker {
         val agentTodayTokens = addTokenCounts(
             sumTokenCounts(todayRecords.filter { it.agentId.equals(agentId, true) }.map { it.totalTokens }),
             sumTokenCounts(activeReservations.values.map { r ->
-                sumTokenCounts(r.tasks.filter { it.agentId.equals(agentId, true) }.map { it.tokensRemaining })
+                addTokenCounts(
+                    sumTokenCounts(r.tasks.filter { it.agentId.equals(agentId, true) }.map { it.tokensRemaining }),
+                    if (r.globalReserveAgentId.equals(agentId, true)) r.globalTokensRemaining else 0L
+                )
             })
         )
 
