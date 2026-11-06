@@ -415,6 +415,15 @@ class TeamRunEngine(
                                     System.currentTimeMillis() - taskStartedAt, attemptCount,
                                     actualProviderId, actualModel, task.reviewOfAgentId
                                 )
+                                if (!usageAccountingPending) {
+                                    runCatching {
+                                        onTaskState(
+                                            task, "RESULT_PERSIST_PENDING",
+                                            "Raport odebrany; trwałe zapisanie wyniku jest w toku.",
+                                            actualProviderId, actualModel, attemptCount
+                                        )
+                                    }
+                                }
                                 val resultPersisted = runCatching { onTaskResult(completedResult) }.getOrDefault(false)
                                 if (!resultPersisted) {
                                     runCatching { onLog("SYSTEM", agent.name,
