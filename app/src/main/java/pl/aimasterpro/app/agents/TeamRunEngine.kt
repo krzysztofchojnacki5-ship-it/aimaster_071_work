@@ -100,6 +100,7 @@ class TeamRunEngine(
                     try {
                         val taskStartedAt = System.currentTimeMillis()
                         var attemptCount = 0
+                        var usageAccountingPending = false
                         var actualProviderId = ""
                         var actualModel = ""
                         val agent = AgentCatalog.find(task.agentId)
@@ -250,6 +251,7 @@ class TeamRunEngine(
                                         // Record usage before validating the report so the budget cannot undercount it.
                                         val usageRecorded = runCatching { onUsage(agent.id, task.id, prov, chatRes.usage) }
                                         usageRecorded.onFailure { error ->
+                                            usageAccountingPending = true
                                             runCatching { onLog("SYSTEM", agent.name, "[USAGE RECORD FAILED] Odpowiedź API mogła zostać rozliczona przez dostawcę, ale lokalny zapis użycia nie powiódł się: ${error.message ?: error.javaClass.simpleName}", "USAGE_RECORD_FAILED") }
                                         }
                                         if (usageRecorded.isSuccess) {
@@ -304,12 +306,16 @@ class TeamRunEngine(
                                         val providerFailure = t as? ProviderException
                                         if (providerFailure?.requestMayHaveBeenProcessed == true) {
                                             val estimatedInput = (system.length.toLong() + user.length.toLong() + 2L) / 3L
-                                            runCatching {
+                                            val unknownUsageSaved = runCatching {
                                                 onUnknownUsage(agent.id, task.id, prov, estimatedInput, unknownOutputEstimateTokens.coerceAtLeast(0L))
-                                            }.onFailure { error ->
+                                            }.isSuccess
+                                            if (!unknownUsageSaved) {
+                                                usageAccountingPending = true
                                                 runCatching { onLog("SYSTEM", agent.name,
-                                                    "[UNKNOWN USAGE RECORD FAILED] POST mógł zostać rozliczony; lokalny zapis estymacji UNAVAILABLE nie powiódł się: ${error.message ?: error.javaClass.simpleName}",
+                                                    "[UNKNOWN USAGE RECORD FAILED] POST mógł zostać rozliczony; lokalny zapis estymacji UNAVAILABLE nie powiódł się.",
                                                     "USAGE_RECORD_FAILED") }
+                                            } else {
+                                                runCatching { onTaskState(task, "USAGE_RECORDED", "Nieznane zużycie API zapisano jako UNAVAILABLE.", prov.id, prov.model, attemptCount) }
                                             }
                                             runCatching { onLog("SYSTEM", agent.name,
                                                 "[UNKNOWN USAGE] POST mógł dotrzeć do providera (faza ${providerFailure.phase}); nie uruchamiam fallbacku.",
@@ -383,11 +389,19 @@ class TeamRunEngine(
 
                             if (report.isBlank()) {
                                 onLog(agent.name, "MASTER", "Agent zwrócił pusty raport.", "FAILED")
-                                runCatching { onTaskState(task, "FAILED", "Agent zwrócił pusty raport.", actualProviderId, actualModel, attemptCount) }
+                                runCatching {
+                                    onTaskState(task, if (usageAccountingPending) "USAGE_PENDING" else "FAILED",
+                                        if (usageAccountingPending) "Odpowiedź odebrano, ale trwałe księgowanie usage wymaga odzyskania." else "Agent zwrócił pusty raport.",
+                                        actualProviderId, actualModel, attemptCount)
+                                }
                                 TeamTaskResult(task.id, task.agentId, TeamTaskResult.Status.FAILED, "Agent zwrócił pusty raport.", System.currentTimeMillis() - taskStartedAt, attemptCount, actualProviderId, actualModel, task.reviewOfAgentId)
                             } else {
                                 runCatching { onLog(agent.name, "MASTER", report, "REPORT") }
-                                runCatching { onTaskState(task, "COMPLETED", "Raport odebrany.", actualProviderId, actualModel, attemptCount) }
+                                runCatching {
+                                    onTaskState(task, if (usageAccountingPending) "USAGE_PENDING" else "COMPLETED",
+                                        if (usageAccountingPending) "Raport odebrany; trwałe księgowanie usage wymaga odzyskania." else "Raport odebrany.",
+                                        actualProviderId, actualModel, attemptCount)
+                                }
                                 TeamTaskResult(task.id, task.agentId, TeamTaskResult.Status.COMPLETED, report, System.currentTimeMillis() - taskStartedAt, attemptCount, actualProviderId, actualModel, task.reviewOfAgentId)
                             }
                         } catch (t: Throwable) {
@@ -402,7 +416,11 @@ class TeamRunEngine(
                             runCatching {
                                 onTaskState(
                                     task,
-                                    if (t is InterruptedException || (t as? ProviderException)?.category == "CANCELLED" || Thread.currentThread().isInterrupted) "CANCELLED" else "FAILED",
+                                    when {
+                                        usageAccountingPending -> "USAGE_PENDING"
+                                        t is InterruptedException || (t as? ProviderException)?.category == "CANCELLED" || Thread.currentThread().isInterrupted -> "CANCELLED"
+                                        else -> "FAILED"
+                                    },
                                     checkpointError,
                                     actualProviderId,
                                     actualModel,
