@@ -1812,17 +1812,43 @@ class MainActivity : Activity() {
                         "[MASTER SYNTHESIS REQUEST]\n--- SYSTEM ---\n$masterSynthesisSystem\n--- USER ---\n$autonomousSynthesisPrompt\nAttachment MIME: ${sendMime.ifBlank { "brak" }}\nAttachment payload: ${if (sendBase64.isBlank()) "brak" else "dołączony; treść binarna pominięta w dzienniku"}",
                         "REQUEST"
                     )
-                    val resp = chatWithFallback(
-                        safeConfig,
-                        masterSynthesisSystem,
-                        autonomousSynthesisPrompt,
-                        sendMime,
-                        sendBase64,
-                        requestTaskId,
-                        AgentRole.MASTER.name,
-                        chatId,
-                        requestScope
+                    // Reserve the final MASTER call independently after specialist and review
+                    // usage has been recorded. Earlier stage reservations are intentionally released
+                    // when those stages finish, so they cannot protect this later synthesis request.
+                    val synthesisBudget = pl.aimasterpro.app.core.ApiTokenTracker.planBatch(
+                        this,
+                        listOf(pl.aimasterpro.app.core.BudgetRequest(
+                            taskId = requestTaskId,
+                            agentId = AgentRole.MASTER.name,
+                            providerId = safeConfig.id,
+                            baseUrl = safeConfig.baseUrl,
+                            modelName = safeConfig.model,
+                            estimatedInputTokens = ((masterSynthesisSystem.length + autonomousSynthesisPrompt.length + 2) / 3).toLong(),
+                            estimatedOutputTokens = 4_096L
+                        ))
                     )
+                    if (requestTaskId !in synthesisBudget.allowedTaskIds) {
+                        pl.aimasterpro.app.core.ApiTokenTracker.releaseBatchReservation(synthesisBudget.reservationId)
+                        val reason = synthesisBudget.blockedReasons[requestTaskId] ?: "Nie udało się zarezerwować budżetu na syntezę MASTER-a."
+                        throw IllegalStateException("Smart Budget wstrzymał końcową syntezę: $reason")
+                    }
+                    logAgentForChat(chatId, "🧠 Smart Budget: zarezerwowano osobny limit dla końcowej syntezy MASTER-a.")
+                    val resp = try {
+                        chatWithFallback(
+                            safeConfig,
+                            masterSynthesisSystem,
+                            autonomousSynthesisPrompt,
+                            sendMime,
+                            sendBase64,
+                            requestTaskId,
+                            AgentRole.MASTER.name,
+                            chatId,
+                            requestScope,
+                            synthesisBudget.reservationId
+                        )
+                    } finally {
+                        pl.aimasterpro.app.core.ApiTokenTracker.releaseBatchReservation(synthesisBudget.reservationId)
+                    }
                     actualProviderId = resp.providerId.ifBlank { safeConfig.id }
                     actualModel = resp.model.ifBlank { safeConfig.model }
                     logAgentDialogueForChat(chatId, "$actualProviderId / $actualModel", "MASTER", resp.text, "REPORT")
