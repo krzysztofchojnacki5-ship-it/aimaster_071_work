@@ -915,3 +915,12 @@ Stan przed aktualizacją checkpointu:
 - poprawka źródłowa: `71a9aad9a3acfffcdfc7ac6d2828498605368251`
 - test: `06cc24e413a83fb7e4184e2b555d721954fd6202`
 - main bez zmian: `752149d40186144b0f458a32b5826c8928349c3a`.
+
+
+## Bilans bieżącej kontynuacji (2026-11-07)
+
+- `TeamRunEngineNetworkTest`: 11 testów po dodaniu regresji anulowania POST.
+- `ApiTokenTrackerTest`: 29 testów po dodaniu regresji współbieżnych snapshotów.
+- Oba nowe testy pozostają **NOT RUN**.
+- Nie należy sumować tych liczb z poprzednimi sekcjami changeloga jako unikalnej liczby testów całego projektu — część zestawów była już wcześniej opisywana w checkpointach.
+- Brak kompilacji, APK i potwierdzonego uruchomienia JUnit/Robolectric pozostaje blokadą uznania poprawek za zweryfikowane.
