@@ -652,7 +652,7 @@ Kontrola pozostałych ścieżek:
 
 ### Dalszy punkt do sprawdzenia
 
-Rezerwy `globalReserveTokens` nadal są rezerwami tokenowymi, a nie osobnymi rezerwami kosztu PLN. Rzeczywisty koszt przyszłej syntezy jest wyceniany i rezerwowany w osobnym `planBatch()` bezpośrednio przed jej wykonaniem. Należy jeszcze ocenić, czy koszt syntezy powinien być blokowany już w trakcie wcześniejszych etapów, aby równoległe zadania nie zużyły miesięcznego limitu przed końcową syntezą.
+Rezerwa tokenowa `globalReserveTokens` jest teraz uzupełniona o niezależną rezerwę kosztu PLN (`globalReserveCostPln`). Koszt rezerwy jest doliczany do miesięcznego wykorzystania, aktywnych rezerwacji, snapshotu budżetu i starszej kontroli `checkLimits()`. Jeżeli sama rezerwa wraz z dotychczasowym użyciem przekracza limit, `planBatch()` odmawia jej utworzenia (fail closed). Główna ścieżka zespołu rezerwuje koszt syntezy MASTER-a już podczas etapów specjalistów i Peer Review; wycena jest konserwatywna i przyjmuje wyższą stawkę input/output dla całej puli tokenów.
 
 ### Status
 
@@ -664,3 +664,23 @@ Rezerwy `globalReserveTokens` nadal są rezerwami tokenowymi, a nie osobnymi rez
 Stan przed zapisem tego uzupełnienia:
 - HEAD branch: 443a8fbe4bc28831eeca7855e9b99ff48c0dbd5b
 - HEAD main: 752149d40186144b0f458a32b5826c8928349c3a
+
+
+## Uzupełnienie — miesięczna rezerwa kosztowa i adekwatność puli syntezy MASTER-a (2026-11-06)
+
+Wykryto, że rezerwa globalna chroniła tokeny, ale nie blokowała równoległym operacjom miesięcznego limitu kosztów PLN. Dodano kosztową część rezerwy:
+
+- `ActiveReservation` przechowuje teraz `globalReserveCostPln`;
+- `planBatch()` waliduje rezerwę kosztową (wartość skończona i nieujemna), uwzględnia ją w miesięcznym koszcie bieżącym i odmawia utworzenia rezerwy, jeśli sama przekracza dostępny limit;
+- aktywny koszt rezerwy jest uwzględniany w `activeReservationStats()`, `budgetUsageSnapshot()` (przez statystyki) i `checkLimits()`;
+- zwolnienie batcha zwalnia również niewykorzystaną rezerwę kosztową;
+- główny batch i Peer Review przekazują koszt rezerwy syntezy MASTER-a;
+- koszt szacowany jest konserwatywnie: cała pula tokenów syntezy jest wyceniana według wyższej z cen input/output danego modelu i aktualnego kursu USD/PLN;
+- pula tokenów syntezy uwzględnia teraz prompt systemowy MASTER-a, instrukcję trybu, raporty, dodatkowy kontekst pamięci/dowodów oraz co najmniej 4096 tokenów wyjściowych (tak jak właściwe wywołanie syntezy);
+- rezerwa syntezy jest tworzona także wtedy, gdy wszystkie raporty specjalistów pochodzą z cache i nie ma nowych zadań do wysłania.
+
+Testy dodane w `ApiTokenTrackerTest`:
+- `globalSynthesisCostReserveBlocksOtherMonthlySpendingUntilReleased`;
+- `globalSynthesisCostReserveAloneCannotExceedMonthlyLimit`.
+
+Testy i kompilacja nadal **NOT RUN**. Kosztowa rezerwa jest etapowa: przed właściwą syntezą końcową wykonywany jest osobny plan tej konkretnej operacji, który ponownie sprawdza bieżący limit i rezerwuje jej rzeczywisty szacunek. Rezerwa etapowa nie jest przedstawiana jako rzeczywisty koszt providera.
