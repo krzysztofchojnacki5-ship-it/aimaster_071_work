@@ -47,25 +47,24 @@ object AiMemoryStore {
         }.getOrNull()
     }
 
-    fun addMemory(context: Context, memory: String) {
-        if (memory.isBlank()) return
+    fun addMemory(context: Context, memory: String): Boolean {
+        if (memory.isBlank()) return false
         val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-        val list = readStoredMemories(context)?.toMutableList() ?: return
-        if (!list.contains(memory)) {
-            list.add(0, memory)
-            val arr = JSONArray()
-            list.take(100).forEach { arr.put(it) }
-            prefs.edit().putString("memories", arr.toString()).commit()
-        }
+        val list = readStoredMemories(context)?.toMutableList() ?: return false
+        if (list.contains(memory)) return true
+        list.add(0, memory)
+        val arr = JSONArray()
+        list.take(100).forEach { arr.put(it) }
+        return prefs.edit().putString("memories", arr.toString()).commit()
     }
 
-    fun removeMemory(context: Context, exactMemory: String) {
+    fun removeMemory(context: Context, exactMemory: String): Boolean {
         val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-        if (prefs.getString("memories", null) == null) return
-        val remaining = readStoredMemories(context)?.filterNot { it == exactMemory } ?: return
+        if (prefs.getString("memories", null) == null) return true
+        val remaining = readStoredMemories(context)?.filterNot { it == exactMemory } ?: return false
         val arr = JSONArray()
         remaining.forEach { arr.put(it) }
-        prefs.edit().putString("memories", arr.toString()).commit()
+        return prefs.edit().putString("memories", arr.toString()).commit()
     }
 
     /**
