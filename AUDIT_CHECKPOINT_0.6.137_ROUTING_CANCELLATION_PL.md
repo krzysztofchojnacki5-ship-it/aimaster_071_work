@@ -996,3 +996,37 @@ Plik: `app/src/main/java/pl/aimasterpro/app/MainActivity.kt`.
 Commit: `403f595895094714f66fc4aa258af01b2ab5dfa7`.
 
 Uzasadnienie: ProviderClient ma już osobne testy sieciowe globalnego anulowania i rozłączania aktywnych POST; nie dodano duplikującego testu transportu. Integracja lifecycle MainActivity nie została jeszcze potwierdzona testem Robolectric. Weryfikacja pozostaje NOT VERIFIED do wyniku CI.
+
+
+## Uzupełnienie — zakres anulowania pobierania katalogu modeli (2026-11-07)
+
+Dalszy przegląd lifecycle wykazał, że `discoverModelDetails()` korzystało z `requestWithRetry()` bez ustawienia `requestScopeLocal`. Pobieranie katalogu modeli było więc operacją niezależną od zakresu czatu, ale nie miało własnego zakresu, który `cancelActiveRequests()` mógłby unieważnić i rozłączyć podczas niszczenia Activity.
+
+Zmiana:
+- `discoverModelDetails(config, scope)` otrzymuje niezależny zakres domyślnie tworzony przez `beginRequestScope()`;
+- zakres jest ustawiany na czas całego pobierania i przywracany w `finally`, aby nie naruszyć ewentualnego zewnętrznego kontekstu wątku;
+- rozpoczęcie nowego czatu nadal nie anuluje trwającego discovery;
+- globalne anulowanie / teardown unieważnia teraz także pobieranie katalogu i uniemożliwia retry po przerwaniu.
+
+Testy:
+- zmieniono nazwę testu niezależności discovery na `beginningNewChatScopeDoesNotCancelIndependentModelDiscovery`;
+- dodano `cancellingGlobalRequestsDisconnectsModelDiscoveryWithoutRetry`: lokalny serwer wstrzymuje odpowiedź GET, test wykonuje globalne anulowanie i sprawdza szybkie zakończenie, kategorię `CANCELLED` oraz dokładnie jedno żądanie bez retry.
+
+Pliki:
+- `app/src/main/java/pl/aimasterpro/app/network/ProviderClient.kt`
+- `app/src/test/java/pl/aimasterpro/app/network/ProviderClientNetworkTest.kt`
+
+Commity:
+- implementacja: `5694a3f1b1d0e94c7a880047712f0788bb437905`
+- test: `b28815899b207c0dc0cd7fe8dbd75109b2abefa3`
+- zachowanie poprzedniego zakresu ThreadLocal i formatowanie: `2137387f9fc9a7f09ed181619ab7691116ed12f1`
+- korekta nazwy testu: `21b532705940f04fe30850ee08605abacdb620af`
+
+Weryfikacja:
+- zmiany zapisane na branchu roboczym;
+- testy i kompilacja tej poprawki pozostają **NOT RUN / NOT VERIFIED**;
+- nowy run CI dla HEAD `21b532705940f04fe30850ee08605abacdb620af` oczekuje na wykonanie (run `42312323287`, status pending);
+- starszy run `42311168794` nadal raportował krok Gradle jako in_progress przy ostatnim odczycie; nie jest wynikiem PASS;
+- run `42311354989` oraz pośrednie runy wyzwolone kolejnymi commitami zostały anulowane przez nowsze uruchomienia;
+- `main` pozostaje na `752149d40186144b0f458a32b5826c8928349c3a`; branch roboczy jest 227 commitów ahead, 0 behind;
+- nie wykonano merge, APK, release ani zmian na `main`; Companion Transport pozostaje **BLOCKED**.
