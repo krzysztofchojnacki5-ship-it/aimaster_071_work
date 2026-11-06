@@ -119,6 +119,7 @@ class MainActivity : Activity() {
     @Volatile private var requestGen = 0
     @Volatile private var activeWorkerThread: Thread? = null
     @Volatile private var activeWorkerGeneration = -1
+    @Volatile private var activeRequestScope: ProviderClient.RequestScope? = null
     private var draft = ""
     private var composerInput: EditText? = null
 
@@ -876,7 +877,7 @@ class MainActivity : Activity() {
         val stopScreen = if (screen == "Asystent") "Asystent" else "Czat"
         requestGen++
         activeWorkerGeneration = -1
-        client.cancelActiveRequests()
+        activeRequestScope?.let { scope -> client.cancelRequestScope(scope) }
         activeWorkerThread?.interrupt()
         activeWorkerThread = null
         isThinking = false
@@ -1411,6 +1412,7 @@ class MainActivity : Activity() {
         showShell(responseScreen)
         showChat()
         val requestScope = client.beginRequestScope()
+        activeRequestScope = requestScope
 
         executor.execute {
             if (gen != requestGen || Thread.currentThread().isInterrupted) return@execute
@@ -1879,10 +1881,18 @@ class MainActivity : Activity() {
             }
             runOnUiThread {
                 if (gen != requestGen) {
-                    if (activeWorkerGeneration == gen) { activeWorkerGeneration = -1; activeWorkerThread = null }
+                    if (activeWorkerGeneration == gen) {
+                        activeWorkerGeneration = -1
+                        activeWorkerThread = null
+                        if (activeRequestScope === requestScope) activeRequestScope = null
+                    }
                     return@runOnUiThread // użytkownik zatrzymał generowanie
                 }
-                if (activeWorkerGeneration == gen) { activeWorkerGeneration = -1; activeWorkerThread = null }
+                if (activeWorkerGeneration == gen) {
+                    activeWorkerGeneration = -1
+                    activeWorkerThread = null
+                    if (activeRequestScope === requestScope) activeRequestScope = null
+                }
                 isThinking = false
                 val ok = result.isSuccess
                 val chatTokenRows = pl.aimasterpro.app.core.ApiTokenTracker.loadAllRecordsFromStorage(this).filter { it.taskId == requestTaskId }
