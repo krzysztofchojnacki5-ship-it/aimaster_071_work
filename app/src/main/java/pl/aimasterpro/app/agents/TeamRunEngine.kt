@@ -73,11 +73,14 @@ class TeamRunEngine(
 
         val pool = Executors.newFixedThreadPool(maxParallel.coerceIn(1, 8).coerceAtMost(tasks.size))
         return try {
-            // Measure the 90-second task deadline from submission, not from the later
-            // sequential future.get() call. Otherwise queued/later tasks can run far
-            // beyond their advertised timeout while earlier futures are being awaited.
+            // Every agent gets a child request scope: cancelling one timed-out agent
+            // disconnects only its HTTP connection and leaves sibling agents untouched.
+            val batchScope = requestScope ?: client.beginRequestScope()
+            val taskScopes = tasks.map { client.childRequestScope(batchScope) }
+            // Measure each deadline from submission, not from sequential result collection.
             val submittedAtNanos = mutableListOf<Long>()
-            val futures = tasks.map { task ->
+            val futures = tasks.mapIndexed { taskIndex, task ->
+                val taskScope = taskScopes[taskIndex]
                 runCatching { onTaskState(task, "QUEUED", "", "", "", 0) }
                 submittedAtNanos += System.nanoTime()
                 pool.submit(Callable {
@@ -210,7 +213,7 @@ class TeamRunEngine(
                                         append(user)
                                     }
                                     onLog("MASTER", agent.name, requestTrace, "REQUEST")
-                                    val chatRes = client.chat(prov, system, user, attachmentMime, attachmentBase64, requestScope)
+                                    val chatRes = client.chat(prov, system, user, attachmentMime, attachmentBase64, taskScope)
                                     pl.aimasterpro.app.core.ProviderQuotaScheduler.markSuccess(quotaKey)
                                     runCatching { onProviderSuccess(prov) }
                                     // Local persistence/telemetry callbacks must never turn a successful,
@@ -357,6 +360,7 @@ class TeamRunEngine(
                     future.get(remainingMs, TimeUnit.MILLISECONDS)
                 } catch (t: TimeoutException) {
                     // A timed-out future must not keep running and later issue another fallback request.
+                    client.cancelRequestScope(taskScopes[index])
                     future.cancel(true)
                     runCatching { onTaskState(tasks[index], "TIMED_OUT", "Przekroczono limit 90 s; zadanie anulowano.", "", "", 0) }
                     TeamTaskResult(tasks[index].id, tasks[index].agentId, TeamTaskResult.Status.FAILED,
