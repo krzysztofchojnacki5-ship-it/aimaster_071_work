@@ -61,6 +61,7 @@ object AiMemoryStore {
 
     fun removeMemory(context: Context, exactMemory: String) {
         val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        if (prefs.getString("memories", null) == null) return
         val remaining = readStoredMemories(context)?.filterNot { it == exactMemory } ?: return
         val arr = JSONArray()
         remaining.forEach { arr.put(it) }
