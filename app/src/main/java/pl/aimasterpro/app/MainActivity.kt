@@ -1249,17 +1249,35 @@ class MainActivity : Activity() {
         if (ordered.isEmpty()) {
             throw IllegalStateException("Brak skonfigurowanego, zweryfikowanego darmowego modelu. Nie wysłano żądania do płatnego lub niezweryfikowanego API.")
         }
+        var ownedBudgetReservationId = ""
+        var effectiveBudgetReservationId = budgetReservationId
         if (budgetReservationId.isBlank()) {
-            val estimatedInput = ((systemPrompt.length + userText.length + 2) / 3).toLong()
-            val budgetCheck = pl.aimasterpro.app.core.ApiTokenTracker.checkLimits(
-                this, requestAgentId, estimatedInput + 4096L
+            val estimatedInput = (systemPrompt.length.toLong() + userText.length.toLong() + 2L) / 3L
+            val directBudget = pl.aimasterpro.app.core.ApiTokenTracker.planBatch(
+                this,
+                listOf(pl.aimasterpro.app.core.BudgetRequest(
+                    taskId = requestTaskId,
+                    agentId = requestAgentId,
+                    providerId = ordered.first().id,
+                    baseUrl = ordered.first().baseUrl,
+                    modelName = ordered.first().model,
+                    estimatedInputTokens = estimatedInput,
+                    estimatedOutputTokens = 4_096L
+                ))
             )
-            if (!budgetCheck.allowed) throw IllegalStateException(budgetCheck.warningMessage ?: "Przekroczono budżet tokenów.")
-            budgetCheck.warningMessage?.let { logAgentForChat(requestChatId, "⚠️ Budżet tokenów: $it") }
+            if (requestTaskId !in directBudget.allowedTaskIds) {
+                pl.aimasterpro.app.core.ApiTokenTracker.releaseBatchReservation(directBudget.reservationId)
+                val reason = directBudget.blockedReasons[requestTaskId] ?: "Nie udało się zarezerwować budżetu dla pojedynczego wywołania."
+                throw IllegalStateException("Smart Budget wstrzymał wywołanie: ${reason}")
+            }
+            ownedBudgetReservationId = directBudget.reservationId
+            effectiveBudgetReservationId = directBudget.reservationId
+            logAgentForChat(requestChatId, "🧠 Smart Budget: zarezerwowano ${directBudget.estimatedReservedTokens} tokenów dla pojedynczego wywołania.")
         }
 
         var lastErr: Throwable? = null
-        for (cfg in ordered) {
+        try {
+            for (cfg in ordered) {
             if (Thread.currentThread().isInterrupted) throw ProviderException(null, "Żądanie anulowane przez użytkownika.", category = "CANCELLED")
             if (!providerReady(cfg)) continue
             val quotaKey = pl.aimasterpro.app.core.ProviderQuotaScheduler.key(cfg.parentProviderId.ifBlank { cfg.id }, cfg.baseUrl, cfg.model)
@@ -1304,7 +1322,7 @@ class MainActivity : Activity() {
                     pl.aimasterpro.app.core.ApiTokenTracker.recordQuery(
                         this, cfg.id, cfg.model, requestAgentId, requestTaskId,
                         res.usage.inputTokens, res.usage.outputTokens, res.usage.reasoningTokens,
-                        res.usage.cachedTokens, res.usage.status, cfg.baseUrl, budgetReservationId
+                        res.usage.cachedTokens, res.usage.status, cfg.baseUrl, effectiveBudgetReservationId
                     )
                 }.onFailure { error ->
                     runCatching { logAgentForChat(requestChatId, "[USAGE_RECORD_FAILED] Odpowiedź API mogła zostać rozliczona, ale zapis tokenów nie powiódł się: ${error.message ?: error.javaClass.simpleName}") }
@@ -1375,8 +1393,13 @@ class MainActivity : Activity() {
             } finally {
                 lease.close()
             }
+            }
+            throw lastErr ?: IllegalStateException("Wszystkie skonfigurowane modele wyczerpały limity tokenów lub zawiodły.")
+        } finally {
+            if (ownedBudgetReservationId.isNotBlank()) {
+                pl.aimasterpro.app.core.ApiTokenTracker.releaseBatchReservation(ownedBudgetReservationId)
+            }
         }
-        throw lastErr ?: IllegalStateException("Wszystkie skonfigurowane modele wyczerpały limity tokenów lub zawiodły.")
     }
 
     private fun sendChatMessage(input: EditText) {
