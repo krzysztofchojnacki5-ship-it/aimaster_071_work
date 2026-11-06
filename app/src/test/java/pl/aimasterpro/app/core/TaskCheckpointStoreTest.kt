@@ -121,6 +121,16 @@ class TaskCheckpointStoreTest {
         assertTrue(TaskCheckpointStore.load(context).isEmpty())
     }
 
+    @Test fun negativePersistedUsageEstimateMakesJournalUnreadableAndPreventsOverwrite() {
+        val prefs = context.getSharedPreferences("task_checkpoints_v1", Context.MODE_PRIVATE)
+        val malformed = """[{"task":"bad-estimate","status":"REQUESTING","estimatedInputTokens":-10}]"""
+        assertTrue(prefs.edit().putString("events", malformed).commit())
+        assertFalse(TaskCheckpointStore.record(
+            context, TaskCheckpointStore.Event("new-task", "tester", "RUNNING", "", 700L, "", "", 0)
+        ))
+        assertEquals(malformed, prefs.getString("events", null))
+    }
+
     @Test fun malformedJournalRowAlsoBlocksAppendInsteadOfDroppingUnknownData() {
         val prefs = context.getSharedPreferences("task_checkpoints_v1", Context.MODE_PRIVATE)
         val malformed = """[{"task":"valid-row"},{"agent":"missing-task-id"}]"""
