@@ -2050,9 +2050,11 @@ class MainActivity : Activity() {
             .setPositiveButton("Zapisz") { _, _ ->
                 val name = input.text.toString().trim()
                 if (name.isBlank()) return@setPositiveButton
-                val r = runCatching { JSONObject(chatPrefs.getString("chats_v2", "{}") ?: "{}") }.getOrDefault(JSONObject())
-                val chat = r.optJSONObject("chats")?.optJSONObject(id)
-                if (chat != null) { chat.put("title", name); chatPrefs.edit().putString("chats_v2", r.toString()).apply() }
+                synchronized(this) {
+                    val r = runCatching { JSONObject(chatPrefs.getString("chats_v2", "{}") ?: "{}") }.getOrDefault(JSONObject())
+                    val chat = r.optJSONObject("chats")?.optJSONObject(id)
+                    if (chat != null) { chat.put("title", name); chatPrefs.edit().putString("chats_v2", r.toString()).apply() }
+                }
                 chatTitles[id] = name
                 populateDrawerList()
                 toast("Zmieniono nazwę rozmowy.")
@@ -2231,7 +2233,7 @@ class MainActivity : Activity() {
     private fun isAssistantChatId(id: String): Boolean =
         id == "assistant_dedicated_chat_id" || id.startsWith("assistant-")
 
-    private fun saveCurrentId() {
+    @Synchronized private fun saveCurrentId() {
         val r = runCatching { JSONObject(chatPrefs.getString("chats_v2", "{}") ?: "{}") }.getOrDefault(JSONObject())
         if (!r.has("chats")) r.put("chats", JSONObject())
         r.put("currentId", currentChatId)
@@ -2243,7 +2245,7 @@ class MainActivity : Activity() {
     }
 
     /** Dopisuje wiadomość do rozmowy zapisanej w pamięci, gdy użytkownik zdążył przejść do innej rozmowy. */
-    private fun appendToStoredChat(id: String, role: String, text: String, taskId: String = "") {
+    @Synchronized private fun appendToStoredChat(id: String, role: String, text: String, taskId: String = "") {
         val r = runCatching { JSONObject(chatPrefs.getString("chats_v2", "{}") ?: "{}") }.getOrDefault(JSONObject())
         val chat = r.optJSONObject("chats")?.optJSONObject(id) ?: return
         val arr = chat.optJSONArray("messages") ?: JSONArray()
