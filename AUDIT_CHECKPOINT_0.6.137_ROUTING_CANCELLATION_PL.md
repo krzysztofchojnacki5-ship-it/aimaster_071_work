@@ -80,3 +80,19 @@ Dodatkowe testy dodane w tym etapie:
 - `ApiTokenTrackerTest.synthesisReservationIsConsumedByActualMasterUsageAndReleased`
 
 Wszystkie pozostają NOT RUN do czasu uruchomienia JUnit/Robolectric i kompilacji Android.
+
+## Uzupełnienie — izolacja równoległych sesji i anulowanie nadrzędne (2026-11-06)
+
+Weryfikacja call-site'ów `beginRequestScope()` wykazała istotny problem architektoniczny: tworzenie nowego zakresu zwiększało globalny epoch i rozłączało starsze żądania. Oznaczało to, że uruchomienie testu modelu, audytu jakości lub innej niezależnej operacji mogło przerwać trwający czat albo pracę innego agenta.
+
+Poprawki:
+1. `beginRequestScope()` tworzy teraz niezależny zakres w aktualnym epoch. Samo rozpoczęcie nowej operacji nie anuluje innych. Globalne unieważnienie pozostaje wyłącznie w jawnej operacji `cancelActiveRequests()`.
+2. Zakresy potomne przechowują referencję do rodzica. Anulowanie nadrzędnego zakresu jest propagowane do wszystkich potomnych połączeń i żądań.
+3. `MainActivity.stopGeneration()` anuluje teraz wyłącznie zakres aktualnego czatu, zamiast globalnie rozłączać wszystkie testy modeli i inne operacje. Czyści też referencję do anulowanego zakresu.
+4. Anulowanie pojedynczego agenta nadal działa niezależnie od rodzeństwa w tym samym batchu.
+
+Dodane testy:
+- `ProviderClientNetworkTest.startingIndependentTopLevelScopesDoesNotCancelEarlierRequest`
+- `ProviderClientNetworkTest.cancellingParentScopeDisconnectsItsAgentChildrenOnly`
+
+Zidentyfikowany problem potwierdzono przez analizę wszystkich widocznych wywołań `beginRequestScope()` w `MainActivity`. Poprawka została zapisana na gałęzi roboczej; testy nadal NOT RUN.
