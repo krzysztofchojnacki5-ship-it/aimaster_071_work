@@ -11,6 +11,9 @@ import pl.aimasterpro.app.core.ProviderQuotaScheduler
 import pl.aimasterpro.app.core.WorkMode
 import pl.aimasterpro.app.network.ProviderClient
 import pl.aimasterpro.app.network.TestHttpServer
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicReference
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.Collections
 
@@ -214,4 +217,56 @@ class TeamRunEngineNetworkTest {
             server.stop(0)
         }
     }
+    @Test
+    fun coordinatorInterruptionMarksQueuedTasksCancelled() {
+        val requestStarted = CountDownLatch(1)
+        val server = TestHttpServer { _, _ ->
+            requestStarted.countDown()
+            Thread.sleep(700L)
+            200 to """{"choices":[{"message":{"content":"late-report"}}],"usage":{"prompt_tokens":2,"completion_tokens":2,"total_tokens":4}}"""
+        }
+        val client = ProviderClient()
+        val states = Collections.synchronizedList(mutableListOf<Pair<String, String>>())
+        val config = ProviderConfig(
+            "interrupt-test", "Interrupt test", ProviderKind.OPENAI_COMPATIBLE,
+            "http://127.0.0.1:" + server.address.port + "/v1", "test-model", ""
+        )
+        val tasks = listOf(
+            TeamTask("interrupt-running", "qa-architect", "Interrupt test", "Return a report"),
+            TeamTask("interrupt-queued", "api-researcher", "Interrupt test", "Return a report")
+        )
+        val coordinator = Thread {
+            TeamRunEngine(client, maxParallel = 1).runBatch(
+                tasks = tasks,
+                provider = config,
+                agentProvidersMap = tasks.associate { it.agentId to config.copy(id = "provider-" + it.agentId) },
+                isFreeProvider = { true },
+                mode = WorkMode.PLANNING,
+                onLog = { _, _, _, _ -> },
+                onTaskState = { task, status, _, _, _, _ -> states.add(task.id to status) },
+                requestScope = client.beginRequestScope()
+            )
+        }
+        try {
+            coordinator.start()
+            assertTrue("First agent should reach the local HTTP server", requestStarted.await(5, TimeUnit.SECONDS))
+            coordinator.interrupt()
+            coordinator.join(5_000L)
+            assertTrue("Coordinator should finish after interruption", !coordinator.isAlive)
+            assertTrue("Running task should reach a terminal cancellation state", states.any {
+                it.first == "interrupt-running" && it.second == "CANCELLED"
+            })
+            assertTrue("Queued task must not remain QUEUED after coordinator interruption", states.any {
+                it.first == "interrupt-queued" && it.second == "CANCELLED"
+            })
+        } finally {
+            client.cancelActiveRequests()
+            server.stop(0)
+            if (coordinator.isAlive) {
+                coordinator.interrupt()
+                coordinator.join(1_000L)
+            }
+        }
+    }
+
 }
