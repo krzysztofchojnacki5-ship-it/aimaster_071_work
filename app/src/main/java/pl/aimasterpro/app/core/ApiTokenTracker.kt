@@ -57,8 +57,8 @@ object ApiTokenTracker {
     private val sessionRecords = mutableListOf<TokenRecord>()
     // Session means the current app process, not an in-memory list that disappears from the monitor.
     private val sessionStartedAt = System.currentTimeMillis()
-    private data class ActiveReservationTask(val taskId: String, val agentId: String, val providerId: String, val baseUrl: String, val modelName: String, var tokensRemaining: Long, var costPlnRemaining: Double)
-    private data class ActiveReservation(val id: String, val tasks: MutableList<ActiveReservationTask>, var globalTokensRemaining: Long)
+    private data class ActiveReservationTask(val taskId: String, val agentId: String, val providerId: String, val baseUrl: String, val modelName: String, var tokensRemaining: Long, var costPlnRemaining: Double, var completed: Boolean = false)
+    private data class ActiveReservation(val id: String, val tasks: MutableList<ActiveReservationTask>, var globalTokensRemaining: Long, var releaseRequested: Boolean = false)
     private val activeReservations = linkedMapOf<String, ActiveReservation>()
 
     private fun addTokenCounts(left: Long, right: Long): Long {
@@ -157,9 +157,35 @@ object ApiTokenTracker {
         task.costPlnRemaining = (task.costPlnRemaining - record.costPln.coerceAtLeast(0.0)).coerceAtLeast(0.0)
     }
 
+    /** Immediate release for reservations whose work was never submitted. */
     @Synchronized
     fun releaseBatchReservation(reservationId: String) {
         if (reservationId.isNotBlank()) activeReservations.remove(reservationId)
+    }
+
+    /**
+     * Defers release until every submitted worker has actually left its callable.
+     * Future.cancel(true) can mark a Future done before an interrupt-ignoring worker exits,
+     * so callers must use this method for reservations backing TeamRunEngine batches.
+     */
+    @Synchronized
+    fun requestBatchReservationRelease(reservationId: String) {
+        if (reservationId.isBlank()) return
+        val reservation = activeReservations[reservationId] ?: return
+        reservation.releaseRequested = true
+        if (reservation.tasks.all { it.completed }) activeReservations.remove(reservationId)
+    }
+
+    /** Called exactly once when a batch worker exits, or when a queued worker is cancelled before start. */
+    @Synchronized
+    fun completeReservationTask(reservationId: String, taskId: String) {
+        if (reservationId.isBlank() || taskId.isBlank()) return
+        val reservation = activeReservations[reservationId] ?: return
+        val task = reservation.tasks.singleOrNull { it.taskId == taskId } ?: return
+        task.completed = true
+        if (reservation.releaseRequested && reservation.tasks.all { it.completed }) {
+            activeReservations.remove(reservationId)
+        }
     }
 
     private fun saveRecordToStorage(context: Context, record: TokenRecord): Boolean {
