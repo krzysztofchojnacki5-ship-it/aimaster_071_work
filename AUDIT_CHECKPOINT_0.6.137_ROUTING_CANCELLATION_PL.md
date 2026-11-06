@@ -1116,3 +1116,34 @@ Weryfikacja:
 - Krok `Run unit tests and compile debug variant`: **IN_PROGRESS** przy ostatnim odczycie; nie ma jeszcze raportu testów ani wyniku kompilacji.
 - Aktualny HEAD brancha po dopisaniu dokumentacji: `a0c5d4ec10f8295980db92940b829b177b11cc8a`.
 - Porównanie z `main`: 236 commits ahead, 0 behind; `main` nadal `752149d40186144b0f458a32b5826c8928349c3a`.
+
+
+## Etap 11 — blokada importu przy nieuzgodnionym receipt patcha (2026-11-07)
+
+Przegląd transakcji workspace ujawnił brak symetrycznej blokady: applyPreview() odmawiał kolejnego patcha, gdy istniał nierozliczony patchReceiptFile, ale importZip() po odzyskaniu dziennika swapu nie sprawdzał tego receipt. Import ZIP mógł więc zastąpić workspace pomiędzy trwałym zatwierdzeniem patcha a uzgodnieniem jego wyniku z rejestrem ChangeSet. Stary receipt pozostałby wtedy związany z poprzednią identity, a odzyskiwanie hosta mogłoby zostać zatrzymane przez niezgodność identity.
+
+Zmiana:
+- ProjectWorkspaceStore.importZip() po recoverInterruptedSwap() sprawdza teraz, czy istnieje receipt patcha;
+- jeśli receipt nie został uzgodniony, import kończy się bez podmiany workspace i z czytelnym komunikatem;
+- receipt oraz snapshot pozostają dostępne dla hostowego mechanizmu recovery;
+- blokada jest w warstwie magazynu, a nie wyłącznie w UI, więc obejmuje wszystkie wywołania importZip().
+
+Test regresyjny:
+- refusesImportWhilePatchReceiptIsAwaitingChangeSetReconciliation;
+- wykonuje poprawny patch z changeSetId i chatId, pozostawia receipt nieuzgodniony, próbuje importować kolejny ZIP;
+- sprawdza odrzucenie importu, zachowanie nowej treści, niezmienioną workspace identity, utrzymanie pending transaction oraz poprawność integralności.
+
+Pliki:
+- app/src/main/java/pl/aimasterpro/app/core/ProjectWorkspaceStore.kt
+- app/src/test/java/pl/aimasterpro/app/core/ProjectWorkspaceStoreApplyTest.kt
+
+Commity:
+- blokada importu: 6c71ac8cd69b7eb73f0e75a8069b543db078709e
+- test regresyjny: 0cb89f62550299e3343cf446360b0aa590301d7c
+
+Weryfikacja:
+- pliki ponownie odczytane z brancha; potwierdzono obecność guardu i testu;
+- test nie został jeszcze wykonany lokalnie ani w CI;
+- nowy workflow run 42315138948 dla SHA 0cb89f62550299e3343cf446360b0aa590301d7c ma status queued;
+- poprzedni run 42313083194 zakończył się jako cancelled po uruchomieniu nowszej wersji workflow; nie był wynikiem testów PASS;
+- brak merge, APK, release i zmian main; Companion Transport pozostaje BLOCKED.
