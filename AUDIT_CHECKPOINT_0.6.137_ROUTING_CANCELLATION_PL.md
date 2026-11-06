@@ -839,3 +839,33 @@ Wszystkie powyższe testy: **NOT RUN**. Nie deklaruję PASS.
 Stan przed zapisaniem tego uzupełnienia:
 - HEAD branch: 49c855f2ce60d59e12c7a86967172d8557cc9ae1
 - HEAD main: 752149d40186144b0f458a32b5826c8928349c3a
+
+
+
+## Uzupełnienie — deterministyczna kolejność checkpointów przy zmianie zegara systemowego (2026-11-07)
+
+Dalsza kontrola etapu trwałości ujawniła rozbieżność między kontraktem dziennika a implementacją `TaskCheckpointStore.latest()`:
+- `record()` dodaje każde nowe zdarzenie na początku dziennika;
+- komentarz i wcześniejszy test zakładały, że kolejność dziennika jest autorytatywna;
+- `latest()` dodatkowo sortowało zdarzenia według `timestamp`, co mogło odwrócić rzeczywistą kolejność, jeśli zegar urządzenia został cofnięty lub przestawiony.
+
+Poprawka:
+- usunięto sortowanie po znaczniku czasu;
+- `latest()` zachowuje kolejność trwałego dziennika i wybiera pierwsze wystąpienie każdego `taskId`;
+- dodano regresję `latestUsesJournalOrderWhenWallClockMovesBackwards`, w której nowsze zdarzenie RUNNING ma wcześniejszy czas systemowy niż poprzednie QUEUED.
+
+Pliki:
+- `app/src/main/java/pl/aimasterpro/app/core/TaskCheckpointStore.kt`
+- `app/src/test/java/pl/aimasterpro/app/core/TaskCheckpointStoreTest.kt`
+
+Weryfikacja:
+- zmiany i test zapisano na branchu roboczym;
+- nowy test nie został uruchomiony; JUnit/Robolectric i kompilacja Android pozostają **NOT RUN**;
+- nie deklaruję PASS.
+
+Stan po zapisaniu poprawki:
+- HEAD branch: `2ad8ea497ecee812ff064f7da5b5fe834fc1b8c8`
+- poprzedni commit kodu: `b6e22bcb552774262f7cbf792de7493e1085e45c`
+- HEAD main: `752149d40186144b0f458a32b5826c8928349c3a` (bez zmian)
+- liczba testów w ośmiu plikach z poprzedniego etapu: 68; wszystkie **NOT RUN**.
+- APK, bump wersji, merge i Companion Transport: bez zmian; Companion Transport pozostaje **BLOCKED**.
