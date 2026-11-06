@@ -4,7 +4,7 @@ Gałąź: `audit/0.6.137-routing-hardening`
 Zakres: routing, scheduler, rozliczanie użycia API, timeouty i anulowanie agentów.
 
 ## Stan repozytorium
-- HEAD gałęzi roboczej: `ea0f8f70cc01f0b81f3eaab3752bc92a27862483`
+- Ostatni HEAD kodu przed aktualizacją tego checkpointu: `74ed3899081bece81d2ff4b77f0e21d2f5769e25`
 - HEAD `main`: `752149d40186144b0f458a32b5826c8928349c3a` (bez zmian).
 - `main` nie zawiera zmian z tej gałęzi.
 - Brak `.github/workflows/` oraz `gradle/wrapper/gradle-wrapper.jar`; nie potwierdzono możliwości uruchomienia builda w CI.
@@ -117,3 +117,39 @@ Dodatkowo zabezpieczono przypadek, w którym przerwany zostaje wątek koordynato
 
 Kod gałęzi roboczej zweryfikowany po tych zmianach: `dac290b1f3684778c9a46b6bd5c7f782beb8eccb`.
 `main` nadal pozostaje na `752149d40186144b0f458a32b5826c8928349c3a`.
+
+
+## Uzupełnienie — trwałość checkpointów i rozliczeń API (2026-11-06)
+
+W kolejnym etapie sprawdzono odzyskiwanie zadań po restarcie, zapis dziennika checkpointów, rejestr użycia API oraz identyfikatory zadań.
+
+### Ustalenia
+
+1. MainActivity.onCreate() wywołuje TaskCheckpointStore.recoverStaleRunning() przed rozpoczęciem normalnej pracy interfejsu.
+2. Odzyskiwanie obejmuje zarówno ostatni stan QUEUED, jak i RUNNING pochodzący z innego procesu. Są one oznaczane INTERRUPTED; nie są automatycznie wysyłane ponownie.
+3. Identyfikatory zadań zespołu w głównym czacie zawierają identyfikator czatu, UUID żądania, indeks i rolę agenta. Żądanie czatu i synteza MASTER mają osobne identyfikatory. Nie wykryto kolizji w sprawdzonych ścieżkach.
+4. Rezerwacje budżetu w ApiTokenTracker są przechowywane w pamięci procesu. Po śmierci procesu znikają, ale w badanej ścieżce aplikacja nie wznawia automatycznie przerwanych zadań. Trwała historia wykorzystania API pozostaje osobnym rejestrem.
+5. Wcześniej ignorowano wynik SharedPreferences.commit() dla checkpointów, a rejestr tokenów używał apply(), które nie potwierdza zakończenia zapisu na dysku przed powrotem z funkcji.
+
+### Poprawki wprowadzone
+
+1. TaskCheckpointStore.record() zwraca teraz Boolean i używa synchronicznego commit(). Błąd zapisu nie jest już przedstawiany jako potwierdzony checkpoint.
+2. recoverStaleRunning() zlicza wyłącznie przerwane zadania, których nowy stan INTERRUPTED został trwale zapisany; nieudany zapis trafia do Android Log.
+3. Wszystkie trzy sprawdzone callbacki onTaskState w MainActivity raportują niepowodzenie trwałego zapisu checkpointu.
+4. TaskCheckpointStore.latest() wybiera najnowszy stan na podstawie kolejności dziennika (najnowsze zdarzenie jest wstawiane na początek), a nie wyłącznie znacznika czasu. Zapobiega to wybraniu starego stanu w przypadku identycznych znaczników czasu.
+5. ApiTokenTracker.saveRecordToStorage() używa teraz commit() i zgłasza błąd, jeśli zapis trwały nie zostanie potwierdzony. W ścieżce TeamRunEngine błąd zapisu usage jest przechwytywany jako błąd księgowania po odpowiedzi i nie może uruchomić ponownego płatnego żądania.
+6. Dodano testy latestUsesJournalOrderWhenTimestampsCollide i recordReportsSuccessfulDurableWrite.
+
+### Pliki zmienione w tym etapie
+
+- app/src/main/java/pl/aimasterpro/app/core/TaskCheckpointStore.kt
+- app/src/test/java/pl/aimasterpro/app/core/TaskCheckpointStoreTest.kt
+- app/src/main/java/pl/aimasterpro/app/core/ApiTokenTracker.kt
+- app/src/main/java/pl/aimasterpro/app/MainActivity.kt
+
+### Ograniczenia i weryfikacja
+
+- Testy nadal NOT RUN — nie uruchomiono Gradle/JUnit/Robolectric ani kompilacji Android.
+- Nie wykonano testu rzeczywistej śmierci procesu Android ani wymuszonego błędu zapisu SharedPreferences.
+- Rezerwacje budżetu nadal są pamięciowe; ich odtworzenie po restarcie nie jest potrzebne, dopóki aplikacja nie wznawia automatycznie przerwanych żądań. Nie należy dodawać takiego automatycznego wznowienia bez osobnego mechanizmu idempotencji.
+- Nie zmieniono main, APK, wersji aplikacji ani Companion Transport.
