@@ -229,8 +229,9 @@ object QualityLearningStore {
     private fun readArray(c: Context, key: String): List<JSONObject> = readArrayStrict(c, key) ?: emptyList()
 
     /** A malformed row invalidates mutation of that journal; never silently drop unknown evidence. */
-    private fun readArrayStrict(c: Context, key: String): List<JSONObject>? = runCatching {
+    private fun readArrayStrict(c: Context, key: String): List<JSONObject>? {
         val raw = c.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString(key, null) ?: return emptyList()
+        return runCatching {
         val array = JSONArray(raw)
         (0 until array.length()).map { index ->
             val row = array.getJSONObject(index)
@@ -256,7 +257,8 @@ object QualityLearningStore {
             }
             row
         }
-    }.getOrNull()
+        }.getOrNull()
+    }
 
     private fun writeArray(c: Context, key: String, rows: List<JSONObject>): Boolean =
         c.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
