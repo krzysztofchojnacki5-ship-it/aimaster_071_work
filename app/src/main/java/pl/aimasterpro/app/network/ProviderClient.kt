@@ -14,6 +14,7 @@ import java.net.ConnectException
 import java.io.IOException
 import java.util.concurrent.ThreadLocalRandom
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
 
 class ProviderException(
