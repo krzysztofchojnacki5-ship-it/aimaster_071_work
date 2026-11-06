@@ -936,3 +936,25 @@ Plik:
 Commit poprawki: `58e519a1e723999913649ede892ab73d43960774`.
 
 Weryfikacja: poprawkę zapisano na branchu roboczym. Nie uruchomiono kompilacji Kotlin/Gradle ani testów; nie oznaczać jako potwierdzonego rozwiązania błędu kompilacji do czasu uruchomienia builda. Test `concurrentUsageSnapshotsAreSerializedWithSessionRecordWrites` pozostaje NOT RUN.
+
+
+## Etap weryfikowalności — dodanie ścieżki CI Android (2026-11-07)
+
+Po sprawdzeniu konfiguracji projektu potwierdzono:
+- Android Gradle Plugin: `8.13.2`;
+- Gradle distribution: `8.13`;
+- JDK target/source: `17`;
+- `compileSdk = 36`;
+- testy jednostkowe: JUnit 4.13.2 i Robolectric 4.11.1;
+- repozytorium nie zawierało `gradle-wrapper.jar`, dlatego lokalne `./gradlew` nie było kompletną ścieżką uruchomienia.
+
+Dodano workflow `.github/workflows/android-audit.yml`:
+- uruchamia się po push na branch audytowy, przy pull request do `main` oraz ręcznie;
+- instaluje JDK 17, Android SDK API 36 i Gradle 8.13;
+- uruchamia `:app:testDebugUnitTest` oraz `:app:assembleDebug`;
+- zachowuje raporty testowe jako artefakt na 14 dni;
+- nie publikuje APK ani nie wykonuje release/merge.
+
+Commit workflow: `7a461943b57f0102c3b6c50b3dd37890ddb23bfd`.
+
+Status: dodanie workflow nie jest równoznaczne z zaliczeniem builda. Oczekujemy na rzeczywisty wynik GitHub Actions; do tego czasu testy i kompilacja pozostają NOT VERIFIED. Brak wrapper JAR nadal pozostaje w repozytorium, a workflow świadomie używa zainstalowanego Gradle 8.13 bezpośrednio.
