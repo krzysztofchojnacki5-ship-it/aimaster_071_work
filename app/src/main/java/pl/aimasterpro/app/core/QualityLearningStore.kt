@@ -115,15 +115,32 @@ object QualityLearningStore {
         if (!saveProposals(context, all)) return false
         val memoryEntry = "[UCZENIE ZATWIERDZONE ${old.id.take(8)}; dowody=${old.evidenceCount}; pewność=${old.confidence}] ${old.text}".take(1000)
         if (status == "APPROVED") {
-            AiMemoryStore.addMemory(context, memoryEntry)
+            val sharedSaved = AiMemoryStore.addMemory(context, memoryEntry)
             // Preserve agent scope: approved specialist lessons are not broadcast to unrelated agents.
-            old.affectedAgents.forEach { agentId ->
+            val sourceRef = "proposal:${old.id}"
+            val agentSaves = old.affectedAgents.filter(String::isNotBlank).map { agentId ->
                 AgentOperationalMemoryStore.addApproved(context, agentId, old.text,
-                    category = "wniosek jakościowy", sourceTaskIds = listOf("proposal:${old.id}"), confidence = old.confidence)
+                    category = "wniosek jakościowy", sourceTaskIds = listOf(sourceRef), confidence = old.confidence) != null
+            }
+            if (!sharedSaved || agentSaves.any { !it }) {
+                AiMemoryStore.removeMemory(context, memoryEntry)
+                AgentOperationalMemoryStore.removeBySource(context, sourceRef)
+                all[index] = old
+                if (!saveProposals(context, all)) {
+                    android.util.Log.e("AIMasterQuality", "Nie udało się wycofać statusu APPROVED po błędzie zapisu pamięci.")
+                }
+                return false
             }
         } else if (old.status == "APPROVED") {
-            AiMemoryStore.removeMemory(context, memoryEntry)
-            AgentOperationalMemoryStore.removeBySource(context, "proposal:${old.id}")
+            val sharedRemoved = AiMemoryStore.removeMemory(context, memoryEntry)
+            val agentRemoved = AgentOperationalMemoryStore.removeBySource(context, "proposal:${old.id}")
+            if (!sharedRemoved || !agentRemoved) {
+                all[index] = old
+                if (!saveProposals(context, all)) {
+                    android.util.Log.e("AIMasterQuality", "Nie udało się przywrócić statusu APPROVED po błędzie usuwania pamięci.")
+                }
+                return false
+            }
         }
         return true
     }
@@ -132,6 +149,8 @@ object QualityLearningStore {
     @Synchronized fun syncApprovedAgentMemories(context: Context): Int {
         var synchronized = 0
         proposals(context).filter { it.status == "APPROVED" }.forEach { proposal ->
+            val memoryEntry = "[UCZENIE ZATWIERDZONE ${proposal.id.take(8)}; dowody=${proposal.evidenceCount}; pewność=${proposal.confidence}] ${proposal.text}".take(1000)
+            if (AiMemoryStore.addMemory(context, memoryEntry)) synchronized++
             proposal.affectedAgents.forEach { agentId ->
                 if (AgentOperationalMemoryStore.addApproved(context, agentId, proposal.text,
                     category = "wniosek jakościowy", sourceTaskIds = listOf("proposal:${proposal.id}"),
