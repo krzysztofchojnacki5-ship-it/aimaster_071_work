@@ -437,3 +437,27 @@ Testy nadal **NOT RUN**. Nie wykonano kompilacji ani uruchomienia JUnit/Robolect
 Stan referencyjny kodu przed zapisaniem tego uzupełnienia:
 - HEAD branch: 5d88924de636ca95f39fba8382096742de9895ea
 - HEAD main: 752149d40186144b0f458a32b5826c8928349c3a
+
+
+### Dodatkowa poprawka — atomowa rezerwacja dla pojedynczego czatu MASTER-a
+
+Kontrola wszystkich ścieżek ujawniła jeszcze jedno miejsce poza TeamRunEngine: zwykły, pojedynczy czat bez przekazanego `budgetReservationId` używał `checkLimits()`. Ta metoda wykonywała tylko kontrolę odczytową i nie rezerwowała limitu. Dwa równoległe czaty mogły więc jednocześnie przejść kontrolę na podstawie tego samego wolnego budżetu.
+
+Poprawka w `MainActivity.chatWithFallback()`:
+
+- usunięto użycie `checkLimits()` z tej ścieżki;
+- przed rozpoczęciem routingu tworzona jest atomowa rezerwacja przez `planBatch()` dla pierwszego dopuszczonego profilu z rankingu;
+- rezerwacja obejmuje szacowany input oraz 4096 tokenów output;
+- jej identyfikator jest przekazywany do `recordQuery()`, więc dokładnie zgodny provider/model/endpoint konsumuje rezerwację;
+- jeżeli routing przejdzie na inny profil, rezerwacja pierwotnego profilu pozostaje zachowawczo aktywna do końca synchronicznej próby; rzeczywiste użycie fallbacku jest księgowane przed zwolnieniem;
+- rezerwacja jest zwalniana w `finally` po zakończeniu całej pętli providerów, niezależnie od sukcesu, błędu lub wyjątku;
+- log informujący o rezerwacji jest best-effort, aby awaria samego logowania nie pozostawiła rezerwacji bez bloku `finally`;
+- estymacja input używa arytmetyki `Long`, aby uniknąć przepełnienia przy dodawaniu długości promptów.
+
+Po tej zmianie `MainActivity` nie ma już wywołań `ApiTokenTracker.checkLimits()` dla pojedynczych czatów; bezpośrednia ścieżka korzysta z tego samego atomowego mechanizmu rezerwacji co batch agentów. Sama metoda `checkLimits()` pozostaje w trackerze jako starsze API/kompatybilność i jest nadal fail-closed, ale nie jest już mechanizmem autoryzacji pojedynczego czatu.
+
+Stan referencyjny kodu przed zapisaniem tego uzupełnienia:
+- HEAD branch: 22647865676c836a2c8e9af0850a3315e789592a
+- HEAD main: 752149d40186144b0f458a32b5826c8928349c3a
+
+Testy pozostają **NOT RUN**.
