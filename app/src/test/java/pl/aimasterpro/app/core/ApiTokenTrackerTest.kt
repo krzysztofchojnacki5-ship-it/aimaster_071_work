@@ -11,6 +11,7 @@ import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
 import java.util.concurrent.CountDownLatch
+import java.util.concurrent.atomic.AtomicReference
 
 @RunWith(RobolectricTestRunner::class)
 class ApiTokenTrackerTest {
@@ -299,6 +300,43 @@ class ApiTokenTrackerTest {
         assertTrue("Reservation lifecycle thread failed: $failures", failures.isEmpty())
         assertEquals("Either ordering of release and completion must retire the reservation",
             0L, ApiTokenTracker.activeReservationStats().tokens)
+    }
+
+    @Test fun concurrentUsageSnapshotsAreSerializedWithSessionRecordWrites() {
+        val failure = AtomicReference<Throwable?>(null)
+        val writerDone = CountDownLatch(1)
+        val writer = Thread {
+            try {
+                repeat(80) { index ->
+                    ApiTokenTracker.recordQuery(
+                        context, "openai", "gpt-4o-mini", "QA", "snapshot-task-$index",
+                        10L, 5L, status = "REAL", idempotencyKey = "snapshot-key-$index"
+                    )
+                }
+            } catch (error: Throwable) {
+                failure.compareAndSet(null, error)
+            } finally {
+                writerDone.countDown()
+            }
+        }
+        val reader = Thread {
+            try {
+                while (writerDone.count > 0L) {
+                    ApiTokenTracker.loadAllRecordsFromStorage(context)
+                }
+            } catch (error: Throwable) {
+                failure.compareAndSet(null, error)
+            }
+        }
+        writer.start()
+        reader.start()
+        writer.join(10_000)
+        reader.join(10_000)
+        assertFalse("Usage writer did not finish", writer.isAlive)
+        assertFalse("Usage snapshot reader did not finish", reader.isAlive)
+        assertEquals(null, failure.get())
+        assertEquals(80, ApiTokenTracker.loadAllRecordsFromStorage(context)
+            .count { it.queryId.startsWith("snapshot-key-") })
     }
 
     @Test fun concurrentUsageWritesAreSerializedAndBothRecordsPersist() {
