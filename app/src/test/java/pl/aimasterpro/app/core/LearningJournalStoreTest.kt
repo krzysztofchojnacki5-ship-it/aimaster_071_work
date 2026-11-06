@@ -43,6 +43,18 @@ class LearningJournalStoreTest {
         assertTrue(summary.contains("3s"))
     }
 
+    @Test fun legacyJournalRowsWithoutTokenTotalsRemainReadableAndAppendable() {
+        val prefs = context.getSharedPreferences("ai_learning_journal_v1", Context.MODE_PRIVATE)
+        val legacy = """[{"ts":10,"kind":"agent","agent":"coder","provider":"groq","model":"legacy-model","status":"COMPLETED","duration":500,"attempts":1,"category":""}]"""
+        assertTrue(prefs.edit().putString("events", legacy).commit())
+        assertEquals(0L, LearningJournalStore.load(context).single().inputTokens)
+        LearningJournalStore.record(
+            context, LearningJournalStore.Event(20L, "agent", "tester", "groq", "new-model", "COMPLETED", 100L, 1, "")
+        )
+        assertEquals(2, LearningJournalStore.load(context).size)
+        assertTrue(LearningJournalStore.load(context).any { it.model == "legacy-model" })
+    }
+
     @Test fun malformedOperationalJournalIsPreservedWhenNewEventIsRecorded() {
         val prefs = context.getSharedPreferences("ai_learning_journal_v1", Context.MODE_PRIVATE)
         val corrupt = """[{"kind":"agent","agent":"coder"},null]"""
