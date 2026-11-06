@@ -305,4 +305,42 @@ class TeamRunEngineNetworkTest {
         }
     }
 
+
+    @Test
+    fun ambiguousPostOutcomeIsAccountedAsUnavailableAndDoesNotFallback() {
+        val server = TestHttpServer { _, _ ->
+            Thread.sleep(500L)
+            200 to """{"choices":[{"message":{"content":"late-report"}}]}"""
+        }
+        try {
+            val primary = ProviderConfig(
+                "ambiguous-primary", "Ambiguous primary", ProviderKind.OPENAI_COMPATIBLE,
+                "http://127.0.0.1:${server.address.port}/v1", "test-model", ""
+            )
+            val fallback = primary.copy(id = "ambiguous-fallback", name = "Ambiguous fallback", model = "backup-model")
+            val unknownUsage = Collections.synchronizedList(mutableListOf<Triple<String, Long, Long>>())
+            val results = TeamRunEngine(ProviderClient(connectTimeoutMs = 500, readTimeoutMs = 100)).runBatch(
+                tasks = listOf(TeamTask("ambiguous-task", "qa-architect", "Ambiguous POST", "Return a report")),
+                provider = primary,
+                agentProvidersMap = mapOf("qa-architect" to primary),
+                fallbackProviders = listOf(primary, fallback),
+                isFreeProvider = { true },
+                mode = WorkMode.PLANNING,
+                onLog = { _, _, _, _ -> },
+                onUnknownUsage = { agentId, taskId, _, input, output ->
+                    unknownUsage.add(Triple("$agentId:$taskId", input, output))
+                }
+            )
+            assertEquals(1, results.size)
+            assertEquals(TeamTaskResult.Status.FAILED, results.single().status)
+            assertEquals("An ambiguous POST must not be replayed against a fallback provider", 1, server.requestCount.get())
+            assertEquals(1, unknownUsage.size)
+            assertEquals("qa-architect:ambiguous-task", unknownUsage.single().first)
+            assertTrue("Input estimate must be positive", unknownUsage.single().second > 0L)
+            assertTrue("Output allowance must be positive", unknownUsage.single().third > 0L)
+        } finally {
+            server.stop(0)
+        }
+    }
+
 }
