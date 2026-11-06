@@ -4,7 +4,7 @@ Gałąź: `audit/0.6.137-routing-hardening`
 Zakres: routing, scheduler, rozliczanie użycia API, timeouty i anulowanie agentów.
 
 ## Stan repozytorium
-- Ostatni HEAD kodu przed aktualizacją tego checkpointu: `74ed3899081bece81d2ff4b77f0e21d2f5769e25`
+- Ostatni HEAD kodu przed aktualizacją tego checkpointu: `ef30f43644262c712760f541545237bb7a159392`
 - HEAD `main`: `752149d40186144b0f458a32b5826c8928349c3a` (bez zmian).
 - `main` nie zawiera zmian z tej gałęzi.
 - Brak `.github/workflows/` oraz `gradle/wrapper/gradle-wrapper.jar`; nie potwierdzono możliwości uruchomienia builda w CI.
@@ -153,3 +153,8 @@ W kolejnym etapie sprawdzono odzyskiwanie zadań po restarcie, zapis dziennika c
 - Nie wykonano testu rzeczywistej śmierci procesu Android ani wymuszonego błędu zapisu SharedPreferences.
 - Rezerwacje budżetu nadal są pamięciowe; ich odtworzenie po restarcie nie jest potrzebne, dopóki aplikacja nie wznawia automatycznie przerwanych żądań. Nie należy dodawać takiego automatycznego wznowienia bez osobnego mechanizmu idempotencji.
 - Nie zmieniono main, APK, wersji aplikacji ani Companion Transport.
+
+
+### Dodatkowa regresja — stabilność terminalnego statusu zadania (2026-11-06)
+
+Przegląd ścieżki timeoutu w TeamRunEngine ujawnił wyścig: koordynator mógł najpierw zapisać TIMED_OUT, po czym przerwany worker zapisywał CANCELLED i nadpisywał informację o przyczynie zakończenia. TaskCheckpointStore odrzuca teraz późniejsze przejścia po zapisanym stanie terminalnym (COMPLETED, FAILED, BLOCKED, TIMED_OUT, CANCELLED, INTERRUPTED). Ponieważ wpis terminalny jest już trwale zapisany, zignorowanie spóźnionego callbacku jest traktowane jako poprawny no-op. Dodano test lateWorkerCancellationDoesNotOverwriteCoordinatorTimeout. Test pozostaje NOT RUN.
