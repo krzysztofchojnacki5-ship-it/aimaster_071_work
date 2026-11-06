@@ -340,7 +340,7 @@ class TeamRunEngine(
                             runCatching { onTaskState(task, "FAILED", "Agent zwrócił pusty raport.", actualProviderId, actualModel, attemptCount) }
                             TeamTaskResult(task.id, task.agentId, TeamTaskResult.Status.FAILED, "Agent zwrócił pusty raport.", System.currentTimeMillis() - taskStartedAt, attemptCount, actualProviderId, actualModel, task.reviewOfAgentId)
                         } else {
-                            onLog(agent.name, "MASTER", report, "REPORT")
+                            runCatching { onLog(agent.name, "MASTER", report, "REPORT") }
                             runCatching { onTaskState(task, "COMPLETED", "Raport odebrany.", actualProviderId, actualModel, attemptCount) }
                             TeamTaskResult(task.id, task.agentId, TeamTaskResult.Status.COMPLETED, report, System.currentTimeMillis() - taskStartedAt, attemptCount, actualProviderId, actualModel, task.reviewOfAgentId)
                         }
