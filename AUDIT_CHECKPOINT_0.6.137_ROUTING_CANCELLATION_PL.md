@@ -175,3 +175,26 @@ Poprawki w MainActivity.kt:
 - blok read-modify-write zmiany nazwy czatu jest chroniony przez synchronized(this).
 
 Nie zmieniano jeszcze modelu trwałości historii: zapisy historii czatu nadal używają SharedPreferences.apply(). Nie zastępowano go commit() na wątku UI, aby nie wprowadzać ryzyka blokowania interfejsu. W kolejnym kroku należy sprawdzić kolejność zapisów i lifecycle flush oraz to, czy log aktywności agentów, assistantTaskIds i wiadomości pozostają spójne przy szybkiej zmianie czatu lub zamknięciu procesu.
+
+## Uzupełnienie — ochrona dziennika przed nadpisaniem po uszkodzeniu (2026-11-06)
+
+W kolejnym przeglądzie znaleziono ryzyko utraty historii checkpointów: wcześniejszy odczyt JSON zwracał pustą listę zarówno dla prawidłowo pustego dziennika, jak i dla uszkodzonych danych. Następny zapis mógł więc potraktować uszkodzony dziennik jako pusty i zastąpić go nowym wpisem, bez zachowania istniejącej zawartości.
+
+Poprawka:
+- dodano odrębny, ścisły odczyt dziennika (readEvents), który rozróżnia poprawną pustą historię od błędu parsowania lub nieprawidłowego wiersza;
+- record() odmawia dopisania zdarzenia, gdy istniejący dziennik jest uszkodzony; nie wykonuje zapisu zastępczego i nie nadpisuje surowych danych;
+- publiczny load() nadal zwraca pustą listę przy błędzie odczytu dla bezpiecznej obsługi ekranów, ale ścieżka zapisu nie interpretuje tego wyniku jako zgody na nadpisanie.
+
+Dodane testy regresyjne:
+- corruptJournalIsNotSilentlyReplacedByAnEmptyHistory
+- malformedJournalRowAlsoBlocksAppendInsteadOfDroppingUnknownData
+
+Pliki zmienione:
+- app/src/main/java/pl/aimasterpro/app/core/TaskCheckpointStore.kt
+- app/src/test/java/pl/aimasterpro/app/core/TaskCheckpointStoreTest.kt
+
+Weryfikacja: zmiany i testy zapisano na branchu roboczym. Testy pozostają NOT RUN — nadal nie potwierdzono uruchomienia Gradle/JUnit/Robolectric ani kompilacji Android. W przypadku uszkodzonego dziennika nowe wpisy będą blokowane do czasu diagnostyki/naprawy danych; to celowe zachowanie fail-safe, a nie automatyczne czyszczenie historii.
+
+Stan referencyjny przed zapisem tego uzupełnienia:
+- HEAD branch: 4acdf6f1ac597403954cfec64d61c5e138ef3654
+- HEAD main: 752149d40186144b0f458a32b5826c8928349c3a
