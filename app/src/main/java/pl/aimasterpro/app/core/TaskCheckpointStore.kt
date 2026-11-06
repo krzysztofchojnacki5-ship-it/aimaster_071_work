@@ -35,7 +35,7 @@ object TaskCheckpointStore {
         // A late worker callback must not overwrite a terminal result already recorded by
         // the coordinator (for example TIMED_OUT followed by the worker's CANCELLED callback).
         val current = rows.firstOrNull { it.taskId == event.taskId }
-        if (current?.status in TERMINAL_STATUSES) return true
+        if (current?.status?.let { it in TERMINAL_STATUSES } == true) return true
         rows.add(
             0,
             event.copy(
