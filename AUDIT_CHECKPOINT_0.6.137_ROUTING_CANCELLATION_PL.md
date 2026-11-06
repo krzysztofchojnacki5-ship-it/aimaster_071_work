@@ -627,3 +627,40 @@ Status weryfikacji pozostaje **NOT RUN**. Nie uruchomiono Gradle, kompilacji And
 Stan przed zapisem tego uzupełnienia:
 - HEAD branch: 685d30fc1fa9066bf15b51f61c3e57db7d01caf7
 - HEAD main: 752149d40186144b0f458a32b5826c8928349c3a
+
+
+## Uzupełnienie — kompletność księgowania nieznanego usage we wszystkich ścieżkach TeamRunEngine (2026-11-06)
+
+Audyt wszystkich wywołań `TeamRunEngine.runBatch()` w `MainActivity` wykazał, że główny batch agentów miał już callback `onUnknownUsage`, ale dwie pozostałe ścieżki go nie przekazywały:
+- Peer Review raportów specjalistów;
+- Patch Peer Review.
+
+W tych dwóch ścieżkach niejednoznaczny POST mógł więc zakończyć zadanie bez zapisania estymacji `UNAVAILABLE`, mimo że silnik poprawnie rozpoznawał możliwe przetworzenie żądania. Domyślny callback był pusty.
+
+Poprawki:
+- obie ścieżki przekazują teraz `onUnknownUsage` do `ApiTokenTracker.recordQuery()` ze statusem `UNAVAILABLE` i właściwą rezerwacją batcha;
+- Peer Review przekazuje estymowany limit wyjścia zgodny z limitem recenzji (maks. 1200 tokenów);
+- Patch Peer Review przekazuje limit wyjścia 1200 tokenów zgodny z rezerwacją recenzji;
+- rezerwa dzienna Peer Review, która obejmuje końcową syntezę MASTER-a i dodatkowy bufor recenzji, jest teraz również przypisana do limitu per-agent MASTER-a.
+
+Kontrola pozostałych ścieżek:
+- główny batch agentów: callback `onUnknownUsage` obecny;
+- Peer Review: callback dodany;
+- Patch Peer Review: callback dodany;
+- pojedynczy czat/fallback: obsługa `UNAVAILABLE` obecna;
+- ręczne testy modelu/providera: obsługa `UNAVAILABLE` obecna.
+
+### Dalszy punkt do sprawdzenia
+
+Rezerwy `globalReserveTokens` nadal są rezerwami tokenowymi, a nie osobnymi rezerwami kosztu PLN. Rzeczywisty koszt przyszłej syntezy jest wyceniany i rezerwowany w osobnym `planBatch()` bezpośrednio przed jej wykonaniem. Należy jeszcze ocenić, czy koszt syntezy powinien być blokowany już w trakcie wcześniejszych etapów, aby równoległe zadania nie zużyły miesięcznego limitu przed końcową syntezą.
+
+### Status
+
+- Zmiany zapisane wyłącznie na branchu roboczym.
+- Testy i kompilacja: **NOT RUN**.
+- Nie wykonano APK, bump wersji ani merge.
+- Companion Transport pozostaje BLOCKED.
+
+Stan przed zapisem tego uzupełnienia:
+- HEAD branch: 443a8fbe4bc28831eeca7855e9b99ff48c0dbd5b
+- HEAD main: 752149d40186144b0f458a32b5826c8928349c3a
