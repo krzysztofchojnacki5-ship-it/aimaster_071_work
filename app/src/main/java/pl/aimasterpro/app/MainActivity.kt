@@ -1311,11 +1311,17 @@ class MainActivity : Activity() {
                     throw ProviderException(null, "Odpowiedź odebrano po anulowaniu; wykorzystanie API zostało rozliczone.", category = "CANCELLED")
                 }
                 if (cfg.id != config.id) {
-                    logAgentForChat(requestChatId, "🧭 Smart Routing: wybrano profil ${cfg.name} (${cfg.model}) zamiast pierwotnego ${config.name} na podstawie dostępności i historii kondycji.")
-                    logAgentDialogueForChat(requestChatId, "SYSTEM", "MASTER", "Routing wybrał profil ${cfg.name} na podstawie dostępności, limitów i lokalnej historii kondycji modeli.", "SMART_ROUTING")
-                    runOnUiThread {
-                        status.text = "🔄 Failover: Przełączono na ${cfg.name}"
-                        status.setTextColor(cyan)
+                    runCatching {
+                        logAgentForChat(requestChatId, "🧭 Smart Routing: wybrano profil ${cfg.name} (${cfg.model}) zamiast pierwotnego ${config.name} na podstawie dostępności i historii kondycji.")
+                    }
+                    runCatching {
+                        logAgentDialogueForChat(requestChatId, "SYSTEM", "MASTER", "Routing wybrał profil ${cfg.name} na podstawie dostępności, limitów i lokalnej historii kondycji modeli.", "SMART_ROUTING")
+                    }
+                    runCatching {
+                        runOnUiThread {
+                            status.text = "🔄 Failover: Przełączono na ${cfg.name}"
+                            status.setTextColor(cyan)
+                        }
                     }
                 }
                 return res.copy(providerId = cfg.id, model = cfg.model)
