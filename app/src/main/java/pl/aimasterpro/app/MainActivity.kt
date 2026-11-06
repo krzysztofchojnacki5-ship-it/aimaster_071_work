@@ -1775,7 +1775,23 @@ class MainActivity : Activity() {
                                         System.currentTimeMillis(), providerId, model, attempts))
                                 if (!saved) android.util.Log.e("AIMasterRecovery", "Nie udało się trwale zapisać checkpointu zadania.")
                             },
-onRequestStarting = { task, actualProvider, estimatedInput, estimatedOutput, idempotencyKey ->
+                            onTaskResult = { taskResult ->
+                                val fingerprint = cacheFingerprints[taskResult.taskId]
+                                if (fingerprint == null) {
+                                    true
+                                } else {
+                                    val configured = batchAgentConfigsMap[taskResult.agentId] ?: safeConfig
+                                    if (taskResult.providerId == configured.id && taskResult.model == configured.model) {
+                                        val saved = pl.aimasterpro.app.core.TaskResultCache.put(this, fingerprint, taskResult.report)
+                                        if (!saved) logAgentForChat(chatId, "⚠️ Nie udało się trwale zapisać cache raportu ${taskResult.agentId}; wynik pozostaje widoczny w dzienniku rozmowy.")
+                                        saved
+                                    } else {
+                                        logAgentForChat(chatId, "♻️ Cache pominięty dla ${taskResult.agentId}: raport pochodzi z fallbacku ${taskResult.providerId}/${taskResult.model}, a nie z przypisanego profilu ${configured.id}/${configured.model}.")
+                                        true
+                                    }
+                                }
+                            },
+                            onRequestStarting = { task, actualProvider, estimatedInput, estimatedOutput, idempotencyKey ->
                             val safeBaseUrl = runCatching {
                                 java.net.URL(actualProvider.baseUrl).let { url ->
                                     "${url.protocol}://${url.host}" + if (url.port >= 0) ":${url.port}" else ""
@@ -1816,17 +1832,6 @@ onRequestStarting = { task, actualProvider, estimatedInput, estimatedOutput, ide
                         )
                     } finally {
                         if (budgetPlan.reservationId.isNotBlank()) pl.aimasterpro.app.core.ApiTokenTracker.requestBatchReservationRelease(budgetPlan.reservationId)
-                    }
-                    freshResults.filter { it.status == pl.aimasterpro.app.agents.TeamTaskResult.Status.COMPLETED }.forEach { fresh ->
-                        val fingerprint = cacheFingerprints[fresh.taskId] ?: return@forEach
-                        val configured = batchAgentConfigsMap[fresh.agentId] ?: safeConfig
-                        // Do not poison the configured-profile cache with a report produced by fallback.
-                        // The actual fallback may change between runs and is not knowable at lookup time.
-                        if (fresh.providerId == configured.id && fresh.model == configured.model) {
-                            pl.aimasterpro.app.core.TaskResultCache.put(this, fingerprint, fresh.report)
-                        } else {
-                            logAgentForChat(chatId, "♻️ Cache pominięty dla ${fresh.agentId}: raport pochodzi z fallbacku ${fresh.providerId}/${fresh.model}, a nie z przypisanego profilu ${configured.id}/${configured.model}.")
-                        }
                     }
                     val results = cachedResults + freshResults
                     val recordedTokenRows = pl.aimasterpro.app.core.ApiTokenTracker.loadAllRecordsFromStorage(this)
