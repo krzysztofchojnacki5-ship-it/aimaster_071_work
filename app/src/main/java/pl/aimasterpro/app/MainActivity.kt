@@ -5741,6 +5741,14 @@ onRequestStarting = { task, actualProvider, estimatedInput, estimatedOutput, ide
 
     override fun onDestroy() {
         pulse?.cancel()
+        // Activity teardown must close blocking HTTP connections as well as interrupt workers.
+        // Thread interruption alone does not reliably unblock HttpURLConnection reads.
+        if (::client.isInitialized) {
+            runCatching { client.cancelActiveRequests() }
+        }
+        activeRequestScope = null
+        activeWorkerThread?.interrupt()
+        activeWorkerThread = null
         executor.shutdownNow()
         super.onDestroy()
     }
