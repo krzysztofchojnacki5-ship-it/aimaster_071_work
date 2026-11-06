@@ -383,4 +383,39 @@ class ProviderClientNetworkTest {
             server.stop(0)
         }
     }
+
+    @Test
+    fun cancellingGlobalRequestsDisconnectsModelDiscoveryWithoutRetry() {
+        val entered = CountDownLatch(1)
+        val releaseResponse = CountDownLatch(1)
+        val server = TestHttpServer { _, _ ->
+            entered.countDown()
+            releaseResponse.await(2, TimeUnit.SECONDS)
+            200 to """{"data":[{"id":"late-catalog-model"}]}"""
+        }
+        val client = ProviderClient(connectTimeoutMs = 1_000, readTimeoutMs = 5_000)
+        val failure = AtomicReference<Throwable?>(null)
+        val worker = Thread {
+            try {
+                client.discoverModels(config("http://127.0.0.1:${server.address.port}/v1"))
+            } catch (error: Throwable) {
+                failure.set(error)
+            }
+        }
+        try {
+            worker.start()
+            assertTrue("Model discovery did not reach the local server",
+                entered.await(2, TimeUnit.SECONDS))
+            client.cancelActiveRequests()
+            worker.join(1_500L)
+            assertTrue("Global cancellation must disconnect model discovery promptly", !worker.isAlive)
+            assertEquals("CANCELLED", (failure.get() as? ProviderException)?.category)
+            assertEquals("A cancelled GET must not be retried", 1, server.requestCount.get())
+        } finally {
+            releaseResponse.countDown()
+            worker.interrupt()
+            server.stop(0)
+        }
+    }
+
 }
