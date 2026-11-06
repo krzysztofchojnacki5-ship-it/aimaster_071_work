@@ -108,11 +108,13 @@ object ApiTokenTracker {
             costPln = pln
         )
 
-        // Persist against the previous history before adding to the in-memory session list.
-        // Otherwise the empty-storage fallback would already contain this record and duplicate it.
-        saveRecordToStorage(context, record)
+        // Keep the usage visible and charged against the in-process reservation even if disk
+        // persistence fails. The caller receives an exception and must report the accounting gap.
+        val persisted = runCatching { saveRecordToStorage(context, record) }.getOrDefault(false)
         sessionRecords.add(0, record)
+        if (sessionRecords.size > 2000) sessionRecords.removeAt(sessionRecords.lastIndex)
         consumeActiveReservation(record, reservationId)
+        check(persisted) { "Nie udało się trwale zapisać rejestru użycia API." }
         return record
     }
 
@@ -138,7 +140,7 @@ object ApiTokenTracker {
         if (reservationId.isNotBlank()) activeReservations.remove(reservationId)
     }
 
-    private fun saveRecordToStorage(context: Context, record: TokenRecord) {
+    private fun saveRecordToStorage(context: Context, record: TokenRecord): Boolean {
         val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         val all = loadAllRecordsFromStorage(context).toMutableList()
         all.add(0, record)
@@ -163,18 +165,16 @@ object ApiTokenTracker {
                 .put("pln", r.costPln)
             )
         }
-        // Usage may represent a billable provider response. Wait for the disk write and
-        // surface failure to the caller instead of silently treating an async enqueue as durable.
-        check(prefs.edit().putString("records", arr.toString()).commit()) {
-            "Nie udało się trwale zapisać rejestru użycia API."
-        }
+        // Usage may represent a billable provider response. Return the commit result so
+        // recordQuery can preserve an in-memory accounting fallback and surface the failure.
+        return prefs.edit().putString("records", arr.toString()).commit()
     }
 
     @Synchronized
     fun loadAllRecordsFromStorage(context: Context): List<TokenRecord> {
         val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-        val raw = prefs.getString("records", null) ?: return sessionRecords.toList()
-        return runCatching {
+        val raw = prefs.getString("records", null)
+        val persisted = if (raw.isNullOrBlank()) emptyList() else runCatching {
             val arr = JSONArray(raw)
             val list = mutableListOf<TokenRecord>()
             for (i in 0 until arr.length()) {
@@ -197,7 +197,16 @@ object ApiTokenTracker {
                 ))
             }
             list
-        }.getOrDefault(sessionRecords)
+        }.getOrDefault(emptyList())
+
+        // Merge process-local records that could not be committed to disk. Query IDs prevent
+        // successful persisted records from being counted twice.
+        val merged = persisted.toMutableList()
+        val knownIds = persisted.mapTo(hashSetOf()) { it.queryId }
+        sessionRecords.forEach { record ->
+            if (knownIds.add(record.queryId)) merged.add(record)
+        }
+        return merged.sortedByDescending { it.timestamp }.take(2000)
     }
 
     fun getPricing(context: Context, modelName: String, providerId: String = "", baseUrl: String = ""): ModelPricing {
