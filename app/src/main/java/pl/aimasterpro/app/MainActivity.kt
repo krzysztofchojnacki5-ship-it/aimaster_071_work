@@ -2178,7 +2178,8 @@ onRequestStarting = { task, actualProvider, estimatedInput, estimatedOutput, ide
 
     private fun renameChat(id: String) {
         if (id.isBlank()) return
-        val root0 = runCatching { JSONObject(chatPrefs.getString("chats_v2", "{}") ?: "{}") }.getOrDefault(JSONObject())
+        val root0 = pl.aimasterpro.app.core.ChatHistoryStore.readRoot(this)
+            ?: run { toast("Historia rozmów jest uszkodzona; zapis i zmiany zostały zablokowane."); return }
         val old = root0.optJSONObject("chats")?.optJSONObject(id)?.optString("title") ?: chatTitles[id].orEmpty()
         val input = field("Nazwa rozmowy", old)
         val box = LinearLayout(this)
@@ -2190,9 +2191,16 @@ onRequestStarting = { task, actualProvider, estimatedInput, estimatedOutput, ide
                 val name = input.text.toString().trim()
                 if (name.isBlank()) return@setPositiveButton
                 synchronized(this) {
-                    val r = runCatching { JSONObject(chatPrefs.getString("chats_v2", "{}") ?: "{}") }.getOrDefault(JSONObject())
+                    val r = pl.aimasterpro.app.core.ChatHistoryStore.readRoot(this)
+                        ?: run { toast("Historia rozmów jest uszkodzona; nazwa nie została zmieniona."); return@setPositiveButton }
                     val chat = r.optJSONObject("chats")?.optJSONObject(id)
-                    if (chat != null) { chat.put("title", name); chatPrefs.edit().putString("chats_v2", r.toString()).apply() }
+                    if (chat != null) {
+                        chat.put("title", name)
+                        if (!pl.aimasterpro.app.core.ChatHistoryStore.writeRoot(this, r)) {
+                            toast("Nie udało się trwale zapisać nazwy rozmowy.")
+                            return@setPositiveButton
+                        }
+                    }
                 }
                 chatTitles[id] = name
                 populateDrawerList()
@@ -2209,9 +2217,13 @@ onRequestStarting = { task, actualProvider, estimatedInput, estimatedOutput, ide
                     if (id == currentChatId && !invalidateActiveEvidenceScopeForChatSwitch()) {
                         false
                     } else {
-                        val r = runCatching { JSONObject(chatPrefs.getString("chats_v2", "{}") ?: "{}") }.getOrDefault(JSONObject())
+                        val r = pl.aimasterpro.app.core.ChatHistoryStore.readRoot(this)
+                            ?: run { toast("Historia rozmów jest uszkodzona; usuwanie zostało zablokowane."); return@setPositiveButton }
                         r.optJSONObject("chats")?.remove(id)
-                        chatPrefs.edit().putString("chats_v2", r.toString()).apply()
+                        if (!pl.aimasterpro.app.core.ChatHistoryStore.writeRoot(this, r)) {
+                            toast("Nie udało się trwale usunąć rozmowy.")
+                            return@setPositiveButton
+                        }
                         chatTitles.remove(id)
                         val pins = pinnedIds(); if (pins.remove(id)) chatPrefs.edit().putStringSet("pinned_chats", pins).apply()
                         if (id == currentChatId) {
@@ -2252,7 +2264,7 @@ onRequestStarting = { task, actualProvider, estimatedInput, estimatedOutput, ide
     // =====================================================================
 
     private fun listChats(): List<ChatMeta> {
-        val r = runCatching { JSONObject(chatPrefs.getString("chats_v2", "{}") ?: "{}") }.getOrDefault(JSONObject())
+        val r = pl.aimasterpro.app.core.ChatHistoryStore.readRoot(this) ?: return emptyList()
         val chats = r.optJSONObject("chats") ?: return emptyList()
         val out = mutableListOf<ChatMeta>()
         for (id in chats.keys()) {
@@ -2278,12 +2290,13 @@ onRequestStarting = { task, actualProvider, estimatedInput, estimatedOutput, ide
             toast("Nie można bezpiecznie unieważnić aktywnego zakresu dowodów. Zmiana czatu została zablokowana.")
             return
         }
+        val r = pl.aimasterpro.app.core.ChatHistoryStore.readRoot(this)
+            ?: run { toast("Historia rozmów jest uszkodzona; otwarcie czatu zostało zablokowane."); return }
         currentChatId = id
         messages.clear()
         assistantTaskIds.clear()
         agentActivity.clear()
         draft = ""
-        val r = runCatching { JSONObject(chatPrefs.getString("chats_v2", "{}") ?: "{}") }.getOrDefault(JSONObject())
         val chatObj = r.optJSONObject("chats")?.optJSONObject(id)
         val arr = chatObj?.optJSONArray("messages") ?: JSONArray()
         for (i in 0 until arr.length()) { val item = arr.getJSONObject(i); messages.add(item.optString("role") to item.optString("text")) }
@@ -2323,7 +2336,8 @@ onRequestStarting = { task, actualProvider, estimatedInput, estimatedOutput, ide
     @Synchronized private fun persistMessages() {
         if (currentChatId.isBlank()) currentChatId = UUID.randomUUID().toString()
         alignAssistantTaskIds()
-        val r = runCatching { JSONObject(chatPrefs.getString("chats_v2", "{}") ?: "{}") }.getOrDefault(JSONObject())
+        val r = pl.aimasterpro.app.core.ChatHistoryStore.readRoot(this)
+            ?: run { android.util.Log.e("AIMasterChat", "Nie zapisano rozmowy: magazyn historii jest uszkodzony."); return }
         val chats = r.optJSONObject("chats") ?: JSONObject()
         if (messages.isEmpty() && agentActivity.isEmpty()) { saveCurrentId(); return } // pusty nowy czat nie trafia na listę rozmów
         val arr = JSONArray()
@@ -2346,12 +2360,17 @@ onRequestStarting = { task, actualProvider, estimatedInput, estimatedOutput, ide
             .put("assistantTaskIds", taskIdArr)
         )
         r.put("currentId", currentChatId).put("chats", chats)
-        chatPrefs.edit().putString("chats_v2", r.toString()).putString("chat_messages", arr.toString()).apply()
+        if (!pl.aimasterpro.app.core.ChatHistoryStore.writeRoot(this, r)) {
+            android.util.Log.e("AIMasterChat", "Nie udało się trwale zapisać historii rozmowy.")
+            return
+        }
+        chatPrefs.edit().putString("chat_messages", arr.toString()).commit()
     }
 
     @Synchronized private fun persistAgentActivity() {
         if (currentChatId.isBlank()) return
-        val r = runCatching { JSONObject(chatPrefs.getString("chats_v2", "{}") ?: "{}") }.getOrDefault(JSONObject())
+        val r = pl.aimasterpro.app.core.ChatHistoryStore.readRoot(this)
+            ?: run { android.util.Log.e("AIMasterChat", "Nie zapisano aktywności: magazyn historii jest uszkodzony."); return }
         val chats = r.optJSONObject("chats") ?: JSONObject()
         val chat = chats.optJSONObject(currentChatId) ?: JSONObject()
             .put("title", deriveTitle())
@@ -2362,7 +2381,9 @@ onRequestStarting = { task, actualProvider, estimatedInput, estimatedOutput, ide
         chat.put("agentActivity", actArr).put("updatedAt", System.currentTimeMillis())
         chats.put(currentChatId, chat)
         r.put("chats", chats)
-        chatPrefs.edit().putString("chats_v2", r.toString()).apply()
+        if (!pl.aimasterpro.app.core.ChatHistoryStore.writeRoot(this, r)) {
+            android.util.Log.e("AIMasterChat", "Nie udało się trwale zapisać aktywności agentów.")
+        }
     }
 
     /** Zapamiętuje tylko ID bieżącej rozmowy (bez zmiany kolejności listy). */
@@ -2373,19 +2394,22 @@ onRequestStarting = { task, actualProvider, estimatedInput, estimatedOutput, ide
         id == "assistant_dedicated_chat_id" || id.startsWith("assistant-")
 
     @Synchronized private fun saveCurrentId() {
-        val r = runCatching { JSONObject(chatPrefs.getString("chats_v2", "{}") ?: "{}") }.getOrDefault(JSONObject())
+        val r = pl.aimasterpro.app.core.ChatHistoryStore.readRoot(this)
+            ?: run { android.util.Log.e("AIMasterChat", "Nie zapisano bieżącego czatu: magazyn historii jest uszkodzony."); return }
         if (!r.has("chats")) r.put("chats", JSONObject())
         r.put("currentId", currentChatId)
-        val edit = chatPrefs.edit().putString("chats_v2", r.toString())
-        if (currentChatId.isNotBlank() && !isAssistantChatId(currentChatId)) {
-            edit.putString("last_user_chat_id", currentChatId)
+        if (!pl.aimasterpro.app.core.ChatHistoryStore.writeRoot(this, r)) {
+            android.util.Log.e("AIMasterChat", "Nie udało się trwale zapisać identyfikatora bieżącego czatu.")
+            return
         }
-        edit.apply()
+        if (currentChatId.isNotBlank() && !isAssistantChatId(currentChatId)) {
+            chatPrefs.edit().putString("last_user_chat_id", currentChatId).commit()
+        }
     }
 
     /** Dopisuje wiadomość do rozmowy zapisanej w pamięci, gdy użytkownik zdążył przejść do innej rozmowy. */
     @Synchronized private fun appendToStoredChat(id: String, role: String, text: String, taskId: String = "") {
-        val r = runCatching { JSONObject(chatPrefs.getString("chats_v2", "{}") ?: "{}") }.getOrDefault(JSONObject())
+        val r = pl.aimasterpro.app.core.ChatHistoryStore.readRoot(this) ?: return
         val chat = r.optJSONObject("chats")?.optJSONObject(id) ?: return
         val arr = chat.optJSONArray("messages") ?: JSONArray()
         val storedIds = chat.optJSONArray("assistantTaskIds") ?: JSONArray()
@@ -2399,13 +2423,16 @@ onRequestStarting = { task, actualProvider, estimatedInput, estimatedOutput, ide
             chat.put("assistantTaskIds", ids)
         }
         chat.put("messages", arr).put("assistantTaskIds", ids).put("updatedAt", System.currentTimeMillis())
-        chatPrefs.edit().putString("chats_v2", r.toString()).apply()
+        if (!pl.aimasterpro.app.core.ChatHistoryStore.writeRoot(this, r)) {
+            android.util.Log.e("AIMasterChat", "Nie udało się trwale dopisać odpowiedzi do poprzedniego czatu.")
+        }
     }
 
     private fun restoreMessages() {
+        val r = pl.aimasterpro.app.core.ChatHistoryStore.readRoot(this)
+            ?: run { toast("Historia rozmów jest uszkodzona. Zachowano dane; przywracanie i zapisy zostały wstrzymane."); return }
         messages.clear()
         assistantTaskIds.clear()
-        val r = runCatching { JSONObject(chatPrefs.getString("chats_v2", "{}") ?: "{}") }.getOrDefault(JSONObject())
         val chats = r.optJSONObject("chats") ?: JSONObject()
         for (id in chats.keys()) chatTitles[id] = chats.optJSONObject(id)?.optString("title", "") ?: ""
         currentChatId = r.optString("currentId", "")
@@ -2429,10 +2456,11 @@ onRequestStarting = { task, actualProvider, estimatedInput, estimatedOutput, ide
     }
 
     @Synchronized private fun restoreMessagesForCurrentChat() {
+        val r = pl.aimasterpro.app.core.ChatHistoryStore.readRoot(this)
+            ?: run { toast("Historia rozmów jest uszkodzona. Zachowano dane; przywracanie zostało wstrzymane."); return }
         messages.clear()
         assistantTaskIds.clear()
         agentActivity.clear()
-        val r = runCatching { JSONObject(chatPrefs.getString("chats_v2", "{}") ?: "{}") }.getOrDefault(JSONObject())
         val chatObj = r.optJSONObject("chats")?.optJSONObject(currentChatId)
         val arr = chatObj?.optJSONArray("messages") ?: JSONArray()
         for (i in 0 until arr.length()) {
@@ -2502,8 +2530,12 @@ onRequestStarting = { task, actualProvider, estimatedInput, estimatedOutput, ide
     private fun togglePinned(id: String) { if (id.isBlank()) return; val set = pinnedIds(); if (!set.add(id)) set.remove(id); chatPrefs.edit().putStringSet("pinned_chats", set).apply() }
 
     private fun showLibrary() {
-        val rootObj = runCatching { JSONObject(chatPrefs.getString("chats_v2", "{}") ?: "{}").toString() }.getOrDefault("{}")
-        val chats = runCatching { JSONObject(rootObj).optJSONObject("chats") ?: JSONObject() }.getOrDefault(JSONObject())
+        val chats = pl.aimasterpro.app.core.ChatHistoryStore.readRoot(this)?.optJSONObject("chats")
+            ?: run {
+                AlertDialog.Builder(this).setTitle("Biblioteka").setMessage("Historia rozmów jest uszkodzona lub niedostępna. Dane nie zostały nadpisane.")
+                    .setPositiveButton("Zamknij", null).show()
+                return
+            }
         val items = mutableListOf<String>()
         val it = chats.keys()
         while (it.hasNext()) { val o = chats.optJSONObject(it.next()) ?: continue; val arr = o.optJSONArray("messages") ?: continue; for (i in 0 until arr.length()) { val m = arr.optJSONObject(i) ?: continue; val t = m.optString("text"); if (t.contains("📎 Załącznik:")) items.add(t.substringAfter("📎 Załącznik:").trim().take(100)) } }
@@ -2529,13 +2561,15 @@ onRequestStarting = { task, actualProvider, estimatedInput, estimatedOutput, ide
             }
             return
         }
-        val rootObj = runCatching { JSONObject(chatPrefs.getString("chats_v2", "{}") ?: "{}") }.getOrDefault(JSONObject())
+        val rootObj = pl.aimasterpro.app.core.ChatHistoryStore.readRoot(this) ?: return
         val chat = rootObj.optJSONObject("chats")?.optJSONObject(chatId) ?: return
         val rows = chat.optJSONArray("agentActivity") ?: JSONArray()
         rows.put(entry)
         while (rows.length() > 150) rows.remove(0)
         chat.put("agentActivity", rows).put("updatedAt", System.currentTimeMillis())
-        chatPrefs.edit().putString("chats_v2", rootObj.toString()).apply()
+        if (!pl.aimasterpro.app.core.ChatHistoryStore.writeRoot(this, rootObj)) {
+            android.util.Log.e("AIMasterChat", "Nie udało się trwale dopisać aktywności poprzedniego czatu.")
+        }
         if (screen == "Rozmowy" && collaborationChatId == chatId) {
             runOnUiThread { refreshCollaborationTimeline(chatId) }
         }
@@ -3036,7 +3070,7 @@ onRequestStarting = { task, actualProvider, estimatedInput, estimatedOutput, ide
     @Synchronized private fun loadAgentActivity() {
         agentActivity.clear()
         if (currentChatId.isBlank()) return
-        val r = runCatching { JSONObject(chatPrefs.getString("chats_v2", "{}") ?: "{}") }.getOrDefault(JSONObject())
+        val r = pl.aimasterpro.app.core.ChatHistoryStore.readRoot(this) ?: return
         val chatObj = r.optJSONObject("chats")?.optJSONObject(currentChatId) ?: return
         val arr = chatObj.optJSONArray("agentActivity") ?: return
         for (i in 0 until arr.length()) { agentActivity.add(arr.getString(i)) }
