@@ -192,7 +192,7 @@ class ProviderClient(
             throw ProviderException(null, "$category podczas $phase dla ${parsedUrl.host}: ${e.message ?: "SocketTimeoutException"}", category = category, phase = phase, requestMayHaveBeenProcessed = method.equals("POST", true) && phase != "CONNECT")
         } catch (e: ConnectException) {
             if (isCancelled(scope)) throw cancelledException(phase, method)
-            throw ProviderException(null, "CONNECT_ERROR dla ${parsedUrl.host}: ${e.message ?: "ConnectException"}", category = "CONNECT_ERROR", phase = phase)
+            throw ProviderException(null, "CONNECT_ERROR dla ${parsedUrl.host}: ${e.message ?: "ConnectException"}", category = "CONNECT_ERROR", phase = phase, requestMayHaveBeenProcessed = method.equals("POST", true) && phase != "CONNECT")
         } catch (e: BoundedResponseReader.ResponseTooLargeException) {
             if (isCancelled(scope)) throw cancelledException(phase, method)
             throw ProviderException(null, e.message ?: "Odpowiedź dostawcy jest zbyt duża.", category = "RESPONSE_TOO_LARGE", phase = phase, requestMayHaveBeenProcessed = method.equals("POST", true))
@@ -227,7 +227,7 @@ class ProviderClient(
                     throw cancelledException()
                 }
                 lastException = e
-                val safeNetworkFailure = e.category in setOf("DNS_ERROR", "CONNECT_ERROR")
+                val safeNetworkFailure = e.category in setOf("DNS_ERROR", "CONNECT_ERROR") && !e.requestMayHaveBeenProcessed
                 val retryableRead = method.equals("GET", ignoreCase = true) &&
                     (e.category in setOf("CONNECT_TIMEOUT", "RESPONSE_TIMEOUT", "READ_TIMEOUT", "NETWORK_IO") ||
                      (e.httpCode != null && e.httpCode in 500..599))
