@@ -143,6 +143,7 @@ class TeamRunEngineNetworkTest {
             val fallback = primary.copy(id = "fallback-test", name = "Fallback test", model = "fallback-model")
             val logs = Collections.synchronizedList(mutableListOf<String>())
             val lifecycle = Collections.synchronizedList(mutableListOf<String>())
+            val checkpointStates = Collections.synchronizedList(mutableListOf<String>())
             val result = TeamRunEngine(ProviderClient()).runBatch(
                 tasks = listOf(TeamTask("usage-task", "qa-architect", "Usage persistence test", "Return a report")),
                 provider = primary,
@@ -155,6 +156,7 @@ class TeamRunEngineNetworkTest {
                     lifecycle.add("usage")
                     throw IllegalStateException("simulated local storage failure")
                 },
+                onTaskState = { _, state, _, _, _, _ -> checkpointStates.add(state) },
                 onTaskFinished = { lifecycle.add("finished") }
             ).single()
 
@@ -163,6 +165,10 @@ class TeamRunEngineNetworkTest {
             assertEquals("A successful response must not trigger a second provider request", 1, server.requestCount.get())
             assertTrue("The local accounting failure must remain visible", logs.any { it.contains("USAGE_RECORD_FAILED") })
             assertEquals("Worker completion callback must follow usage accounting", listOf("usage", "finished"), lifecycle.toList())
+            assertTrue("Failed durable usage accounting must remain recoverable after a completed response",
+                checkpointStates.contains("USAGE_PENDING"))
+            assertTrue("The task must not be marked terminal before usage can be recovered",
+                checkpointStates.last() != "COMPLETED")
         } finally {
             ProviderQuotaScheduler.resetForTests()
             server.stop(0)
