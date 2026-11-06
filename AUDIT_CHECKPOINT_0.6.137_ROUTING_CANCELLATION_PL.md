@@ -893,3 +893,25 @@ Stan przed aktualizacją checkpointu:
 - HEAD main pozostaje `752149d40186144b0f458a32b5826c8928349c3a`;
 - nie zmieniono wersji aplikacji, APK ani main;
 - Companion Transport nadal pozostaje **BLOCKED**.
+
+
+## Uzupełnienie — synchronizacja odczytu rejestru usage z równoległym księgowaniem (2026-11-07)
+
+Przegląd `ApiTokenTracker` wykazał, że modyfikacje `sessionRecords` są chronione monitorem obiektu (m.in. `recordQuery()`, `clearRecords()`, `planBatch()`), ale publiczny `loadAllRecordsFromStorage()` iterował po tej samej mutowalnej liście bez synchronizacji. Równoległy odczyt monitora/diagnostyki mógł więc wejść w konflikt z dopisywaniem rekordu usage i zakończyć się niespójnym snapshotem lub `ConcurrentModificationException`.
+
+Poprawka:
+- oznaczono `loadAllRecordsFromStorage()` jako `@Synchronized`, używając tego samego monitora co zapis i planowanie rezerwacji;
+- dodano `concurrentUsageSnapshotsAreSerializedWithSessionRecordWrites`, który równolegle zapisuje 80 rekordów i wielokrotnie pobiera snapshoty, a następnie sprawdza kompletność wszystkich rekordów.
+
+Pliki:
+- `app/src/main/java/pl/aimasterpro/app/core/ApiTokenTracker.kt`
+- `app/src/test/java/pl/aimasterpro/app/core/ApiTokenTrackerTest.kt`
+
+Weryfikacja:
+- poprawka i test zapisane na branchu;
+- test **NOT RUN**; kompilacja i JUnit/Robolectric nadal niepotwierdzone.
+
+Stan przed aktualizacją checkpointu:
+- poprawka źródłowa: `71a9aad9a3acfffcdfc7ac6d2828498605368251`
+- test: `06cc24e413a83fb7e4184e2b555d721954fd6202`
+- main bez zmian: `752149d40186144b0f458a32b5826c8928349c3a`.
