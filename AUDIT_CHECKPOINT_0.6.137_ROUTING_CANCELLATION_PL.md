@@ -594,3 +594,36 @@ Dokończono obsługę błędów, w których żądanie POST mogło dotrzeć do pr
 Stan przed zapisem tego uzupełnienia:
 - HEAD branch: 7e626942b2d1af233d82cf66e90265643f059dc5
 - HEAD main: 752149d40186144b0f458a32b5826c8928349c3a
+
+
+## Uzupełnienie — anulowanie po wysłaniu POST i odpowiedzi HTTP 408/5xx (2026-11-06)
+
+Dodatkowa analiza granic transportu wykazała dwa przypadki wymagające rozszerzenia klasyfikacji nieznanego usage:
+
+1. Anulowanie zakresu HTTP po rozpoczęciu wysyłania POST mogło wcześniej zamienić pierwotny błąd transportu na ogólny `CANCELLED`, tracąc informację, że provider mógł już przetworzyć żądanie.
+2. `ConnectException` podczas fazy WRITE_REQUEST oraz odpowiedzi HTTP 408/5xx mogły oznaczać częściowe lub pełne przetworzenie żądania, mimo że nie otrzymano poprawnego wyniku modelu.
+
+Poprawki:
+- anulowanie w fazie WRITE_REQUEST/WAIT_RESPONSE/READ_RESPONSE zachowuje `requestMayHaveBeenProcessed=true`; anulowanie przed wysłaniem nadal nie jest traktowane jako billable;
+- `requestWithRetry()` nie ponawia CONNECT_ERROR, jeśli POST mógł już zostać przetworzony;
+- ConnectException po fazie CONNECT jest oznaczany jako niejednoznaczny;
+- odpowiedzi HTTP 408 i 5xx dla POST są oznaczane jako niejednoznaczne usage i nie uruchamiają fallbacku;
+- odpowiedzi 400/401/403/404 oraz 429 zachowują dotychczasową klasyfikację i obsługę.
+
+Testy:
+- rozszerzono test anulowania POST o fazę i flagę nieznanego rozliczenia;
+- dodano `postServerErrorIsMarkedAsAmbiguousAndNotReplayed`.
+
+## Uzupełnienie — precyzja miesięcznego limitu kosztów (2026-11-06)
+
+Wykryto przypadek konwersji dodatniego, bardzo małego limitu `Double` do `Float`: wartość mogła zaokrąglić się do `0.0f`, a zero w konfiguracji wyłącza miesięczną bramkę kosztową.
+
+Poprawka:
+- `setLimits()` odrzuca dodatni miesięczny limit, który po konwersji do Float stałby się zerem;
+- dodano test `positiveMonthlyLimitThatUnderflowsFloatStorageIsRejected`, sprawdzający również, że wcześniejsza wartość limitu nie zostaje nadpisana.
+
+Status weryfikacji pozostaje **NOT RUN**. Nie uruchomiono Gradle, kompilacji Android ani JUnit/Robolectric.
+
+Stan przed zapisem tego uzupełnienia:
+- HEAD branch: 685d30fc1fa9066bf15b51f61c3e57db7d01caf7
+- HEAD main: 752149d40186144b0f458a32b5826c8928349c3a
