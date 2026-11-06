@@ -135,7 +135,20 @@ class MainActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         store = SecureStore(this)
-        val recoveredTasks = runCatching { pl.aimasterpro.app.core.TaskCheckpointStore.recoverStaleRunning(this) }.getOrDefault(0)
+        val recoveredTasks = runCatching {
+            pl.aimasterpro.app.core.TaskCheckpointStore.recoverStaleRunning(this, onAmbiguousRequest = { event ->
+                if (event.status != "REQUESTING" && event.status != "INTERRUPTED_USAGE_PENDING") true
+                else {
+                    pl.aimasterpro.app.core.ApiTokenTracker.recordQuery(
+                        this, event.providerId, event.model, event.agentId, event.taskId,
+                        event.estimatedInputTokens, event.estimatedOutputTokens,
+                        status = "UNAVAILABLE", baseUrl = event.baseUrl,
+                        idempotencyKey = event.idempotencyKey.ifBlank { "team:${event.taskId}:${event.providerId}" }
+                    )
+                    true
+                }
+            })
+        }.getOrDefault(0)
         if (recoveredTasks > 0) android.util.Log.w("AIMasterRecovery", "Oznaczono $recoveredTasks przerwanych zadań jako INTERRUPTED.")
         seedDefaultProviders()
         selectedProviderId = chatPrefs.getString("selected_provider", "gemini") ?: "gemini"
@@ -1651,14 +1664,16 @@ class MainActivity : Activity() {
                             attachmentBase64 = sendBase64,
                             onLog = { sender, recipient, msg, status -> logAgentDialogueForChat(chatId, sender, recipient, msg, status) },
                             onUsage = { agentId, taskId, actualProvider, usage ->
-                                pl.aimasterpro.app.core.ApiTokenTracker.recordQuery(this, actualProvider.id, actualProvider.model, agentId, taskId, usage.inputTokens, usage.outputTokens, usage.reasoningTokens, usage.cachedTokens, usage.status, actualProvider.baseUrl, budgetPlan.reservationId)
+                                pl.aimasterpro.app.core.ApiTokenTracker.recordQuery(this, actualProvider.id, actualProvider.model, agentId, taskId, usage.inputTokens, usage.outputTokens, usage.reasoningTokens, usage.cachedTokens, usage.status, actualProvider.baseUrl, budgetPlan.reservationId,
+                                    "team:$taskId:${actualProvider.id}")
                             },
                             unknownOutputEstimateTokens = adaptivePlan.outputTokensPerAgent,
                             onUnknownUsage = { agentId, taskId, actualProvider, estimatedInput, estimatedOutput ->
                                 pl.aimasterpro.app.core.ApiTokenTracker.recordQuery(
                                     this, actualProvider.id, actualProvider.model, agentId, taskId,
                                     estimatedInput, estimatedOutput, status = "UNAVAILABLE",
-                                    baseUrl = actualProvider.baseUrl, reservationId = budgetPlan.reservationId
+                                    baseUrl = actualProvider.baseUrl, reservationId = budgetPlan.reservationId,
+                                    idempotencyKey = "team:$taskId:${actualProvider.id}"
                                 )
                             },
                             rankProviders = { candidates -> pl.aimasterpro.app.core.ModelHealthTracker.rank(this, candidates) },
@@ -1674,7 +1689,43 @@ class MainActivity : Activity() {
                                         System.currentTimeMillis(), providerId, model, attempts))
                                 if (!saved) android.util.Log.e("AIMasterRecovery", "Nie udało się trwale zapisać checkpointu zadania.")
                             },
-                            requestScope = requestScope,
+onRequestStarting = { task, actualProvider, estimatedInput, estimatedOutput, idempotencyKey ->
+                            val safeBaseUrl = runCatching {
+                                java.net.URL(actualProvider.baseUrl).let { url ->
+                                    "${url.protocol}://${url.host}" + if (url.port >= 0) ":${url.port}" else ""
+                                }
+                            }.getOrDefault("")
+                            pl.aimasterpro.app.core.TaskCheckpointStore.record(
+                                this,
+                                pl.aimasterpro.app.core.TaskCheckpointStore.Event(
+                                    taskId = task.id, agentId = task.agentId, status = "REQUESTING",
+                                    detail = "Żądanie API rozpoczęte; wynik rozliczenia może być nieznany.",
+                                    timestamp = System.currentTimeMillis(), providerId = actualProvider.id,
+                                    model = actualProvider.model, attempts = 1,
+                                    estimatedInputTokens = estimatedInput, estimatedOutputTokens = estimatedOutput,
+                                    idempotencyKey = idempotencyKey, baseUrl = safeBaseUrl
+                                )
+                            )
+                            },
+                    onRequestStarting = { task, actualProvider, estimatedInput, estimatedOutput, idempotencyKey ->
+                                    val safeBaseUrl = runCatching {
+                                        java.net.URL(actualProvider.baseUrl).let { url ->
+                                            "${url.protocol}://${url.host}" + if (url.port >= 0) ":${url.port}" else ""
+                                        }
+                                    }.getOrDefault("")
+                                    pl.aimasterpro.app.core.TaskCheckpointStore.record(
+                                        this,
+                                        pl.aimasterpro.app.core.TaskCheckpointStore.Event(
+                                            taskId = task.id, agentId = task.agentId, status = "REQUESTING",
+                                            detail = "Żądanie API rozpoczęte; wynik rozliczenia może być nieznany.",
+                                            timestamp = System.currentTimeMillis(), providerId = actualProvider.id,
+                                            model = actualProvider.model, attempts = 1,
+                                            estimatedInputTokens = estimatedInput, estimatedOutputTokens = estimatedOutput,
+                                            idempotencyKey = idempotencyKey, baseUrl = safeBaseUrl
+                                        )
+                                    )
+                                    },
+                                                                        requestScope = requestScope,
                             onTaskFinished = { taskId -> pl.aimasterpro.app.core.ApiTokenTracker.completeReservationTask(budgetPlan.reservationId, taskId) }
                         )
                     } finally {
@@ -1792,7 +1843,8 @@ class MainActivity : Activity() {
                                         pl.aimasterpro.app.core.ApiTokenTracker.recordQuery(
                                             this, actualProvider.id, actualProvider.model, agentId, taskId,
                                             usage.inputTokens, usage.outputTokens, usage.reasoningTokens,
-                                            usage.cachedTokens, usage.status, actualProvider.baseUrl, reviewBudget.reservationId
+                                            usage.cachedTokens, usage.status, actualProvider.baseUrl, reviewBudget.reservationId,
+                                            "team:$taskId:${actualProvider.id}"
                                         )
                                     },
                                     unknownOutputEstimateTokens = minOf(adaptivePlan.outputTokensPerAgent.coerceAtLeast(500L), 1_200L),
@@ -1800,7 +1852,8 @@ class MainActivity : Activity() {
                                         pl.aimasterpro.app.core.ApiTokenTracker.recordQuery(
                                             this, actualProvider.id, actualProvider.model, agentId, taskId,
                                             estimatedInput, estimatedOutput, status = "UNAVAILABLE",
-                                            baseUrl = actualProvider.baseUrl, reservationId = reviewBudget.reservationId
+                                            baseUrl = actualProvider.baseUrl, reservationId = reviewBudget.reservationId,
+                                            idempotencyKey = "team:$taskId:${actualProvider.id}"
                                         )
                                     },
                                     rankProviders = { candidates -> pl.aimasterpro.app.core.ModelHealthTracker.rank(this, candidates) },
@@ -4139,7 +4192,8 @@ class MainActivity : Activity() {
                             pl.aimasterpro.app.core.ApiTokenTracker.recordQuery(
                                 this, actualProvider.id, actualProvider.model, agentId, taskId,
                                 usage.inputTokens, usage.outputTokens, usage.reasoningTokens,
-                                usage.cachedTokens, usage.status, actualProvider.baseUrl, reviewBudget.reservationId
+                                usage.cachedTokens, usage.status, actualProvider.baseUrl, reviewBudget.reservationId,
+                                "team:$taskId:${actualProvider.id}"
                             )
                         },
                         unknownOutputEstimateTokens = 1_200L,
@@ -4147,7 +4201,8 @@ class MainActivity : Activity() {
                             pl.aimasterpro.app.core.ApiTokenTracker.recordQuery(
                                 this, actualProvider.id, actualProvider.model, agentId, taskId,
                                 estimatedInput, estimatedOutput, status = "UNAVAILABLE",
-                                baseUrl = actualProvider.baseUrl, reservationId = reviewBudget.reservationId
+                                baseUrl = actualProvider.baseUrl, reservationId = reviewBudget.reservationId,
+                                idempotencyKey = "team:$taskId:${actualProvider.id}"
                             )
                         },
                         rankProviders = { candidates -> pl.aimasterpro.app.core.ModelHealthTracker.rank(this, candidates) },
@@ -4166,7 +4221,25 @@ class MainActivity : Activity() {
                             )
                             if (!saved) android.util.Log.e("AIMasterRecovery", "Nie udało się trwale zapisać checkpointu zadania.")
                         },
-                        requestScope = client.beginRequestScope(),
+onRequestStarting = { task, actualProvider, estimatedInput, estimatedOutput, idempotencyKey ->
+                        val safeBaseUrl = runCatching {
+                            java.net.URL(actualProvider.baseUrl).let { url ->
+                                "${url.protocol}://${url.host}" + if (url.port >= 0) ":${url.port}" else ""
+                            }
+                        }.getOrDefault("")
+                        pl.aimasterpro.app.core.TaskCheckpointStore.record(
+                            this,
+                            pl.aimasterpro.app.core.TaskCheckpointStore.Event(
+                                taskId = task.id, agentId = task.agentId, status = "REQUESTING",
+                                detail = "Żądanie API rozpoczęte; wynik rozliczenia może być nieznany.",
+                                timestamp = System.currentTimeMillis(), providerId = actualProvider.id,
+                                model = actualProvider.model, attempts = 1,
+                                estimatedInputTokens = estimatedInput, estimatedOutputTokens = estimatedOutput,
+                                idempotencyKey = idempotencyKey, baseUrl = safeBaseUrl
+                            )
+                        )
+                        },
+                                                requestScope = client.beginRequestScope(),
                         onTaskFinished = { taskId -> pl.aimasterpro.app.core.ApiTokenTracker.completeReservationTask(reviewBudget.reservationId, taskId) }
                     )
                 }
