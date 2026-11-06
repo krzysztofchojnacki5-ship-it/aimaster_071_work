@@ -457,18 +457,18 @@ object ApiTokenTracker {
         val todayTokens = sumTokenCounts(filterRecords(records, "Dzisiaj").map { it.totalTokens })
         val recentCost = filterRecords(records, "30 dni").sumOf { it.costPln.coerceAtLeast(0.0) }
         val reservations = activeReservationStats()
-        val ledgerHealthy = readPersistedRecords(context) != null
+        val ledgerIsHealthy = readPersistedRecords(context) != null
         val usedIncludingReservations = addTokenCounts(todayTokens, reservations.tokens)
         return BudgetUsageSnapshot(
             recordedTodayTokens = todayTokens,
             activeReservedTokens = reservations.tokens,
             dailyLimitTokens = limits.dailyTokenLimit,
-            remainingTokens = if (ledgerHealthy) (limits.dailyTokenLimit - usedIncludingReservations).coerceAtLeast(0L) else 0L,
+            remainingTokens = if (ledgerIsHealthy) (limits.dailyTokenLimit - usedIncludingReservations).coerceAtLeast(0L) else 0L,
             recorded30DayCostPln = recentCost,
             activeReservedCostPln = reservations.costPln,
             monthlyCostLimitPln = limits.monthlyCostPlnLimit,
             perAgentLimitTokens = limits.agentTokenLimit,
-            ledgerHealthy = readPersistedRecords(context) != null
+            ledgerHealthy = ledgerIsHealthy
         )
     }
 
