@@ -74,6 +74,12 @@ object TaskCheckpointStore {
             val o = a.getJSONObject(i)
             val id = o.optString("task")
             require(id.isNotBlank()) { "Checkpoint row has no task id." }
+            val estimatedInput = o.optLong("estimatedInputTokens")
+            val estimatedOutput = o.optLong("estimatedOutputTokens")
+            val attempts = o.optInt("attempts")
+            require(estimatedInput >= 0L && estimatedOutput >= 0L && attempts >= 0) {
+                "Checkpoint row has invalid token estimates or attempt count."
+            }
             Event(
                 id,
                 o.optString("agent"),
@@ -82,10 +88,10 @@ object TaskCheckpointStore {
                 o.optLong("ts"),
                 o.optString("provider"),
                 o.optString("model"),
-                o.optInt("attempts"),
+                attempts,
                 o.optString("processId"),
-                o.optLong("estimatedInputTokens"),
-                o.optLong("estimatedOutputTokens"),
+                estimatedInput,
+                estimatedOutput,
                 o.optString("idempotencyKey"),
                 o.optString("baseUrl")
             )
