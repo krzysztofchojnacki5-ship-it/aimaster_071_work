@@ -1742,7 +1742,8 @@ class MainActivity : Activity() {
                         val reviewBudget = pl.aimasterpro.app.core.ApiTokenTracker.planBatch(
                             this,
                             reviewBudgetRequests,
-                            globalReserveTokens = masterSynthesisReserve + peerReviewTasks.size * 1_000L
+                            globalReserveTokens = masterSynthesisReserve + peerReviewTasks.size * 1_000L,
+                            globalReserveAgentId = AgentRole.MASTER.name
                         )
                         reviewBudget.blockedReasons.forEach { (taskId, reason) ->
                             logAgentForChat(chatId, "⛔ Peer Review — Smart Budget zablokował $taskId: $reason")
@@ -1771,6 +1772,14 @@ class MainActivity : Activity() {
                                             this, actualProvider.id, actualProvider.model, agentId, taskId,
                                             usage.inputTokens, usage.outputTokens, usage.reasoningTokens,
                                             usage.cachedTokens, usage.status, actualProvider.baseUrl, reviewBudget.reservationId
+                                        )
+                                    },
+                                    unknownOutputEstimateTokens = minOf(adaptivePlan.outputTokensPerAgent.coerceAtLeast(500L), 1_200L),
+                                    onUnknownUsage = { agentId, taskId, actualProvider, estimatedInput, estimatedOutput ->
+                                        pl.aimasterpro.app.core.ApiTokenTracker.recordQuery(
+                                            this, actualProvider.id, actualProvider.model, agentId, taskId,
+                                            estimatedInput, estimatedOutput, status = "UNAVAILABLE",
+                                            baseUrl = actualProvider.baseUrl, reservationId = reviewBudget.reservationId
                                         )
                                     },
                                     rankProviders = { candidates -> pl.aimasterpro.app.core.ModelHealthTracker.rank(this, candidates) },
@@ -4110,6 +4119,14 @@ class MainActivity : Activity() {
                                 this, actualProvider.id, actualProvider.model, agentId, taskId,
                                 usage.inputTokens, usage.outputTokens, usage.reasoningTokens,
                                 usage.cachedTokens, usage.status, actualProvider.baseUrl, reviewBudget.reservationId
+                            )
+                        },
+                        unknownOutputEstimateTokens = 1_200L,
+                        onUnknownUsage = { agentId, taskId, actualProvider, estimatedInput, estimatedOutput ->
+                            pl.aimasterpro.app.core.ApiTokenTracker.recordQuery(
+                                this, actualProvider.id, actualProvider.model, agentId, taskId,
+                                estimatedInput, estimatedOutput, status = "UNAVAILABLE",
+                                baseUrl = actualProvider.baseUrl, reservationId = reviewBudget.reservationId
                             )
                         },
                         rankProviders = { candidates -> pl.aimasterpro.app.core.ModelHealthTracker.rank(this, candidates) },
