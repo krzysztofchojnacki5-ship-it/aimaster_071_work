@@ -92,6 +92,7 @@ class TeamRunEngineNetworkTest {
             )
             val fallback = primary.copy(id = "fallback-test", name = "Fallback test", model = "fallback-model")
             val logs = Collections.synchronizedList(mutableListOf<String>())
+            val lifecycle = Collections.synchronizedList(mutableListOf<String>())
             val result = TeamRunEngine(ProviderClient()).runBatch(
                 tasks = listOf(TeamTask("usage-task", "qa-architect", "Usage persistence test", "Return a report")),
                 provider = primary,
@@ -100,13 +101,18 @@ class TeamRunEngineNetworkTest {
                 isFreeProvider = { true },
                 mode = WorkMode.PLANNING,
                 onLog = { _, _, message, status -> logs.add("$status $message") },
-                onUsage = { _, _, _, _ -> throw IllegalStateException("simulated local storage failure") }
+                onUsage = { _, _, _, _ ->
+                    lifecycle.add("usage")
+                    throw IllegalStateException("simulated local storage failure")
+                },
+                onTaskFinished = { lifecycle.add("finished") }
             ).single()
 
             assertEquals(TeamTaskResult.Status.COMPLETED, result.status)
             assertEquals("valid-agent-report", result.report)
             assertEquals("A successful response must not trigger a second provider request", 1, server.requestCount.get())
             assertTrue("The local accounting failure must remain visible", logs.any { it.contains("USAGE_RECORD_FAILED") })
+            assertEquals("Worker completion callback must follow usage accounting", listOf("usage", "finished"), lifecycle.toList())
         } finally {
             ProviderQuotaScheduler.resetForTests()
             server.stop(0)
@@ -227,6 +233,8 @@ class TeamRunEngineNetworkTest {
         }
         val client = ProviderClient()
         val states = Collections.synchronizedList(mutableListOf<Pair<String, String>>())
+        val finished = Collections.synchronizedList(mutableListOf<String>())
+        val finishedLatch = CountDownLatch(2)
         val config = ProviderConfig(
             "interrupt-test", "Interrupt test", ProviderKind.OPENAI_COMPATIBLE,
             "http://127.0.0.1:" + server.address.port + "/v1", "test-model", ""
@@ -244,7 +252,11 @@ class TeamRunEngineNetworkTest {
                 mode = WorkMode.PLANNING,
                 onLog = { _, _, _, _ -> },
                 onTaskState = { task, status, _, _, _, _ -> states.add(task.id to status) },
-                requestScope = client.beginRequestScope()
+                requestScope = client.beginRequestScope(),
+                onTaskFinished = { taskId ->
+                    finished.add(taskId)
+                    finishedLatch.countDown()
+                }
             )
         }
         try {
@@ -259,6 +271,9 @@ class TeamRunEngineNetworkTest {
             assertTrue("Queued task must not remain QUEUED after coordinator interruption", states.any {
                 it.first == "interrupt-queued" && it.second == "CANCELLED"
             })
+            assertTrue("Every worker must signal actual completion after cancellation",
+                finishedLatch.await(5, TimeUnit.SECONDS))
+            assertEquals(setOf("interrupt-running", "interrupt-queued"), finished.toSet())
         } finally {
             client.cancelActiveRequests()
             server.stop(0)
