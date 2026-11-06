@@ -62,7 +62,9 @@ class TeamRunEngine(
         onLog: (String, String, String, String) -> Unit = { _, _, _, _ -> },
         onUsage: (String, String, ProviderConfig, TokenUsageResult) -> Unit = { _, _, _, _ -> },
         unknownOutputEstimateTokens: Long = 4_096L,
-        onUnknownUsage: (String, String, ProviderConfig, Long, Long) -> Unit = { _, _, _, _, _ -> },
+        onUnknownUsage: (String, String, ProviderConfig, Long, Long) -> Unit = { _, _, _, _, _ ->
+            throw IllegalStateException("Brak callbacku trwałego księgowania nieznanego usage API.")
+        },
         rankProviders: (List<ProviderConfig>) -> List<ProviderConfig> = { it },
         onProviderHealth: (ProviderConfig, Boolean, String, Long) -> Unit = { _, _, _, _ -> },
         persistedCooldownMs: (ProviderConfig) -> Long = { 0L },
