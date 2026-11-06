@@ -33,6 +33,16 @@ class TaskResultCacheFingerprintTest {
         assertEquals(1_000L, cached?.createdAt)
     }
 
+    @Test fun cachedReportsRedactCommonProviderCredentials() {
+        val report = "API key: sk-12345678901234567890 and Bearer abcdefghijklmnopqrstuvwxyz123456"
+        assertTrue(TaskResultCache.put(context, "sensitive-report", report, 1_000L))
+        val stored = context.getSharedPreferences("task_result_cache_v1", Context.MODE_PRIVATE)
+            .getString("entries", null).orEmpty()
+        assertFalse(stored.contains("sk-12345678901234567890"))
+        assertFalse(stored.contains("abcdefghijklmnopqrstuvwxyz123456"))
+        assertTrue(TaskResultCache.get(context, "sensitive-report", 1_500L)?.report?.contains("[REDACTED]") == true)
+    }
+
     @Test fun malformedResultCacheIsNotReplacedByAnEmptyCache() {
         val prefs = context.getSharedPreferences("task_result_cache_v1", Context.MODE_PRIVATE)
         val corrupt = """[{"fingerprint":"known","report":"saved report","createdAt":1000},null]"""
