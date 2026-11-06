@@ -1,0 +1,117 @@
+package pl.aimasterpro.app.core
+
+import android.content.Context
+import org.json.JSONArray
+import java.util.Locale
+
+/**
+ * Persistent user-approved rules and learning. Context injection is relevance-ranked and bounded
+ * so a large memory library does not inflate every model request.
+ */
+object AiMemoryStore {
+    private const val PREFS_NAME = "ai_master_memory_store_v1"
+    private const val DEFAULT_CONTEXT_LIMIT = 2_400
+    private const val DEFAULT_CONTEXT_ITEMS = 8
+    private val termRegex = Regex("[\\p{L}\\p{N}]{3,}")
+    private val stopWords = setOf(
+        "oraz", "który", "która", "które", "jest", "być", "tego", "taka", "takie", "żeby", "przez",
+        "przy", "jako", "jego", "jej", "dla", "czyli", "oraz", "the", "and", "for", "with", "from",
+        "this", "that", "have", "will", "your", "into", "when", "what", "how"
+    )
+
+    fun getMemories(context: Context): List<String> {
+        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        val raw = prefs.getString("memories", null) ?: return defaultMemories()
+        return runCatching {
+            val arr = JSONArray(raw)
+            val list = mutableListOf<String>()
+            for (i in 0 until arr.length()) list.add(arr.getString(i))
+            list.ifEmpty { defaultMemories() }
+        }.getOrDefault(defaultMemories())
+    }
+
+    fun addMemory(context: Context, memory: String) {
+        if (memory.isBlank()) return
+        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        val list = getMemories(context).toMutableList()
+        if (!list.contains(memory)) {
+            list.add(0, memory)
+            val arr = JSONArray()
+            list.take(100).forEach { arr.put(it) }
+            prefs.edit().putString("memories", arr.toString()).apply()
+        }
+    }
+
+    fun removeMemory(context: Context, exactMemory: String) {
+        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        val raw = prefs.getString("memories", null) ?: return
+        val remaining = runCatching {
+            val arr = JSONArray(raw)
+            (0 until arr.length()).mapNotNull { arr.optString(it).takeIf { value -> value != exactMemory } }
+        }.getOrDefault(emptyList())
+        val arr = JSONArray()
+        remaining.forEach { arr.put(it) }
+        prefs.edit().putString("memories", arr.toString()).apply()
+    }
+
+    /**
+     * Selects a small set of memories relevant to the current request. Operational counters are
+     * intentionally excluded by default: they are not instructions and waste context tokens.
+     */
+    fun contextString(
+        context: Context,
+        query: String = "",
+        maxChars: Int = DEFAULT_CONTEXT_LIMIT,
+        maxItems: Int = DEFAULT_CONTEXT_ITEMS,
+        includeOperationalSummary: Boolean = false
+    ): String {
+        if (maxChars <= 0 || maxItems <= 0) return ""
+        val memories = getMemories(context)
+        val queryTerms = terms(query)
+        val ranked = memories.mapIndexed { index, memory ->
+            val memoryTerms = terms(memory)
+            val score = if (queryTerms.isEmpty()) 0 else queryTerms.count { it in memoryTerms }
+            Triple(index, memory, score)
+        }
+        val coreRules = defaultMemories().take(2).mapNotNull { rule ->
+            ranked.firstOrNull { it.second == rule }
+        }
+        val relevant = ranked.filter { it !in coreRules }
+            .sortedWith(compareByDescending<Triple<Int, String, Int>> { it.third }.thenBy { it.first })
+        val selected = (coreRules + relevant).distinctBy { it.second }.take(maxItems)
+        val header = "ZASADY I PAMIĘĆ ZATWIERDZONA (wybrane pod bieżące zadanie):\n"
+        val out = StringBuilder(header.take(maxChars))
+        selected.forEachIndexed { index, item ->
+            if (out.length >= maxChars) return@forEachIndexed
+            val prefix = if (index == 0) "• " else "\n• "
+            val available = maxChars - out.length - prefix.length
+            if (available <= 0) return@forEachIndexed
+            val line = item.second.replace('\n', ' ').trim()
+            out.append(prefix)
+            out.append(line.take(available))
+        }
+        if (includeOperationalSummary && out.length < maxChars) {
+            val operational = LearningJournalStore.contextString(context)
+            if (operational.isNotBlank()) {
+                val separator = "\n\nMETRYKI OPERACYJNE (nie są oceną jakości):\n"
+                val remaining = (maxChars - out.length - separator.length).coerceAtLeast(0)
+                if (remaining > 0) out.append(separator).append(operational.take(remaining))
+            }
+        }
+        return out.toString().take(maxChars)
+    }
+
+    private fun terms(value: String): Set<String> = termRegex
+        .findAll(value.lowercase(Locale.ROOT))
+        .map { it.value }
+        .filterNot { it in stopWords }
+        .toSet()
+
+    private fun defaultMemories(): List<String> = listOf(
+        "1. Ucz się na wynikach każdego zadania: zapisuj i weryfikuj poprawki przed ich zatwierdzeniem.",
+        "2. Oddzielaj potwierdzone fakty z kodu źródłowego od hipotez i domysłów.",
+        "3. Pamiętaj o architekturze projektu: Single-Activity Kotlin, Android Keystore, TeamRunEngine dla paralelizacji agentów.",
+        "4. Zawsze weryfikuj limity tokenów i automatycznie stosuj failover przy błędach 429.",
+        "5. Zachowaj czystość kodu, poprawne formatowanie i przestrzegaj zasad bezpieczeństwa RODO/GDPR."
+    )
+}

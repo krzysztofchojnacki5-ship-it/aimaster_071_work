@@ -1,0 +1,11 @@
+package pl.aimasterpro.app.core
+
+/**
+ * Cleartext is deliberately restricted to exact local endpoints.
+ * Keep this allowlist synchronized with res/xml/network_security_config.xml.
+ */
+object CleartextEndpointPolicy {
+    private val allowedHosts = setOf("localhost", "127.0.0.1", "10.0.2.2")
+
+    fun isAllowedHost(host: String): Boolean = allowedHosts.any { it.equals(host, ignoreCase = true) }
+}
