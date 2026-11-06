@@ -106,7 +106,7 @@ object TaskCheckpointStore {
         onAmbiguousRequest: (Event) -> Boolean = { true }
     ): Int {
         val stale = latest(context).filter { event ->
-            (event.status in setOf("QUEUED", "RUNNING", "REQUESTING", "USAGE_RECORDED", "USAGE_PENDING") && event.processId != processId) ||
+            (event.status in setOf("QUEUED", "RUNNING", "REQUESTING", "USAGE_RECORDED", "USAGE_PENDING", "RESULT_PERSIST_PENDING") && event.processId != processId) ||
                 event.status == "INTERRUPTED_USAGE_PENDING"
         }
         var recovered = 0
@@ -120,6 +120,7 @@ object TaskCheckpointStore {
             val detail = when {
                 needsUsageRecovery && usageRecovered -> "Proces zakończył się po rozpoczęciu żądania; nieznane zużycie API zabezpieczono jako UNAVAILABLE."
                 needsUsageRecovery -> "Proces zakończył się po rozpoczęciu żądania; księgowanie UNAVAILABLE oczekuje na ponowienie."
+                event.status == "RESULT_PERSIST_PENDING" -> "Proces zakończył się po odebraniu raportu; trwały zapis wyniku nie został potwierdzony."
                 else -> "Proces aplikacji zakończył się przed zapisaniem wyniku."
             }
             val saved = record(context, event.copy(
