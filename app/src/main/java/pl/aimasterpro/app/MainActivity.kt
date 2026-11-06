@@ -1604,13 +1604,16 @@ class MainActivity : Activity() {
                     val masterSynthesisReserveCostPln =
                         (masterSynthesisReserve.toDouble() * maxOf(synthesisPricing.inputPer1MUsd, synthesisPricing.outputPer1MUsd) *
                             synthesisExchangeRate) / 1_000_000.0
-                    val budgetPlan = if (budgetRequests.isEmpty()) pl.aimasterpro.app.core.BatchBudgetPlan(
-                        allowedTaskIds = emptySet(), blockedReasons = emptyMap(), estimatedReservedTokens = 0L,
-                        estimatedReservedCostPln = 0.0, reservationId = ""
-                    ) else pl.aimasterpro.app.core.ApiTokenTracker.planBatch(
+                    val budgetPlan = pl.aimasterpro.app.core.ApiTokenTracker.planBatch(
                         this, budgetRequests, globalReserveTokens = masterSynthesisReserve,
                         globalReserveAgentId = "MASTER", globalReserveCostPln = masterSynthesisReserveCostPln
                     )
+                    if (budgetPlan.reservationId.isBlank() &&
+                        (masterSynthesisReserve > 0L || masterSynthesisReserveCostPln > 0.0)) {
+                        throw IllegalStateException(
+                            "Smart Budget nie zdołał zarezerwować dziennego i miesięcznego budżetu na końcową syntezę MASTER-a."
+                        )
+                    }
                     budgetPlan.blockedReasons.forEach { (taskId, reason) ->
                         logAgentForChat(chatId, "⛔ Smart Budget: $taskId — $reason")
                     }
