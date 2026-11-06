@@ -1594,7 +1594,14 @@ class MainActivity : Activity() {
                         )
                     }
                     val synthesisReportBudgetChars = minOf(18_000, adaptiveTasks.size * 6_000)
-                    val masterSynthesisReserve = ((prompt.length + sharedLearningContext.length + synthesisReportBudgetChars + 1_200 + 2) / 3).toLong() + adaptivePlan.synthesisReserveTokens
+                    // Reserve input for the MASTER system prompt, report pack, memory/evidence
+                    // context and prompt framing, plus at least the 4096-token output allowance
+                    // used by the actual final synthesis request.
+                    val synthesisInputReserveChars = prompt.length + sharedLearningContext.length +
+                        synthesisReportBudgetChars + AgentPrompts.systemPrompt(AgentRole.MASTER).length +
+                        mode.systemInstruction.length + 8_000
+                    val masterSynthesisReserve = ((synthesisInputReserveChars + 2) / 3).toLong() +
+                        maxOf(adaptivePlan.synthesisReserveTokens, 4_096L)
                     val synthesisPricing = pl.aimasterpro.app.core.ApiTokenTracker.getPricing(
                         this, safeConfig.model, safeConfig.id, safeConfig.baseUrl
                     )
