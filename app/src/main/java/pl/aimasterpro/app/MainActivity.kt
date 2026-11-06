@@ -1514,7 +1514,13 @@ class MainActivity : Activity() {
         val safeConfig = config!!
 
         val shownPrompt = if (attachedName.isNotBlank()) "${input.text.toString().trim()}\n\n📎 Załącznik: $attachedName".trim() else input.text.toString().trim()
-        messages.add("user" to shownPrompt); persistMessages()
+        messages.add("user" to shownPrompt)
+        if (!persistMessages()) {
+            messages.removeAt(messages.lastIndex)
+            toast("Historia rozmów nie została trwale zapisana. Żądanie API nie zostało wysłane.")
+            showChat()
+            return
+        }
         val sendMime = attachedMime
         val sendBase64 = attachedBase64
         attachedText = ""; attachedName = ""; attachedMime = ""; attachedBase64 = ""
