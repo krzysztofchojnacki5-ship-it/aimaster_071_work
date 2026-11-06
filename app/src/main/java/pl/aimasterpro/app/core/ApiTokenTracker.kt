@@ -98,7 +98,8 @@ object ApiTokenTracker {
         cachedTokens: Long = 0,
         status: String = "ESTIMATED",
         baseUrl: String = "",
-        reservationId: String = ""
+        reservationId: String = "",
+        idempotencyKey: String = ""
     ): TokenRecord {
         require(inputTokens >= 0L && outputTokens >= 0L && reasoningTokens >= 0L && cachedTokens >= 0L) {
             "Liczby tokenów nie mogą być ujemne."
@@ -113,8 +114,25 @@ object ApiTokenTracker {
         val pln = usd * exchangeRate
         require(usd.isFinite() && pln.isFinite() && usd >= 0.0 && pln >= 0.0) { "Nieprawidłowy koszt użycia API." }
 
+        val stableQueryId = idempotencyKey.trim().ifBlank { UUID.randomUUID().toString() }
+        val persistedBefore = readPersistedRecords(context)
+            ?: throw IllegalStateException("Rejestr użycia API jest uszkodzony; księgowanie idempotentne zostało wstrzymane.")
+        val existing = (persistedBefore + sessionRecords).firstOrNull { it.queryId == stableQueryId }
+        if (existing != null) {
+            require(existing.providerId == providerId && existing.modelName == modelName &&
+                existing.agentId == agentId && existing.taskId == taskId) {
+                "Klucz idempotencji użycia API został ponownie użyty dla innego żądania."
+            }
+            if (persistedBefore.none { it.queryId == stableQueryId }) {
+                check(saveRecordToStorage(context, existing)) {
+                    "Nie udało się trwale odtworzyć istniejącego rekordu użycia API."
+                }
+            }
+            return existing
+        }
+
         val record = TokenRecord(
-            queryId = UUID.randomUUID().toString(),
+            queryId = stableQueryId,
             timestamp = System.currentTimeMillis(),
             providerId = providerId,
             modelName = modelName,
@@ -194,6 +212,7 @@ object ApiTokenTracker {
         // represent billable calls and must remain intact until explicitly repaired.
         val persisted = readPersistedRecords(context) ?: return false
         val all = (persisted + sessionRecords).distinctBy { it.queryId }.toMutableList()
+        all.removeAll { it.queryId == record.queryId }
         all.add(0, record)
         // Keep last 2000 records
         val trimmed = if (all.size > 2000) all.take(2000) else all
