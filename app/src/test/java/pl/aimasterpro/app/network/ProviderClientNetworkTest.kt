@@ -148,6 +148,22 @@ class ProviderClientNetworkTest {
     }
 
     @Test
+    fun postServerErrorIsMarkedAsAmbiguousAndNotReplayed() {
+        val (server, count) = server { _, _ -> 500 to "provider internal error" }
+        try {
+            try {
+                ProviderClient().chat(config("http://127.0.0.1:${server.address.port}/v1"), "system", "test")
+                throw AssertionError("Expected HTTP 500")
+            } catch (e: ProviderException) {
+                assertEquals("SERVER_ERROR", e.category)
+                assertEquals("READ_RESPONSE", e.phase)
+                assertTrue("A provider 5xx may follow partial processing of a POST", e.requestMayHaveBeenProcessed)
+            }
+            assertEquals("A possibly processed POST must not be retried", 1, count.get())
+        } finally { server.stop(0) }
+    }
+
+    @Test
     fun dnsFailureIsReportedAsDnsAndNotGenericNetworkError() {
         try {
             ProviderClient().discoverModels(config("https://this-host-must-not-exist.invalid/v1"))
