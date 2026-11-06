@@ -58,7 +58,7 @@ object ApiTokenTracker {
     // Session means the current app process, not an in-memory list that disappears from the monitor.
     private val sessionStartedAt = System.currentTimeMillis()
     private data class ActiveReservationTask(val taskId: String, val agentId: String, val providerId: String, val baseUrl: String, val modelName: String, var tokensRemaining: Long, var costPlnRemaining: Double, var completed: Boolean = false)
-    private data class ActiveReservation(val id: String, val tasks: MutableList<ActiveReservationTask>, var globalTokensRemaining: Long, val globalReserveAgentId: String = "", var releaseRequested: Boolean = false)
+    private data class ActiveReservation(val id: String, val tasks: MutableList<ActiveReservationTask>, var globalTokensRemaining: Long, val globalReserveAgentId: String = "", val globalReserveCostPln: Double = 0.0, var releaseRequested: Boolean = false)
     private val activeReservations = linkedMapOf<String, ActiveReservation>()
 
     private fun addTokenCounts(left: Long, right: Long): Long {
@@ -371,7 +371,8 @@ object ApiTokenTracker {
         context: Context,
         requests: List<BudgetRequest>,
         globalReserveTokens: Long = 0L,
-        globalReserveAgentId: String = ""
+        globalReserveAgentId: String = "",
+        globalReserveCostPln: Double = 0.0
     ): BatchBudgetPlan {
         val limits = getLimits(context)
         val persisted = readPersistedRecords(context)
@@ -381,7 +382,8 @@ object ApiTokenTracker {
         }
         if (limits.dailyTokenLimit <= 0L || limits.agentTokenLimit <= 0L ||
             !limits.monthlyCostPlnLimit.isFinite() || limits.monthlyCostPlnLimit < 0.0 ||
-            globalReserveTokens < 0L || (globalReserveTokens > 0L && globalReserveAgentId.isNotBlank() && globalReserveAgentId.length > 128) || requests.any {
+            globalReserveTokens < 0L || !globalReserveCostPln.isFinite() || globalReserveCostPln < 0.0 ||
+            (globalReserveTokens > 0L && globalReserveAgentId.isNotBlank() && globalReserveAgentId.length > 128) || requests.any {
                 it.taskId.isBlank() || it.agentId.isBlank() || it.providerId.isBlank() ||
                     it.estimatedInputTokens < 0L || it.estimatedOutputTokens < 0L ||
                     runCatching { Math.addExact(it.estimatedInputTokens, it.estimatedOutputTokens) }.isFailure
@@ -417,7 +419,9 @@ object ApiTokenTracker {
             perAgentUsed[key] = addTokenCounts(perAgentUsed[key] ?: 0L, globalReserveTokens)
         }
         var monthlyCostUsed = recent.sumOf { it.costPln.coerceAtLeast(0.0) } +
-            activeReservations.values.sumOf { r -> r.tasks.sumOf { it.costPlnRemaining.coerceAtLeast(0.0) } }
+            activeReservations.values.sumOf { r ->
+                r.globalReserveCostPln + r.tasks.sumOf { it.costPlnRemaining.coerceAtLeast(0.0) }
+            } + globalReserveCostPln
         val allowed = linkedSetOf<String>()
         val blocked = linkedMapOf<String, String>()
         var reservedTokens = 0L
@@ -456,8 +460,10 @@ object ApiTokenTracker {
         while (reservationId.isBlank() || activeReservations.containsKey(reservationId)) {
             reservationId = UUID.randomUUID().toString()
         }
-        if (allowed.isNotEmpty() || globalReserveTokens > 0L) {
-            activeReservations[reservationId] = ActiveReservation(reservationId, newReservationTasks, globalReserveTokens, globalReserveAgentId.trim())
+        if (allowed.isNotEmpty() || globalReserveTokens > 0L || globalReserveCostPln > 0.0) {
+            activeReservations[reservationId] = ActiveReservation(
+                reservationId, newReservationTasks, globalReserveTokens, globalReserveAgentId.trim(), globalReserveCostPln
+            )
         } else {
             reservationId = ""
         }
@@ -491,7 +497,7 @@ object ApiTokenTracker {
         tokens = sumTokenCounts(activeReservations.values.map { r ->
             addTokenCounts(r.globalTokensRemaining, sumTokenCounts(r.tasks.map { it.tokensRemaining }))
         }),
-        costPln = activeReservations.values.sumOf { r -> r.tasks.sumOf { it.costPlnRemaining.coerceAtLeast(0.0) } }
+        costPln = activeReservations.values.sumOf { r -> r.globalReserveCostPln + r.tasks.sumOf { it.costPlnRemaining.coerceAtLeast(0.0) } }
     )
 
     /** A read-only budget snapshot shared by the API monitor and diagnostics screen. */
@@ -597,7 +603,9 @@ object ApiTokenTracker {
 
         val monthlyRecords = filterRecords(all, "30 dni")
         val monthlyCost = monthlyRecords.sumOf { it.costPln.coerceAtLeast(0.0) } +
-            activeReservations.values.sumOf { r -> r.tasks.sumOf { it.costPlnRemaining.coerceAtLeast(0.0) } }
+            activeReservations.values.sumOf { r ->
+                r.globalReserveCostPln + r.tasks.sumOf { it.costPlnRemaining.coerceAtLeast(0.0) }
+            }
 
         if (exceedsTokenLimit(todayTokens, estimatedTokens, limits.dailyTokenLimit)) {
             return LimitCheckResult(false, "Osiągnięto dzienny limit tokenów (${limits.dailyTokenLimit}). Zapytanie zostało wstrzymane dla agenta $agentId.")
