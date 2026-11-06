@@ -384,8 +384,13 @@ class TeamRunEngine(
                 } catch (t: Throwable) {
                     if (t is InterruptedException) {
                         // Interrupting the coordinator must also disconnect this agent's HTTP call.
+                        // Record a terminal state here as well: a submitted task may still be queued
+                        // and never enter its worker body, so it cannot persist its own cancellation.
                         client.cancelRequestScope(taskScopes[index])
                         future.cancel(true)
+                        runCatching {
+                            onTaskState(tasks[index], "CANCELLED", "Koordynator został przerwany; zadanie anulowano.", "", "", 0)
+                        }
                         Thread.currentThread().interrupt()
                     }
                     TeamTaskResult(tasks[index].id, tasks[index].agentId, TeamTaskResult.Status.FAILED,
