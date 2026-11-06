@@ -61,6 +61,21 @@ object ApiTokenTracker {
     private data class ActiveReservation(val id: String, val tasks: MutableList<ActiveReservationTask>, var globalTokensRemaining: Long)
     private val activeReservations = linkedMapOf<String, ActiveReservation>()
 
+    private fun addTokenCounts(left: Long, right: Long): Long {
+        val a = left.coerceAtLeast(0L)
+        val b = right.coerceAtLeast(0L)
+        return if (Long.MAX_VALUE - a < b) Long.MAX_VALUE else a + b
+    }
+
+    private fun sumTokenCounts(values: Iterable<Long>): Long =
+        values.fold(0L) { total, value -> addTokenCounts(total, value) }
+
+    private fun exceedsTokenLimit(current: Long, additional: Long, limit: Long): Boolean {
+        if (additional < 0L) return true
+        val used = current.coerceAtLeast(0L)
+        return used > limit || additional > limit - used
+    }
+
     // Default pricing per 1 Million tokens in USD
     private val defaultPricing = listOf(
         ModelPricing("gemini", 0.075, 0.30),
@@ -345,11 +360,13 @@ object ApiTokenTracker {
         val recent = filterRecords(all, "30 dni")
         // Keep a reserve for the MASTER's final synthesis after specialist reports return.
         val reservedTasks = activeReservations.values.flatMap { it.tasks }
-        val activeGlobalTokens = activeReservations.values.sumOf { it.globalTokensRemaining.coerceAtLeast(0L) }
-        var dailyUsed = today.sumOf { it.totalTokens.coerceAtLeast(0L) } + activeGlobalTokens +
-            reservedTasks.sumOf { it.tokensRemaining.coerceAtLeast(0L) } + globalReserveTokens.coerceAtLeast(0L)
+        val activeGlobalTokens = sumTokenCounts(activeReservations.values.map { it.globalTokensRemaining })
+        var dailyUsed = sumTokenCounts(
+            listOf(sumTokenCounts(today.map { it.totalTokens }), activeGlobalTokens,
+                sumTokenCounts(reservedTasks.map { it.tokensRemaining }), globalReserveTokens)
+        )
         val perAgentUsed = today.groupBy { it.agentId.lowercase(Locale.ROOT) }
-            .mapValues { entry -> entry.value.sumOf { it.totalTokens.coerceAtLeast(0L) } }
+            .mapValues { entry -> sumTokenCounts(entry.value.map { it.totalTokens }) }
             .toMutableMap()
         reservedTasks.forEach { task ->
             val key = task.agentId.lowercase(Locale.ROOT)
@@ -374,15 +391,15 @@ object ApiTokenTracker {
             val estimatedPln = usd * exchangeRate
             val reason = when {
                 !exchangeRate.isFinite() || exchangeRate <= 0.0 || !estimatedPln.isFinite() || estimatedPln < 0.0 -> "Wstrzymano: nieprawidłowy kurs waluty lub wycena modelu; nie można bezpiecznie obliczyć kosztu."
-                dailyUsed + estimate > limits.dailyTokenLimit -> "Pominięto: brak dziennego budżetu tokenów (limit ${limits.dailyTokenLimit})."
-                agentUsed + estimate > limits.agentTokenLimit -> "Pominięto: agent przekroczyłby dzienny limit ${limits.agentTokenLimit} tokenów."
+                exceedsTokenLimit(dailyUsed, estimate, limits.dailyTokenLimit) -> "Pominięto: brak dziennego budżetu tokenów (limit ${limits.dailyTokenLimit})."
+                exceedsTokenLimit(agentUsed, estimate, limits.agentTokenLimit) -> "Pominięto: agent przekroczyłby dzienny limit ${limits.agentTokenLimit} tokenów."
                 limits.monthlyCostPlnLimit > 0.0 && monthlyCostUsed + estimatedPln > limits.monthlyCostPlnLimit -> "Pominięto: przekroczony zostałby miesięczny budżet ${limits.monthlyCostPlnLimit} PLN."
                 else -> null
             }
             if (reason == null) {
                 allowed += request.taskId
-                dailyUsed += estimate
-                perAgentUsed[agentKey] = agentUsed + estimate
+                dailyUsed = addTokenCounts(dailyUsed, estimate)
+                perAgentUsed[agentKey] = addTokenCounts(agentUsed, estimate)
                 monthlyCostUsed += estimatedPln
                 reservedTokens += estimate
                 reservedCost += estimatedPln
@@ -422,7 +439,9 @@ object ApiTokenTracker {
     @Synchronized
     fun activeReservationStats(): ActiveReservationStats = ActiveReservationStats(
         tasks = activeReservations.values.sumOf { it.tasks.count { task -> task.tokensRemaining > 0L } },
-        tokens = activeReservations.values.sumOf { r -> r.globalTokensRemaining.coerceAtLeast(0L) + r.tasks.sumOf { it.tokensRemaining.coerceAtLeast(0L) } },
+        tokens = sumTokenCounts(activeReservations.values.map { r ->
+            addTokenCounts(r.globalTokensRemaining, sumTokenCounts(r.tasks.map { it.tokensRemaining }))
+        }),
         costPln = activeReservations.values.sumOf { r -> r.tasks.sumOf { it.costPlnRemaining.coerceAtLeast(0.0) } }
     )
 
@@ -435,7 +454,7 @@ object ApiTokenTracker {
         val recentCost = filterRecords(records, "30 dni").sumOf { it.costPln.coerceAtLeast(0.0) }
         val reservations = activeReservationStats()
         val ledgerHealthy = ledgerHealthy
-        val usedIncludingReservations = todayTokens + reservations.tokens
+        val usedIncludingReservations = addTokenCounts(todayTokens, reservations.tokens)
         return BudgetUsageSnapshot(
             recordedTodayTokens = todayTokens,
             activeReservedTokens = reservations.tokens,
@@ -488,27 +507,36 @@ object ApiTokenTracker {
     @Synchronized
     fun checkLimits(context: Context, agentId: String, estimatedTokens: Long): LimitCheckResult {
         val limits = getLimits(context)
+        if (estimatedTokens < 0L) return LimitCheckResult(false, "Szacowana liczba tokenów nie może być ujemna.")
         if (readPersistedRecords(context) == null) {
             return LimitCheckResult(false, "Rejestr użycia API jest uszkodzony lub nieczytelny. Zapytanie wstrzymano, aby nie przekroczyć nieznanego budżetu.")
         }
         val all = loadAllRecordsFromStorage(context)
         val todayRecords = filterRecords(all, "Dzisiaj")
-        val todayTokens = todayRecords.sumOf { it.totalTokens.coerceAtLeast(0L) } +
-            activeReservations.values.sumOf { r -> r.globalTokensRemaining.coerceAtLeast(0L) + r.tasks.sumOf { it.tokensRemaining.coerceAtLeast(0L) } }
-        val agentTodayTokens = todayRecords.filter { it.agentId.equals(agentId, true) }.sumOf { it.totalTokens.coerceAtLeast(0L) } +
-            activeReservations.values.sumOf { r -> r.tasks.filter { it.agentId.equals(agentId, true) }.sumOf { it.tokensRemaining.coerceAtLeast(0L) } }
+        val todayTokens = addTokenCounts(
+            sumTokenCounts(todayRecords.map { it.totalTokens }),
+            sumTokenCounts(activeReservations.values.map { r ->
+                addTokenCounts(r.globalTokensRemaining, sumTokenCounts(r.tasks.map { it.tokensRemaining }))
+            })
+        )
+        val agentTodayTokens = addTokenCounts(
+            sumTokenCounts(todayRecords.filter { it.agentId.equals(agentId, true) }.map { it.totalTokens }),
+            sumTokenCounts(activeReservations.values.map { r ->
+                sumTokenCounts(r.tasks.filter { it.agentId.equals(agentId, true) }.map { it.tokensRemaining })
+            })
+        )
 
         val monthlyRecords = filterRecords(all, "30 dni")
         val monthlyCost = monthlyRecords.sumOf { it.costPln.coerceAtLeast(0.0) } +
             activeReservations.values.sumOf { r -> r.tasks.sumOf { it.costPlnRemaining.coerceAtLeast(0.0) } }
 
-        if (todayTokens + estimatedTokens > limits.dailyTokenLimit) {
+        if (exceedsTokenLimit(todayTokens, estimatedTokens, limits.dailyTokenLimit)) {
             return LimitCheckResult(false, "Osiągnięto dzienny limit tokenów (${limits.dailyTokenLimit}). Zapytanie zostało wstrzymane dla agenta $agentId.")
         }
         if (limits.monthlyCostPlnLimit > 0.0 && monthlyCost >= limits.monthlyCostPlnLimit) {
             return LimitCheckResult(false, "Osiągnięto miesięczny limit kosztów (${limits.monthlyCostPlnLimit} PLN).")
         }
-        if (agentTodayTokens + estimatedTokens > limits.agentTokenLimit) {
+        if (exceedsTokenLimit(agentTodayTokens, estimatedTokens, limits.agentTokenLimit)) {
             return LimitCheckResult(false, "Agent $agentId przekroczył swój dzienny limit tokenów (${limits.agentTokenLimit}).")
         }
 
