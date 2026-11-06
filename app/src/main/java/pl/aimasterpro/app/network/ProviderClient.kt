@@ -402,76 +402,78 @@ class ProviderClient(
         scope: RequestScope = beginRequestScope()
     ): List<ProviderModelInfo> {
         if (isCancelled(scope)) throw cancelledException()
+        val previousScope = requestScopeLocal.get()
         requestScopeLocal.set(scope)
         return try {
             when (config.kind) {
-        ProviderKind.ANTHROPIC -> {
-            val root = config.baseUrl.trimEnd('/').ifBlank { "https://api.anthropic.com/v1" }
-            val json = requestWithRetry("$root/models", "GET", config.apiKey, authHeader = "x-api-key", extraHeaders = mapOf("anthropic-version" to "2023-06-01"))
-            val arr = json.optJSONArray("data") ?: JSONArray()
-            (0 until arr.length()).mapNotNull { i ->
-                val o = arr.optJSONObject(i) ?: return@mapNotNull null
-                val id = o.optString("id").takeIf { it.isNotBlank() } ?: return@mapNotNull null
-                ProviderModelInfo(id, o.optString("display_name", id), o.optLong("context_length", -1L).takeIf { it > 0 })
-            }.sortedBy { it.id }
-        }
-        ProviderKind.OPENAI_COMPATIBLE -> {
-            val root = config.baseUrl.trimEnd('/').removeSuffix("/chat/completions")
-            val json = requestWithRetry("$root/models", "GET", config.apiKey)
-            val arr = json.optJSONArray("data") ?: JSONArray()
-            val isOpenRouter = root.contains("openrouter.ai", true)
-            (0 until arr.length()).mapNotNull { i ->
-                val o = arr.optJSONObject(i) ?: return@mapNotNull null
-                val id = o.optString("id").takeIf { it.isNotBlank() } ?: return@mapNotNull null
-                val pricing = o.optJSONObject("pricing")
-                val promptRaw = pricing?.optString("prompt")
-                val completionRaw = pricing?.optString("completion")
-                val prompt = promptRaw?.toDoubleOrNull()?.times(1_000_000.0)
-                val completion = completionRaw?.toDoubleOrNull()?.times(1_000_000.0)
-                val hasPricing = prompt != null && completion != null
-                val explicitFree = id.equals("openrouter/free", true) || id.endsWith(":free", true)
-                val free = if (isOpenRouter) {
-                    when {
-                        hasPricing && prompt == 0.0 && completion == 0.0 -> true
-                        hasPricing -> false
-                        explicitFree -> true
-                        else -> null
+                ProviderKind.ANTHROPIC -> {
+                    val root = config.baseUrl.trimEnd('/').ifBlank { "https://api.anthropic.com/v1" }
+                    val json = requestWithRetry("$root/models", "GET", config.apiKey, authHeader = "x-api-key", extraHeaders = mapOf("anthropic-version" to "2023-06-01"))
+                    val arr = json.optJSONArray("data") ?: JSONArray()
+                    (0 until arr.length()).mapNotNull { i ->
+                        val o = arr.optJSONObject(i) ?: return@mapNotNull null
+                        val id = o.optString("id").takeIf { it.isNotBlank() } ?: return@mapNotNull null
+                        ProviderModelInfo(id, o.optString("display_name", id), o.optLong("context_length", -1L).takeIf { it > 0 })
+                    }.sortedBy { it.id }
+                }
+                ProviderKind.OPENAI_COMPATIBLE -> {
+                    val root = config.baseUrl.trimEnd('/').removeSuffix("/chat/completions")
+                    val json = requestWithRetry("$root/models", "GET", config.apiKey)
+                    val arr = json.optJSONArray("data") ?: JSONArray()
+                    val isOpenRouter = root.contains("openrouter.ai", true)
+                    (0 until arr.length()).mapNotNull { i ->
+                        val o = arr.optJSONObject(i) ?: return@mapNotNull null
+                        val id = o.optString("id").takeIf { it.isNotBlank() } ?: return@mapNotNull null
+                        val pricing = o.optJSONObject("pricing")
+                        val promptRaw = pricing?.optString("prompt")
+                        val completionRaw = pricing?.optString("completion")
+                        val prompt = promptRaw?.toDoubleOrNull()?.times(1_000_000.0)
+                        val completion = completionRaw?.toDoubleOrNull()?.times(1_000_000.0)
+                        val hasPricing = prompt != null && completion != null
+                        val explicitFree = id.equals("openrouter/free", true) || id.endsWith(":free", true)
+                        val free = if (isOpenRouter) {
+                            when {
+                                hasPricing && prompt == 0.0 && completion == 0.0 -> true
+                                hasPricing -> false
+                                explicitFree -> true
+                                else -> null
+                            }
+                        } else null
+                        ProviderModelInfo(
+                            id = id,
+                            name = o.optString("name", id),
+                            contextLength = o.optLong("context_length", -1L).takeIf { it > 0 },
+                            promptPricePerMillion = prompt,
+                            completionPricePerMillion = completion,
+                            freeByPricing = free,
+                            description = o.optString("description", "")
+                        )
+                    }.sortedBy { it.id }
+                }
+                ProviderKind.GEMINI -> {
+                    val root = config.baseUrl.trimEnd('/').ifBlank { "https://generativelanguage.googleapis.com/v1beta" }
+                    if (root.contains("/openai")) {
+                        val json = requestWithRetry("$root/models", "GET", config.apiKey)
+                        val arr = json.optJSONArray("data") ?: JSONArray()
+                        (0 until arr.length()).mapNotNull { i ->
+                            val o = arr.optJSONObject(i) ?: return@mapNotNull null
+                            val id = o.optString("id").takeIf { it.isNotBlank() } ?: return@mapNotNull null
+                            ProviderModelInfo(id, o.optString("name", id), o.optLong("context_length", -1L).takeIf { it > 0 })
+                        }.sortedBy { it.id }
+                    } else {
+                        val encodedKey = java.net.URLEncoder.encode(config.apiKey, "UTF-8")
+                        val json = requestWithRetry("$root/models?key=$encodedKey", "GET", "")
+                        val arr = json.optJSONArray("models") ?: JSONArray()
+                        (0 until arr.length()).mapNotNull { i ->
+                            val o = arr.optJSONObject(i) ?: return@mapNotNull null
+                            val id = o.optString("name").removePrefix("models/").takeIf { it.isNotBlank() } ?: return@mapNotNull null
+                            ProviderModelInfo(id, o.optString("displayName", id), o.optLong("inputTokenLimit", -1L).takeIf { it > 0 }, description = o.optString("description", ""))
+                        }.sortedBy { it.id }
                     }
-                } else null
-                ProviderModelInfo(
-                    id = id,
-                    name = o.optString("name", id),
-                    contextLength = o.optLong("context_length", -1L).takeIf { it > 0 },
-                    promptPricePerMillion = prompt,
-                    completionPricePerMillion = completion,
-                    freeByPricing = free,
-                    description = o.optString("description", "")
-                )
-            }.sortedBy { it.id }
-        }
-        ProviderKind.GEMINI -> {
-            val root = config.baseUrl.trimEnd('/').ifBlank { "https://generativelanguage.googleapis.com/v1beta" }
-            if (root.contains("/openai")) {
-                val json = requestWithRetry("$root/models", "GET", config.apiKey)
-                val arr = json.optJSONArray("data") ?: JSONArray()
-                (0 until arr.length()).mapNotNull { i ->
-                    val o = arr.optJSONObject(i) ?: return@mapNotNull null
-                    val id = o.optString("id").takeIf { it.isNotBlank() } ?: return@mapNotNull null
-                    ProviderModelInfo(id, o.optString("name", id), o.optLong("context_length", -1L).takeIf { it > 0 })
-                }.sortedBy { it.id }
-            } else {
-                val encodedKey = java.net.URLEncoder.encode(config.apiKey, "UTF-8")
-                val json = requestWithRetry("$root/models?key=$encodedKey", "GET", "")
-                val arr = json.optJSONArray("models") ?: JSONArray()
-                (0 until arr.length()).mapNotNull { i ->
-                    val o = arr.optJSONObject(i) ?: return@mapNotNull null
-                    val id = o.optString("name").removePrefix("models/").takeIf { it.isNotBlank() } ?: return@mapNotNull null
-                    ProviderModelInfo(id, o.optString("displayName", id), o.optLong("inputTokenLimit", -1L).takeIf { it > 0 }, description = o.optString("description", ""))
-                }.sortedBy { it.id }
-            }
+                }
             }
         } finally {
-            requestScopeLocal.remove()
+            if (previousScope == null) requestScopeLocal.remove() else requestScopeLocal.set(previousScope)
         }
     }
 
