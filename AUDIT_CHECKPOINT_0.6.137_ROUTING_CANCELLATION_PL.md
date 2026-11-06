@@ -42,3 +42,23 @@ Zakres: routing, scheduler, rozliczanie użycia API, timeouty i anulowanie agent
 2. Dodać/zweryfikować regresje dla timeoutu agenta w `TeamRunEngine`, w tym brak fallbacku po anulowaniu.
 3. Przejrzeć `ApiTokenTracker.planBatch/releaseBatchReservation/recordQuery` pod kątem wszystkich ścieżek wyjątków i rezerwacji.
 4. Przygotować wiarygodną ścieżkę uruchamiania testów (CI/Gradle wrapper) dopiero po sprawdzeniu wersji JDK, AGP, Gradle i SDK; nie deklarować PASS bez uruchomienia.
+
+## Uzupełnienie — ścieżka MASTER i rezerwacja syntezy (2026-11-06)
+
+Dalszy przegląd ujawnił, że ścieżka `MainActivity.chatWithFallback()` miała podobne ryzyka jak wcześniej TeamRunEngine:
+- lokalna odmowa schedulera zapisywała fałszywą porażkę zdrowia modelu;
+- błędy lokalnego zapisu kondycji, historii użycia lub tokenów mogły wejść do catch dostawcy po poprawnej odpowiedzi i uruchomić fallback;
+- końcowa synteza MASTER-a korzystała z kontroli limitu, ale nie miała własnej aktywnej rezerwacji budżetu obejmującej faktyczne wywołanie.
+
+Wprowadzone poprawki:
+1. Usunięto negatywny zapis zdrowia providera dla lokalnej konkurencji/cooldownu schedulera.
+2. Oddzielono zapis kondycji, historii użycia i tokenów od wyniku żądania API. Błędy lokalne są logowane; nie mogą uruchamiać drugiego wywołania po udanej odpowiedzi.
+3. Po odebraniu odpowiedzi i rozliczeniu wykorzystania anulowane zadanie nie publikuje wyniku.
+4. Końcowa synteza MASTER-a otrzymuje własny `planBatch` z rezerwacją tokenów i kosztu. Rezerwacja jest przekazywana do `recordQuery` i zwalniana w `finally`.
+5. Dodano test `synthesisReservationIsConsumedByActualMasterUsageAndReleased` w `ApiTokenTrackerTest.kt`.
+
+Dodatkowe pliki zmienione:
+- `app/src/main/java/pl/aimasterpro/app/MainActivity.kt`
+- `app/src/test/java/pl/aimasterpro/app/core/ApiTokenTrackerTest.kt`
+
+Weryfikacja pozostaje NOT RUN: nie wykonano kompilacji Android ani JUnit/Robolectric. Powyższe zmiany wymagają uruchomienia testów przed uznaniem ich za poprawne.
