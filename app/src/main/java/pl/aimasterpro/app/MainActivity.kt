@@ -1322,10 +1322,14 @@ class MainActivity : Activity() {
             } catch (t: Throwable) {
                 if ((t as? ProviderException)?.category == "CANCELLED" || Thread.currentThread().isInterrupted) throw t
                 lastErr = t
-                pl.aimasterpro.app.core.ModelHealthTracker.record(
-                    this, cfg, false, if ((t as? ProviderException)?.httpCode == 429) "HTTP_429" else (t as? ProviderException)?.category ?: "UNKNOWN",
-                    if (modelCallStartedAt > 0L) System.currentTimeMillis() - modelCallStartedAt else 0L
-                )
+                runCatching {
+                    pl.aimasterpro.app.core.ModelHealthTracker.record(
+                        this, cfg, false, if ((t as? ProviderException)?.httpCode == 429) "HTTP_429" else (t as? ProviderException)?.category ?: "UNKNOWN",
+                        if (modelCallStartedAt > 0L) System.currentTimeMillis() - modelCallStartedAt else 0L
+                    )
+                }.onFailure { error ->
+                    runCatching { logAgentForChat(requestChatId, "[HEALTH RECORD WARNING] Nie udało się zapisać błędu providera: ${error.message ?: error.javaClass.simpleName}") }
+                }
                 if ((t as? ProviderException)?.httpCode == 429) {
                     val processCooldown = pl.aimasterpro.app.core.ProviderQuotaScheduler.markRateLimited(quotaKey)
                     val persistedCooldown = runCatching { pl.aimasterpro.app.core.ProviderCooldownStore.markRateLimited(this, cfg) }.getOrDefault(0L)
