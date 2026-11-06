@@ -221,3 +221,34 @@ Test pozostaje NOT RUN. Nie wykonano kompilacji ani JUnit/Robolectric; test wyma
 Stan referencyjny przed zapisem tego uzupełnienia:
 - HEAD branch: 949cd5d1cceefa1cff2a8dbf2fc07966f888ea0d
 - HEAD main: 752149d40186144b0f458a32b5826c8928349c3a
+
+## Uzupełnienie — fail-safe dla uszkodzonego rejestru użycia API (2026-11-06)
+
+Audyt księgowania API ujawnił analogiczny, lecz bardziej krytyczny problem niż wcześniej w checkpointach: loadAllRecordsFromStorage() zwracało pustą historię, jeśli JSON rejestru użycia był uszkodzony. saveRecordToStorage() korzystało z tego wyniku i mogło zastąpić poprzedni rejestr nowym wpisem. Ponadto planBatch() i checkLimits() mogły policzyć budżet bez brakujących, potencjalnie płatnych rekordów.
+
+Poprawki w ApiTokenTracker.kt:
+- dodano ścisły parser readPersistedRecords(), który zwraca null przy błędzie parsowania lub nieprawidłowym rekordzie, odróżniając uszkodzenie od prawidłowo pustego rejestru;
+- saveRecordToStorage() odmawia zapisu zastępczego, gdy istniejący rejestr jest nieczytelny. recordQuery() nadal zachowuje świeży rekord w sessionRecords, zużywa dopasowaną rezerwację i zgłasza błąd trwałego zapisu, dzięki czemu wywołujący raportuje lukę księgową bez ponowienia płatnego żądania;
+- planBatch() wstrzymuje wszystkie nowe zadania, jeśli rejestr jest uszkodzony lub nieczytelny, zamiast zaniżać wykorzystanie budżetu;
+- checkLimits() również blokuje zapytanie przy nieczytelnym rejestrze;
+- BudgetUsageSnapshot otrzymał ledgerHealthy, a przy niezdrowym rejestrze pozostały budżet jest prezentowany jako 0, nie jako pozornie dostępny limit;
+- planBatch() odrzuca niepuste, ale powtarzające się taskId, zanim utworzy rezerwację.
+
+Dodane testy w ApiTokenTrackerTest.kt:
+- corruptUsageLedgerIsNotOverwrittenByNewUsageRecord
+- corruptUsageLedgerBlocksNewBudgetReservations
+- duplicateBudgetTaskIdsAreRejectedBeforeReservation
+- corruptUsageLedgerBlocksLegacyLimitCheckAndReportsUnknownBudget
+
+Ograniczenia:
+- loadAllRecordsFromStorage() nadal może zwrócić dane sesyjne do bieżącego monitora, ale nieczytelny trwały rejestr jest sygnalizowany przez ledgerHealthy=false; ścieżki autoryzujące nowe żądania używają ścisłego odczytu i fail closed;
+- rekord po nieudanym commit() istnieje tylko w pamięci procesu. Jeśli proces zostanie zabity przed naprawą rejestru i kolejnym trwałym zapisem, wpis sesyjny może zniknąć. Stan ten jest jawnie zgłaszany jako USAGE_RECORD_FAILED; nie wolno przedstawiać go jako trwale rozliczonego;
+- testy nadal NOT RUN. Nie uruchomiono Gradle/JUnit/Robolectric ani kompilacji Android.
+
+Pliki zmienione:
+- app/src/main/java/pl/aimasterpro/app/core/ApiTokenTracker.kt
+- app/src/test/java/pl/aimasterpro/app/core/ApiTokenTrackerTest.kt
+
+Stan referencyjny przed zapisem tego uzupełnienia:
+- HEAD branch: ba2f9fbe21b91187cecf461cf28e2dbcd185e002
+- HEAD main: 752149d40186144b0f458a32b5826c8928349c3a
