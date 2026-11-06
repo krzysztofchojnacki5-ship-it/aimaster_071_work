@@ -1598,9 +1598,10 @@ class MainActivity : Activity() {
                             onRateLimited = { model -> runCatching { pl.aimasterpro.app.core.ProviderCooldownStore.markRateLimited(this, model) }.getOrDefault(0L) },
                             onProviderSuccess = { model -> runCatching { pl.aimasterpro.app.core.ProviderCooldownStore.markSuccess(this, model) } },
                             onTaskState = { task, state, detail, providerId, model, attempts ->
-                                pl.aimasterpro.app.core.TaskCheckpointStore.record(this,
+                                val saved = pl.aimasterpro.app.core.TaskCheckpointStore.record(this,
                                     pl.aimasterpro.app.core.TaskCheckpointStore.Event(task.id, task.agentId, state, detail,
                                         System.currentTimeMillis(), providerId, model, attempts))
+                                if (!saved) android.util.Log.e("AIMasterRecovery", "Nie udało się trwale zapisać checkpointu zadania.")
                             },
                             requestScope = requestScope
                         )
@@ -1728,9 +1729,10 @@ class MainActivity : Activity() {
                                     onRateLimited = { model -> runCatching { pl.aimasterpro.app.core.ProviderCooldownStore.markRateLimited(this, model) }.getOrDefault(0L) },
                                     onProviderSuccess = { model -> runCatching { pl.aimasterpro.app.core.ProviderCooldownStore.markSuccess(this, model) } },
                                     onTaskState = { task, state, detail, providerId, model, attempts ->
-                                        pl.aimasterpro.app.core.TaskCheckpointStore.record(this,
+                                        val saved = pl.aimasterpro.app.core.TaskCheckpointStore.record(this,
                                             pl.aimasterpro.app.core.TaskCheckpointStore.Event(task.id, task.agentId, state, detail,
                                                 System.currentTimeMillis(), providerId, model, attempts))
+                                        if (!saved) android.util.Log.e("AIMasterRecovery", "Nie udało się trwale zapisać checkpointu zadania.")
                                     },
                                     requestScope = requestScope
                                 )
@@ -3995,13 +3997,15 @@ class MainActivity : Activity() {
                         onRateLimited = { model -> runCatching { pl.aimasterpro.app.core.ProviderCooldownStore.markRateLimited(this, model) }.getOrDefault(0L) },
                         onProviderSuccess = { model -> runCatching { pl.aimasterpro.app.core.ProviderCooldownStore.markSuccess(this, model) } },
                         onTaskState = { task, state, detail, providerId, model, attempts ->
-                            pl.aimasterpro.app.core.TaskCheckpointStore.record(
+                            val saved = pl.aimasterpro.app.core.TaskCheckpointStore.record(
                                 this,
                                 pl.aimasterpro.app.core.TaskCheckpointStore.Event(
                                     task.id, task.agentId, state, detail, System.currentTimeMillis(), providerId, model, attempts
                                 )
                             )
-                        },
+                        
+                            if (!saved) android.util.Log.e("AIMasterRecovery", "Nie udało się trwale zapisać checkpointu zadania.")
+},
                         requestScope = client.beginRequestScope()
                     )
                 }
