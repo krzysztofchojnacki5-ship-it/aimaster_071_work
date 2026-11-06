@@ -300,6 +300,42 @@ class ApiTokenTrackerTest {
         assertEquals("Both serialized writes must remain in the durable ledger", 2, parallelRecords.size)
     }
 
+    @Test fun globalSynthesisCostReserveBlocksOtherMonthlySpendingUntilReleased() {
+        ApiTokenTracker.setLimits(context, daily = 10_000L, monthly = 0.0005, perAgent = 10_000L)
+        val reserve = ApiTokenTracker.planBatch(
+            context, emptyList(), globalReserveTokens = 100L,
+            globalReserveAgentId = "MASTER", globalReserveCostPln = 0.00025
+        )
+        assertTrue("A synthesis-only reservation must be persisted in memory", reserve.reservationId.isNotBlank())
+        assertEquals(0.00025, ApiTokenTracker.activeReservationStats().costPln, 1.0e-9)
+
+        val competing = BudgetRequest(
+            "competing-monthly-task", "RESEARCHER", "openai", "https://api.openai.com/v1",
+            "gpt-4o-mini", 100L, 100L
+        )
+        val blocked = ApiTokenTracker.planBatch(context, listOf(competing))
+        assertFalse("The monthly synthesis allowance must not be spent by another batch",
+            blocked.allowedTaskIds.contains(competing.taskId))
+        assertTrue(blocked.blockedReasons.getValue(competing.taskId).contains("miesięczny budżet"))
+
+        ApiTokenTracker.releaseBatchReservation(reserve.reservationId)
+        val afterRelease = ApiTokenTracker.planBatch(context, listOf(competing))
+        assertTrue("Releasing the synthesis guard must return its unused monthly allowance",
+            afterRelease.allowedTaskIds.contains(competing.taskId))
+        ApiTokenTracker.releaseBatchReservation(afterRelease.reservationId)
+    }
+
+    @Test fun globalSynthesisCostReserveAloneCannotExceedMonthlyLimit() {
+        ApiTokenTracker.setLimits(context, daily = 10_000L, monthly = 0.0005, perAgent = 10_000L)
+        val reserve = ApiTokenTracker.planBatch(
+            context, emptyList(), globalReserveTokens = 100L,
+            globalReserveAgentId = "MASTER", globalReserveCostPln = 0.0006
+        )
+        assertTrue("An over-limit synthesis reserve must fail closed", reserve.reservationId.isBlank())
+        assertEquals(0, ApiTokenTracker.activeReservationStats().tasks)
+        assertEquals(0L, ApiTokenTracker.activeReservationStats().tokens)
+    }
+
     @Test fun monthlyCostBudgetIncludesActiveReservationsAndRecordedUsage() {
         ApiTokenTracker.setLimits(context, daily = 100_000L, monthly = 0.0005, perAgent = 50_000L)
         val request = BudgetRequest(
