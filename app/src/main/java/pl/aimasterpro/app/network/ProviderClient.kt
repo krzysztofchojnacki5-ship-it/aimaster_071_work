@@ -393,7 +393,18 @@ class ProviderClient(
         }
     }
 
-    fun discoverModelDetails(config: ProviderConfig): List<ProviderModelInfo> = when (config.kind) {
+    /**
+     * Model discovery is an independent operation: it must not be cancelled merely because
+     * another chat scope starts, but it must remain cancellable by an explicit global teardown.
+     */
+    fun discoverModelDetails(
+        config: ProviderConfig,
+        scope: RequestScope = beginRequestScope()
+    ): List<ProviderModelInfo> {
+        if (isCancelled(scope)) throw cancelledException()
+        requestScopeLocal.set(scope)
+        return try {
+            when (config.kind) {
         ProviderKind.ANTHROPIC -> {
             val root = config.baseUrl.trimEnd('/').ifBlank { "https://api.anthropic.com/v1" }
             val json = requestWithRetry("$root/models", "GET", config.apiKey, authHeader = "x-api-key", extraHeaders = mapOf("anthropic-version" to "2023-06-01"))
@@ -458,6 +469,9 @@ class ProviderClient(
                     ProviderModelInfo(id, o.optString("displayName", id), o.optLong("inputTokenLimit", -1L).takeIf { it > 0 }, description = o.optString("description", ""))
                 }.sortedBy { it.id }
             }
+            }
+        } finally {
+            requestScopeLocal.remove()
         }
     }
 
