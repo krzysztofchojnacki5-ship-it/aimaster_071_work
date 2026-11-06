@@ -346,7 +346,7 @@ class TeamRunEngine(
                     } catch (t: Throwable) {
                         val err = "${t.javaClass.simpleName}: ${t.message ?: "Nieznany błąd"}"
                         onLog(agent.name, "MASTER", err, "ERROR")
-                        runCatching { onTaskState(task, if (t is InterruptedException || Thread.currentThread().isInterrupted) "CANCELLED" else "FAILED", err, actualProviderId, actualModel, attemptCount) }
+                        runCatching { onTaskState(task, if (t is InterruptedException || (t as? ProviderException)?.category == "CANCELLED" || Thread.currentThread().isInterrupted) "CANCELLED" else "FAILED", err, actualProviderId, actualModel, attemptCount) }
                         TeamTaskResult(task.id, task.agentId, TeamTaskResult.Status.FAILED, err, System.currentTimeMillis() - taskStartedAt, attemptCount, actualProviderId, actualModel, task.reviewOfAgentId)
                     }
                 })
