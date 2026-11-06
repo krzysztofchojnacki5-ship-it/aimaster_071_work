@@ -40,7 +40,10 @@ class ProviderClient(
     private val connectTimeoutMs: Int = 15_000,
     private val readTimeoutMs: Int = 45_000
 ) {
-    class RequestScope internal constructor(val epoch: Long) {
+    class RequestScope internal constructor(
+        val epoch: Long,
+        internal val parent: RequestScope? = null
+    ) {
         internal val cancelled = AtomicBoolean(false)
     }
 
@@ -61,14 +64,14 @@ class ProviderClient(
     /** Creates an independently cancellable child for one agent within a batch. */
     fun childRequestScope(parent: RequestScope): RequestScope {
         if (isCancelled(parent)) throw cancelledException()
-        return RequestScope(parent.epoch)
+        return RequestScope(parent.epoch, parent)
     }
 
     /** Cancels only this agent's in-flight calls; sibling scopes in the same batch remain active. */
     fun cancelRequestScope(scope: RequestScope) {
         scope.cancelled.set(true)
         activeConnections.entries.toList().forEach { (connection, active) ->
-            if (active.scope === scope) runCatching { connection.disconnect() }
+            if (isWithinScope(active.scope, scope)) runCatching { connection.disconnect() }
         }
     }
 
@@ -84,9 +87,26 @@ class ProviderClient(
         }
     }
 
-    private fun isCancelled(scope: RequestScope?): Boolean =
-        (scope != null && (scope.cancelled.get() || scope.epoch != cancellationEpoch.get())) ||
-            Thread.currentThread().isInterrupted
+    private fun isWithinScope(candidate: RequestScope?, ancestor: RequestScope): Boolean {
+        var current = candidate
+        while (current != null) {
+            if (current === ancestor) return true
+            current = current.parent
+        }
+        return false
+    }
+
+    private fun isCancelled(scope: RequestScope?): Boolean {
+        if (Thread.currentThread().isInterrupted) return true
+        if (scope == null) return false
+        if (scope.epoch != cancellationEpoch.get()) return true
+        var current: RequestScope? = scope
+        while (current != null) {
+            if (current.cancelled.get()) return true
+            current = current.parent
+        }
+        return false
+    }
 
     private fun cancelledException(): ProviderException =
         ProviderException(null, "Żądanie anulowane przez użytkownika.", category = "CANCELLED")
