@@ -96,3 +96,14 @@ Dodane testy:
 - `ProviderClientNetworkTest.cancellingParentScopeDisconnectsItsAgentChildrenOnly`
 
 Zidentyfikowany problem potwierdzono przez analizę wszystkich widocznych wywołań `beginRequestScope()` w `MainActivity`. Poprawka została zapisana na gałęzi roboczej; testy nadal NOT RUN.
+
+## Uzupełnienie — prywatność checkpointów (2026-11-06)
+
+Przegląd zapisu błędów wykazał, że `TeamRunEngine` przekazywał pełny tekst wyjątku do `TaskCheckpointStore`. Treść wyjątku dostawcy może zawierać dane zwrócone przez serwer, dlatego nie powinna trafiać do trwałego dziennika checkpointów.
+
+Poprawka:
+- szczegółowy błąd nadal może trafić do bieżącego logu diagnostycznego;
+- checkpoint przechowuje wyłącznie typ wyjątku oraz kategorię błędu providera i opcjonalny kod HTTP;
+- nie zapisuje dowolnej treści komunikatu wyjątku do metadanych odzyskiwania.
+
+Dodatkowy przegląd potwierdził, że ID zadań zespołu są budowane z identyfikatora czatu, żądania, indeksu i roli agenta, co ogranicza kolizje pomiędzy równoległymi czatami.
