@@ -57,7 +57,7 @@ object ApiTokenTracker {
     private val sessionRecords = mutableListOf<TokenRecord>()
     // Session means the current app process, not an in-memory list that disappears from the monitor.
     private val sessionStartedAt = System.currentTimeMillis()
-    private data class ActiveReservationTask(val taskId: String, val agentId: String, var tokensRemaining: Long, var costPlnRemaining: Double)
+    private data class ActiveReservationTask(val taskId: String, val agentId: String, val providerId: String, var tokensRemaining: Long, var costPlnRemaining: Double)
     private data class ActiveReservation(val id: String, val tasks: MutableList<ActiveReservationTask>, var globalTokensRemaining: Long)
     private val activeReservations = linkedMapOf<String, ActiveReservation>()
 
@@ -85,11 +85,18 @@ object ApiTokenTracker {
         baseUrl: String = "",
         reservationId: String = ""
     ): TokenRecord {
-        val total = inputTokens + outputTokens
+        require(inputTokens >= 0L && outputTokens >= 0L && reasoningTokens >= 0L && cachedTokens >= 0L) {
+            "Liczby tokenów nie mogą być ujemne."
+        }
+        val total = Math.addExact(inputTokens, outputTokens)
         val pricing = getPricing(context, modelName, providerId, baseUrl)
-        val usd = (inputTokens * pricing.inputPer1MUsd + outputTokens * pricing.outputPer1MUsd) / 1_000_000.0
+        require(pricing.inputPer1MUsd.isFinite() && pricing.outputPer1MUsd.isFinite() &&
+            pricing.inputPer1MUsd >= 0.0 && pricing.outputPer1MUsd >= 0.0) { "Nieprawidłowy cennik modelu." }
         val exchangeRate = getExchangeRate(context)
+        require(exchangeRate.isFinite() && exchangeRate > 0.0) { "Nieprawidłowy kurs USD/PLN; rozliczenie API wstrzymano." }
+        val usd = (inputTokens.toDouble() * pricing.inputPer1MUsd + outputTokens.toDouble() * pricing.outputPer1MUsd) / 1_000_000.0
         val pln = usd * exchangeRate
+        require(usd.isFinite() && pln.isFinite() && usd >= 0.0 && pln >= 0.0) { "Nieprawidłowy koszt użycia API." }
 
         val record = TokenRecord(
             queryId = UUID.randomUUID().toString(),
@@ -121,18 +128,16 @@ object ApiTokenTracker {
     private fun consumeActiveReservation(record: TokenRecord, reservationId: String) {
         if (reservationId.isBlank() || record.taskId.isBlank() || record.taskId == "general") return
         val reservation = activeReservations[reservationId] ?: return
-        var remainingTokens = record.totalTokens.coerceAtLeast(0L)
-        var remainingCost = record.costPln.coerceAtLeast(0.0)
-        run {
-            reservation.tasks.filter { it.taskId == record.taskId && it.agentId.equals(record.agentId, true) }.forEach { task ->
-                val used = minOf(task.tokensRemaining, remainingTokens)
-                task.tokensRemaining -= used
-                remainingTokens -= used
-                val costUsed = minOf(task.costPlnRemaining, remainingCost)
-                task.costPlnRemaining -= costUsed
-                remainingCost -= costUsed
-            }
-        }
+        // A fallback provider must not consume the estimate priced for another provider.
+        // Leaving that estimate reserved until batch release is conservative and prevents
+        // a cheaper/different fallback from freeing the wrong provider's cost allowance.
+        val task = reservation.tasks.singleOrNull {
+            it.taskId == record.taskId &&
+                it.agentId.equals(record.agentId, true) &&
+                it.providerId.equals(record.providerId, true)
+        } ?: return
+        task.tokensRemaining = (task.tokensRemaining - record.totalTokens.coerceAtLeast(0L)).coerceAtLeast(0L)
+        task.costPlnRemaining = (task.costPlnRemaining - record.costPln.coerceAtLeast(0.0)).coerceAtLeast(0.0)
     }
 
     @Synchronized
@@ -190,7 +195,12 @@ object ApiTokenTracker {
             val total = o.optLong("tot")
             val input = o.optLong("in")
             val output = o.optLong("out")
-            require(input >= 0L && output >= 0L && total >= 0L) { "Usage record has negative token counts." }
+            val reasoning = o.optLong("reas")
+            val cached = o.optLong("cache")
+            val costUsd = o.optDouble("usd")
+            val costPln = o.optDouble("pln")
+            require(input >= 0L && output >= 0L && total >= 0L && reasoning >= 0L && cached >= 0L) { "Usage record has negative token counts." }
+            require(costUsd.isFinite() && costPln.isFinite() && costUsd >= 0.0 && costPln >= 0.0) { "Usage record has invalid cost values." }
             require(o.has("tot") && o.has("qId")) { "Usage record is missing required fields." }
             list.add(TokenRecord(
                 queryId = queryId,
@@ -202,11 +212,11 @@ object ApiTokenTracker {
                 inputTokens = input,
                 outputTokens = output,
                 totalTokens = total,
-                reasoningTokens = o.optLong("reas"),
-                cachedTokens = o.optLong("cache"),
+                reasoningTokens = reasoning,
+                cachedTokens = cached,
                 status = o.optString("status", "ESTIMATED"),
-                costUsd = o.optDouble("usd"),
-                costPln = o.optDouble("pln")
+                costUsd = costUsd,
+                costPln = costPln
             ))
         }
         list
@@ -243,6 +253,7 @@ object ApiTokenTracker {
     }
 
     fun setExchangeRate(context: Context, rate: Double) {
+        require(rate.isFinite() && rate in 0.01..1_000.0) { "Kurs USD/PLN musi być skończony i mieścić się w zakresie 0,01–1000." }
         val prefs = context.getSharedPreferences(PRICING_PREFS, Context.MODE_PRIVATE)
         prefs.edit().putFloat("exchange_rate_pln", rate.toFloat()).apply()
     }
@@ -321,8 +332,11 @@ object ApiTokenTracker {
             val reason = "Wstrzymano: rejestr użycia API jest uszkodzony lub nieczytelny; nie można bezpiecznie obliczyć pozostałego budżetu."
             return BatchBudgetPlan(emptySet(), requests.associate { it.taskId to reason }, 0L, 0.0)
         }
-        if (requests.any { it.taskId.isBlank() || it.agentId.isBlank() } ||
-            requests.map { it.taskId }.distinct().size != requests.size) {
+        if (globalReserveTokens < 0L || requests.any {
+                it.taskId.isBlank() || it.agentId.isBlank() || it.providerId.isBlank() ||
+                    it.estimatedInputTokens < 0L || it.estimatedOutputTokens < 0L ||
+                    runCatching { Math.addExact(it.estimatedInputTokens, it.estimatedOutputTokens) }.isFailure
+            } || requests.map { it.taskId }.distinct().size != requests.size) {
             val reason = "Wstrzymano: zadania budżetowe muszą mieć niepuste i unikalne identyfikatory oraz agentów."
             return BatchBudgetPlan(emptySet(), requests.associate { it.taskId to reason }, 0L, 0.0)
         }
@@ -350,14 +364,16 @@ object ApiTokenTracker {
         val newReservationTasks = mutableListOf<ActiveReservationTask>()
 
         requests.forEach { request ->
-            val estimate = (request.estimatedInputTokens.coerceAtLeast(0L) + request.estimatedOutputTokens.coerceAtLeast(0L))
+            val estimate = Math.addExact(request.estimatedInputTokens, request.estimatedOutputTokens)
             val agentKey = request.agentId.lowercase(Locale.ROOT)
             val agentUsed = perAgentUsed[agentKey] ?: 0L
             val pricing = getPricing(context, request.modelName, request.providerId, request.baseUrl)
             val usd = (request.estimatedInputTokens.coerceAtLeast(0L) * pricing.inputPer1MUsd +
                 request.estimatedOutputTokens.coerceAtLeast(0L) * pricing.outputPer1MUsd) / 1_000_000.0
-            val estimatedPln = usd * getExchangeRate(context)
+            val exchangeRate = getExchangeRate(context)
+            val estimatedPln = usd * exchangeRate
             val reason = when {
+                !exchangeRate.isFinite() || exchangeRate <= 0.0 || !estimatedPln.isFinite() || estimatedPln < 0.0 -> "Wstrzymano: nieprawidłowy kurs waluty lub wycena modelu; nie można bezpiecznie obliczyć kosztu."
                 dailyUsed + estimate > limits.dailyTokenLimit -> "Pominięto: brak dziennego budżetu tokenów (limit ${limits.dailyTokenLimit})."
                 agentUsed + estimate > limits.agentTokenLimit -> "Pominięto: agent przekroczyłby dzienny limit ${limits.agentTokenLimit} tokenów."
                 limits.monthlyCostPlnLimit > 0.0 && monthlyCostUsed + estimatedPln > limits.monthlyCostPlnLimit -> "Pominięto: przekroczony zostałby miesięczny budżet ${limits.monthlyCostPlnLimit} PLN."
@@ -370,7 +386,7 @@ object ApiTokenTracker {
                 monthlyCostUsed += estimatedPln
                 reservedTokens += estimate
                 reservedCost += estimatedPln
-                newReservationTasks += ActiveReservationTask(request.taskId, request.agentId, estimate, estimatedPln)
+                newReservationTasks += ActiveReservationTask(request.taskId, request.agentId, request.providerId, estimate, estimatedPln)
             } else {
                 blocked[request.taskId] = reason
             }
@@ -443,6 +459,7 @@ object ApiTokenTracker {
     }
 
     fun setLimits(context: Context, daily: Long, monthly: Double, perAgent: Long) {
+        require(monthly.isFinite() && monthly >= 0.0) { "Miesięczny limit kosztów musi być skończony i nieujemny." }
         val prefs = context.getSharedPreferences(LIMITS_PREFS, Context.MODE_PRIVATE)
         prefs.edit()
             .putLong("daily_token_limit", daily.coerceAtLeast(1L))
