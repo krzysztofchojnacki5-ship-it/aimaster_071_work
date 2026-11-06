@@ -51,12 +51,12 @@ class ProviderClient(
     private val activeConnections = ConcurrentHashMap<HttpURLConnection, ActiveRequest>()
     private val unscopedEpoch = Long.MIN_VALUE
 
-    /** Starts a fresh top-level chat scope and invalidates older top-level scopes. */
-    fun beginRequestScope(): RequestScope {
-        val newEpoch = cancellationEpoch.incrementAndGet()
-        disconnectOlderScopes(newEpoch)
-        return RequestScope(newEpoch)
-    }
+    /**
+     * Creates an independent top-level operation scope.
+     * Starting a model test, audit, or another chat must not cancel unrelated active work.
+     * Global invalidation is reserved for the explicit cancelActiveRequests() action.
+     */
+    fun beginRequestScope(): RequestScope = RequestScope(cancellationEpoch.get())
 
     /** Creates an independently cancellable child for one agent within a batch. */
     fun childRequestScope(parent: RequestScope): RequestScope {
