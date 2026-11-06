@@ -273,3 +273,55 @@ Pliki zmienione:
 Stan referencyjny przed zapisem tego uzupełnienia:
 - HEAD branch: b1e8f65e0939fa31ff74d88deefe9686dd52403a
 - HEAD main: 752149d40186144b0f458a32b5826c8928349c3a
+
+
+## Uzupełnienie — spójność rezerwacji budżetowych i walidacja kosztów (2026-11-06)
+
+### Ustalenia audytu
+
+1. Rezerwacja zadania była konsumowana po samym `taskId` i `agentId`. Przy fallbacku mogło to zmniejszyć rezerwację wycenioną dla innego providera/modelu.
+2. Suma tokenów była liczona zwykłym dodawaniem `Long`. Skrajnie duże, lecz nieujemne wartości mogły przepełnić licznik i zawinąć się do wartości ujemnej, zaniżając wykorzystanie limitu.
+3. Ścieżka księgowania nie odrzucała jawnie ujemnych liczników, przepełnienia `inputTokens + outputTokens`, nieprawidłowych kosztów ani niepoprawnego kursu walutowego.
+4. Ścisły odczyt trwałego rejestru sprawdzał wcześniej liczniki podstawowe, ale nie wszystkie pola kosztowe oraz liczniki reasoning/cache.
+5. Konfiguracja limitów zapisana w SharedPreferences mogła zawierać niefinitywny/ujemny miesięczny limit; ścieżki planowania i starszy `checkLimits()` muszą blokować działanie przy uszkodzonej konfiguracji.
+6. Rezerwacja globalna jest celowym buforem tokenów dla późniejszego etapu (np. syntezy MASTER-a), a nie rezerwacją przypisaną do konkretnego providera. Jest doliczana do globalnego limitu dziennego i pozostaje aktywna do jawnego zwolnienia. Końcowa synteza MASTER-a w głównej ścieżce dostaje osobną rezerwację po rozliczeniu agentów i recenzji; wcześniejsze rezerwacje etapów są zwalniane w `finally`.
+
+### Poprawki wprowadzone
+
+W `ApiTokenTracker.kt`:
+
+- aktywna rezerwacja zadania przechowuje teraz `taskId`, `agentId`, `providerId`, `baseUrl` i `modelName`;
+- faktyczne użycie konsumuje rezerwację tylko przy pełnej zgodności zadania, agenta, providera, adresu bazowego i modelu. Użycie z fallbacku innego providera/modelu nadal jest księgowane jako faktyczne użycie, ale nie zwalnia wyceny przypisanej do pierwotnego profilu. Pozostała rezerwacja jest zachowawczo utrzymywana do zwolnienia batcha;
+- rzeczywiste liczniki tokenów muszą być nieujemne, a ich suma jest sprawdzana przez `Math.addExact`;
+- wycena, kurs USD/PLN i wyliczone koszty muszą być skończone i nieujemne; kurs można ustawić tylko w zakresie 0,01–1000;
+- ścisły parser rejestru odrzuca ujemne liczniki oraz ujemne/niefinitywne koszty;
+- `planBatch()` odrzuca puste identyfikatory providera, ujemne estymacje, przepełnienie sumy estymacji, ujemną rezerwę globalną oraz nieprawidłowe zapisane limity;
+- `setLimits()` odrzuca niefinitywny lub ujemny limit kosztów; starsze `checkLimits()` fail-closed przy nieprawidłowej konfiguracji i ujemnej estymacji;
+- sumowanie wykorzystania tokenów i aktywnych rezerwacji używa nasycającej arytmetyki, która nie pozwala przepełnić `Long` i zaniżyć wykorzystania budżetu;
+- migawka budżetu wyznacza `ledgerHealthy` na podstawie ścisłego odczytu rejestru.
+
+### Testy regresyjne dodane
+
+W `ApiTokenTrackerTest.kt`:
+
+- `reservationIsConsumedOnlyByTheProviderThatWasBudgeted` — fallback innego providera oraz innego modelu nie konsumuje rezerwacji pierwotnego profilu; dokładnie dopasowany profil ją konsumuje;
+- `actualUsageAboveEstimateIsStillCountedAgainstTheNextBatch` — rzeczywiste użycie powyżej estymacji ogranicza następny batch;
+- `negativeUsageAndTokenOverflowAreRejected` — odrzucenie ujemnych tokenów i przepełnienia sumy;
+- `invalidExchangeRatesAreRejected` — odrzucenie NaN, zera i nieskończoności;
+- `negativePersistedCostMakesUsageLedgerUnhealthy` — uszkodzony koszt w trwałym rejestrze blokuje nową rezerwację.
+
+### Status i ograniczenia
+
+- Zmiany zapisane wyłącznie na branchu roboczym.
+- Testy: **NOT RUN** — nie potwierdzono środowiska Gradle/Android/JUnit/Robolectric; nie deklarować PASS.
+- Nie wykonano kompilacji APK.
+- Nie zmieniono `main`, numeru wersji aplikacji ani Companion Transport.
+- Bufor `globalReserveTokens` pozostaje globalnym buforem dziennego limitu i nie jest konsumowany przez wywołania agentów; jest zwalniany wraz z rezerwacją etapu. To zachowanie jest zamierzone i udokumentowane, a końcowa synteza ma osobną rezerwację zadania.
+
+Pliki zmienione w tym etapie:
+- `app/src/main/java/pl/aimasterpro/app/core/ApiTokenTracker.kt`
+- `app/src/test/java/pl/aimasterpro/app/core/ApiTokenTrackerTest.kt`
+
+Stan po zapisaniu kodu, przed aktualizacją tego checkpointu:
+- HEAD branch: 7e7b44fe5f8e9dba5cf95ab0f845c468f864b26d
+- HEAD main: 752149d40186144b0f458a32b5826c8928349c3a
