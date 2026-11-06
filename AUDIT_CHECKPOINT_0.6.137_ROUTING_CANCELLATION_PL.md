@@ -969,3 +969,14 @@ Skorygowano workflow: jawnie ustawiono `accept-android-sdk-licenses: true` oraz 
 Commit korekty CI: `4bdf543b032a723704970ccb10169700b2a7be7e`.
 
 Oczekiwany jest kolejny run na najnowszym HEAD. Dopiero wynik kroków Gradle będzie miarodajny dla kompilacji i testów.
+
+
+### Druga korekta CI — format listy pakietów SDK
+
+Drugi run (`42311104170`) ponownie zatrzymał się przed Gradle. Tym razem log wykazał, że `setup-android` przekazał wielowierszową wartość `packages` jako jeden argument do `sdkmanager`, więc SDK Manager potraktował trzy pakiety jako jedną nieistniejącą nazwę. Skorygowano konfigurację zgodnie z kontraktem akcji: `packages: ''` wyłącza pakiety domyślne, a osobny krok powłoki wywołuje `sdkmanager --install` z trzema odrębnymi argumentami.
+
+Dodatkowo ustawiono `cancel-in-progress: false`, aby kolejne commity dokumentacyjne nie przerywały aktywnego audytu, oraz dodano `paths-ignore` dla plików Markdown w push/PR, żeby same aktualizacje checkpointu nie uruchamiały ponownie pełnego builda.
+
+Commit korekty workflow: `354e3b73aed8a2f7f726ce51c84cf9c9ef64bf58`.
+
+Wciąż brak wyniku Gradle/JUnit. Runy 1–4 nie potwierdzają kompilacji ani testów: pierwszy został anulowany, kolejne dwa zakończyły się błędem konfiguracji SDK, a run 4 był próbą tej drugiej konfiguracji.
