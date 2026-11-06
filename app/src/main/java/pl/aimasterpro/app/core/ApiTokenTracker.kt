@@ -526,13 +526,14 @@ object ApiTokenTracker {
     }
 
     @Synchronized
-    fun clearRecords(context: Context): Boolean {
-        // Do not report success or discard the in-memory recovery copy until disk confirms deletion.
+    fun clearRecords(context: Context, clearInFlightReservations: Boolean = false): Boolean {
+        // Clearing historical usage must not free budget still owned by running workers.
+        // Tests or an explicit full reset may opt into clearing in-flight reservations.
         val committed = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
             .edit().remove("records").commit()
         if (!committed) return false
         sessionRecords.clear()
-        activeReservations.clear()
+        if (clearInFlightReservations) activeReservations.clear()
         return true
     }
 
