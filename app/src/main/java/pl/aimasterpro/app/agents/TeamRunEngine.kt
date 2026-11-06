@@ -95,7 +95,7 @@ class TeamRunEngine(
                             "Zadanie anulowano przed rozpoczęciem workera.", reviewOfAgentId = task.reviewOfAgentId)
                     }
                     try {
-                    val taskStartedAt = System.currentTimeMillis()
+                        val taskStartedAt = System.currentTimeMillis()
                         var attemptCount = 0
                         var actualProviderId = ""
                         var actualModel = ""
