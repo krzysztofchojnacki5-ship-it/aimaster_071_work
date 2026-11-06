@@ -69,6 +69,7 @@ class TeamRunEngine(
         onRateLimited: (ProviderConfig) -> Long = { 0L },
         onProviderSuccess: (ProviderConfig) -> Unit = { },
         onTaskState: (TeamTask, String, String, String, String, Int) -> Unit = { _, _, _, _, _, _ -> },
+        onRequestStarting: (TeamTask, ProviderConfig, Long, Long, String) -> Boolean = { _, _, _, _, _ -> true },
         requestScope: ProviderClient.RequestScope? = null,
         onTaskFinished: (String) -> Unit = { }
     ): List<TeamTaskResult> {
@@ -226,6 +227,14 @@ class TeamRunEngine(
                                             append(user)
                                         }
                                         onLog("MASTER", agent.name, requestTrace, "REQUEST")
+                                        val estimatedRequestInput = (system.length.toLong() + user.length.toLong() + 2L) / 3L
+                                        val requestIdempotencyKey = "team:${task.id}:${prov.id}"
+                                        check(onRequestStarting(
+                                            task, prov, estimatedRequestInput,
+                                            unknownOutputEstimateTokens.coerceAtLeast(0L), requestIdempotencyKey
+                                        )) {
+                                            "Nie udało się trwale zapisać checkpointu REQUESTING; żądanie API nie zostało wysłane."
+                                        }
                                         val chatRes = client.chat(prov, system, user, attachmentMime, attachmentBase64, taskScope)
                                         runCatching { pl.aimasterpro.app.core.ProviderQuotaScheduler.markSuccess(quotaKey) }
                                         runCatching { onProviderSuccess(prov) }
@@ -242,6 +251,12 @@ class TeamRunEngine(
                                         val usageRecorded = runCatching { onUsage(agent.id, task.id, prov, chatRes.usage) }
                                         usageRecorded.onFailure { error ->
                                             runCatching { onLog("SYSTEM", agent.name, "[USAGE RECORD FAILED] Odpowiedź API mogła zostać rozliczona przez dostawcę, ale lokalny zapis użycia nie powiódł się: ${error.message ?: error.javaClass.simpleName}", "USAGE_RECORD_FAILED") }
+                                        }
+                                        if (usageRecorded.isSuccess) {
+                                            runCatching { onTaskState(
+                                                task, "USAGE_RECORDED", "Zużycie API zapisano trwale.",
+                                                prov.id, prov.model, attemptCount
+                                            ) }
                                         }
                                         // The HTTP response may arrive just after the caller timed out and
                                         // interrupted this worker. Preserve usage accounting, but do not let
