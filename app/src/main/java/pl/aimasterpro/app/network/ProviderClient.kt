@@ -112,8 +112,13 @@ class ProviderClient(
         return false
     }
 
-    private fun cancelledException(): ProviderException =
-        ProviderException(null, "Żądanie anulowane przez użytkownika.", category = "CANCELLED")
+    private fun cancelledException(phase: String = "", method: String = ""): ProviderException =
+        if (method.equals("POST", true) && phase.isNotBlank() && phase != "CONNECT") {
+            ProviderException(null, "Żądanie POST anulowano po rozpoczęciu wysyłania; wynik rozliczenia jest nieznany.",
+                category = "CANCELLED", phase = phase, requestMayHaveBeenProcessed = true)
+        } else {
+            ProviderException(null, "Żądanie anulowane przez użytkownika.", category = "CANCELLED")
+        }
 
     private fun request(url: String, method: String, apiKey: String, body: JSONObject? = null, authHeader: String = "Authorization", extraHeaders: Map<String, String> = emptyMap()): JSONObject {
         val scope = requestScopeLocal.get()
@@ -141,18 +146,18 @@ class ProviderClient(
         }
         var phase = "CONNECT"
         try {
-            if (isCancelled(scope)) throw cancelledException()
+            if (isCancelled(scope)) throw cancelledException(phase, method)
             if (body != null) {
                 phase = "WRITE_REQUEST"
                 conn.outputStream.use { it.write(body.toString().toByteArray(Charsets.UTF_8)); it.flush() }
             }
-            if (isCancelled(scope)) throw cancelledException()
+            if (isCancelled(scope)) throw cancelledException(phase, method)
             phase = "WAIT_RESPONSE"
             val code = conn.responseCode
             val stream = if (code in 200..299) conn.inputStream else conn.errorStream
             phase = "READ_RESPONSE"
             val text = stream?.use { BoundedResponseReader.readUtf8(it) }.orEmpty()
-            if (isCancelled(scope)) throw cancelledException()
+            if (isCancelled(scope)) throw cancelledException(phase, method)
 
             if (code !in 200..299) {
                 val category = when (code) {
@@ -172,13 +177,13 @@ class ProviderClient(
                 throw ProviderException(code, "Nieprawidłowy JSON od dostawcy: ${e.message}", text.take(2500), category = "INVALID_RESPONSE", phase = phase, requestMayHaveBeenProcessed = method.equals("POST", true))
             }
         } catch (e: ProviderException) {
-            if (isCancelled(scope)) throw cancelledException()
+            if (isCancelled(scope)) throw cancelledException(phase, method)
             throw e
         } catch (e: UnknownHostException) {
-            if (isCancelled(scope)) throw cancelledException()
+            if (isCancelled(scope)) throw cancelledException(phase, method)
             throw ProviderException(null, "DNS_ERROR podczas $phase dla hosta ${parsedUrl.host}: ${e.message ?: "UnknownHostException"}", category = "DNS_ERROR", phase = phase)
         } catch (e: SocketTimeoutException) {
-            if (isCancelled(scope)) throw cancelledException()
+            if (isCancelled(scope)) throw cancelledException(phase, method)
             val category = when (phase) {
                 "CONNECT", "WRITE_REQUEST" -> "CONNECT_TIMEOUT"
                 "WAIT_RESPONSE" -> "RESPONSE_TIMEOUT"
@@ -186,19 +191,19 @@ class ProviderClient(
             }
             throw ProviderException(null, "$category podczas $phase dla ${parsedUrl.host}: ${e.message ?: "SocketTimeoutException"}", category = category, phase = phase, requestMayHaveBeenProcessed = method.equals("POST", true) && phase != "CONNECT")
         } catch (e: ConnectException) {
-            if (isCancelled(scope)) throw cancelledException()
+            if (isCancelled(scope)) throw cancelledException(phase, method)
             throw ProviderException(null, "CONNECT_ERROR dla ${parsedUrl.host}: ${e.message ?: "ConnectException"}", category = "CONNECT_ERROR", phase = phase)
         } catch (e: BoundedResponseReader.ResponseTooLargeException) {
-            if (isCancelled(scope)) throw cancelledException()
+            if (isCancelled(scope)) throw cancelledException(phase, method)
             throw ProviderException(null, e.message ?: "Odpowiedź dostawcy jest zbyt duża.", category = "RESPONSE_TOO_LARGE", phase = phase, requestMayHaveBeenProcessed = method.equals("POST", true))
         } catch (e: BoundedResponseReader.InvalidUtf8Exception) {
-            if (isCancelled(scope)) throw cancelledException()
+            if (isCancelled(scope)) throw cancelledException(phase, method)
             throw ProviderException(null, e.message ?: "Nieprawidłowe kodowanie odpowiedzi.", category = "INVALID_RESPONSE_ENCODING", phase = phase, requestMayHaveBeenProcessed = method.equals("POST", true))
         } catch (e: IOException) {
-            if (isCancelled(scope)) throw cancelledException()
+            if (isCancelled(scope)) throw cancelledException(phase, method)
             throw ProviderException(null, "NETWORK_IO podczas $phase dla ${parsedUrl.host}: ${e.message ?: "IOException"}", category = "NETWORK_IO", phase = phase, requestMayHaveBeenProcessed = method.equals("POST", true) && phase != "CONNECT")
         } catch (e: Exception) {
-            if (isCancelled(scope)) throw cancelledException()
+            if (isCancelled(scope)) throw cancelledException(phase, method)
             throw ProviderException(null, "NETWORK_ERROR podczas $phase dla ${parsedUrl.host}: ${e.message ?: e.javaClass.simpleName}", category = "NETWORK_ERROR", phase = phase, requestMayHaveBeenProcessed = method.equals("POST", true) && phase != "CONNECT")
         } finally {
             activeConnections.remove(conn)
@@ -217,7 +222,10 @@ class ProviderClient(
             try {
                 return request(url, method, apiKey, body, authHeader, extraHeaders)
             } catch (e: ProviderException) {
-                if (e.category == "CANCELLED" || isCancelled(scope)) throw cancelledException()
+                if (e.category == "CANCELLED" || isCancelled(scope)) {
+                    if (e.requestMayHaveBeenProcessed) throw e
+                    throw cancelledException()
+                }
                 lastException = e
                 val safeNetworkFailure = e.category in setOf("DNS_ERROR", "CONNECT_ERROR")
                 val retryableRead = method.equals("GET", ignoreCase = true) &&
