@@ -441,9 +441,14 @@ object ApiTokenTracker {
                 blocked[request.taskId] = reason
             }
         }
-        val reservationId = UUID.randomUUID().toString()
+        var reservationId = UUID.randomUUID().toString()
+        while (reservationId.isBlank() || activeReservations.containsKey(reservationId)) {
+            reservationId = UUID.randomUUID().toString()
+        }
         if (allowed.isNotEmpty() || globalReserveTokens > 0L) {
-            activeReservations[reservationId] = ActiveReservation(reservationId, newReservationTasks, globalReserveTokens.coerceAtLeast(0L))
+            activeReservations[reservationId] = ActiveReservation(reservationId, newReservationTasks, globalReserveTokens)
+        } else {
+            reservationId = ""
         }
         return BatchBudgetPlan(allowed, blocked, reservedTokens, reservedCost, reservationId)
     }
