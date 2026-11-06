@@ -510,3 +510,49 @@ Stan referencyjny kodu przed zapisaniem tego uzupełnienia:
 - HEAD main: 752149d40186144b0f458a32b5826c8928349c3a
 
 Testy nadal **NOT RUN**.
+
+
+## Uzupełnienie — rezerwa syntezy MASTER-a a limit per-agent (2026-11-06)
+
+Dalszy audyt wykazał, że `globalReserveTokens` chronił dzienny limit globalny, ale nie był przypisywany do limitu agenta. Główna ścieżka batcha rezerwuje tokeny na końcową syntezę MASTER-a; bez powiązania z agentem równoległe lub kolejne zadania MASTER-a mogły wykorzystać tę samą przestrzeń per-agent i pozostawić syntezę bez budżetu.
+
+Poprawki:
+- `ApiTokenTracker.planBatch()` przyjmuje opcjonalne `globalReserveAgentId`;
+- aktywna rezerwacja przechowuje identyfikator agenta przypisany do bufora globalnego;
+- bufor jest doliczany do wykorzystania per-agent przy planowaniu kolejnych zadań oraz przy starszej metodzie `checkLimits()`;
+- bufor bieżącego batcha jest uwzględniany przed oceną zadań z tego samego batcha;
+- główna ścieżka `MainActivity` przypisuje rezerwę syntezy do `MASTER`.
+
+Dodano testy:
+- `globalSynthesisReserveAlsoProtectsMasterPerAgentLimit`;
+- `currentGlobalSynthesisReserveIsIncludedBeforePlanningMasterTasks`.
+
+## Uzupełnienie — faza transportu i niejednoznaczny wynik POST (2026-11-06)
+
+W `ProviderClient` faza transportu była wcześniej zakodowana wyłącznie w tekście komunikatu wyjątku. To utrudniało bezpieczne odróżnienie błędu przed wysłaniem żądania od sytuacji, w której POST mógł już dotrzeć do providera.
+
+Poprawki:
+- `ProviderException` udostępnia teraz strukturalne pola `phase` i `requestMayHaveBeenProcessed`;
+- błędy DNS i połączenia przed wysłaniem są oznaczane jako niebillowalne z perspektywy nieznanego usage;
+- timeout/IO po rozpoczęciu wysyłania POST oraz błędy odczytu odpowiedzi oznaczają niejednoznaczny wynik;
+- pusta lub niepoprawna odpowiedź HTTP 2xx oraz zbyt duża/nieprawidłowo zakodowana odpowiedź są oznaczane jako możliwe do rozliczenia;
+- błędy HTTP z odebranym kodem statusu nie są automatycznie klasyfikowane jako nieznane usage;
+- polityka retry pozostaje bez zmian: POST nie jest ponawiany po możliwym przetworzeniu; GET zachowuje dotychczasowe retry.
+
+Testy rozszerzono o asercje fazy i flagi niejednoznacznego usage dla timeoutu odczytu, zbyt dużej odpowiedzi oraz błędu DNS.
+
+### Otwarty punkt audytu
+
+Samo oznaczenie niejednoznacznego POST nie księguje jeszcze estymowanego usage. Następnym krokiem jest bezpieczne połączenie tej informacji z aktywną rezerwacją zadania, tak aby status `UNAVAILABLE` zużywał właściwą rezerwację bez podwójnego księgowania i bez uruchamiania fallbacku. Nie należy szacować kosztu na podstawie dowolnego tekstu wyjątku.
+
+### Status
+
+- Zmiany zapisane wyłącznie na branchu roboczym.
+- Testy JUnit/Robolectric i kompilacja Android: **NOT RUN**.
+- Nie wykonano APK, bump wersji ani merge.
+- Companion Transport pozostaje BLOCKED.
+- `main` pozostaje bez zmian.
+
+Stan przed zapisem tego uzupełnienia:
+- HEAD branch: 74ca9402c38291be1c76859a432dd736c9dfaa90
+- HEAD main: 752149d40186144b0f458a32b5826c8928349c3a
