@@ -285,7 +285,6 @@ object ApiTokenTracker {
     }.getOrNull()
 
     @Synchronized
-    @Synchronized
     fun loadAllRecordsFromStorage(context: Context): List<TokenRecord> {
         // UI/monitor can still display process-local records if disk data is damaged.
         // Budget enforcement and append operations use readPersistedRecords() directly.
