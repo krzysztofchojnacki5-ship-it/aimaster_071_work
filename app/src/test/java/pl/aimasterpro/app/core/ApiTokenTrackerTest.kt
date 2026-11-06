@@ -83,4 +83,47 @@ class ApiTokenTrackerTest {
         ApiTokenTracker.clearRecords(context)
         assertTrue(ApiTokenTracker.loadAllRecordsFromStorage(context).isEmpty())
     }
+    @Test fun corruptUsageLedgerIsNotOverwrittenByNewUsageRecord() {
+        val prefs = context.getSharedPreferences("api_token_tracker_records_v1", Context.MODE_PRIVATE)
+        val corrupt = """[{"qId":"old-record","tot":10},broken]"""
+        assertTrue(prefs.edit().putString("records", corrupt).commit())
+
+        val result = runCatching {
+            ApiTokenTracker.recordQuery(
+                context, "provider", "gpt-4o-mini", "MASTER", "new-task",
+                inputTokens = 5, outputTokens = 3, status = "REAL"
+            )
+        }
+        assertTrue("A durable usage write must fail when the existing ledger is corrupt", result.isFailure)
+        assertEquals("Corrupt persisted usage data must be preserved", corrupt, prefs.getString("records", null))
+        assertEquals("The current process must retain the billable usage record", 1, ApiTokenTracker.loadAllRecordsFromStorage(context).count { it.taskId == "new-task" })
+    }
+
+    @Test fun corruptUsageLedgerBlocksNewBudgetReservations() {
+        val prefs = context.getSharedPreferences("api_token_tracker_records_v1", Context.MODE_PRIVATE)
+        val corrupt = """not-json"""
+        assertTrue(prefs.edit().putString("records", corrupt).commit())
+
+        val plan = ApiTokenTracker.planBatch(
+            context,
+            listOf(BudgetRequest("blocked-task", "MASTER", "provider", "https://example.invalid/v1", "gpt-4o-mini", 10, 10))
+        )
+        assertTrue(plan.allowedTaskIds.isEmpty())
+        assertTrue(plan.blockedReasons.getValue("blocked-task").contains("rejestr użycia API"))
+        assertEquals(corrupt, prefs.getString("records", null))
+    }
+
+    @Test fun duplicateBudgetTaskIdsAreRejectedBeforeReservation() {
+        val plan = ApiTokenTracker.planBatch(
+            context,
+            listOf(
+                BudgetRequest("same-task", "MASTER", "provider-a", "https://a.invalid/v1", "gpt-4o-mini", 10, 10),
+                BudgetRequest("same-task", "reviewer", "provider-b", "https://b.invalid/v1", "gpt-4o-mini", 10, 10)
+            )
+        )
+        assertTrue(plan.allowedTaskIds.isEmpty())
+        assertTrue(plan.blockedReasons.values.all { it.contains("niepuste i unikalne") })
+        assertEquals(0L, ApiTokenTracker.activeReservationStats().tokens)
+    }
+
 }
