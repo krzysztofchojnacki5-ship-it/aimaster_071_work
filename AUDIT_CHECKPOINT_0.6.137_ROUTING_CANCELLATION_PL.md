@@ -493,3 +493,20 @@ Testy nadal **NOT RUN** — nie uruchomiono Gradle/JUnit/Robolectric ani kompila
 Stan referencyjny kodu przed zapisaniem tego uzupełnienia:
 - HEAD branch: 38c45669e73dd75d59e509ebaa0a0b430629dfdb
 - HEAD main: 752149d40186144b0f458a32b5826c8928349c3a
+
+
+### Identyfikatory rezerwacji
+
+Dodatkowo zabezpieczono generowanie identyfikatorów rezerwacji:
+
+- przed utworzeniem wpisu aktywnej rezerwacji generator ponawia UUID, jeśli identyfikator jest pusty albo już występuje w `activeReservations`;
+- jeśli plan nie dopuścił żadnego zadania i nie ma globalnego bufora, zwracany `reservationId` jest pusty, ponieważ nie istnieje żadna aktywna rezerwacja do zwolnienia;
+- jeśli plan ma dopuszczone zadania lub globalny bufor, otrzymuje niepusty identyfikator i zostaje zapisany w mapie aktywnych rezerwacji.
+
+Test `monthlyCostBudgetIncludesActiveReservationsAndRecordedUsage` sprawdza teraz również niepusty identyfikator aktywnego planu i pusty identyfikator planu całkowicie zablokowanego.
+
+Stan referencyjny kodu przed zapisaniem tego uzupełnienia:
+- HEAD branch: 8cb95b734e5277f77b21d627ceac56841b456f3f
+- HEAD main: 752149d40186144b0f458a32b5826c8928349c3a
+
+Testy nadal **NOT RUN**.
