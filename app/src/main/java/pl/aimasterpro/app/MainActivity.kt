@@ -3220,19 +3220,72 @@ class MainActivity : Activity() {
         toast("Dodano profil modelu: ${info.name}. Przypisz go odpowiedniej roli w zakładce Agenci.")
     }
 
-    private fun recordModelTestUsage(config: ProviderConfig, response: ChatResponse?, testLabel: String, error: Throwable? = null) {
-        pl.aimasterpro.app.core.ModelHealthTracker.record(
-            this, config, response != null,
-            if (response != null) "" else if ((error as? ProviderException)?.httpCode == 429) "HTTP_429" else (error as? ProviderException)?.category ?: "TEST_ERROR",
-            0L
-        )
+    private fun recordModelTestUsage(
+        config: ProviderConfig,
+        response: ChatResponse?,
+        testLabel: String,
+        taskId: String,
+        reservationId: String,
+        error: Throwable? = null
+    ) {
+        // Provider health telemetry must not prevent accounting after a billable response.
+        runCatching {
+            pl.aimasterpro.app.core.ModelHealthTracker.record(
+                this, config, response != null,
+                if (response != null) "" else if ((error as? ProviderException)?.httpCode == 429) "HTTP_429" else (error as? ProviderException)?.category ?: "TEST_ERROR",
+                0L
+            )
+        }
         val usage = response?.usage ?: return
         runCatching {
             pl.aimasterpro.app.core.ApiTokenTracker.recordQuery(
-                this, config.id, config.model, "TEST:$testLabel", "test-${UUID.randomUUID()}",
+                this, config.id, config.model, "TEST", taskId,
                 usage.inputTokens, usage.outputTokens, usage.reasoningTokens, usage.cachedTokens,
-                usage.status, config.baseUrl
+                usage.status, config.baseUrl, reservationId
             )
+        }.onFailure {
+            android.util.Log.e("AIMasterBudget", "Nie udało się zapisać użycia testu modelu.", it)
+        }
+    }
+
+    /** A manual provider/model test is still a real API request and must reserve budget atomically. */
+    private fun runBudgetedModelTest(
+        config: ProviderConfig,
+        testLabel: String,
+        systemPrompt: String,
+        userPrompt: String,
+        scope: ProviderClient.RequestScope
+    ): Result<ChatResponse> {
+        val taskId = "test-$testLabel-${UUID.randomUUID()}"
+        val estimatedInput = (systemPrompt.length.toLong() + userPrompt.length.toLong() + 2L) / 3L
+        val planResult = runCatching {
+            pl.aimasterpro.app.core.ApiTokenTracker.planBatch(
+                this,
+                listOf(pl.aimasterpro.app.core.BudgetRequest(
+                    taskId = taskId,
+                    agentId = "TEST",
+                    providerId = config.id,
+                    baseUrl = config.baseUrl,
+                    modelName = config.model,
+                    estimatedInputTokens = estimatedInput,
+                    estimatedOutputTokens = 256L
+                ))
+            )
+        }
+        if (planResult.isFailure) return Result.failure(planResult.exceptionOrNull()!!)
+        val plan = planResult.getOrThrow()
+        if (taskId !in plan.allowedTaskIds) {
+            pl.aimasterpro.app.core.ApiTokenTracker.releaseBatchReservation(plan.reservationId)
+            return Result.failure(IllegalStateException(
+                plan.blockedReasons[taskId] ?: "Smart Budget wstrzymał test providera/modelu."
+            ))
+        }
+        return try {
+            val result = runCatching { client.chat(config, systemPrompt, userPrompt, scope = scope) }
+            recordModelTestUsage(config, result.getOrNull(), testLabel, taskId, plan.reservationId, result.exceptionOrNull())
+            result
+        } finally {
+            pl.aimasterpro.app.core.ApiTokenTracker.releaseBatchReservation(plan.reservationId)
         }
     }
 
@@ -3245,8 +3298,7 @@ class MainActivity : Activity() {
         status.text = "Test modelu ${info.id}…"
         val testScope = client.beginRequestScope()
         executor.execute {
-            val result = runCatching { client.chat(testConfig, "Odpowiadaj krótko po polsku.", "Odpowiedz dokładnie: MODEL OK", scope = testScope) }
-            recordModelTestUsage(testConfig, result.getOrNull(), "MODEL", result.exceptionOrNull())
+            val result = runBudgetedModelTest(testConfig, "MODEL", "Odpowiadaj krótko po polsku.", "Odpowiedz dokładnie: MODEL OK", testScope)
             runOnUiThread {
                 status.text = if (result.isSuccess) "Test modelu: OK" else "Test modelu: błąd"
                 val error = result.exceptionOrNull()
@@ -3320,8 +3372,7 @@ class MainActivity : Activity() {
         status.text = "Testowanie ${p.name}…"
         val testScope = client.beginRequestScope()
         executor.execute {
-            val r = runCatching { client.chat(p, "Odpowiadaj krótko po polsku.", "Odpowiedz dokładnie: TEST OK", scope = testScope) }
-            recordModelTestUsage(p, r.getOrNull(), "PROVIDER", r.exceptionOrNull())
+            val r = runBudgetedModelTest(p, "PROVIDER", "Odpowiadaj krótko po polsku.", "Odpowiedz dokładnie: TEST OK", testScope)
             runOnUiThread { AlertDialog.Builder(this).setTitle(if (r.isSuccess) "Test zakończony powodzeniem" else "Test nieudany")
                 .setMessage(r.getOrNull()?.text ?: ((r.exceptionOrNull()?.message ?: "Nieznany błąd") + "\n\n" + (r.exceptionOrNull() as? ProviderException)?.responseBody.orEmpty()))
                 .setPositiveButton("OK", null).show(); status.text = if (r.isSuccess) "Test API: OK" else "Test API: błąd" }
@@ -3431,8 +3482,7 @@ class MainActivity : Activity() {
                 showShell("Agenci"); showAgents()
                 val testScope = client.beginRequestScope()
                 executor.execute {
-                    val result = runCatching { client.chat(cfg, "Odpowiadaj krótko po polsku.", "Odpowiedz dokładnie: AGENT OK", scope = testScope) }
-                    recordModelTestUsage(cfg, result.getOrNull(), "AGENT:${role.name}", result.exceptionOrNull())
+                    val result = runBudgetedModelTest(cfg, "AGENT:${role.name}", "Odpowiadaj krótko po polsku.", "Odpowiedz dokładnie: AGENT OK", testScope)
                     runOnUiThread {
                         agentConnection[role.name] = if (result.isSuccess) "connected" else "error"
                         logAgent("${role.label}: test połączenia ${if (result.isSuccess) "OK" else "BŁĄD"} • ${cfg.name} / ${cfg.model}")
