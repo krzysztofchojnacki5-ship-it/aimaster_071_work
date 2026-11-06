@@ -4,7 +4,7 @@ Gałąź: `audit/0.6.137-routing-hardening`
 Zakres: routing, scheduler, rozliczanie użycia API, timeouty i anulowanie agentów.
 
 ## Stan repozytorium
-- Ostatni HEAD kodu przed aktualizacją tego checkpointu: `ef30f43644262c712760f541545237bb7a159392`
+- Ostatni HEAD kodu przed aktualizacją tego checkpointu: `573bf04e305862074f8d31fe66d6497f9b3d2f07`
 - HEAD `main`: `752149d40186144b0f458a32b5826c8928349c3a` (bez zmian).
 - `main` nie zawiera zmian z tej gałęzi.
 - Brak `.github/workflows/` oraz `gradle/wrapper/gradle-wrapper.jar`; nie potwierdzono możliwości uruchomienia builda w CI.
@@ -158,3 +158,8 @@ W kolejnym etapie sprawdzono odzyskiwanie zadań po restarcie, zapis dziennika c
 ### Dodatkowa regresja — stabilność terminalnego statusu zadania (2026-11-06)
 
 Przegląd ścieżki timeoutu w TeamRunEngine ujawnił wyścig: koordynator mógł najpierw zapisać TIMED_OUT, po czym przerwany worker zapisywał CANCELLED i nadpisywał informację o przyczynie zakończenia. TaskCheckpointStore odrzuca teraz późniejsze przejścia po zapisanym stanie terminalnym (COMPLETED, FAILED, BLOCKED, TIMED_OUT, CANCELLED, INTERRUPTED). Ponieważ wpis terminalny jest już trwale zapisany, zignorowanie spóźnionego callbacku jest traktowane jako poprawny no-op. Dodano test lateWorkerCancellationDoesNotOverwriteCoordinatorTimeout. Test pozostaje NOT RUN.
+
+
+### Dodatkowe zabezpieczenie — awaria zapisu usage (2026-11-06)
+
+Dalsza kontrola ujawniła, że samo zgłoszenie błędu commit() mogłoby pozostawić wykorzystanie API niewidoczne nawet w bieżącym procesie, mimo że odpowiedź dostawcy już dotarła. Zmieniono więc kolejność księgowania: rekord jest zachowywany w sessionRecords i zużywa odpowiadającą mu aktywną rezerwację również wtedy, gdy zapis na dysku się nie powiedzie. Funkcja zgłasza błąd po zachowaniu rekordu w pamięci, dzięki czemu istniejące callbacki raportują USAGE_RECORD_FAILED, ale nie uruchamiają fallbacku. loadAllRecordsFromStorage() scala historię trwałą z rekordami sesyjnymi po queryId, aby nie dublować poprawnie zapisanych wywołań i nie pomijać tymczasowych wpisów w monitorze/budżecie. Rekord niezapisany na dysku nadal zostanie utracony po śmierci procesu — ta sytuacja jest jawnie raportowana i nie może być przedstawiana jako trwałe rozliczenie. Zmiana w ApiTokenTracker.kt.
