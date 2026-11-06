@@ -256,6 +256,38 @@ class ProviderClientNetworkTest {
     }
 
     @Test
+    fun cancellingParentScopeDisconnectsItsAgentChildrenOnly() {
+        val entered = CountDownLatch(1)
+        val server = TestHttpServer { _, _ ->
+            entered.countDown()
+            Thread.sleep(3_000L)
+            200 to """{"choices":[{"message":{"content":"late"}}]}"""
+        }
+        val client = ProviderClient(connectTimeoutMs = 1_000, readTimeoutMs = 5_000)
+        val parent = client.beginRequestScope()
+        val child = client.childRequestScope(parent)
+        val failure = AtomicReference<Throwable?>(null)
+        val worker = Thread {
+            try {
+                client.chat(config("http://127.0.0.1:${server.address.port}/v1"), "system", "child-call", scope = child)
+            } catch (t: Throwable) { failure.set(t) }
+        }
+        try {
+            worker.start()
+            assertTrue("Child request should reach the local server", entered.await(2, TimeUnit.SECONDS))
+            client.cancelRequestScope(parent)
+            worker.join(1_500L)
+            assertTrue("Parent cancellation should stop its child promptly", !worker.isAlive)
+            assertEquals("CANCELLED", (failure.get() as? ProviderException)?.category)
+            assertEquals(1, server.requestCount.get())
+        } finally {
+            client.cancelActiveRequests()
+            worker.interrupt()
+            server.stop(0)
+        }
+    }
+
+    @Test
     fun startingIndependentTopLevelScopesDoesNotCancelEarlierRequest() {
         val bothEntered = CountDownLatch(2)
         val server = TestHttpServer { body, _ ->
