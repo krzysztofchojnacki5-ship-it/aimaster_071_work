@@ -252,3 +252,24 @@ Pliki zmienione:
 Stan referencyjny przed zapisem tego uzupełnienia:
 - HEAD branch: ba2f9fbe21b91187cecf461cf28e2dbcd185e002
 - HEAD main: 752149d40186144b0f458a32b5826c8928349c3a
+
+## Uzupełnienie — potwierdzanie trwałego czyszczenia rejestru API (2026-11-06)
+
+Dodatkowy przegląd operacji czyszczenia wykazał, że clearRecords() używało SharedPreferences.apply(), a interfejs natychmiast pokazywał sukces i usuwał również pozostałe metryki. apply() nie potwierdza trwałego zapisu przed powrotem.
+
+Poprawki:
+- ApiTokenTracker.clearRecords() zwraca Boolean i używa commit(); pamięć sesyjna oraz aktywne rezerwacje są czyszczone wyłącznie po potwierdzonym usunięciu trwałego rejestru;
+- MainActivity wykonuje synchroniczny commit poza wątkiem UI, a wynik pokazuje dopiero po zakończeniu;
+- jeśli usunięcie rejestru użycia API nie powiedzie się, pozostałe metryki nie są czyszczone, a interfejs nie ogłasza sukcesu;
+- test clearRecordsRemovesPersistedUsageOnlyAfterDurableCommit sprawdza wynik i stan SharedPreferences.
+
+Test pozostaje NOT RUN. Nie przeprowadzono testu wymuszonego błędu commit() ani kompilacji Android.
+
+Pliki zmienione:
+- app/src/main/java/pl/aimasterpro/app/core/ApiTokenTracker.kt
+- app/src/main/java/pl/aimasterpro/app/MainActivity.kt
+- app/src/test/java/pl/aimasterpro/app/core/ApiTokenTrackerTest.kt
+
+Stan referencyjny przed zapisem tego uzupełnienia:
+- HEAD branch: b1e8f65e0939fa31ff74d88deefe9686dd52403a
+- HEAD main: 752149d40186144b0f458a32b5826c8928349c3a
