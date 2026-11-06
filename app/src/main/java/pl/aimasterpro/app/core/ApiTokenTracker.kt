@@ -163,7 +163,11 @@ object ApiTokenTracker {
                 .put("pln", r.costPln)
             )
         }
-        prefs.edit().putString("records", arr.toString()).apply()
+        // Usage may represent a billable provider response. Wait for the disk write and
+        // surface failure to the caller instead of silently treating an async enqueue as durable.
+        check(prefs.edit().putString("records", arr.toString()).commit()) {
+            "Nie udało się trwale zapisać rejestru użycia API."
+        }
     }
 
     @Synchronized
