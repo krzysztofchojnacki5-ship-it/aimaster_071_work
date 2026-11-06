@@ -31,7 +31,7 @@ object TaskCheckpointStore {
     @Synchronized
     fun record(context: Context, event: Event): Boolean {
         if (event.taskId.isBlank()) return false
-        val rows = load(context).toMutableList()
+        val rows = readEvents(context)?.toMutableList() ?: return false
         // A late worker callback must not overwrite a terminal result already recorded by
         // the coordinator (for example TIMED_OUT followed by the worker's CANCELLED callback).
         val current = rows.firstOrNull { it.taskId == event.taskId }
@@ -52,14 +52,21 @@ object TaskCheckpointStore {
     }
 
     @Synchronized
-    fun load(context: Context): List<Event> = runCatching {
+    fun load(context: Context): List<Event> = readEvents(context) ?: emptyList()
+
+    /**
+     * A corrupt journal is distinct from an empty journal. Callers that append must not
+     * replace unreadable persisted data with a new empty history.
+     */
+    private fun readEvents(context: Context): List<Event>? = runCatching {
         val a = JSONArray(
             context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString(KEY, "[]") ?: "[]"
         )
-        (0 until a.length()).mapNotNull { i ->
-            val o = a.optJSONObject(i) ?: return@mapNotNull null
+        (0 until a.length()).map { i ->
+            val o = a.getJSONObject(i)
             val id = o.optString("task")
-            if (id.isBlank()) null else Event(
+            require(id.isNotBlank()) { "Checkpoint row has no task id." }
+            Event(
                 id,
                 o.optString("agent"),
                 o.optString("status"),
@@ -71,7 +78,7 @@ object TaskCheckpointStore {
                 o.optString("processId")
             )
         }
-    }.getOrDefault(emptyList())
+    }.getOrNull()
 
     /** At process startup, queued/running work from another process cannot be resumed safely. */
     @Synchronized
