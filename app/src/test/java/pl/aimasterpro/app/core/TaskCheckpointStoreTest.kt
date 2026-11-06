@@ -29,10 +29,19 @@ class TaskCheckpointStoreTest {
         assertEquals("RUNNING", TaskCheckpointStore.latest(context).single().status)
     }
 
-    @Test fun latestReturnsOneStatePerTask() {
-        TaskCheckpointStore.record(context, TaskCheckpointStore.Event("task-1", "tester", "QUEUED", "", 100L, "", "", 0))
+    @Test fun latestUsesJournalOrderWhenTimestampsCollide() {
+        TaskCheckpointStore.record(context, TaskCheckpointStore.Event("task-1", "tester", "QUEUED", "", 200L, "", "", 0))
         TaskCheckpointStore.record(context, TaskCheckpointStore.Event("task-1", "tester", "RUNNING", "", 200L, "", "", 0))
         assertEquals(1, TaskCheckpointStore.latest(context).size)
+        assertEquals("RUNNING", TaskCheckpointStore.latest(context).single().status)
+    }
+
+    @Test fun recordReportsSuccessfulDurableWrite() {
+        val saved = TaskCheckpointStore.record(
+            context,
+            TaskCheckpointStore.Event("task-durable", "tester", "RUNNING", "", 100L, "", "", 0)
+        )
+        assertTrue(saved)
         assertEquals("RUNNING", TaskCheckpointStore.latest(context).single().status)
     }
 }
