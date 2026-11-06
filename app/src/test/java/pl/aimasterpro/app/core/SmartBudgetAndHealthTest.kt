@@ -65,6 +65,8 @@ class SmartBudgetAndHealthTest {
         val primary = ProviderConfig("primary", "Primary", ProviderKind.OPENAI_COMPATIBLE, "https://one.example/v1", "model-a")
         val backup = ProviderConfig("backup", "Backup", ProviderKind.OPENAI_COMPATIBLE, "https://two.example/v1", "model-b")
         repeat(2) { ModelHealthTracker.record(context, primary, false, "DNS_ERROR", 100L) }
+        // A backup is eligible for promotion only after at least one observed success.
+        repeat(2) { ModelHealthTracker.record(context, backup, true, "", 100L) }
         val ranked = ModelHealthTracker.rank(context, listOf(primary, backup))
         assertEquals("backup", ranked.first().id)
     }
