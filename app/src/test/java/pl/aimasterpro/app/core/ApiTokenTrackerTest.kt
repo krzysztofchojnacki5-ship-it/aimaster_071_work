@@ -51,6 +51,33 @@ class ApiTokenTrackerTest {
         assertFalse(blocked.allowedTaskIds.contains("task-2"))
     }
 
+    @Test fun synthesisReservationIsConsumedByActualMasterUsageAndReleased() {
+        val plan = ApiTokenTracker.planBatch(
+            context,
+            listOf(BudgetRequest(
+                taskId = "master-synthesis",
+                agentId = "MASTER",
+                providerId = "ollama",
+                baseUrl = "http://127.0.0.1:11434/v1",
+                modelName = "llama3",
+                estimatedInputTokens = 100,
+                estimatedOutputTokens = 100
+            ))
+        )
+        assertTrue(plan.allowedTaskIds.contains("master-synthesis"))
+        assertEquals(200L, ApiTokenTracker.activeReservationStats().tokens)
+
+        ApiTokenTracker.recordQuery(
+            context, "ollama", "llama3", "MASTER", "master-synthesis",
+            inputTokens = 50, outputTokens = 20, status = "REAL",
+            baseUrl = "http://127.0.0.1:11434/v1", reservationId = plan.reservationId
+        )
+        assertEquals("Actual token usage should consume its matching reservation", 130L, ApiTokenTracker.activeReservationStats().tokens)
+
+        ApiTokenTracker.releaseBatchReservation(plan.reservationId)
+        assertEquals(0L, ApiTokenTracker.activeReservationStats().tokens)
+    }
+
     @Test fun clearRecordsRemovesPersistedUsage() {
         ApiTokenTracker.recordQuery(context, "ollama", "llama3", "MASTER", "chat-1", 10, 5, status = "REAL", baseUrl = "http://127.0.0.1:11434/v1")
         ApiTokenTracker.clearRecords(context)
