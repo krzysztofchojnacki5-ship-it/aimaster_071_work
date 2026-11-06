@@ -71,6 +71,7 @@ class TeamRunEngine(
         onRateLimited: (ProviderConfig) -> Long = { 0L },
         onProviderSuccess: (ProviderConfig) -> Unit = { },
         onTaskState: (TeamTask, String, String, String, String, Int) -> Unit = { _, _, _, _, _, _ -> },
+        onTaskResult: (TeamTaskResult) -> Boolean = { true },
         onRequestStarting: (TeamTask, ProviderConfig, Long, Long, String) -> Boolean = { _, _, _, _, _ -> true },
         requestScope: ProviderClient.RequestScope? = null,
         onTaskFinished: (String) -> Unit = { }
@@ -409,13 +410,37 @@ class TeamRunEngine(
                                 }
                                 TeamTaskResult(task.id, task.agentId, TeamTaskResult.Status.FAILED, "Agent zwrócił pusty raport.", System.currentTimeMillis() - taskStartedAt, attemptCount, actualProviderId, actualModel, task.reviewOfAgentId)
                             } else {
-                                runCatching { onLog(agent.name, "MASTER", report, "REPORT") }
-                                runCatching {
-                                    onTaskState(task, if (usageAccountingPending) "USAGE_PENDING" else "COMPLETED",
-                                        if (usageAccountingPending) "Raport odebrany; trwałe księgowanie usage wymaga odzyskania." else "Raport odebrany.",
-                                        actualProviderId, actualModel, attemptCount)
+                                val completedResult = TeamTaskResult(
+                                    task.id, task.agentId, TeamTaskResult.Status.COMPLETED, report,
+                                    System.currentTimeMillis() - taskStartedAt, attemptCount,
+                                    actualProviderId, actualModel, task.reviewOfAgentId
+                                )
+                                val resultPersisted = runCatching { onTaskResult(completedResult) }.getOrDefault(false)
+                                if (!resultPersisted) {
+                                    runCatching { onLog("SYSTEM", agent.name,
+                                        "Raport odebrany, ale zapis odzyskiwalnego wyniku nie został potwierdzony.",
+                                        "RESULT_PERSIST_FAILED") }
                                 }
-                                TeamTaskResult(task.id, task.agentId, TeamTaskResult.Status.COMPLETED, report, System.currentTimeMillis() - taskStartedAt, attemptCount, actualProviderId, actualModel, task.reviewOfAgentId)
+                                runCatching {
+                                    onLog(agent.name, "MASTER", report, "REPORT")
+                                }
+                                runCatching {
+                                    onTaskState(
+                                        task,
+                                        when {
+                                            usageAccountingPending -> "USAGE_PENDING"
+                                            !resultPersisted -> "RESULT_PERSIST_PENDING"
+                                            else -> "COMPLETED"
+                                        },
+                                        when {
+                                            usageAccountingPending -> "Raport odebrany; trwałe księgowanie usage wymaga odzyskania."
+                                            !resultPersisted -> "Raport odebrany; trwały zapis wyniku wymaga kontroli."
+                                            else -> "Raport odebrany i zapisany."
+                                        },
+                                        actualProviderId, actualModel, attemptCount
+                                    )
+                                }
+                                completedResult
                             }
                         } catch (t: Throwable) {
                             val err = "${t.javaClass.simpleName}: ${t.message ?: "Nieznany błąd"}"
