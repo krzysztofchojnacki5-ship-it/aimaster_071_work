@@ -308,12 +308,14 @@ class ApiTokenTrackerTest {
         )
         val first = ApiTokenTracker.planBatch(context, listOf(request))
         assertTrue(first.allowedTaskIds.contains(request.taskId))
+        assertTrue("An active batch must receive a non-empty reservation id", first.reservationId.isNotBlank())
 
         val whileReserved = ApiTokenTracker.planBatch(
             context, listOf(request.copy(taskId = "second-paid-task"))
         )
         assertFalse("An active reservation must count against the monthly cost limit",
             whileReserved.allowedTaskIds.contains("second-paid-task"))
+        assertTrue(whileReserved.reservationId.isBlank())
         assertTrue(whileReserved.blockedReasons.getValue("second-paid-task").contains("miesięczny budżet"))
 
         ApiTokenTracker.recordQuery(
