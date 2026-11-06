@@ -578,4 +578,27 @@ class ApiTokenTrackerTest {
         assertEquals(0L, snapshot.remainingTokens)
     }
 
+
+    @Test fun inconsistentPersistedTokenTotalMakesLedgerUnhealthyAndBlocksWrites() {
+        val prefs = context.getSharedPreferences("api_token_tracker_records_v1", Context.MODE_PRIVATE)
+        val corrupt = """[{"qId":"bad-total","ts":1,"prov":"p","model":"m","agent":"MASTER","task":"x","in":900,"out":700,"tot":10,"reas":0,"cache":0,"status":"REAL","usd":0.01,"pln":0.04}]"""
+        assertTrue(prefs.edit().putString("records", corrupt).commit())
+
+        val plan = ApiTokenTracker.planBatch(
+            context,
+            listOf(BudgetRequest("must-block-total", "MASTER", "provider", "https://p.invalid/v1", "gpt-4o-mini", 1, 1))
+        )
+        assertTrue("An internally inconsistent token ledger must fail closed", plan.allowedTaskIds.isEmpty())
+        assertTrue(plan.blockedReasons.getValue("must-block-total").contains("rejestr użycia API"))
+
+        val write = runCatching {
+            ApiTokenTracker.recordQuery(
+                context, "provider", "gpt-4o-mini", "MASTER", "new-task",
+                inputTokens = 5, outputTokens = 3, status = "REAL"
+            )
+        }
+        assertTrue("A malformed historical total must not be overwritten by a new record", write.isFailure)
+        assertEquals("The original ledger must remain intact for recovery", corrupt, prefs.getString("records", null))
+    }
+
 }
