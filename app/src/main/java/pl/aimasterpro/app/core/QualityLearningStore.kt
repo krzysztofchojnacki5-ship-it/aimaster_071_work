@@ -56,6 +56,10 @@ object QualityLearningStore {
         require(targetId.isNotBlank()) { "Brak identyfikatora ocenianego elementu" }
         require(rating == -1 || rating == 1) { "Ocena musi wynosić +1 albo -1" }
         val normalizedType = targetType.ifBlank { "UNKNOWN" }.take(30)
+        if (readArrayStrict(context, FEEDBACK_KEY) == null) {
+            android.util.Log.e("AIMasterQuality", "Nie zapisano oceny: dziennik ocen jest uszkodzony.")
+            return
+        }
         val all = feedback(context).toMutableList()
         // A target ID is unique only inside its target type.
         val old = all.firstOrNull { it.targetId == targetId && it.targetType == normalizedType }
@@ -71,7 +75,9 @@ object QualityLearningStore {
                 .put("rating", f.rating).put("comment", f.comment).put("timestamp", f.timestamp)
                 .put("agent", f.agentId).put("provider", f.providerId).put("model", f.model)
                 .put("category", f.category).put("history", JSONArray(f.history.map { h -> JSONObject().put("rating", h.rating).put("comment", h.comment).put("timestamp", h.timestamp) }))
-        })
+        }).also { saved ->
+            if (!saved) android.util.Log.e("AIMasterQuality", "Nie udało się trwale zapisać oceny.")
+        }
     }
 
     @Synchronized fun proposals(context: Context): List<Proposal> = readArray(context, PROPOSALS_KEY).mapNotNull { o ->
@@ -83,24 +89,30 @@ object QualityLearningStore {
     @Synchronized fun addProposal(context: Context, text: String, evidenceCount: Int, confidence: String,
                                   sourceTaskIds: List<String>, agents: List<String>, models: List<String>): Proposal {
         require(text.isNotBlank())
+        check(readArrayStrict(context, PROPOSALS_KEY) != null) {
+            "Rejestr propozycji jest uszkodzony; zapis został wstrzymany bez nadpisywania danych."
+        }
         val now = System.currentTimeMillis()
         val p = Proposal(UUID.randomUUID().toString(), text.take(3000), "PROPOSAL", now, now,
             evidenceCount.coerceAtLeast(0), confidence.take(40), sourceTaskIds.distinct().take(100),
             agents.distinct().take(50), models.distinct().take(50))
-        saveProposals(context, listOf(p) + proposals(context))
+        check(saveProposals(context, listOf(p) + proposals(context))) {
+            "Nie udało się trwale zapisać propozycji uczenia."
+        }
         return p
     }
 
     /** Only APPROVED proposals enter shared model memory. Rejected proposals remain auditable. */
     @Synchronized fun setProposalStatus(context: Context, id: String, status: String): Boolean {
         require(status in setOf("APPROVED", "REJECTED", "PROPOSAL"))
+        if (readArrayStrict(context, PROPOSALS_KEY) == null) return false
         val all = proposals(context).toMutableList()
         val index = all.indexOfFirst { it.id == id }
         if (index < 0) return false
         val old = all[index]
         if (old.status == status) return true
         all[index] = old.copy(status = status, updatedAt = System.currentTimeMillis())
-        saveProposals(context, all)
+        if (!saveProposals(context, all)) return false
         val memoryEntry = "[UCZENIE ZATWIERDZONE ${old.id.take(8)}; dowody=${old.evidenceCount}; pewność=${old.confidence}] ${old.text}".take(1000)
         if (status == "APPROVED") {
             AiMemoryStore.addMemory(context, memoryEntry)
@@ -195,14 +207,43 @@ object QualityLearningStore {
         }.take(12000)
     }
 
-    private fun readArray(c: Context, key: String): List<JSONObject> = runCatching {
-        val a = JSONArray(c.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString(key, "[]"))
-        (0 until a.length()).mapNotNull { a.optJSONObject(it) }
-    }.getOrDefault(emptyList())
-    private fun writeArray(c: Context, key: String, rows: List<JSONObject>) {
-        c.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putString(key, JSONArray(rows).toString()).apply()
-    }
-    private fun saveProposals(c: Context, rows: List<Proposal>) = writeArray(c, PROPOSALS_KEY, rows.take(MAX_PROPOSALS).map {
+    private fun readArray(c: Context, key: String): List<JSONObject> = readArrayStrict(c, key) ?: emptyList()
+
+    /** A malformed row invalidates mutation of that journal; never silently drop unknown evidence. */
+    private fun readArrayStrict(c: Context, key: String): List<JSONObject>? = runCatching {
+        val raw = c.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString(key, null) ?: return emptyList()
+        val array = JSONArray(raw)
+        (0 until array.length()).map { index ->
+            val row = array.getJSONObject(index)
+            if (key == FEEDBACK_KEY) {
+                require(listOf("id", "targetId", "targetType", "comment", "agent", "provider", "model", "category")
+                    .all { row.opt(it) is String })
+                require(row.opt("rating") is Number && row.opt("timestamp") is Number)
+                require(row.optInt("rating") == -1 || row.optInt("rating") == 1)
+                if (row.has("history")) {
+                    val history = row.optJSONArray("history") ?: error("Invalid feedback audit history.")
+                    for (i in 0 until history.length()) {
+                        val item = history.getJSONObject(i)
+                        require(item.opt("rating") is Number && item.opt("comment") is String && item.opt("timestamp") is Number)
+                    }
+                }
+            } else if (key == PROPOSALS_KEY) {
+                require(listOf("id", "text", "status", "confidence").all { row.opt(it) is String })
+                require(listOf("created", "updated", "evidence").all { row.opt(it) is Number })
+                listOf("tasks", "agents", "models").forEach { field ->
+                    val values = row.optJSONArray(field) ?: error("Invalid proposal provenance.")
+                    for (i in 0 until values.length()) require(values.opt(i) is String)
+                }
+            }
+            row
+        }
+    }.getOrNull()
+
+    private fun writeArray(c: Context, key: String, rows: List<JSONObject>): Boolean =
+        c.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
+            .putString(key, JSONArray(rows).toString()).commit()
+
+    private fun saveProposals(c: Context, rows: List<Proposal>): Boolean = writeArray(c, PROPOSALS_KEY, rows.take(MAX_PROPOSALS).map {
         JSONObject().put("id", it.id).put("text", it.text).put("status", it.status).put("created", it.createdAt)
             .put("updated", it.updatedAt).put("evidence", it.evidenceCount).put("confidence", it.confidence)
             .put("tasks", JSONArray(it.sourceTaskIds)).put("agents", JSONArray(it.affectedAgents)).put("models", JSONArray(it.affectedModels))
