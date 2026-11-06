@@ -42,6 +42,25 @@ class AgentOperationalMemoryStoreTest {
         assertTrue(AgentOperationalMemoryStore.all(context).isEmpty())
     }
 
+    @Test fun malformedOperationalMemoryIsNotOverwrittenByMutation() {
+        val prefs = context.getSharedPreferences("ai_agent_operational_memory_v1", Context.MODE_PRIVATE)
+        val corrupt = """[{"id":"entry-1","agentId":"tester","text":"valid row","createdAt":1},null]"""
+        assertTrue(prefs.edit().putString("entries", corrupt).commit())
+        assertNull(AgentOperationalMemoryStore.addApproved(context, "tester", "Nowy wniosek po uszkodzeniu magazynu."))
+        assertFalse(AgentOperationalMemoryStore.remove(context, "entry-1"))
+        AgentOperationalMemoryStore.removeBySource(context, "task-1")
+        assertEquals(corrupt, prefs.getString("entries", null))
+    }
+
+    @Test fun approvedOperationalMemoryIsCommittedBeforeReturning() {
+        val prefs = context.getSharedPreferences("ai_agent_operational_memory_v1", Context.MODE_PRIVATE)
+        val entry = AgentOperationalMemoryStore.addApproved(
+            context, "tester", "Zatwierdzona reguła do testu trwałego zapisu."
+        )!!
+        assertTrue(prefs.getString("entries", null).orEmpty().contains(entry.id))
+        assertEquals(entry.id, AgentOperationalMemoryStore.all(context).single().id)
+    }
+
     @Test fun malformedStorageDoesNotCrashReads() {
         context.getSharedPreferences("ai_agent_operational_memory_v1", Context.MODE_PRIVATE).edit().putString("entries", "not-json").commit()
         assertTrue(AgentOperationalMemoryStore.all(context).isEmpty())
