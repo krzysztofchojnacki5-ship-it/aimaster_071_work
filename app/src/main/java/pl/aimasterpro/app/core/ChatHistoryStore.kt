@@ -65,12 +65,9 @@ object ChatHistoryStore {
         val serialized = root.toString()
         val validated = runCatching {
             val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-            val current = prefs.getString(KEY, null)
             val candidate = JSONObject(serialized)
             validate(candidate)
-            // A concurrent writer must not silently replace a newer document.
-            val editor = prefs.edit().putString(KEY, serialized)
-            editor.commit()
+            prefs.edit().putString(KEY, serialized).commit()
         }.getOrDefault(false)
         return validated
     }
