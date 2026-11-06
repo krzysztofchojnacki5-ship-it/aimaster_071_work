@@ -80,6 +80,56 @@ class TeamRunEngineNetworkTest {
         } finally { server.stop(0) }
     }
     @Test
+    fun requestCheckpointIsDurableBeforeHttpAndBlocksSendWhenPersistenceFails() {
+        ProviderQuotaScheduler.resetForTests()
+        val server = TestHttpServer { _, _ ->
+            200 to """{"choices":[{"message":{"content":"checkpointed-report"}}],"usage":{"prompt_tokens":4,"completion_tokens":3,"total_tokens":7}}"""
+        }
+        try {
+            val config = ProviderConfig(
+                "checkpoint-test", "Checkpoint test", ProviderKind.OPENAI_COMPATIBLE,
+                "http://127.0.0.1:${server.address.port}/v1", "test-model", ""
+            )
+            val lifecycle = Collections.synchronizedList(mutableListOf<String>())
+            val successful = TeamRunEngine(ProviderClient()).runBatch(
+                tasks = listOf(TeamTask("checkpoint-task", "qa-architect", "Checkpoint", "Return report")),
+                provider = config,
+                agentProvidersMap = mapOf("qa-architect" to config),
+                isFreeProvider = { true },
+                mode = WorkMode.PLANNING,
+                onRequestStarting = { task, actual, input, output, key ->
+                    lifecycle.add("checkpoint")
+                    assertEquals("checkpoint-task", task.id)
+                    assertEquals(config.id, actual.id)
+                    assertTrue(input > 0L)
+                    assertEquals("team:checkpoint-task:${config.id}", key)
+                    assertEquals(4_096L, output)
+                    true
+                },
+                onUsage = { _, _, _, _ -> lifecycle.add("usage") }
+            ).single()
+            assertEquals(TeamTaskResult.Status.COMPLETED, successful.status)
+            assertEquals(1, server.requestCount.get())
+            assertEquals(listOf("checkpoint", "usage"), lifecycle.toList())
+
+            ProviderQuotaScheduler.resetForTests()
+            val blocked = TeamRunEngine(ProviderClient()).runBatch(
+                tasks = listOf(TeamTask("checkpoint-blocked", "qa-architect", "Checkpoint", "Do not send")),
+                provider = config,
+                agentProvidersMap = mapOf("qa-architect" to config),
+                isFreeProvider = { true },
+                mode = WorkMode.PLANNING,
+                onRequestStarting = { _, _, _, _, _ -> false }
+            ).single()
+            assertEquals(TeamTaskResult.Status.FAILED, blocked.status)
+            assertEquals("Failed checkpoint persistence must prevent HTTP", 1, server.requestCount.get())
+        } finally {
+            ProviderQuotaScheduler.resetForTests()
+            server.stop(0)
+        }
+    }
+
+    @Test
     fun usagePersistenceFailureDoesNotRetrySuccessfulProviderRequest() {
         ProviderQuotaScheduler.resetForTests()
         val server = TestHttpServer { _, _ ->
