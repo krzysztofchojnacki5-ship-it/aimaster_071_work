@@ -171,7 +171,8 @@ class TeamRunEngine(
                             val gate = pl.aimasterpro.app.core.ProviderQuotaScheduler.acquire(quotaKey, isFreeProvider(prov))
                             val lease = gate.lease
                             if (lease == null) {
-                                onProviderHealth(prov, false, gate.reason ?: "MODEL_BUSY", 0L)
+                                // Scheduler contention/cooldown is not evidence that the provider itself failed.
+                                // Keep it in operational logs, but do not poison ModelHealthTracker rankings.
                                 val reason = "Model ${prov.name}/${prov.model} jest zajęty lub w cooldown (${gate.reason ?: "LIMIT"}, ${gate.waitMs} ms)."
                                 onLog("SYSTEM", agent.name, "[SMART SCHEDULER] $reason Pomijam ten profil bez wysyłania kolejnego żądania.", "MODEL_THROTTLED")
                                 lastException = if (gate.reason == "INTERRUPTED") InterruptedException(reason)
