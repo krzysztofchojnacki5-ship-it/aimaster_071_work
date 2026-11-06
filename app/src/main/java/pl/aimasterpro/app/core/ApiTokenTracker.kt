@@ -104,16 +104,6 @@ object ApiTokenTracker {
         require(inputTokens >= 0L && outputTokens >= 0L && reasoningTokens >= 0L && cachedTokens >= 0L) {
             "Liczby tokenów nie mogą być ujemne."
         }
-        val total = Math.addExact(inputTokens, outputTokens)
-        val pricing = getPricing(context, modelName, providerId, baseUrl)
-        require(pricing.inputPer1MUsd.isFinite() && pricing.outputPer1MUsd.isFinite() &&
-            pricing.inputPer1MUsd >= 0.0 && pricing.outputPer1MUsd >= 0.0) { "Nieprawidłowy cennik modelu." }
-        val exchangeRate = getExchangeRate(context)
-        require(exchangeRate.isFinite() && exchangeRate > 0.0) { "Nieprawidłowy kurs USD/PLN; rozliczenie API wstrzymano." }
-        val usd = (inputTokens.toDouble() * pricing.inputPer1MUsd + outputTokens.toDouble() * pricing.outputPer1MUsd) / 1_000_000.0
-        val pln = usd * exchangeRate
-        require(usd.isFinite() && pln.isFinite() && usd >= 0.0 && pln >= 0.0) { "Nieprawidłowy koszt użycia API." }
-
         val stableQueryId = idempotencyKey.trim().ifBlank { UUID.randomUUID().toString() }
         val persistedBefore = readPersistedRecords(context)
             ?: throw IllegalStateException("Rejestr użycia API jest uszkodzony; księgowanie idempotentne zostało wstrzymane.")
@@ -130,6 +120,16 @@ object ApiTokenTracker {
             }
             return existing
         }
+
+        val total = Math.addExact(inputTokens, outputTokens)
+        val pricing = getPricing(context, modelName, providerId, baseUrl)
+        require(pricing.inputPer1MUsd.isFinite() && pricing.outputPer1MUsd.isFinite() &&
+            pricing.inputPer1MUsd >= 0.0 && pricing.outputPer1MUsd >= 0.0) { "Nieprawidłowy cennik modelu." }
+        val exchangeRate = getExchangeRate(context)
+        require(exchangeRate.isFinite() && exchangeRate > 0.0) { "Nieprawidłowy kurs USD/PLN; rozliczenie API wstrzymano." }
+        val usd = (inputTokens.toDouble() * pricing.inputPer1MUsd + outputTokens.toDouble() * pricing.outputPer1MUsd) / 1_000_000.0
+        val pln = usd * exchangeRate
+        require(usd.isFinite() && pln.isFinite() && usd >= 0.0 && pln >= 0.0) { "Nieprawidłowy koszt użycia API." }
 
         val record = TokenRecord(
             queryId = stableQueryId,
