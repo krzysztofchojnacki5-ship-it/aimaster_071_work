@@ -293,8 +293,14 @@ class ChatResponseArchiveTest {
         SharedPreferencesWriteHealth.withHealthyAccess("chat_response_archive_v1") {
             worker.start()
             assertTrue(ready.await(2, java.util.concurrent.TimeUnit.SECONDS))
-            assertFalse("Archive put must wait while its preference file is locked",
-                finished.await(150, java.util.concurrent.TimeUnit.MILLISECONDS))
+            val deadline = System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(2)
+            while (worker.state != Thread.State.BLOCKED && System.nanoTime() < deadline) {
+                Thread.yield()
+            }
+            assertEquals("Archive put must block on the shared preference-file lock",
+                Thread.State.BLOCKED, worker.state)
+            assertFalse("Archive put must not finish while its preference file is locked",
+                finished.count == 0L)
         }
         worker.join(3_000L)
         assertTrue(finished.await(1, java.util.concurrent.TimeUnit.SECONDS))
