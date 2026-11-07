@@ -120,4 +120,18 @@ class SecureStoreImportTest {
         assertEquals("unchanged-encrypted-value", prefs.getString("key_existing", null))
     }
 
+    @Test fun individualSaveRejectsInvalidProviderSchemaWithoutMutation() {
+        val context = org.robolectric.RuntimeEnvironment.getApplication()
+        seedExistingConfig(context)
+        val invalid = validConfig("bad/id")
+
+        val result = SecureStore(context).saveConfig(invalid)
+
+        assertFalse(result)
+        val prefs = context.getSharedPreferences("secure_provider_store", Context.MODE_PRIVATE)
+        assertEquals(setOf("existing"), prefs.getStringSet("provider_ids", emptySet()))
+        assertEquals("unchanged-encrypted-value", prefs.getString("key_existing", null))
+        assertFalse(prefs.contains("config_bad/id"))
+    }
+
 }
