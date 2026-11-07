@@ -3245,8 +3245,16 @@ class MainActivity : Activity() {
         val baseProfiles = allSaved.filter { it.parentProviderId.isBlank() }
         val unavailableSecretIds = store.unavailableSecretProviderIds()
         if (unavailableSecretIds.isNotEmpty()) {
-            val recoveryCard = card("⚠ Klucze API niedostępne", "Nie udało się odszyfrować kluczy w profilach: ${unavailableSecretIds.joinToString(", ")}. Profile pozostają wyłączone. Jeśli masz aktualne klucze API, możesz wprowadzić je ponownie dla pojedynczego profilu. Pozostałe dane nie zostaną zmienione.")
-            unavailableSecretIds.forEach { id ->
+            val canReplaceSecrets = store.canReplaceUnreadableSecrets()
+            val recoveryCard = card(
+                "⚠ Klucze API niedostępne",
+                if (canReplaceSecrets) {
+                    "Nie udało się odszyfrować kluczy w profilach: ${unavailableSecretIds.joinToString(", ")}. Profile pozostają wyłączone. Możesz wprowadzić nowy klucz dla pojedynczego profilu; pozostałe sekrety nie zostaną zmienione."
+                } else {
+                    "Nie udało się odszyfrować kluczy w profilach: ${unavailableSecretIds.joinToString(", ")}. Nie wykryto dostępnego, prawidłowego aliasu Android Keystore. Nie twórz nowego klucza automatycznie — pozostałe sekrety mogłyby stać się nieodzyskiwalne. Wymagany jest osobny, świadomy proces resetu magazynu."
+                }
+            )
+            if (canReplaceSecrets) unavailableSecretIds.forEach { id ->
                 val raw = store.readConfig(id) ?: return@forEach
                 val kind = runCatching { ProviderKind.valueOf(raw.optString("kind")) }.getOrDefault(ProviderKind.OPENAI_COMPATIBLE)
                 val recoveryProfile = ProviderConfig(
