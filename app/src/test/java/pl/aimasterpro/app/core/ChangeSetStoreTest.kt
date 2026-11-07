@@ -528,8 +528,10 @@ class ChangeSetStoreTest {
         val item = appliedForHostScope()
         val failing = AmbiguousCommitContext(context, "ai_host_active_change_set_v1")
         assertFalse(HostActiveChangeSetStore.setActive(failing, "chat-active", "workspace-sha", item.id))
-        assertEquals(HostActiveChangeSetStore.ReadStatus.INVALID,
-            HostActiveChangeSetStore.readActive(context, "chat-active", "workspace-sha").status)
+        val quarantined = HostActiveChangeSetStore.readActive(context, "chat-active", "workspace-sha")
+        assertEquals(HostActiveChangeSetStore.ReadStatus.INVALID, quarantined.status)
+        assertTrue(quarantined.reason.contains("niejednoznaczny"))
+        assertFalse(HostActiveChangeSetStore.setActive(context, "chat-active", "workspace-sha", item.id))
         assertFalse(HostActiveChangeSetStore.invalidate(context, item.id))
     }
 }
