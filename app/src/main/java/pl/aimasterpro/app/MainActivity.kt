@@ -2697,17 +2697,17 @@ class MainActivity : Activity() {
             .setPositiveButton("Zapisz") { _, _ ->
                 val name = input.text.toString().trim()
                 if (name.isBlank()) return@setPositiveButton
-                synchronized(this) {
-                    val r = pl.aimasterpro.app.core.ChatHistoryStore.readRoot(this)
-                        ?: run { toast("Historia rozmów jest uszkodzona; nazwa nie została zmieniona."); return@setPositiveButton }
-                    val chat = r.optJSONObject("chats")?.optJSONObject(id)
-                    if (chat != null) {
-                        chat.put("title", name)
-                        if (!pl.aimasterpro.app.core.ChatHistoryStore.writeRoot(this, r)) {
-                            toast("Nie udało się trwale zapisać nazwy rozmowy.")
-                            return@setPositiveButton
-                        }
-                    }
+                var found = false
+                val saved = pl.aimasterpro.app.core.ChatHistoryStore.updateRoot(this) { root ->
+                    val chat = root.optJSONObject("chats")?.optJSONObject(id)
+                        ?: return@updateRoot false
+                    found = true
+                    chat.put("title", name)
+                    true
+                }
+                if (!found || !saved) {
+                    toast("Nie udało się trwale zapisać nazwy rozmowy.")
+                    return@setPositiveButton
                 }
                 chatTitles[id] = name
                 populateDrawerList()
@@ -2724,10 +2724,15 @@ class MainActivity : Activity() {
                     if (id == currentChatId && !invalidateActiveEvidenceScopeForChatSwitch()) {
                         false
                     } else {
-                        val r = pl.aimasterpro.app.core.ChatHistoryStore.readRoot(this)
-                            ?: run { toast("Historia rozmów jest uszkodzona; usuwanie zostało zablokowane."); return@setPositiveButton }
-                        r.optJSONObject("chats")?.remove(id)
-                        if (!pl.aimasterpro.app.core.ChatHistoryStore.writeRoot(this, r)) {
+                        var found = false
+                        val saved = pl.aimasterpro.app.core.ChatHistoryStore.updateRoot(this) { root ->
+                            val chats = root.optJSONObject("chats") ?: return@updateRoot false
+                            if (!chats.has(id)) return@updateRoot false
+                            chats.remove(id)
+                            found = true
+                            true
+                        }
+                        if (!found || !saved) {
                             toast("Nie udało się trwale usunąć rozmowy.")
                             return@setPositiveButton
                         }
@@ -2843,55 +2848,57 @@ class MainActivity : Activity() {
     @Synchronized private fun persistMessages(): Boolean {
         if (currentChatId.isBlank()) currentChatId = UUID.randomUUID().toString()
         alignAssistantTaskIds()
-        val r = pl.aimasterpro.app.core.ChatHistoryStore.readRoot(this)
-            ?: run { android.util.Log.e("AIMasterChat", "Nie zapisano rozmowy: magazyn historii jest uszkodzony."); return false }
-        val chats = r.optJSONObject("chats") ?: JSONObject()
-        if (messages.isEmpty() && agentActivity.isEmpty()) return saveCurrentId() // pusty nowy czat nie trafia na listę rozmów
+        if (messages.isEmpty() && agentActivity.isEmpty()) return saveCurrentId()
         val arr = JSONArray()
         messages.forEach { (role, text) -> arr.put(JSONObject().put("role", role).put("text", text)) }
         val actArr = JSONArray()
         agentActivitySnapshot().forEach { actArr.put(it) }
         val taskIdArr = JSONArray()
         assistantTaskIds.forEach { taskIdArr.put(it) }
-        val existing = chats.optJSONObject(currentChatId) ?: JSONObject()
-        val placeholder = "Nowa rozmowa"
-        val title = chatTitles[currentChatId]?.takeIf { it.isNotBlank() && it != placeholder }
-            ?: existing.optString("title").takeIf { it.isNotBlank() && it != placeholder }
-            ?: deriveTitle()
-        chatTitles[currentChatId] = title
-        chats.put(currentChatId, JSONObject()
-            .put("title", title)
-            .put("updatedAt", System.currentTimeMillis())
-            .put("messages", arr)
-            .put("agentActivity", actArr)
-            .put("assistantTaskIds", taskIdArr)
-        )
-        r.put("currentId", currentChatId).put("chats", chats)
-        if (!pl.aimasterpro.app.core.ChatHistoryStore.writeRoot(this, r)) {
+        val saved = pl.aimasterpro.app.core.ChatHistoryStore.updateRoot(this) { root ->
+            val chats = root.optJSONObject("chats") ?: JSONObject()
+            val existing = chats.optJSONObject(currentChatId) ?: JSONObject()
+            val placeholder = "Nowa rozmowa"
+            val title = chatTitles[currentChatId]?.takeIf { it.isNotBlank() && it != placeholder }
+                ?: existing.optString("title").takeIf { it.isNotBlank() && it != placeholder }
+                ?: deriveTitle()
+            chatTitles[currentChatId] = title
+            chats.put(currentChatId, JSONObject()
+                .put("title", title)
+                .put("updatedAt", System.currentTimeMillis())
+                .put("messages", arr)
+                .put("agentActivity", actArr)
+                .put("assistantTaskIds", taskIdArr)
+            )
+            root.put("currentId", currentChatId).put("chats", chats)
+            true
+        }
+        if (!saved) {
             android.util.Log.e("AIMasterChat", "Nie udało się trwale zapisać historii rozmowy.")
             return false
         }
+        // Legacy mirror is best-effort only; chats_v2 is the canonical durable document.
         chatPrefs.edit().putString("chat_messages", arr.toString()).commit()
         true
     }
 
     @Synchronized private fun persistAgentActivity() {
         if (currentChatId.isBlank()) return
-        val r = pl.aimasterpro.app.core.ChatHistoryStore.readRoot(this)
-            ?: run { android.util.Log.e("AIMasterChat", "Nie zapisano aktywności: magazyn historii jest uszkodzony."); return }
-        val chats = r.optJSONObject("chats") ?: JSONObject()
-        val chat = chats.optJSONObject(currentChatId) ?: JSONObject()
-            .put("title", deriveTitle())
-            .put("updatedAt", System.currentTimeMillis())
-            .put("messages", JSONArray())
-        val actArr = JSONArray()
-        agentActivitySnapshot().forEach { actArr.put(it) }
-        chat.put("agentActivity", actArr).put("updatedAt", System.currentTimeMillis())
-        chats.put(currentChatId, chat)
-        r.put("chats", chats)
-        if (!pl.aimasterpro.app.core.ChatHistoryStore.writeRoot(this, r)) {
-            android.util.Log.e("AIMasterChat", "Nie udało się trwale zapisać aktywności agentów.")
+        val activitySnapshot = agentActivitySnapshot()
+        val saved = pl.aimasterpro.app.core.ChatHistoryStore.updateRoot(this) { root ->
+            val chats = root.optJSONObject("chats") ?: JSONObject()
+            val chat = chats.optJSONObject(currentChatId) ?: JSONObject()
+                .put("title", deriveTitle())
+                .put("updatedAt", System.currentTimeMillis())
+                .put("messages", JSONArray())
+            val actArr = JSONArray()
+            activitySnapshot.forEach { actArr.put(it) }
+            chat.put("agentActivity", actArr).put("updatedAt", System.currentTimeMillis())
+            chats.put(currentChatId, chat)
+            root.put("chats", chats)
+            true
         }
+        if (!saved) android.util.Log.e("AIMasterChat", "Nie udało się trwale zapisać aktywności agentów.")
     }
 
     /** Zapamiętuje tylko ID bieżącej rozmowy (bez zmiany kolejności listy). */
@@ -2902,11 +2909,12 @@ class MainActivity : Activity() {
         id == "assistant_dedicated_chat_id" || id.startsWith("assistant-")
 
     @Synchronized private fun saveCurrentId(): Boolean {
-        val r = pl.aimasterpro.app.core.ChatHistoryStore.readRoot(this)
-            ?: run { android.util.Log.e("AIMasterChat", "Nie zapisano bieżącego czatu: magazyn historii jest uszkodzony."); return false }
-        if (!r.has("chats")) r.put("chats", JSONObject())
-        r.put("currentId", currentChatId)
-        if (!pl.aimasterpro.app.core.ChatHistoryStore.writeRoot(this, r)) {
+        val saved = pl.aimasterpro.app.core.ChatHistoryStore.updateRoot(this) { root ->
+            if (!root.has("chats")) root.put("chats", JSONObject())
+            root.put("currentId", currentChatId)
+            true
+        }
+        if (!saved) {
             android.util.Log.e("AIMasterChat", "Nie udało się trwale zapisać identyfikatora bieżącego czatu.")
             return false
         }
@@ -2918,23 +2926,27 @@ class MainActivity : Activity() {
 
     /** Dopisuje wiadomość do rozmowy zapisanej w pamięci, gdy użytkownik zdążył przejść do innej rozmowy. */
     @Synchronized private fun appendToStoredChat(id: String, role: String, text: String, taskId: String = ""): Boolean {
-        val r = pl.aimasterpro.app.core.ChatHistoryStore.readRoot(this) ?: return false
-        val chat = r.optJSONObject("chats")?.optJSONObject(id) ?: return false
-        val arr = chat.optJSONArray("messages") ?: JSONArray()
-        val storedIds = chat.optJSONArray("assistantTaskIds") ?: JSONArray()
-        val existingAssistantCount = (0 until arr.length()).count { arr.optJSONObject(it)?.optString("role") == "assistant" }
-        val ids = JSONArray(pl.aimasterpro.app.core.AssistantTaskIdAlignment.align(
-            (0 until storedIds.length()).map { storedIds.optString(it) }, existingAssistantCount
-        ))
-        arr.put(JSONObject().put("role", role).put("text", text))
-        if (role == "assistant" && taskId.isNotBlank()) {
-            ids.put(taskId)
-            chat.put("assistantTaskIds", ids)
+        var found = false
+        val saved = pl.aimasterpro.app.core.ChatHistoryStore.updateRoot(this) { root ->
+            val chat = root.optJSONObject("chats")?.optJSONObject(id)
+                ?: return@updateRoot false
+            found = true
+            val arr = chat.optJSONArray("messages") ?: JSONArray()
+            val storedIds = chat.optJSONArray("assistantTaskIds") ?: JSONArray()
+            val existingAssistantCount = (0 until arr.length()).count { arr.optJSONObject(it)?.optString("role") == "assistant" }
+            val ids = JSONArray(pl.aimasterpro.app.core.AssistantTaskIdAlignment.align(
+                (0 until storedIds.length()).map { storedIds.optString(it) }, existingAssistantCount
+            ))
+            arr.put(JSONObject().put("role", role).put("text", text))
+            if (role == "assistant" && taskId.isNotBlank()) ids.put(taskId)
+            chat.put("messages", arr).put("assistantTaskIds", ids).put("updatedAt", System.currentTimeMillis())
+            true
         }
-        chat.put("messages", arr).put("assistantTaskIds", ids).put("updatedAt", System.currentTimeMillis())
-        val saved = pl.aimasterpro.app.core.ChatHistoryStore.writeRoot(this, r)
-        if (!saved) android.util.Log.e("AIMasterChat", "Nie udało się trwale dopisać odpowiedzi do poprzedniego czatu.")
-        return saved
+        if (!found || !saved) {
+            android.util.Log.e("AIMasterChat", "Nie udało się trwale dopisać odpowiedzi do poprzedniego czatu.")
+            return false
+        }
+        return true
     }
 
     private fun restoreMessages() {
@@ -3073,13 +3085,18 @@ class MainActivity : Activity() {
             }
             return
         }
-        val rootObj = pl.aimasterpro.app.core.ChatHistoryStore.readRoot(this) ?: return
-        val chat = rootObj.optJSONObject("chats")?.optJSONObject(chatId) ?: return
-        val rows = chat.optJSONArray("agentActivity") ?: JSONArray()
-        rows.put(entry)
-        while (rows.length() > 150) rows.remove(0)
-        chat.put("agentActivity", rows).put("updatedAt", System.currentTimeMillis())
-        if (!pl.aimasterpro.app.core.ChatHistoryStore.writeRoot(this, rootObj)) {
+        var found = false
+        val saved = pl.aimasterpro.app.core.ChatHistoryStore.updateRoot(this) { root ->
+            val chat = root.optJSONObject("chats")?.optJSONObject(chatId)
+                ?: return@updateRoot false
+            found = true
+            val rows = chat.optJSONArray("agentActivity") ?: JSONArray()
+            rows.put(entry)
+            while (rows.length() > 150) rows.remove(0)
+            chat.put("agentActivity", rows).put("updatedAt", System.currentTimeMillis())
+            true
+        }
+        if (!found || !saved) {
             android.util.Log.e("AIMasterChat", "Nie udało się trwale dopisać aktywności poprzedniego czatu.")
         }
         if (screen == "Rozmowy" && collaborationChatId == chatId) {
