@@ -1875,3 +1875,10 @@ Doprecyzowanie projektu SQLite:
 - Dodano `SECURESTORE_SQLITE_MIGRATION_DESIGN_PL.md`, commit `41bf664c`.
 - Dokument określa schemat DB, zachowanie formatu ciphertext i aliasu Keystore, transakcyjną migrację z legacy SharedPreferences, atomowy marker, punkty odzyskiwania po awarii, operacje po migracji i wymagany zestaw testów.
 - To wyłącznie specyfikacja. Nie dodano SQLiteOpenHelper, nie zmieniono źródła prawdy i nie ruszono istniejących danych.
+
+
+### Doprecyzowanie położenia dokumentu migracyjnego
+
+- Dokument `SECURESTORE_SQLITE_MIGRATION_DESIGN_PL.md` znajduje się na gałęzi audytowej; commit branch: `c77f7386`.
+- Korekta operacyjna: pierwsze wywołanie utworzenia tego pliku pominęło parametr gałęzi i skierowało commit `41bf664c` na domyślne `main`. Natychmiast przywrócono wskaźnik `main` do dokładnego poprzedniego SHA `752149d40186144b0f458a32b5826c8928349c3a` z kontrolą oczekiwanego SHA `41bf664c`. Weryfikacja po korekcie: `main` ponownie wskazuje `752149d`; porównanie audytowej gałęzi z `main` pokazuje 360 ahead / 0 behind. Nie pozostała zmiana zawartości na `main`.
+- Dalsze operacje plikowe muszą jawnie przekazywać `branch: audit/0.6.137-routing-hardening`.
