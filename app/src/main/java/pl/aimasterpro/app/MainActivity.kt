@@ -5580,12 +5580,12 @@ onRequestStarting = { task, actualProvider, estimatedInput, estimatedOutput, ide
         AlertDialog.Builder(this).setTitle(if (export) "Eksport zaszyfrowanej bazy" else "Odszyfruj bazę")
             .setView(box).setNegativeButton("Anuluj", null).setPositiveButton(if (export) "Dalej" else "Wczytaj") { _, _ ->
                 if (input.text.length < 8) { toast("Hasło musi mieć co najmniej 8 znaków."); return@setPositiveButton }
-                val passwordChars = CharArray(input.text.length)
-                input.text.getChars(0, input.text.length, passwordChars, 0)
                 if (export) {
                     val configs = JSONArray()
                     store.allConfigs().forEach { configs.put(it) }
                     if (configs.length() == 0) { toast("Brak zapisanych konfiguracji do eksportu."); return@setPositiveButton }
+                    val passwordChars = CharArray(input.text.length)
+                    input.text.getChars(0, input.text.length, passwordChars, 0)
                     val payload = JSONObject().put("app", "AI_MASTER_PRO_ANDROID").put("schemaVersion", 1).put("providers", configs).toString()
                     try {
                         pendingBackup = BackupCrypto.encrypt(payload, passwordChars)
@@ -5600,6 +5600,8 @@ onRequestStarting = { task, actualProvider, estimatedInput, estimatedOutput, ide
                 } else {
                     val raw = runCatching { source?.also { require(it.length <= 6 * 1024 * 1024) { "Plik kopii przekracza limit 6 MiB." } } ?: readBackupText(uri!!) }.getOrNull()
                     if (raw.isNullOrBlank()) { toast("Nie udało się odczytać pliku kopii."); return@setPositiveButton }
+                    val passwordChars = CharArray(input.text.length)
+                    input.text.getChars(0, input.text.length, passwordChars, 0)
                     val result = try {
                         runCatching { BackupCrypto.decrypt(raw, passwordChars) }
                     } finally {
