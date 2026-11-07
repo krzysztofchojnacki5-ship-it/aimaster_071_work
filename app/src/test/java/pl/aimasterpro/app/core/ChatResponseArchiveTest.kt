@@ -46,6 +46,7 @@ class ChatResponseArchiveTest {
         ))
 
         assertEquals(1, ChatResponseArchive.restoreArchivedResponses(context))
+        assertNull("A durably replayed answer must be acknowledged", ChatResponseArchive.get(context, "chat-task-1"))
         val chat = ChatHistoryStore.readRoot(context)!!.getJSONObject("chats").getJSONObject(chatId)
         val messages = chat.getJSONArray("messages")
         assertEquals(2, messages.length())
@@ -195,18 +196,28 @@ class ChatResponseArchiveTest {
         assertEquals(12, entries.map { it.taskId }.toSet().size)
     }
 
-    @Test fun archiveCapacityIsBoundedAndNewestEntriesAreRetained() {
-        repeat(30) { index ->
+    @Test fun fullArchiveRejectsNewAnswersWithoutEvictingPendingRecoveryAndReplayFreesCapacity() {
+        repeat(25) { index ->
             assertTrue(ChatResponseArchive.put(
                 context, "bounded-task-$index", "bounded-chat", "MASTER",
                 "Answer $index", "provider-a", "model-a", 30_000L + index
             ))
         }
-        val entries = ChatResponseArchive.latest(context)
-        assertEquals(25, entries.size)
-        assertEquals("bounded-task-29", entries.first().taskId)
-        assertEquals("bounded-task-5", entries.last().taskId)
-        assertNull(ChatResponseArchive.get(context, "bounded-task-4"))
+        assertFalse(ChatResponseArchive.put(
+            context, "overflow-task", "bounded-chat", "MASTER", "Overflow answer",
+            "provider-a", "model-a", 31_000L
+        ))
+        assertEquals(25, ChatResponseArchive.latest(context).size)
+        assertNotNull(ChatResponseArchive.get(context, "bounded-task-0"))
+        assertNull(ChatResponseArchive.get(context, "overflow-task"))
+
+        createChat("bounded-chat")
+        assertEquals(25, ChatResponseArchive.restoreArchivedResponses(context))
+        assertTrue(ChatResponseArchive.latest(context).isEmpty())
+        assertTrue(ChatResponseArchive.put(
+            context, "after-replay", "bounded-chat", "MASTER", "Capacity released",
+            "provider-a", "model-a", 32_000L
+        ))
     }
 
 
