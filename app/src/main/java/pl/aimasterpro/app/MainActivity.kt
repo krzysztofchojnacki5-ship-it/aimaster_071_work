@@ -3723,7 +3723,13 @@ class MainActivity : Activity() {
         val json = JSONObject().put("id", config.id).put("name", config.name).put("kind", config.kind.name)
             .put("baseUrl", config.baseUrl).put("model", config.model).put("apiKey", config.apiKey).put("enabled", config.enabled).put("parentProviderId", config.parentProviderId)
         val saved = store.saveConfig(json)
-        if (!saved) toast("Nie udało się bezpiecznie zapisać klucza API. Konfiguracja nie została zapisana.")
+        if (!saved) {
+            if (store.isStorageUncertain()) {
+                toast("Błąd zapisu magazynu konfiguracji. Dla ochrony danych zamknij całkowicie AI MASTER PRO i uruchom ponownie aplikację.")
+            } else {
+                toast("Nie udało się bezpiecznie zapisać klucza API. Konfiguracja nie została zapisana.")
+            }
+        }
         return saved
     }
 
@@ -5617,6 +5623,11 @@ onRequestStarting = { task, actualProvider, estimatedInput, estimatedOutput, ide
     }
 
     private fun promptBackupPassword(export: Boolean, uri: Uri? = null, source: String? = null) {
+        if (store.isStorageUncertain()) {
+            toast("Magazyn konfiguracji ma niepewny stan. Eksport i import są zablokowane do ponownego uruchomienia aplikacji.")
+            navigate("Modele")
+            return
+        }
         val input = EditText(this).apply {
             hint = if (export) "Utwórz hasło (min. 8 znaków)" else "Hasło użyte przy eksporcie"
             inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
