@@ -2278,8 +2278,14 @@ class MainActivity : Activity() {
                                 updatedAt = System.currentTimeMillis()
                             )
                         } != null
-                    check(synthesisJournalAdvanced && gen == requestGen && !Thread.currentThread().isInterrupted) {
-                        "Zadanie MASTER zostało przerwane albo dziennik nie potwierdził przejścia do syntezy."
+                    // BLOCKED can represent a partial specialist failure; preserve the existing
+                    // behavior of synthesizing the successful reports. PAUSED/COMPLETED or an
+                    // unreadable journal must stop this stage, especially after user Stop.
+                    val synthesisJournalBlocked = !synthesisJournalAdvanced &&
+                        pl.aimasterpro.app.core.MasterWorkJournalStore.get(this, requestTaskId)?.status == "BLOCKED"
+                    check((synthesisJournalAdvanced || synthesisJournalBlocked) &&
+                        gen == requestGen && !Thread.currentThread().isInterrupted) {
+                        "Zadanie MASTER zostało przerwane albo dziennik nie zezwala na syntezę."
                     }
                     val synthesisResults = results + peerReviewResults
                     runOnUiThread {
