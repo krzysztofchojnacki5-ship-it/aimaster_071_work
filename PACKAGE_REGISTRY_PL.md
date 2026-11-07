@@ -417,3 +417,11 @@ Rejestr rozróżnia paczkę źródłową od wersji aplikacji/APK. Numer paczki n
 - `MainActivity` zapisuje błąd `TaskResultArchive.restoreArchivedReports()` do logu `AIMasterRecovery`, analogicznie do archiwum odpowiedzi. Start aplikacji nadal jest kontynuowany, a archiwum pozostaje do ponowienia.
 - `persistMessages()` aktualizuje `chatTitles` dopiero po potwierdzeniu trwałego zapisu `chats_v2`; awaria commit nie zmienia już lokalnego cache tytułu.
 - Commit: `ab954ce9e099afeecf6adfc68c251229d3c2e332`. Weryfikacja statyczna wykonana; test/build NOT RUN.
+
+### 0.6.139 — bezpośredni zapis historii pod wspólną blokadą (2026-11-07)
+
+- `ChatHistoryStore.writeRoot()` wykonywał wcześniej sprawdzenie istniejącej historii i commit w dwóch oddzielnych sekcjach blokady. Ujednolicono to: walidacja, ochrona przed nadpisaniem nieczytelnej historii i commit działają teraz w jednym `withHealthyAccess("chat_state")`.
+- `updateRoot()` może bezpiecznie wywołać `writeRoot()` reentrantnie, ponieważ blokada jest monitorem JVM.
+- Test `directWriteRootWaitsForSharedPreferenceLockThroughValidationAndCommit` sprawdza oczekiwanie wątku na wspólnej blokadzie.
+- Commity: produkcja `f9d566f9d837b8aea8596cc5ad2bb89d22caa5a0`, test `4028df55984d1b0c19927c3abeed9659dcf0ce22`.
+- Status: statyczny przegląd wykonany; test ADDED / NOT RUN; CI nadal pracuje na SHA `30e0f496...`.
