@@ -937,6 +937,7 @@ class ApiTokenTrackerTest {
         val rows = ApiTokenTracker.loadAllRecordsFromStorage(context)
         assertEquals(1, rows.size)
         assertEquals(0L, rows.single().cacheWriteTokens)
+        assertEquals(0L, rows.single().cacheWrite1hTokens)
         assertTrue(ApiTokenTracker.budgetUsageSnapshot(context).ledgerHealthy)
     }
 
@@ -1009,6 +1010,52 @@ class ApiTokenTrackerTest {
             ))
         )
         assertEquals(3.60, plan.estimatedReservedCostPln, 0.00001)
+        ApiTokenTracker.releaseBatchReservation(plan.reservationId)
+    }
+
+    @Test fun fiveMinuteAndOneHourCacheWritesUseTheirOwnPublishedRates() {
+        ApiTokenTracker.replaceCatalogPricingForProvider(
+            context, "cache-ttl-provider", "https://cache-ttl.example/v1",
+            listOf(CatalogModelPrice(
+                "vendor/cache-ttl-model", 0.23, 0.91, false,
+                cachedInputPer1MUsd = 0.05,
+                cacheWriteInputPer1MUsd = 0.30,
+                cacheWriteInput1hPer1MUsd = 0.50
+            ))
+        )
+        val record = ApiTokenTracker.recordQuery(
+            context, "cache-ttl-provider", "vendor/cache-ttl-model", "MASTER", "cache-ttl-task",
+            inputTokens = 1_000_000L, outputTokens = 0L, cachedTokens = 100_000L,
+            cacheWriteTokens = 200_000L, cacheWrite1hTokens = 300_000L,
+            status = "REAL", baseUrl = "https://cache-ttl.example/v1"
+        )
+        // 400k regular + 100k read + 200k 5m write + 300k 1h write.
+        assertEquals(0.307, record.costUsd, 0.000001)
+        assertEquals(1.228, record.costPln, 0.00001)
+        val stored = ApiTokenTracker.loadAllRecordsFromStorage(context).single()
+        assertEquals(200_000L, stored.cacheWriteTokens)
+        assertEquals(300_000L, stored.cacheWrite1hTokens)
+    }
+
+    @Test fun reservationUsesHighestPublishedOneHourCacheWriteRate() {
+        ApiTokenTracker.setLimits(context, daily = 2_000_000L, monthly = 50.0, perAgent = 2_000_000L)
+        ApiTokenTracker.replaceCatalogPricingForProvider(
+            context, "cache-ttl-reserve-provider", "https://cache-ttl-reserve.example/v1",
+            listOf(CatalogModelPrice(
+                "vendor/cache-ttl-reserve-model", 0.23, 0.91, false,
+                cacheWriteInputPer1MUsd = 0.30,
+                cacheWriteInput1hPer1MUsd = 0.50
+            ))
+        )
+        val plan = ApiTokenTracker.planBatch(
+            context,
+            listOf(BudgetRequest(
+                "cache-ttl-reserve-task", "MASTER", "cache-ttl-reserve-provider",
+                "https://cache-ttl-reserve.example/v1", "vendor/cache-ttl-reserve-model",
+                1_000_000L, 0L
+            ))
+        )
+        assertEquals(2.00, plan.estimatedReservedCostPln, 0.00001)
         ApiTokenTracker.releaseBatchReservation(plan.reservationId)
     }
 
