@@ -113,6 +113,45 @@ object ApiTokenTracker {
                 existing.agentId == agentId && existing.taskId == taskId) {
                 "Klucz idempotencji użycia API został ponownie użyty dla innego żądania."
             }
+            // A late authoritative response may resolve an earlier UNAVAILABLE estimate for
+            // the same POST. Upgrade that one row in place; never append a second charge and
+            // never let a later estimate downgrade already-known REAL usage.
+            if (existing.status == "UNAVAILABLE" && status == "REAL") {
+                val upgradedTotal = Math.addExact(inputTokens, outputTokens)
+                val upgradePricing = getPricing(context, modelName, providerId, baseUrl)
+                require(upgradePricing.inputPer1MUsd.isFinite() && upgradePricing.outputPer1MUsd.isFinite() &&
+                    upgradePricing.inputPer1MUsd >= 0.0 && upgradePricing.outputPer1MUsd >= 0.0) {
+                    "Nieprawidłowy cennik modelu."
+                }
+                val upgradeRate = getExchangeRate(context)
+                require(upgradeRate.isFinite() && upgradeRate > 0.0) {
+                    "Nieprawidłowy kurs USD/PLN; rozliczenie API wstrzymano."
+                }
+                val upgradeUsd = (inputTokens.toDouble() * upgradePricing.inputPer1MUsd +
+                    outputTokens.toDouble() * upgradePricing.outputPer1MUsd) / 1_000_000.0
+                val upgradePln = upgradeUsd * upgradeRate
+                require(upgradeUsd.isFinite() && upgradePln.isFinite() && upgradeUsd >= 0.0 && upgradePln >= 0.0) {
+                    "Nieprawidłowy koszt użycia API."
+                }
+                val upgraded = existing.copy(
+                    timestamp = System.currentTimeMillis(),
+                    inputTokens = inputTokens,
+                    outputTokens = outputTokens,
+                    totalTokens = upgradedTotal,
+                    reasoningTokens = reasoningTokens,
+                    cachedTokens = cachedTokens,
+                    status = "REAL",
+                    costUsd = upgradeUsd,
+                    costPln = upgradePln
+                )
+                check(saveRecordToStorage(context, upgraded)) {
+                    "Nie udało się trwale uzgodnić rzeczywistego usage z wcześniejszym wpisem UNAVAILABLE."
+                }
+                sessionRecords.removeAll { it.queryId == stableQueryId }
+                sessionRecords.add(0, upgraded)
+                adjustActiveReservationForUsageUpgrade(existing, upgraded, reservationId, baseUrl)
+                return upgraded
+            }
             if (persistedBefore.none { it.queryId == stableQueryId }) {
                 check(saveRecordToStorage(context, existing)) {
                     "Nie udało się trwale odtworzyć istniejącego rekordu użycia API."
@@ -156,6 +195,32 @@ object ApiTokenTracker {
         consumeActiveReservation(record, reservationId, baseUrl)
         check(persisted) { "Nie udało się trwale zapisać rejestru użycia API." }
         return record
+    }
+
+    /**
+     * An UNAVAILABLE estimate may already have consumed part of a live reservation.
+     * When REAL usage arrives for the same request, reserve only the positive delta.
+     * We deliberately do not refund a smaller actual value: conservative headroom is safer.
+     */
+    private fun adjustActiveReservationForUsageUpgrade(
+        previous: TokenRecord,
+        upgraded: TokenRecord,
+        reservationId: String,
+        baseUrl: String
+    ) {
+        if (reservationId.isBlank()) return
+        val reservation = activeReservations[reservationId] ?: return
+        val task = reservation.tasks.singleOrNull {
+            it.taskId == upgraded.taskId &&
+                it.agentId.equals(upgraded.agentId, true) &&
+                it.providerId.equals(upgraded.providerId, true) &&
+                it.baseUrl.equals(baseUrl, true) &&
+                it.modelName.equals(upgraded.modelName, true)
+        } ?: return
+        val extraTokens = (upgraded.totalTokens - previous.totalTokens).coerceAtLeast(0L)
+        val extraCost = (upgraded.costPln - previous.costPln).coerceAtLeast(0.0)
+        task.tokensRemaining = (task.tokensRemaining - extraTokens).coerceAtLeast(0L)
+        task.costPlnRemaining = (task.costPlnRemaining - extraCost).coerceAtLeast(0.0)
     }
 
     private fun consumeActiveReservation(record: TokenRecord, reservationId: String, baseUrl: String = "") {
