@@ -26,7 +26,9 @@ data class TokenUsageResult(
     /** Tokens written to the default (5-minute) prompt cache; subset of inputTokens. */
     val cacheWriteTokens: Long = 0L,
     /** Tokens written to a 1-hour prompt cache; subset of inputTokens. */
-    val cacheWrite1hTokens: Long = 0L
+    val cacheWrite1hTokens: Long = 0L,
+    /** Whether the provider explicitly returned the reasoning-token breakdown. */
+    val reasoningTokensKnown: Boolean = false
 )
 
 data class ChatResponse(
