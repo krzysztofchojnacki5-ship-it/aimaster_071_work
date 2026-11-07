@@ -263,12 +263,67 @@ class AgentProviderAssignmentStoreTest {
 
         assertNotNull(recovered)
         assertEquals("new-master", recovered!!["MASTER"])
-        assertEquals("new-master", recovered["CODER"])
+        assertEquals("new-coder", recovered["CODER"])
         assertEquals("new-master", recovered["RESEARCHER"])
         assertEquals("new-master", prefs.getString("agent_provider_MASTER", null))
         assertEquals("new-master", prefs.getString("selected_provider", null))
         assertEquals("new-coder", prefs.getString("agent_provider_CODER", null))
         assertEquals("new-master", prefs.getString("agent_provider_RESEARCHER", null))
+    }
+
+
+    @Test fun startupRecoveryRepairsOldDurableAssignmentsWhenImportReconciliationCommitDidNotPersist() {
+        val base = context
+        val providerPrefs = base.getSharedPreferences("secure_provider_store", Context.MODE_PRIVATE)
+        providerPrefs.edit().clear().commit()
+        SecureStoreHealth.resetForTests()
+
+        fun provider(id: String) = JSONObject()
+            .put("id", id)
+            .put("name", id)
+            .put("kind", "OPENAI_COMPATIBLE")
+            .put("baseUrl", "https://example.invalid/v1")
+            .put("model", "test-model")
+            .put("enabled", true)
+            .put("parentProviderId", "")
+            .put("apiKey", "")
+
+        assertTrue(SecureStore(base).replaceAllConfigs(listOf(provider("new-master"), provider("new-coder"))))
+        prefs.edit()
+            .putString("agent_provider_MASTER", "old-master")
+            .putString("selected_provider", "old-master")
+            .putString("agent_provider_CODER", "old-coder")
+            .putString("agent_provider_RESEARCHER", "old-researcher")
+            .commit()
+
+        // Model commit(false) where the previous durable assignment snapshot remains intact.
+        val failingContext = AmbiguousCommitContext(base, "chat_state", applyBeforeFailure = false)
+        assertNull(
+            AgentProviderAssignmentStore.reconcileAfterProviderImport(
+                failingContext,
+                defaults,
+                setOf("new-master", "new-coder"),
+                "new-master"
+            )
+        )
+        assertEquals("old-master", prefs.getString("agent_provider_MASTER", null))
+        assertEquals("old-master", prefs.getString("selected_provider", null))
+
+        // Restart: no import preference survives in chat_state, so recovery must use only
+        // the current provider catalog and the persisted assignment snapshot.
+        SharedPreferencesWriteHealth.resetForTests("chat_state")
+        SecureStoreHealth.resetForTests()
+        val recoveredCatalog = SecureStore(base).allConfigs().map { it.optString("id") }.toSet()
+        val recovered = AgentProviderAssignmentStore.reconcileExistingAssignments(
+            base, defaults, recoveredCatalog, "old-master"
+        )
+
+        assertNotNull(recovered)
+        assertTrue(recovered!!.values.all { it in recoveredCatalog })
+        assertEquals("new-coder", recovered["MASTER"]) // deterministic first valid ID; intended import preference was not durable
+        assertEquals("new-coder", recovered["CODER"])
+        assertEquals("new-coder", recovered["RESEARCHER"])
+        assertEquals("new-coder", prefs.getString("selected_provider", null))
     }
 
 }
