@@ -46,6 +46,30 @@ class ApiTokenTrackerTest {
         assertEquals(420L, all.single().totalTokens)
     }
 
+    @Test fun lateRealUsageUpgradesUnavailableEstimateWithoutCreatingSecondCharge() {
+        val key = "team:task-late-real:openai"
+        val estimate = ApiTokenTracker.recordQuery(
+            context, "openai", "gpt-4o-mini", "RESEARCHER", "task-late-real",
+            250L, 900L, status = "UNAVAILABLE", idempotencyKey = key
+        )
+        val actual = ApiTokenTracker.recordQuery(
+            context, "openai", "gpt-4o-mini", "RESEARCHER", "task-late-real",
+            310L, 145L, reasoningTokens = 35L, cachedTokens = 20L,
+            status = "REAL", idempotencyKey = key
+        )
+        val all = ApiTokenTracker.loadAllRecordsFromStorage(context)
+        assertEquals(estimate.queryId, actual.queryId)
+        assertEquals("REAL", actual.status)
+        assertEquals(310L, actual.inputTokens)
+        assertEquals(145L, actual.outputTokens)
+        assertEquals(35L, actual.reasoningTokens)
+        assertEquals(20L, actual.cachedTokens)
+        assertEquals(455L, actual.totalTokens)
+        assertEquals(1, all.count { it.queryId == key })
+        assertEquals("REAL", all.single().status)
+        assertEquals(455L, all.single().totalTokens)
+    }
+
     @Test fun idempotencyKeyCannotBeReusedForAnotherTaskIdentity() {
         ApiTokenTracker.recordQuery(
             context, "openai", "gpt-4o-mini", "RESEARCHER", "task-original",
