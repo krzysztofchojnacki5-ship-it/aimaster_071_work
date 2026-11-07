@@ -8,6 +8,7 @@ on:
       - audit/0.6.141-navigation-atomicity
       - audit/0.6.142-new-chat-atomicity
       - audit/0.6.143-delete-current-chat
+      - audit/0.6.144-chat-pins-durability
     paths-ignore:
       - '**/*.md'
       - '*.md'
