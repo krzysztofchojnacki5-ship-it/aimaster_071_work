@@ -108,6 +108,41 @@ class SecureStoreImportTest {
         }
     }
 
+    @Test fun failedFullImportCommitPoisonsStoreEvenWhenMemoryWasAlreadyReplaced() {
+        val context = org.robolectric.RuntimeEnvironment.getApplication()
+        val prefs = context.getSharedPreferences("secure_provider_store", Context.MODE_PRIVATE)
+        prefs.edit()
+            .putStringSet("provider_ids", setOf("old_provider"))
+            .putString("config_old_provider", validConfig("old_provider").toString())
+            .commit()
+        val failingStore = SecureStore(context) { editor ->
+            // Simulate commit() returning false after SharedPreferences has exposed the new
+            // in-memory snapshot. The durable outcome is ambiguous, so callers must fail closed.
+            editor.apply()
+            false
+        }
+        val otherStore = SecureStore(context)
+
+        try {
+            assertFalse(failingStore.replaceAllConfigs(listOf(validConfig("imported_provider"))))
+
+            assertTrue(failingStore.isStorageUncertain())
+            assertTrue(otherStore.isStorageUncertain())
+            assertTrue(otherStore.allConfigs().isEmpty())
+            assertEquals(null, otherStore.readConfig("imported_provider"))
+            assertFalse(otherStore.saveConfig(validConfig("must_stay_blocked")))
+            assertEquals(
+                setOf("imported_provider"),
+                prefs.getStringSet("provider_ids", emptySet())
+            )
+            assertFalse(prefs.contains("config_old_provider"))
+            assertTrue(prefs.contains("config_imported_provider"))
+            assertFalse(prefs.contains("config_must_stay_blocked"))
+        } finally {
+            SecureStoreHealth.resetForTests()
+        }
+    }
+
     @Test fun thrownPreferencesCommitPoisonsAllStoreInstances() {
         val context = org.robolectric.RuntimeEnvironment.getApplication()
         val throwingStore = SecureStore(context) { editor ->
