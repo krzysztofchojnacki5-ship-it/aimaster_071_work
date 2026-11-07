@@ -124,6 +124,31 @@ class TeamRunEngineNetworkTest {
             ).single()
             assertEquals(TeamTaskResult.Status.FAILED, blocked.status)
             assertEquals("Failed checkpoint persistence must prevent HTTP", 1, server.requestCount.get())
+
+            val fallbackServer = TestHttpServer { _, _ ->
+                200 to """{"choices":[{"message":{"content":"must-not-be-sent"}}],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}"""
+            }
+            try {
+                ProviderQuotaScheduler.resetForTests()
+                val fallback = config.copy(
+                    id = "checkpoint-fallback",
+                    name = "Checkpoint fallback",
+                    baseUrl = "http://127.0.0.1:" + fallbackServer.address.port + "/v1"
+                )
+                val blockedWithFallback = TeamRunEngine(ProviderClient()).runBatch(
+                    tasks = listOf(TeamTask("checkpoint-fallback-blocked", "qa-architect", "Checkpoint", "Do not send")),
+                    provider = config,
+                    agentProvidersMap = mapOf("qa-architect" to config),
+                    fallbackProviders = listOf(fallback),
+                    isFreeProvider = { true },
+                    mode = WorkMode.PLANNING,
+                    onRequestStarting = { _, _, _, _, _ -> false }
+                ).single()
+                assertEquals(TeamTaskResult.Status.FAILED, blockedWithFallback.status)
+                assertEquals("A failed pre-request checkpoint must block every fallback POST", 0, fallbackServer.requestCount.get())
+            } finally {
+                fallbackServer.stop(0)
+            }
         } finally {
             ProviderQuotaScheduler.resetForTests()
             server.stop(0)
