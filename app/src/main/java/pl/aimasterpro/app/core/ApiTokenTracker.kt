@@ -315,10 +315,14 @@ object ApiTokenTracker {
         if (raw.isNullOrBlank()) return@runCatching emptyList()
         val arr = JSONArray(raw)
         val list = mutableListOf<TokenRecord>()
+        val seenQueryIds = hashSetOf<String>()
         for (i in 0 until arr.length()) {
             val o = arr.getJSONObject(i)
             val queryId = o.optString("qId")
             require(queryId.isNotBlank()) { "Usage record has no query id." }
+            require(seenQueryIds.add(queryId)) {
+                "Usage ledger contains a duplicate idempotency key; refusing ambiguous double accounting."
+            }
             val total = o.optLong("tot")
             val input = o.optLong("in")
             val output = o.optLong("out")
