@@ -318,6 +318,13 @@ class SecureStore internal constructor(
             SecureStoreHealth.markUncertain()
             return@synchronized null
         }
+        val storedId = config.opt("id")
+        if (storedId !is String || storedId != id) {
+            // A valid JSON document stored under another provider's key is still corrupt state.
+            // Do not return a mismatched profile or allow a partial configuration snapshot.
+            SecureStoreHealth.markUncertain()
+            return@synchronized null
+        }
         config.apply {
             val secretKey = "key_$id"
             if (hasStoredCiphertext(secretKey)) {
