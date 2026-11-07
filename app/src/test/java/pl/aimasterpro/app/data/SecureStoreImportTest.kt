@@ -181,6 +181,24 @@ class SecureStoreImportTest {
         }
     }
 
+    @Test fun malformedPersistedProviderJsonPoisonsStoreAndDiscardsPartialConfigList() {
+        val context = org.robolectric.RuntimeEnvironment.getApplication()
+        val prefs = context.getSharedPreferences("secure_provider_store", Context.MODE_PRIVATE)
+        prefs.edit()
+            .putStringSet("provider_ids", setOf("a_valid", "z_malformed"))
+            .putString("config_a_valid", validConfig("a_valid").toString())
+            .putString("config_z_malformed", "{not-valid-json")
+            .commit()
+        val store = SecureStore(context)
+
+        assertTrue(store.allConfigs().isEmpty())
+        assertTrue(store.isStorageUncertain())
+        assertEquals(null, store.readConfig("a_valid"))
+        assertFalse(store.saveConfig(validConfig("must_remain_blocked")))
+        assertFalse(prefs.contains("config_must_remain_blocked"))
+        assertEquals("{not-valid-json", prefs.getString("config_z_malformed", null))
+    }
+
     @Test fun emptyReplacementIsRejectedWithoutChangingExistingConfig() {
         val context = org.robolectric.RuntimeEnvironment.getApplication()
         seedExistingConfig(context)
