@@ -2051,3 +2051,9 @@ Doprecyzowanie projektu SQLite:
 - `MainActivity.saveCurrentId()` nie wykonuje już drugiego niezależnego commitu.
 - Dodano testy `currentChatAndLastUserNavigationMirrorCommitTogether` i `ambiguousCurrentChatCommitNeverSplitsCanonicalIdFromNavigationMirror`.
 - Commity `c85a4a5288746e3b964376297020a6199bb9dc57`, `e49f3d94fb17ca9f39972ddf9f7aba631edd2b33`, `a2c955b0eeff9b41c428f69c197db8aec230d112`. ADDED / NOT RUN.
+
+### CI checkpoint — 0.6.139
+
+- Stary run `42411603439` zakończony jako `cancelled` po kolejnych pushach; nie traktować jako porażki testów ani sukcesu.
+- Aktualny kod scalono na `audit/0.6.137-routing-hardening`, HEAD `c650c5604074449593d138730bd7e2e2b89da9d2`.
+- Run `42415438103`, job `128532366193`, `in_progress`; testy jednostkowe i `assembleDebug` jeszcze nie rozpoczęte na ostatnim odczycie.
