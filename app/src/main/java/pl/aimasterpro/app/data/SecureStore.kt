@@ -12,9 +12,9 @@ import javax.crypto.SecretKey
 import javax.crypto.spec.GCMParameterSpec
 
 /**
- * Process-wide latch: SharedPreferences may update its in-memory map before a failed disk commit.
- * Once a commit fails, this process must not read or mutate that potentially divergent state.
- * A process restart reloads the durable preferences state and clears this in-memory latch.
+ * Process-wide latch for ambiguous SharedPreferences state: a failed commit may leave memory ahead of disk,
+ * while a read exception means the current process cannot establish a trustworthy snapshot. Once latched,
+ * this process must not read or mutate the store. A process restart reloads durable preferences state.
  */
 internal object SecureStoreHealth {
     private val sharedLock = Any()
@@ -42,7 +42,7 @@ class SecureStore internal constructor(
     private val prefs = context.getSharedPreferences("secure_provider_store", Context.MODE_PRIVATE)
     private val alias = "ai_master_provider_key_v1"
 
-    /** True after a failed preferences commit; only a process restart may clear this state. */
+    /** True after an ambiguous preference read or failed commit; only a process restart clears this state. */
     fun isStorageUncertain(): Boolean = SecureStoreHealth.isUncertain()
 
     private fun commitOrMarkUncertain(editor: android.content.SharedPreferences.Editor): Boolean {
