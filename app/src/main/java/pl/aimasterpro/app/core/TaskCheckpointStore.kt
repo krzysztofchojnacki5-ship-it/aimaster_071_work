@@ -39,6 +39,14 @@ object TaskCheckpointStore {
         // A late worker callback must not overwrite a terminal result already recorded by
         // the coordinator (for example TIMED_OUT followed by the worker's CANCELLED callback).
         val current = rows.firstOrNull { it.taskId == event.taskId }
+        // REQUESTING means the provider may already have processed and billed the POST.
+        // Do not let UI/worker finalization hide a failed USAGE_RECORDED/USAGE_PENDING write
+        // behind a terminal state. Startup recovery is the only path allowed to close it.
+        if (current?.status == "REQUESTING" &&
+            event.status in setOf("COMPLETED", "FAILED", "BLOCKED")) {
+            val isRecoveryTransition = current.processId != processId && event.processId == processId
+            if (!isRecoveryTransition) return true
+        }
         if (current?.status?.let { it in TERMINAL_STATUSES } == true) {
             // A timeout/cancellation can race with a worker that has already committed its report.
             // Permit only archive-backed reconciliation for that exact task; never trust a late
