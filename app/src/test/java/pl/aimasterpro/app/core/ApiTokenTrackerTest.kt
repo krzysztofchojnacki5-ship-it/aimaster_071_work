@@ -21,6 +21,7 @@ class ApiTokenTrackerTest {
         context = RuntimeEnvironment.getApplication()
         ApiTokenTracker.resetInMemoryStateForTests()
         ApiTokenTracker.clearRecords(context)
+        context.getSharedPreferences("api_token_pricing_v1", Context.MODE_PRIVATE).edit().clear().commit()
         ApiTokenTracker.setLimits(context, 100_000L, 50.0, 50_000L)
     }
 
