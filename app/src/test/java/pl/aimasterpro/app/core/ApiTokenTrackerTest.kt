@@ -595,6 +595,21 @@ class ApiTokenTrackerTest {
         assertEquals(0.91, profile.outputPer1MUsd, 0.0000001)
     }
 
+    @Test fun usageLedgerChargesUsingDiscoveredCatalogPrices() {
+        ApiTokenTracker.setCatalogPricing(
+            context, "catalog-billing-provider", "vendor/billing-model", "https://billing.example/v1",
+            0.23, 0.91, explicitlyFree = false
+        )
+        val record = ApiTokenTracker.recordQuery(
+            context, "catalog-billing-provider", "vendor/billing-model", "MASTER", "catalog-billing",
+            inputTokens = 1_000_000L, outputTokens = 1_000_000L,
+            status = "REAL", baseUrl = "https://billing.example/v1",
+            idempotencyKey = "catalog-billing-provider:catalog-billing"
+        )
+        assertEquals(1.14, record.costUsd, 0.000001)
+        assertEquals(4.56, record.costPln, 0.00001)
+    }
+
     @Test fun explicitlyFreeCatalogModelDoesNotInheritPaidFallback() {
         ApiTokenTracker.setCatalogPricing(
             context, "catalog-free-provider", "vendor/free-model", "https://free.example/v1",
