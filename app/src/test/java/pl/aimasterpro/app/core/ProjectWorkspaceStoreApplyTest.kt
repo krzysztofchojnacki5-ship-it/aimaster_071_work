@@ -207,4 +207,22 @@ class ProjectWorkspaceStoreApplyTest {
         assertTrue(root.isDirectory)
     }
 
+
+    @Test fun manualRestoreCannotBypassPendingPatchReceiptButExplicitRollbackCan() {
+        val (store, _) = store("README.md" to "before\\n", "src/A.kt" to "old\\n")
+        val patch = preview(store, "src/A.kt", "old\\n", "--- a/src/A.kt\\n+++ b/src/A.kt\\n@@ -1 +1 @@\\n-old\\n+new\\n")
+        val applied = store.applyPreview(patch, changeSetId = "changeset-rollback", chatId = "chat-rollback")
+
+        assertTrue(runCatching { store.restoreSnapshot(applied.snapshot.id) }.isFailure)
+        assertEquals("new\\n", store.readTextFile("src/A.kt").content)
+
+        assertTrue(store.markPatchReceiptRollbackRequested("changeset-rollback", applied.transactionId))
+        store.restoreSnapshotForPatchRollback(applied.snapshot.id, "changeset-rollback", applied.transactionId)
+        assertTrue(store.markPatchReceiptRolledBack("changeset-rollback", applied.transactionId))
+        assertEquals("old\\n", store.readTextFile("src/A.kt").content)
+        assertTrue(store.verifyCurrentWorkspace().valid)
+        assertTrue(store.acknowledgePatchReceipt("changeset-rollback", applied.transactionId))
+        assertFalse(store.hasPendingWorkspaceTransaction())
+    }
+
 }
