@@ -2057,3 +2057,5 @@ Doprecyzowanie projektu SQLite:
 - Stary run `42411603439` zakończony jako `cancelled` po kolejnych pushach; nie traktować jako porażki testów ani sukcesu.
 - Aktualny kod scalono na `audit/0.6.137-routing-hardening`, HEAD `c650c5604074449593d138730bd7e2e2b89da9d2`.
 - Run `42415438103`, job `128532366193`, `in_progress`; testy jednostkowe i `assembleDebug` jeszcze nie rozpoczęte na ostatnim odczycie.
+
+- `navigate("Asystent")` i `newChat()` używają teraz `saveCurrentId()`; usunięto bezpośrednie `apply()` dla `last_user_chat_id`. Nieudany zapis wstrzymuje przełączenie. Commit `2db4679b21a5f908b150297d18e3ba23a7636d0a`; kontrola statyczna potwierdziła brak bezpośrednich zapisów mirror w MainActivity.
