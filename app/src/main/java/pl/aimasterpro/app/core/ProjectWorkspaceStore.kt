@@ -411,6 +411,9 @@ class ProjectWorkspaceStore(private val root: File) {
         require(currentIdentity() == receipt.workspaceIdentity) {
             "Workspace ma inną identity niż zatwierdzony patch; rollback zablokowano, aby nie nadpisać późniejszego projektu."
         }
+        require(verifyCurrentWorkspaceInternal().valid) {
+            "Bieżący workspace nie przechodzi kontroli integralności; rollback zablokowano, aby nie nadpisać zmienionych plików."
+        }
         return restoreSnapshotInternal(snapshotId, now)
     }
 
