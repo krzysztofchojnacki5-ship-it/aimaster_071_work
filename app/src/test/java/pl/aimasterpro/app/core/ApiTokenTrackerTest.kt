@@ -97,6 +97,22 @@ class ApiTokenTrackerTest {
         assertEquals(1, ApiTokenTracker.loadAllRecordsFromStorage(context).size)
     }
 
+    @Test fun usageSummarySaturatesInsteadOfWrappingOnLargeTotals() {
+        fun record(id: String) = TokenRecord(
+            queryId = id, timestamp = 1L, providerId = "provider", modelName = "model",
+            agentId = "MASTER", taskId = id, inputTokens = Long.MAX_VALUE,
+            outputTokens = 0L, totalTokens = Long.MAX_VALUE, reasoningTokens = 0L,
+            cachedTokens = 0L, status = "REAL", costUsd = Double.MAX_VALUE,
+            costPln = Double.MAX_VALUE
+        )
+
+        val summary = ApiTokenTracker.calculateSummary(listOf(record("large-1"), record("large-2")))
+        assertEquals(Long.MAX_VALUE, summary.inputTokens)
+        assertEquals(Long.MAX_VALUE, summary.totalTokens)
+        assertEquals(Double.MAX_VALUE, summary.costUsd, 0.0)
+        assertEquals(Double.MAX_VALUE, summary.costPln, 0.0)
+    }
+
     @Test fun successfulUsageIsPersistedAndVisibleInMonitorPeriods() {
         ApiTokenTracker.recordQuery(context, "ollama", "llama3", "MASTER", "chat-1", 120, 30, status = "REAL", baseUrl = "http://127.0.0.1:11434/v1")
         val all = ApiTokenTracker.loadAllRecordsFromStorage(context)
