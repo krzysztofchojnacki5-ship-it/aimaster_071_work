@@ -576,9 +576,9 @@ class ApiTokenTrackerTest {
     }
 
     @Test fun discoveredCatalogPricesOverrideGenericModelFallback() {
-        ApiTokenTracker.setCatalogPricing(
-            context, "catalog-provider", "vendor/unknown-model", "https://catalog.example/v1",
-            0.23, 0.91, explicitlyFree = false
+        ApiTokenTracker.replaceCatalogPricingForProvider(
+            context, "catalog-provider", "https://catalog.example/v1",
+            listOf(CatalogModelPrice("vendor/unknown-model", 0.23, 0.91, explicitlyFree = false))
         )
 
         val exact = ApiTokenTracker.getPricing(
@@ -596,9 +596,9 @@ class ApiTokenTrackerTest {
     }
 
     @Test fun usageLedgerChargesUsingDiscoveredCatalogPrices() {
-        ApiTokenTracker.setCatalogPricing(
-            context, "catalog-billing-provider", "vendor/billing-model", "https://billing.example/v1",
-            0.23, 0.91, explicitlyFree = false
+        ApiTokenTracker.replaceCatalogPricingForProvider(
+            context, "catalog-billing-provider", "https://billing.example/v1",
+            listOf(CatalogModelPrice("vendor/billing-model", 0.23, 0.91, explicitlyFree = false))
         )
         val record = ApiTokenTracker.recordQuery(
             context, "catalog-billing-provider", "vendor/billing-model", "MASTER", "catalog-billing",
@@ -611,9 +611,9 @@ class ApiTokenTrackerTest {
     }
 
     @Test fun explicitlyFreeCatalogModelDoesNotInheritPaidFallback() {
-        ApiTokenTracker.setCatalogPricing(
-            context, "catalog-free-provider", "vendor/free-model", "https://free.example/v1",
-            0.0, 0.0, explicitlyFree = true
+        ApiTokenTracker.replaceCatalogPricingForProvider(
+            context, "catalog-free-provider", "https://free.example/v1",
+            listOf(CatalogModelPrice("vendor/free-model", 0.0, 0.0, explicitlyFree = true))
         )
         val pricing = ApiTokenTracker.getPricing(
             context, "vendor/free-model", "catalog-free-provider", "https://free.example/v1"
@@ -624,15 +624,15 @@ class ApiTokenTrackerTest {
 
     @Test fun incompleteOrInvalidCatalogPricesAreRejected() {
         assertTrue(runCatching {
-            ApiTokenTracker.setCatalogPricing(
-                context, "catalog-invalid-provider", "vendor/model", "https://invalid.example",
-                0.1, null
+            ApiTokenTracker.replaceCatalogPricingForProvider(
+                context, "catalog-invalid-provider", "https://invalid.example",
+                listOf(CatalogModelPrice("vendor/model", 0.1, null))
             )
         }.isFailure)
         assertTrue(runCatching {
-            ApiTokenTracker.setCatalogPricing(
-                context, "catalog-invalid-provider", "vendor/model", "https://invalid.example",
-                Double.NaN, 0.2
+            ApiTokenTracker.replaceCatalogPricingForProvider(
+                context, "catalog-invalid-provider", "https://invalid.example",
+                listOf(CatalogModelPrice("vendor/model", Double.NaN, 0.2))
             )
         }.isFailure)
     }
