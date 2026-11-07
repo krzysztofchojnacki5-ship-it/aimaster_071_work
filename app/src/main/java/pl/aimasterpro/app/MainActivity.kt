@@ -1346,6 +1346,9 @@ class MainActivity : Activity() {
     private fun chatWithFallback(config: ProviderConfig, systemPrompt: String, userText: String, mime: String, b64: String,
                                  requestTaskId: String, requestAgentId: String, requestChatId: String,
                                  requestScope: ProviderClient.RequestScope, budgetReservationId: String = ""): ChatResponse {
+        check(agentAssignmentsHealthy) {
+            "Przypisania agentów nie zostały bezpiecznie uzgodnione. Żądanie API zostało zablokowane."
+        }
         check(!store.isStorageUncertain()) {
             "Magazyn konfiguracji ma niepewny stan po błędzie zapisu. Uruchom ponownie AI MASTER PRO przed wysłaniem kolejnego żądania."
         }
@@ -4534,6 +4537,10 @@ class MainActivity : Activity() {
         previewWorkspaceIdentity: String,
         previewChatId: String
     ) {
+        if (!agentAssignmentsHealthy) {
+            toast("Recenzja patcha zablokowana: przypisania agentów nie zostały bezpiecznie uzgodnione.")
+            return
+        }
         if (!reviewPackage.acceptedForReview) {
             toast("Lokalny audyt zablokował recenzję patcha.")
             return
@@ -5412,6 +5419,7 @@ class MainActivity : Activity() {
             }.setNegativeButton("Zamknij", null).show()
         })
         action("🧠 Przeanalizuj jakość — MASTER (zużywa tokeny)", onClick = {
+            if (!agentAssignmentsHealthy) { toast("Analiza zablokowana: przypisania agentów nie zostały bezpiecznie uzgodnione."); return@action }
             if (isThinking) { toast("Poczekaj na zakończenie bieżącego zapytania."); return@action }
             val cfg = loadProvider(agentProviders[AgentRole.MASTER.name] ?: selectedProviderId)
             if (!providerReady(cfg)) { toast("Najpierw skonfiguruj działający profil MASTER-a."); return@action }
