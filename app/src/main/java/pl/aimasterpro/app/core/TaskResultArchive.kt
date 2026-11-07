@@ -95,10 +95,10 @@ object TaskResultArchive {
     )
 
     /** Corrupt rows are never silently dropped or overwritten with a fresh empty archive. */
-    private fun read(context: Context): JSONArray? {
-        val raw = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString(KEY, null)
-            ?: return JSONArray()
-        return runCatching {
+    private fun read(context: Context): JSONArray? = runCatching {
+        val raw = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            .getString(KEY, null) ?: return@runCatching JSONArray()
+        runCatching {
             val source = JSONArray(raw)
             val seen = hashSetOf<String>()
             for (i in 0 until source.length()) {
@@ -121,5 +121,5 @@ object TaskResultArchive {
             }
             source
         }.getOrNull()
-    }
+    }.getOrNull()
 }
