@@ -37,7 +37,9 @@ data class ProviderModelInfo(
     val completionPricePerMillion: Double? = null,
     /** true/false only when provider metadata is explicit; null means unknown. */
     val freeByPricing: Boolean? = null,
-    val description: String = ""
+    val description: String = "",
+    /** USD per million tokens for cached input reads, when explicitly published by the provider. */
+    val cachedPromptPricePerMillion: Double? = null
 )
 
 class ProviderClient(
