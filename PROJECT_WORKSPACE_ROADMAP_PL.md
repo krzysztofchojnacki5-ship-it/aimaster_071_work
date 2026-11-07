@@ -940,3 +940,7 @@ Dodano test awarii niejednoznacznego commit w ChatResponseArchive: po apply + zw
 ### 0.6.139 — jawne przerwanie replayu przy kwarantannie archiwum
 
 Rozszerzono testy obu archiwów: po niejednoznacznym commit `restoreArchivedResponses()` i `restoreArchivedReports()` muszą przerwać działanie, a nie zwrócić pustego wyniku odzyskiwania. Commity testowe: `5eb52b62...`, `5fbfa126...`; ADDED / NOT RUN. CI 42411603439 nadal dotyczy starszego SHA `30e0f496...`.
+
+### 0.6.139 — testy dostępu i serializacji archiwum odpowiedzi
+
+Dodano dwa testy ChatResponseArchive: błąd dostępu do preferencji nie może wyglądać jak puste archiwum; zapis musi respektować blokadę całego read-modify-write. Commit `bccb390d...`; ADDED / NOT RUN. CI 42411603439 nadal dotyczy SHA `30e0f496...`.
