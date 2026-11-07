@@ -47,17 +47,19 @@ class SecureStore(context: Context) {
     }
 
     /** Returns false when the secret could not be stored; nothing is written in that case. */
-    @Synchronized fun putSecret(name: String, value: String): Boolean = try {
-        val editor = prefs.edit()
-        if (value.isBlank()) {
-            editor.remove(name)
-        } else {
-            val encrypted = encryptSecret(value) ?: return false
-            editor.putString(name, encrypted)
+    @Synchronized fun putSecret(name: String, value: String): Boolean {
+        return try {
+            val editor = prefs.edit()
+            if (value.isBlank()) {
+                editor.remove(name)
+            } else {
+                val encrypted = encryptSecret(value) ?: return false
+                editor.putString(name, encrypted)
+            }
+            editor.commit()
+        } catch (_: Exception) {
+            false
         }
-        editor.commit()
-    } catch (_: Exception) {
-        false
     }
 
     @Synchronized fun getSecret(name: String): String? = runCatching {
@@ -71,18 +73,20 @@ class SecureStore(context: Context) {
     }.getOrNull()
 
     /** Stores the encrypted key and its metadata in one preferences transaction. */
-    @Synchronized fun saveConfig(config: JSONObject): Boolean = try {
-        val id = config.optString("id", "default")
-        if (id.isBlank()) return false
-        val encrypted = encryptSecret(config.optString("apiKey")) 
-        val safe = JSONObject(config.toString()).apply { remove("apiKey") }
-        val ids = (prefs.getStringSet("provider_ids", emptySet()) ?: emptySet()).toMutableSet()
-        ids.add(id)
-        val editor = prefs.edit().putString("config_$id", safe.toString()).putStringSet("provider_ids", ids)
-        if (encrypted == null) editor.remove("key_$id") else editor.putString("key_$id", encrypted)
-        editor.commit()
-    } catch (_: Exception) {
-        false
+    @Synchronized fun saveConfig(config: JSONObject): Boolean {
+        return try {
+            val id = config.optString("id", "default")
+            if (id.isBlank()) return false
+            val encrypted = encryptSecret(config.optString("apiKey"))
+            val safe = JSONObject(config.toString()).apply { remove("apiKey") }
+            val ids = (prefs.getStringSet("provider_ids", emptySet()) ?: emptySet()).toMutableSet()
+            ids.add(id)
+            val editor = prefs.edit().putString("config_$id", safe.toString()).putStringSet("provider_ids", ids)
+            if (encrypted == null) editor.remove("key_$id") else editor.putString("key_$id", encrypted)
+            editor.commit()
+        } catch (_: Exception) {
+            false
+        }
     }
 
     @Synchronized fun allConfigs(): List<JSONObject> {
@@ -95,31 +99,33 @@ class SecureStore(context: Context) {
      * including provider IDs, metadata and encrypted API keys, is committed with one Editor commit.
      * A preparation failure therefore leaves the previous configuration untouched.
      */
-    @Synchronized fun replaceAllConfigs(configs: List<JSONObject>): Boolean = try {
-        if (configs.isEmpty()) return false
-        val copied = configs.map { JSONObject(it.toString()) }
-        val newIds = copied.map { it.optString("id", "default") }
-        require(newIds.all { it.isNotBlank() }) { "Id dostawcy nie może być pusty." }
-        require(newIds.size == newIds.toSet().size) { "Kopia zawiera powtórzone identyfikatory dostawców." }
-        val prepared = copied.map { config ->
-            val id = config.optString("id", "default")
-            val encrypted = encryptSecret(config.optString("apiKey"))
-            val safe = JSONObject(config.toString()).apply { remove("apiKey") }
-            Triple(id, safe, encrypted)
-        }
+    @Synchronized fun replaceAllConfigs(configs: List<JSONObject>): Boolean {
+        return try {
+            if (configs.isEmpty()) return false
+            val copied = configs.map { JSONObject(it.toString()) }
+            val newIds = copied.map { it.optString("id", "default") }
+            require(newIds.all { it.isNotBlank() }) { "Id dostawcy nie może być pusty." }
+            require(newIds.size == newIds.toSet().size) { "Kopia zawiera powtórzone identyfikatory dostawców." }
+            val prepared = copied.map { config ->
+                val id = config.optString("id", "default")
+                val encrypted = encryptSecret(config.optString("apiKey"))
+                val safe = JSONObject(config.toString()).apply { remove("apiKey") }
+                Triple(id, safe, encrypted)
+            }
 
-        val oldIds = (prefs.getStringSet("provider_ids", emptySet()) ?: emptySet()).toSet()
-        val editor = prefs.edit()
-        oldIds.filterNot { it in newIds }.forEach { id ->
-            editor.remove("config_$id").remove("key_$id")
+            val oldIds = (prefs.getStringSet("provider_ids", emptySet()) ?: emptySet()).toSet()
+            val editor = prefs.edit()
+            oldIds.filterNot { it in newIds }.forEach { id ->
+                editor.remove("config_$id").remove("key_$id")
+            }
+            prepared.forEach { (id, safe, encrypted) ->
+                editor.putString("config_$id", safe.toString())
+                if (encrypted == null) editor.remove("key_$id") else editor.putString("key_$id", encrypted)
+            }
+            editor.putStringSet("provider_ids", newIds.toSet()).commit()
+        } catch (_: Exception) {
+            false
         }
-        prepared.forEach { (id, safe, encrypted) ->
-            editor.putString("config_$id", safe.toString())
-            if (encrypted == null) editor.remove("key_$id") else editor.putString("key_$id", encrypted)
-        }
-        editor.putStringSet("provider_ids", newIds.toSet()).commit()
-    } catch (_: Exception) {
-        false
     }
 
     fun readConfig(id: String): JSONObject? = runCatching {
