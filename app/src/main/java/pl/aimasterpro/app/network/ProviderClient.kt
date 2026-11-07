@@ -398,9 +398,10 @@ class ProviderClient(
             val finalCached = if (realUsage) cached!! else 0L
             val finalCacheWrite = if (realUsage) cacheWrite!! else 0L
             val finalCacheWrite1h = if (realUsage) cacheWrite1h!! else 0L
+            val finalReasoning = if (realUsage) reasoning!! else 0L
             val status = if (realUsage) "REAL" else "ESTIMATED"
 
-            ChatResponse(text, TokenUsageResult(finalInput, finalOutput, finalTotal, reasoning, finalCached, status, finalCacheWrite, finalCacheWrite1h, reasoningKnown), providerId = config.id, model = responseModel(result, config.model))
+            ChatResponse(text, TokenUsageResult(finalInput, finalOutput, finalTotal, finalReasoning, finalCached, status, finalCacheWrite, finalCacheWrite1h, reasoningKnown), providerId = config.id, model = responseModel(result, config.model))
         }
         ProviderKind.OPENAI_COMPATIBLE -> {
             val root = config.baseUrl.trimEnd('/')
@@ -524,9 +525,10 @@ class ProviderClient(
                 val finalOutput = if (realUsage) output!! else text.length / 4.toLong()
                 val finalTotal = if (realUsage) Math.addExact(finalInput, finalOutput) else finalInput + finalOutput
                 val finalCached = if (realUsage) cached!! else 0L
+                val finalReasoning = if (realUsage) reasoning!! else 0L
                 val status = if (realUsage) "REAL" else "ESTIMATED"
 
-                ChatResponse(text, TokenUsageResult(finalInput, finalOutput, finalTotal, reasoning, finalCached, status, reasoningTokensKnown = reasoningKnown),
+                ChatResponse(text, TokenUsageResult(finalInput, finalOutput, finalTotal, finalReasoning, finalCached, status, reasoningTokensKnown = reasoningKnown),
                     providerId = config.id, model = responseModel(result, config.model, "modelVersion"))
             }
         }
