@@ -3657,9 +3657,13 @@ class MainActivity : Activity() {
                 }
                 if (base.contains("localhost") || base.contains("127.0.0.1")) toast("Uwaga: localhost wskazuje na urządzenie, na którym działa aplikacja.")
                 val enteredKey = key.text.toString().trim().removePrefix("Bearer ").trim()
+                if (recoverSecret && enteredKey.isBlank()) {
+                    toast("Wprowadź nowy klucz API. Stary zaszyfrowany wpis pozostaje nienaruszony.")
+                    return@setPositiveButton
+                }
                 val apiKey = enteredKey.ifBlank { old.apiKey.trim().removePrefix("Bearer ").trim() }
                 val cfg = ProviderConfig(old.id, name.text.toString().ifBlank { old.name }, kind, base, model.text.toString().trim(), apiKey, old.enabled, old.parentProviderId)
-                saveProvider(cfg)
+                if (!saveProvider(cfg)) return@setPositiveButton
                 modelCatalogPrefs.edit().putLong("last_attempt", 0L).apply()
                 if (cfg.model.isNotBlank()) {
                     selectedProviderId = cfg.id
