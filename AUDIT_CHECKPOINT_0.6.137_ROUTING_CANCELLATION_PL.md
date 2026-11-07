@@ -1809,3 +1809,16 @@ Doprecyzowanie projektu SQLite:
 - Nie zmieniono jeszcze SecureStore. Polityka po false z SharedPreferences.commit() nadal wymaga wydzielenia testowalnej warstwy stanu niepewnego; nie należy wprowadzać pozornego rollbacku.
 - Zmiany kodu wymagają nowego CI. Nie uzyskano jeszcze potwierdzonego wyniku testów jednostkowych ani assembleDebug dla tych commitów. Nie oznaczać jako PASS przed odczytem końcowego workflow.
 - Najnowsze commity kodu: `e408041f` (crypto), `9658d13f` (testy Base64), `fc31a7d8` (agent assignment), `9bdbe3ed` (model profile). Pomiędzy nimi znajduje się też korekta testów `e65237d4`; ostateczna wersja testów została następnie poprawiona w `9658d13f`.
+
+
+## SecureStore — blokada po nieudanym commit() — 2026-11-07
+
+- Dodano procesowy, współdzielony latch `SecureStoreHealth` z blokadą wspólną dla wszystkich instancji `SecureStore`. Po nieudanym `SharedPreferences.Editor.commit()` (wynik false lub wyjątek) magazyn przechodzi w stan niepewny.
+- Wszystkie zapisy `putSecret()`, `saveConfig()`, `replaceAllConfigs()` przechodzą przez jeden helper `commitOrMarkUncertain()`. Nieudany commit ustawia latch.
+- Odczyty `getSecret()`, `readConfig()`, `allConfigs()`, `unavailableSecretProviderIds()` i operacje odzyskiwania również respektują stan niepewny. Po jego ustawieniu nie zwracają danych z potencjalnie rozjechanej mapy pamięciowej i nie wykonują dalszych zapisów.
+- Wspólna blokada synchronizuje operacje między różnymi instancjami `SecureStore`, nie tylko wewnątrz pojedynczego obiektu. Latch jest celowo nieodwracalny w normalnym działaniu procesu; restart aplikacji odtwarza stan SharedPreferences z trwałego magazynu i czyści stan wyłącznie przez nowy proces.
+- Ekran MODELE pokazuje ostrzeżenie i kończy renderowanie katalogu, gdy magazyn jest niepewny. Użytkownik otrzymuje instrukcję pełnego zamknięcia i ponownego uruchomienia aplikacji; nie sugerujemy rollbacku.
+- Dodano test Robolectric sprawdzający współdzielenie latcha przez dwie instancje oraz blokowanie odczytów/zapisów i brak kolejnych mutacji prefs po ustawieniu stanu niepewnego.
+- Ograniczenie testu: obecny test weryfikuje politykę blokady po ustawieniu latcha; nie symuluje fizycznego błędu I/O w `SharedPreferences.commit()`. Punkt commit jest scentralizowany, więc osobny test wymuszający false/wyjątek wymaga wstrzyknięcia małej abstrakcji edytora/zapisu. Nie oznaczamy tego scenariusza jako bezpośrednio przetestowanego.
+- Długoterminowa migracja do SQLite nadal pozostaje osobnym zadaniem. Nie zmieniono formatu ciphertextów, aliasu Android Keystore ani danych zapisanych na urządzeniu.
+- Commit kodu: `e2983da8`. CI dla tego SHA należy odczytać po zakończeniu; poprzedni run mógł zostać anulowany przez concurrency po pushu. Brak potwierdzonego PASS na tym etapie.
