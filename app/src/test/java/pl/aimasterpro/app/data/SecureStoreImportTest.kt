@@ -97,4 +97,27 @@ class SecureStoreImportTest {
         assertEquals("unchanged-encrypted-value", prefs.getString("key_existing", null))
     }
 
+    @Test fun truncatedGcmSecretIsRejectedBeforeKeystoreDecryption() {
+        val context = org.robolectric.RuntimeEnvironment.getApplication()
+        val prefs = context.getSharedPreferences("secure_provider_store", Context.MODE_PRIVATE)
+        prefs.edit().putString("key_truncated", android.util.Base64.encodeToString(ByteArray(27), android.util.Base64.NO_WRAP)).commit()
+
+        val result = SecureStore(context).getSecret("key_truncated")
+
+        assertEquals(null, result)
+    }
+
+    @Test fun providerIdWithPreferenceKeyInjectionCharactersIsRejected() {
+        val context = org.robolectric.RuntimeEnvironment.getApplication()
+        seedExistingConfig(context)
+        val invalid = validConfig("valid_id").put("id", "valid_id\\nprovider_ids")
+
+        val result = SecureStore(context).replaceAllConfigs(listOf(invalid))
+
+        assertFalse(result)
+        val prefs = context.getSharedPreferences("secure_provider_store", Context.MODE_PRIVATE)
+        assertEquals(setOf("existing"), prefs.getStringSet("provider_ids", emptySet()))
+        assertEquals("unchanged-encrypted-value", prefs.getString("key_existing", null))
+    }
+
 }
