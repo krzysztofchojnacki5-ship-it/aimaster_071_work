@@ -62,6 +62,19 @@ class TaskResultArchiveTest {
         assertEquals(corrupt, prefs.getString("entries", null))
     }
 
+    @Test fun preferenceAccessFailureDoesNotPretendArchiveIsEmptyOrAcceptNewReport() {
+        val failingContext = object : android.content.ContextWrapper(context) {
+            override fun getSharedPreferences(name: String, mode: Int): android.content.SharedPreferences {
+                throw IllegalStateException("controlled result archive preferences failure")
+            }
+        }
+        assertNull(TaskResultArchive.get(failingContext, "task-1"))
+        assertTrue(TaskResultArchive.latest(failingContext).isEmpty())
+        assertFalse(TaskResultArchive.put(
+            failingContext, "task-new", "developer", "New report", "provider-a", "model-a", 2_000L
+        ))
+    }
+
     @Test fun blankAndOversizedReportsAreRejected() {
         assertFalse(TaskResultArchive.put(context, "blank", "developer", " ", "p", "m", 1_000L))
         assertFalse(TaskResultArchive.put(context, "large", "developer", "x".repeat(32_001), "p", "m", 1_000L))
