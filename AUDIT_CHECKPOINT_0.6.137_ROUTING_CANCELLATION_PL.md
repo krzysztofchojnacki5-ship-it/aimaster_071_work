@@ -2124,3 +2124,13 @@ Doprecyzowanie projektu SQLite:
 - Nowa gałąź: `audit/0.6.147-startup-restore-nullability`.
 - Zastąpiono potencjalnie niezdefiniowane `orFalse()` jawnym warunkiem `currentChat?.has("messages") != true`.
 - CI 0.6.146 pozostaje oddzielnym runem; 0.6.147 ma osobny branch filter. APK NOT BUILT; Companion NOT ACTIVATED.
+
+
+## Checkpoint 0.6.148 — bezpieczne odświeżanie aktywności agentów (2026-11-07)
+
+- Baza: commit 0.6.147 `f60a3bc13c4aeb75bbcaa0279b7c8bca454ac405` z poprawką jawnego warunku nullable w `restoreMessages()`.
+- Nowa gałąź: `audit/0.6.148-agent-activity-refresh`.
+- Audyt 0.6.146 wykazał usunięcie definicji `loadAgentActivity()` przy pozostawieniu czterech wywołań. W 0.6.148 przywrócono metodę w wersji fail-safe.
+- Metoda nie czyści aktywności przed udanym odczytem i parsowaniem kompletnego snapshotu; przy błędzie zachowuje poprzednie dane w pamięci.
+- Dodano test dla nieprawidłowego typu `agentActivity` (obiekt zamiast tablicy).
+- Testy/Gradle/Android debug NOT RUN do potwierdzenia przez CI. APK NOT BUILT; Companion NOT ACTIVATED; `main` untouched.

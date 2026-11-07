@@ -48,4 +48,11 @@ class ChatConversationSnapshotTest {
         assertNull(ChatConversationSnapshot.parse(chat))
     }
 
+    @Test fun nonArrayActivityCollectionRejectsWholeSnapshot() {
+        val chat = JSONObject()
+            .put("messages", JSONArray().put(JSONObject().put("role", "user").put("text", "hello")))
+            .put("agentActivity", JSONObject())
+        assertNull(ChatConversationSnapshot.parse(chat))
+    }
+
 }

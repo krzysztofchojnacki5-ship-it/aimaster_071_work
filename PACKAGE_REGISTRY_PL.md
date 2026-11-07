@@ -462,3 +462,11 @@ Rejestr rozróżnia paczkę źródłową od wersji aplikacji/APK. Numer paczki n
 
 - Doprecyzowano warunek rozpoznawania czatu bez kanonicznej tablicy `messages`: nullable Boolean jest porównywany jawnie z `true`, bez zależności od niepotwierdzonej funkcji rozszerzającej.
 - Zmiana usuwa ryzyko błędu kompilacji w ścieżce odtwarzania historii. Testy/kompilacja Androida oczekują na CI.
+
+
+## 0.6.148 — bezpieczne odświeżanie aktywności agentów (2026-11-07)
+
+- Audyt 0.6.146 wykazał, że usunięto definicję `loadAgentActivity()`, ale pozostawiono cztery wywołania w ekranach czatu i agentów.
+- Na bazie 0.6.147 (jawny warunek nullable w odtwarzaniu startowym) przywrócono metodę jako fail-safe: najpierw odczytuje i parsuje kompletny snapshot rozmowy, a dopiero potem podmienia `agentActivity`; błąd odczytu lub parsowania zachowuje poprzedni stan pamięci.
+- Dodano test odrzucania `agentActivity` zapisanej jako obiekt zamiast tablicy.
+- Testy JUnit i kompilacja debug: ADDED / NOT RUN do potwierdzenia przez CI. APK nie utworzono; Companion pozostaje nieaktywny.

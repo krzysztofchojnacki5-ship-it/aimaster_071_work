@@ -12,6 +12,7 @@ on:
       - audit/0.6.145-chat-restore-atomicity
       - audit/0.6.146-startup-chat-snapshot
       - audit/0.6.147-startup-restore-nullability
+      - audit/0.6.148-agent-activity-refresh
     paths-ignore:
       - '**/*.md'
       - '*.md'
