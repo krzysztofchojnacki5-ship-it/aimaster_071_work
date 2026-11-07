@@ -35,6 +35,7 @@ class ProviderClientNetworkTest {
             assertTrue(result.usage.outputTokens >= 0L)
             assertEquals(result.usage.inputTokens + result.usage.outputTokens, result.usage.totalTokens)
             assertEquals(0L, result.usage.cachedTokens)
+            assertEquals(0L, result.usage.cacheWriteTokens)
             assertEquals(0L, result.usage.reasoningTokens)
         } finally { server.stop(0) }
     }
