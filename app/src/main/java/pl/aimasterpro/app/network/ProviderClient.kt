@@ -288,10 +288,19 @@ class ProviderClient(
         return count.takeIf { it >= 0L }
     }
 
+    private fun preferredUsageCount(
+        primary: JSONObject?, primaryKey: String, fallback: JSONObject?, fallbackKey: String
+    ): Long? = if (primary?.has(primaryKey) == true) {
+        exactNonNegativeCount(primary, primaryKey)
+    } else {
+        exactNonNegativeCount(fallback, fallbackKey)
+    }
+
     private fun validUsageBreakdown(
-        input: Long?, output: Long?, reportedTotal: Long?, cached: Long?, reasoning: Long?
+        input: Long?, output: Long?, reportedTotal: Long?, cached: Long?, reasoning: Long?,
+        reportedTotalFieldValid: Boolean = true
     ): Boolean {
-        if (input == null || output == null || cached == null || reasoning == null) return false
+        if (!reportedTotalFieldValid || input == null || output == null || cached == null || reasoning == null) return false
         if (cached > input || reasoning > output) return false
         val sum = try { Math.addExact(input, output) } catch (_: ArithmeticException) { return false }
         return reportedTotal == null || reportedTotal == sum
@@ -349,14 +358,13 @@ class ProviderClient(
             val text = choices.optJSONObject(0)?.optJSONObject("message")?.optString("content").orEmpty()
 
             val usageObj = result.optJSONObject("usage")
-            val input = exactNonNegativeCount(usageObj, "prompt_tokens")
-                ?: exactNonNegativeCount(result, "prompt_eval_count")
-            val output = exactNonNegativeCount(usageObj, "completion_tokens")
-                ?: exactNonNegativeCount(result, "eval_count")
+            val input = preferredUsageCount(usageObj, "prompt_tokens", result, "prompt_eval_count")
+            val output = preferredUsageCount(usageObj, "completion_tokens", result, "eval_count")
             val reportedTotal = exactNonNegativeCount(usageObj, "total_tokens")
+            val reportedTotalFieldValid = usageObj == null || !usageObj.has("total_tokens") || reportedTotal != null
             val cached = exactNonNegativeCount(usageObj?.optJSONObject("prompt_tokens_details"), "cached_tokens", 0L)
             val reasoning = exactNonNegativeCount(usageObj?.optJSONObject("completion_tokens_details"), "reasoning_tokens", 0L)
-            val realUsage = validUsageBreakdown(input, output, reportedTotal, cached, reasoning)
+            val realUsage = validUsageBreakdown(input, output, reportedTotal, cached, reasoning, reportedTotalFieldValid)
 
             val finalInput = if (realUsage) input!! else (systemPrompt.length + userText.length) / 4.toLong()
             val finalOutput = if (realUsage) output!! else text.length / 4.toLong()
@@ -385,7 +393,8 @@ class ProviderClient(
                 val input = exactNonNegativeCount(usageObj, "prompt_tokens")
                 val output = exactNonNegativeCount(usageObj, "completion_tokens")
                 val reportedTotal = exactNonNegativeCount(usageObj, "total_tokens")
-                val realUsage = validUsageBreakdown(input, output, reportedTotal, 0L, 0L)
+                val reportedTotalFieldValid = usageObj == null || !usageObj.has("total_tokens") || reportedTotal != null
+                val realUsage = validUsageBreakdown(input, output, reportedTotal, 0L, 0L, reportedTotalFieldValid)
                 val finalInput = if (realUsage) input!! else (systemPrompt.length + userText.length) / 4L
                 val finalOutput = if (realUsage) output!! else text.length / 4L
                 val finalTotal = if (realUsage) Math.addExact(finalInput, finalOutput) else finalInput + finalOutput
@@ -407,9 +416,10 @@ class ProviderClient(
                 val input = exactNonNegativeCount(meta, "promptTokenCount")
                 val output = exactNonNegativeCount(meta, "candidatesTokenCount")
                 val total = exactNonNegativeCount(meta, "totalTokenCount")
+                val totalFieldValid = meta == null || !meta.has("totalTokenCount") || total != null
                 val cached = exactNonNegativeCount(meta, "cachedContentTokenCount", 0L)
                 val reasoning = 0L
-                val realUsage = validUsageBreakdown(input, output, total, cached, reasoning)
+                val realUsage = validUsageBreakdown(input, output, total, cached, reasoning, totalFieldValid)
 
                 val finalInput = if (realUsage) input!! else (systemPrompt.length + userText.length) / 4.toLong()
                 val finalOutput = if (realUsage) output!! else text.length / 4.toLong()
