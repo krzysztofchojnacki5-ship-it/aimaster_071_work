@@ -593,6 +593,28 @@ class ApiTokenTrackerTest {
         assertEquals("The current process must retain the billable usage record", 1, ApiTokenTracker.loadAllRecordsFromStorage(context).count { it.taskId == "new-task" })
     }
 
+    @Test fun fractionalAndCoercedUsageLedgerValuesAreRejectedWithoutOverwritingData() {
+        val prefs = context.getSharedPreferences("api_token_tracker_records_v1", Context.MODE_PRIVATE)
+        val malformedRows = listOf(
+            """[{"qId":"fractional-input","ts":1,"prov":"p","model":"m","agent":"MASTER","task":"x","in":1.5,"out":1,"tot":2.5,"reas":0,"cache":0,"status":"REAL","usd":0.01,"pln":0.04}]""",
+            """[{"qId":"string-input","ts":1,"prov":"p","model":"m","agent":"MASTER","task":"x","in":"10","out":1,"tot":11,"reas":0,"cache":0,"status":"REAL","usd":0.01,"pln":0.04}]""",
+            """[{"qId":"fractional-time","ts":1.5,"prov":"p","model":"m","agent":"MASTER","task":"x","in":1,"out":1,"tot":2,"reas":0,"cache":0,"status":"REAL","usd":0.01,"pln":0.04}]""",
+            """[{"qId":"string-cost","ts":1,"prov":"p","model":"m","agent":"MASTER","task":"x","in":1,"out":1,"tot":2,"reas":0,"cache":0,"status":"REAL","usd":"0.01","pln":0.04}]"""
+        )
+
+        malformedRows.forEachIndexed { index, raw ->
+            assertTrue(prefs.edit().putString("records", raw).commit())
+            val plan = ApiTokenTracker.planBatch(
+                context,
+                listOf(BudgetRequest("must-block-$index", "MASTER", "provider", "https://p.invalid/v1", "gpt-4o-mini", 1, 1))
+            )
+            assertTrue("Malformed ledger row $index must block reservations", plan.allowedTaskIds.isEmpty())
+            assertFalse("Malformed ledger row $index must be reported unhealthy",
+                ApiTokenTracker.budgetUsageSnapshot(context).ledgerHealthy)
+            assertEquals("Malformed ledger row $index must remain intact", raw, prefs.getString("records", null))
+        }
+    }
+
     @Test fun corruptUsageLedgerBlocksNewBudgetReservations() {
         val prefs = context.getSharedPreferences("api_token_tracker_records_v1", Context.MODE_PRIVATE)
         val corrupt = """not-json"""
