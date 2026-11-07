@@ -40,20 +40,24 @@ object TaskCheckpointStore {
         // the coordinator (for example TIMED_OUT followed by the worker's CANCELLED callback).
         val current = rows.firstOrNull { it.taskId == event.taskId }
         if (current?.status?.let { it in TERMINAL_STATUSES } == true) return true
+        // Later lifecycle states often omit request-only metadata. Preserve the latest
+        // REQUESTING details so a USAGE_PENDING checkpoint can still be reconciled after restart.
         rows.add(
             0,
             event.copy(
                 agentId = event.agentId.take(100),
                 status = event.status.take(30),
                 detail = event.detail.take(500),
-                providerId = event.providerId.take(100),
-                model = event.model.take(160),
+                providerId = event.providerId.ifBlank { current?.providerId.orEmpty() }.take(100),
+                model = event.model.ifBlank { current?.model.orEmpty() }.take(160),
                 attempts = event.attempts.coerceAtLeast(0),
                 processId = event.processId.ifBlank { processId },
-                estimatedInputTokens = event.estimatedInputTokens.coerceAtLeast(0L),
-                estimatedOutputTokens = event.estimatedOutputTokens.coerceAtLeast(0L),
-                idempotencyKey = event.idempotencyKey.take(240),
-                baseUrl = event.baseUrl.take(300)
+                estimatedInputTokens = event.estimatedInputTokens.coerceAtLeast(0L)
+                    .takeIf { it > 0L } ?: current?.estimatedInputTokens ?: 0L,
+                estimatedOutputTokens = event.estimatedOutputTokens.coerceAtLeast(0L)
+                    .takeIf { it > 0L } ?: current?.estimatedOutputTokens ?: 0L,
+                idempotencyKey = event.idempotencyKey.ifBlank { current?.idempotencyKey.orEmpty() }.take(240),
+                baseUrl = event.baseUrl.ifBlank { current?.baseUrl.orEmpty() }.take(300)
             )
         )
         return save(context, rows.take(MAX_EVENTS))
