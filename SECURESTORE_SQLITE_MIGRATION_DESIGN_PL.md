@@ -31,9 +31,9 @@ Tabela `store_metadata`:
 - `key TEXT PRIMARY KEY NOT NULL`
 - `value TEXT NOT NULL`
 
-Klucz metadata `migration_state` przyjmuje `complete_v1` wyłącznie w tej samej transakcji, w której zapisano wszystkie rekordy i zakończono kontrole. Dodatkowo przechować `source_schema=shared_preferences_v1` oraz liczbę rekordów dla diagnostyki. Bez sekretów i bez pełnych wartości profili w logach.
+W `SQLiteOpenHelper.onConfigure()` obowiązkowo włączyć `PRAGMA foreign_keys=ON`; nie zakładać, że SQLite wymusza FK domyślnie. Klucz metadata `migration_state` przyjmuje `complete_v1` wyłącznie w tej samej transakcji, w której zapisano wszystkie rekordy i zakończono kontrole. Dodatkowo przechować `source_schema=shared_preferences_v1` oraz liczbę rekordów dla diagnostyki. Bez sekretów i bez pełnych wartości profili w logach.
 
-Relacje rodziców walidować przed transakcją: parent musi istnieć, brak self-parent i cykli. FK stanowi dodatkową ochronę integralności.
+Relacje rodziców walidować przed transakcją: parent musi istnieć, brak self-parent i cykli. FK stanowi dodatkową ochronę integralności. W transakcji można wstawiać rekordy w dowolnej kolejności dzięki odroczonemu FK, ale przed zatwierdzeniem muszą istnieć wszyscy rodzice. Dodatkowo sprawdzać spójność: `provider_configs.id == config_json.id` oraz `parent_provider_id == config_json.parentProviderId` (pusty rodzic normalizowany do NULL). Po ponownym otwarciu DB wykonać `PRAGMA quick_check` i `PRAGMA foreign_key_check`; jakikolwiek wynik inny niż poprawny zatrzymuje migrację/uruchomienie i zachowuje źródło legacy.
 
 ## 3. Jednorazowa migracja legacy → SQLite
 
