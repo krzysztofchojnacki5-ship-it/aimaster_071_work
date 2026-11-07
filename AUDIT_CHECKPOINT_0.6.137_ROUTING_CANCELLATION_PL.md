@@ -2059,3 +2059,10 @@ Doprecyzowanie projektu SQLite:
 - Run `42415438103`, job `128532366193`, `in_progress`; testy jednostkowe i `assembleDebug` jeszcze nie rozpoczęte na ostatnim odczycie.
 
 - `navigate("Asystent")` i `newChat()` używają teraz `saveCurrentId()`; usunięto bezpośrednie `apply()` dla `last_user_chat_id`. Nieudany zapis wstrzymuje przełączenie. Commit `2db4679b21a5f908b150297d18e3ba23a7636d0a`; kontrola statyczna potwierdziła brak bezpośrednich zapisów mirror w MainActivity.
+
+### Checkpoint 0.6.139 — legacy mirror
+
+- Bezpośredni commit `chat_messages` z MainActivity przeniesiono do `ChatHistoryStore.writeLegacyMirror()`.
+- Zapis używa blokady `chat_state` i wspólnego `SharedPreferencesWriteHealth.commit()`.
+- Testy pokrywają awarię przed apply (stary mirror pozostaje) oraz oczekiwanie na blokadę.
+- Commity `173e1ba8faff4870732209ac983c61a88c840bf4`, `ff41c04fb8f0dba91a216f3fc75c7f60fbf1d347`, `bf3556baa3d4bb491b96e08b89cd062bc403f46b`. ADDED / NOT RUN.
