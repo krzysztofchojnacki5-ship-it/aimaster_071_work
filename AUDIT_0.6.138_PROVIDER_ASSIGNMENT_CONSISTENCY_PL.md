@@ -243,3 +243,23 @@ Testy odtwarzają teraz także istotną część rzeczywistego startu `MainActiv
 - APK nie tworzono; Companion pozostaje nieaktywny.
 
 Następny krok: uruchomić workflow Android audit dla aktualnego HEAD i dopiero po wyniku rozstrzygnąć, czy potrzebna jest poprawka testu lub kodu produkcyjnego.
+
+
+## Kolejny blok — wyjątki commitu i odzyskiwanie po błędzie odczytu
+
+Dodano cztery scenariusze do `SecureStoreReplacementRecoveryTest.kt`:
+
+1. Wyjątek z `commitEditor` po `editor.apply()`: metoda importu zwraca false, latch zostaje ustawiony, dalsze odczyty i zapisy są blokowane, a po symulowanym restarcie można odczytać nowy snapshot widoczny w SharedPreferences.
+2. Wyjątek przed zastosowaniem edytora: stary katalog pozostaje nienaruszony; po resecie latcha odczytywany jest stary snapshot.
+3. Błąd walidacji późniejszej pozycji w imporcie wieloelementowym: wcześniejszy poprawny element z sekretem nie powoduje żadnej mutacji; zachowany zostaje stary katalog i brak jest nowych rekordów/sekretów.
+4. Przejściowy wyjątek przy odczycie `provider_ids`: odczyt zwraca pustą listę i zatruwa bieżący proces; po symulowanym restarcie i odczycie z bazowych SharedPreferences trwały katalog jest ponownie dostępny.
+
+Commity testowe:
+- `9dc9f6175389f559def8d38c0164dea5c66d789c` — wyjątek po apply.
+- `15db8bf371d99fea3390abf4bdaf5041315a8cef` — wyjątek przed apply.
+- `61b476988f85fcee709490ff7a308354a5949dca` — późna walidacja bez mutacji.
+- `30e0f496a4383d935563a35e7b61b1742f853c71` — odzyskiwanie po błędzie odczytu.
+
+### Status CI
+
+Run `42411603439` dla aktualnego HEAD `30e0f496a4383d935563a35e7b61b1742f853c71` został uruchomiony. Ostatni odczyt: job `Unit tests and debug compilation` jest `in_progress`; szczegółowe kroki nie były jeszcze dostępne. Wynik testów i kompilacji pozostaje niepotwierdzony.
