@@ -68,6 +68,18 @@ object ChatHistoryStore {
     }.getOrNull()
 
     /**
+     * Returns true only while the legacy mirror is eligible for one-time migration.
+     * A present canonical document (including an intentionally empty chats object) always wins.
+     * Null means preference state could not be read safely; callers must fail closed.
+     */
+    fun shouldImportLegacyMirror(context: Context): Boolean? = runCatching {
+        if (SharedPreferencesWriteHealth.isUncertain(PREFS)) return@runCatching null
+        SharedPreferencesWriteHealth.withHealthyAccess(PREFS) {
+            !context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).contains(KEY)
+        }
+    }.getOrNull()
+
+    /**
      * Performs a read-modify-write against one locked snapshot. Callers must mutate the supplied
      * root only inside this callback; returning false means no persistence is needed.
      */
