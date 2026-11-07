@@ -1256,6 +1256,9 @@ class MainActivity : Activity() {
     private fun chatWithFallback(config: ProviderConfig, systemPrompt: String, userText: String, mime: String, b64: String,
                                  requestTaskId: String, requestAgentId: String, requestChatId: String,
                                  requestScope: ProviderClient.RequestScope, budgetReservationId: String = ""): ChatResponse {
+        check(!store.isStorageUncertain()) {
+            "Magazyn konfiguracji ma niepewny stan po błędzie zapisu. Uruchom ponownie AI MASTER PRO przed wysłaniem kolejnego żądania."
+        }
         val allConfigs = store.allConfigs().mapNotNull { j -> runCatching { loadProvider(j.optString("id")) }.getOrNull() }
         val primaryBaseId = config.parentProviderId.ifBlank { config.id }
         val freeBackups = allConfigs.filter {
@@ -2257,6 +2260,11 @@ class MainActivity : Activity() {
     }
 
     private fun showModelPicker() {
+        if (store.isStorageUncertain()) {
+            toast("Magazyn konfiguracji wymaga ponownego uruchomienia aplikacji. Otwórz MODELE, aby zobaczyć instrukcję.")
+            navigate("Modele")
+            return
+        }
         val box = LinearLayout(this)
         box.orientation = LinearLayout.VERTICAL
         box.setPadding(dp(6), dp(6), dp(6), dp(10))
