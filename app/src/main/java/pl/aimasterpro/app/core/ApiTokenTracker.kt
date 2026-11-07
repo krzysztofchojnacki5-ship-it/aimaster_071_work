@@ -647,6 +647,22 @@ object ApiTokenTracker {
     private fun sumNonNegativeCosts(values: Iterable<Double>): Double =
         values.fold(0.0, ::addNonNegativeCosts)
 
+    /** Exact finite aggregation for admission decisions; saturation is diagnostics-only. */
+    private fun tryAddNonNegativeCosts(left: Double, right: Double): Double? {
+        val a = left.takeIf { it.isFinite() && it > 0.0 } ?: 0.0
+        val b = right.takeIf { it.isFinite() && it > 0.0 } ?: 0.0
+        if (a > Double.MAX_VALUE - b) return null
+        return a + b
+    }
+
+    private fun trySumNonNegativeCosts(values: Iterable<Double>): Double? {
+        var total = 0.0
+        for (value in values) {
+            total = tryAddNonNegativeCosts(total, value) ?: return null
+        }
+        return total
+    }
+
     fun calculateSummary(records: List<TokenRecord>): SummaryStats = SummaryStats(
         totalQueries = records.size,
         inputTokens = sumTokenCounts(records.map { it.inputTokens }),
@@ -715,12 +731,16 @@ object ApiTokenTracker {
             val key = globalReserveAgentId.lowercase(Locale.ROOT)
             perAgentUsed[key] = addTokenCounts(perAgentUsed[key] ?: 0L, globalReserveTokens)
         }
-        var monthlyCostUsed = sumNonNegativeCosts(
+        val monthlyCostUsedInitial = trySumNonNegativeCosts(
             recent.map { it.costPln } +
                 activeReservations.values.flatMap { r ->
                     listOf(r.globalReserveCostPln) + r.tasks.map { it.costPlnRemaining }
                 } + listOf(globalReserveCostPln)
-        )
+        ) ?: run {
+            val reason = "Wstrzymano: suma dotychczasowych kosztów i rezerw przekracza zakres bezpiecznej wyceny."
+            return BatchBudgetPlan(emptySet(), requests.associate { it.taskId to reason }, 0L, 0.0)
+        }
+        var monthlyCostUsed = monthlyCostUsedInitial
         if (limits.monthlyCostPlnLimit > 0.0 && monthlyCostUsed > limits.monthlyCostPlnLimit) {
             val reason = "Wstrzymano: sama rezerwa kosztowa wraz z dotychczasowym użyciem przekracza miesięczny limit."
             return BatchBudgetPlan(emptySet(), requests.associate { it.taskId to reason }, 0L, 0.0)
@@ -756,20 +776,25 @@ object ApiTokenTracker {
                 request.estimatedOutputTokens.coerceAtLeast(0L) * conservativeOutputRate) / 1_000_000.0
             val exchangeRate = getExchangeRate(context)
             val estimatedPln = usd * exchangeRate
+            val nextMonthlyCost = if (estimatedPln.isFinite() && estimatedPln >= 0.0)
+                tryAddNonNegativeCosts(monthlyCostUsed, estimatedPln) else null
+            val nextBatchReserveCost = if (estimatedPln.isFinite() && estimatedPln >= 0.0)
+                tryAddNonNegativeCosts(reservedCost, estimatedPln) else null
             val reason = when {
                 !exchangeRate.isFinite() || exchangeRate <= 0.0 || !estimatedPln.isFinite() || estimatedPln < 0.0 -> "Wstrzymano: nieprawidłowy kurs waluty lub wycena modelu; nie można bezpiecznie obliczyć kosztu."
-                exceedsTokenLimit(dailyUsed, estimate, limits.dailyTokenLimit) -> "Pominięto: brak dziennego budżetu tokenów (limit ${limits.dailyTokenLimit})."
-                exceedsTokenLimit(agentUsed, estimate, limits.agentTokenLimit) -> "Pominięto: agent przekroczyłby dzienny limit ${limits.agentTokenLimit} tokenów."
-                limits.monthlyCostPlnLimit > 0.0 && addNonNegativeCosts(monthlyCostUsed, estimatedPln) > limits.monthlyCostPlnLimit -> "Pominięto: przekroczony zostałby miesięczny budżet ${limits.monthlyCostPlnLimit} PLN."
+                nextMonthlyCost == null || nextBatchReserveCost == null -> "Pominięto: łączna wycena zadań i rezerw przekroczyłaby zakres bezpiecznej reprezentacji kosztu."
+                exceedsTokenLimit(dailyUsed, estimate, limits.dailyTokenLimit) -> "Pominięto: brak dziennego budżetu tokenów."
+                exceedsTokenLimit(agentUsed, estimate, limits.agentTokenLimit) -> "Pominięto: agent przekroczyłby dzienny limit tokenów."
+                limits.monthlyCostPlnLimit > 0.0 && nextMonthlyCost > limits.monthlyCostPlnLimit -> "Pominięto: przekroczony zostałby miesięczny budżet."
                 else -> null
             }
             if (reason == null) {
                 allowed += request.taskId
                 dailyUsed = addTokenCounts(dailyUsed, estimate)
                 perAgentUsed[agentKey] = addTokenCounts(agentUsed, estimate)
-                monthlyCostUsed = addNonNegativeCosts(monthlyCostUsed, estimatedPln)
+                monthlyCostUsed = nextMonthlyCost!!
                 reservedTokens += estimate
-                reservedCost = addNonNegativeCosts(reservedCost, estimatedPln)
+                reservedCost = nextBatchReserveCost!!
                 newReservationTasks += ActiveReservationTask(request.taskId, request.agentId, request.providerId, request.baseUrl, request.modelName, estimate, estimatedPln)
             } else {
                 blocked[request.taskId] = reason
