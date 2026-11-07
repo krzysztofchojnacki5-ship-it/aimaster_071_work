@@ -1831,3 +1831,13 @@ Doprecyzowanie projektu SQLite:
 - Dodatkowy test zachowuje kontrolę nad resetem latcha wyłącznie w sekcji finally. W produkcji nie ma ścieżki ręcznego odblokowania; wymagany jest restart procesu.
 - Commit testu: `21aad12b`; ograniczenie punktu wstrzykiwania do konstruktora internal i uporządkowanie odczytów: `8ffd38ad`.
 - CI run dla `21aad12b` mógł zostać anulowany przez kolejny push w ramach concurrency. Ostateczny CI należy przypisać do najnowszego SHA kodu `8ffd38ad`, a nie do wcześniejszego runu.
+
+
+### Dodatkowe odcięcie ścieżek użycia po awarii magazynu — 2026-11-07
+
+- Audyt wywołań `SecureStore` w `MainActivity` wykazał, że samo zablokowanie metod magazynu i pokazanie ostrzeżenia w MODELE nie wystarcza: `chatWithFallback()` otrzymuje już zbudowany obiekt profilu i mógłby próbować wysłać żądanie, mimo że `allConfigs()` zwraca pustą listę po awarii.
+- Dodano twardy warunek na wejściu do `chatWithFallback()`: stan niepewny kończy ścieżkę przed przygotowaniem fallbacków i przed wysłaniem żądania do dostawcy.
+- `showModelPicker()` wykrywa ten stan i kieruje użytkownika do MODELE, gdzie znajduje się instrukcja restartu zamiast prezentować pustą listę profili jako normalny stan.
+- Weryfikacja statyczna potwierdziła oba guardy w aktualnym `MainActivity.kt`.
+- Commit: `23c3b590`.
+- CI uruchomione dla SHA `23c3b590`, run `42328456275`; status przy zapisie checkpointu: pending. Starszy run `42328153066` dla `8ffd38ad` nadal był in_progress, ale nowszy push może spowodować anulowanie przez concurrency. Nie ma jeszcze potwierdzonego PASS.
