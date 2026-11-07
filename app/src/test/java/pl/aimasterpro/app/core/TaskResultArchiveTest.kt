@@ -1,6 +1,8 @@
 package pl.aimasterpro.app.core
 
 import android.content.Context
+import org.json.JSONArray
+import org.json.JSONObject
 import org.junit.Assert.*
 import org.junit.Before
 import org.junit.Test
@@ -60,6 +62,52 @@ class TaskResultArchiveTest {
         assertNull(TaskResultArchive.get(context, "fractional-time"))
         assertFalse(TaskResultArchive.put(context, "new-task", "developer", "new report", "p", "m", 2_000L))
         assertEquals(corrupt, prefs.getString("entries", null))
+    }
+
+    @Test fun archivedReportIsRestoredToItsChatExactlyOnce() {
+        val chatId = "chat-recovery-1"
+        val root = JSONObject()
+            .put("currentId", chatId)
+            .put("chats", JSONObject().put(chatId, JSONObject()
+                .put("title", "Recovery test")
+                .put("messages", JSONArray())
+                .put("agentActivity", JSONArray())))
+        assertTrue(ChatHistoryStore.writeRoot(context, root))
+        assertTrue(TaskResultArchive.put(
+            context, "task-recovery-1", "RESEARCHER", "Pełny raport odzyskany po restarcie.",
+            "provider-a", "model-a", 1_000L, chatId
+        ))
+
+        assertEquals(1, TaskResultArchive.restoreArchivedReports(context))
+        val activity = ChatHistoryStore.readRoot(context)!!
+            .getJSONObject("chats").getJSONObject(chatId).getJSONArray("agentActivity")
+        assertEquals(1, activity.length())
+        assertTrue(activity.optString(0).contains("[TASK_REPORT_ID:task-recovery-1]"))
+        assertTrue(activity.optString(0).contains("Pełny raport odzyskany po restarcie."))
+
+        assertEquals(0, TaskResultArchive.restoreArchivedReports(context))
+        val afterRetry = ChatHistoryStore.readRoot(context)!!
+            .getJSONObject("chats").getJSONObject(chatId).getJSONArray("agentActivity")
+        assertEquals(1, afterRetry.length())
+    }
+
+    @Test fun legacyArchiveWithoutChatIdIsNotAttachedToAnUnrelatedConversation() {
+        val chatId = "chat-unrelated"
+        val root = JSONObject()
+            .put("currentId", chatId)
+            .put("chats", JSONObject().put(chatId, JSONObject()
+                .put("title", "Unrelated")
+                .put("messages", JSONArray())
+                .put("agentActivity", JSONArray())))
+        assertTrue(ChatHistoryStore.writeRoot(context, root))
+        assertTrue(TaskResultArchive.put(
+            context, "legacy-task", "RESEARCHER", "Legacy report", "provider-a", "model-a", 1_000L
+        ))
+
+        assertEquals(0, TaskResultArchive.restoreArchivedReports(context))
+        val activity = ChatHistoryStore.readRoot(context)!!
+            .getJSONObject("chats").getJSONObject(chatId).getJSONArray("agentActivity")
+        assertEquals(0, activity.length())
     }
 
     @Test fun preferenceAccessFailureDoesNotPretendArchiveIsEmptyOrAcceptNewReport() {
