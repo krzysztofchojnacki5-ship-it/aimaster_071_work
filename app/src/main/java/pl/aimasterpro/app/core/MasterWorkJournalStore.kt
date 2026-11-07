@@ -69,7 +69,7 @@ object MasterWorkJournalStore {
     fun updateActive(context: Context, taskId: String, transform: (Record) -> Record?): Record? =
         transaction(context) { rows ->
             val current = rows.firstOrNull { it.taskId == taskId } ?: return@transaction null
-            if (current.status != "ACTIVE") return@transaction current
+            if (current.status != "ACTIVE") return@transaction null
             val next = runCatching { transform(current) }.getOrNull() ?: return@transaction null
             if (next.taskId != current.taskId || !valid(next)) return@transaction null
             if (!write(context, listOf(next) + rows.filterNot { it.taskId == taskId })) return@transaction null
