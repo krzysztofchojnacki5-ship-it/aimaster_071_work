@@ -16,6 +16,7 @@ class AiMemoryStoreTest {
     @Before fun reset() {
         context.getSharedPreferences("ai_master_memory_store_v1", Context.MODE_PRIVATE)
             .edit().clear().commit()
+        SharedPreferencesWriteHealth.resetForTests("ai_master_memory_store_v1")
     }
 
     @Test fun contextIsBoundedAndDoesNotInjectOperationalStatsByDefault() {
@@ -65,5 +66,13 @@ class AiMemoryStoreTest {
         assertFalse(defaultContext.contains("METRYKI OPERACYJNE"))
         val expanded = AiMemoryStore.contextString(context, "", maxChars = 2_000, includeOperationalSummary = true)
         assertTrue(expanded.length <= 2_000)
+    }
+
+    @Test fun ambiguousMemoryCommitBlocksFurtherMutation() {
+        val failing = AmbiguousCommitContext(context, "ai_master_memory_store_v1")
+        assertFalse(AiMemoryStore.addMemory(failing, "Ambiguous write must not be trusted."))
+        assertFalse(AiMemoryStore.addMemory(context, "Second write must be blocked."))
+        assertFalse(AiMemoryStore.removeMemory(context, "anything"))
+        assertTrue(AiMemoryStore.getMemories(context).isNotEmpty())
     }
 }
