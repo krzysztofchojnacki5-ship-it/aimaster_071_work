@@ -62,8 +62,9 @@ object ProviderCooldownStore {
         check(!SharedPreferencesWriteHealth.isUncertain(PREFS)) {
             "Provider cooldown storage is unavailable after an ambiguous durable write."
         }
-        val raw = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString(KEY, null)
-            ?: return@runCatching emptyList()
+        val raw = SharedPreferencesWriteHealth.withHealthyAccess(PREFS) {
+            context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString(KEY, null)
+        } ?: return@runCatching emptyList()
         val array = JSONArray(raw)
         require(array.length() <= MAX_STATES) { "Too many cooldown rows." }
         val seen = mutableSetOf<String>()
