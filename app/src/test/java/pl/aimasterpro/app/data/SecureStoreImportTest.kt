@@ -213,4 +213,11 @@ class SecureStoreImportTest {
         assertFalse(hasUnreadableExistingSecrets(emptySet(), emptySet()))
     }
 
+    @Test fun unreadableSecretReplacementRequiresExistingUsableKeystoreAlias() {
+        assertTrue(canReplaceUnreadableSecret(aliasExists = true, keyIsSecretKey = true))
+        assertFalse(canReplaceUnreadableSecret(aliasExists = false, keyIsSecretKey = false))
+        assertFalse(canReplaceUnreadableSecret(aliasExists = true, keyIsSecretKey = false))
+        assertFalse(canReplaceUnreadableSecret(aliasExists = false, keyIsSecretKey = true))
+    }
+
 }
