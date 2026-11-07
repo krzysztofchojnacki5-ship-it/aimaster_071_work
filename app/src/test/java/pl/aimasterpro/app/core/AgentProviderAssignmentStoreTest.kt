@@ -252,7 +252,7 @@ class AgentProviderAssignmentStoreTest {
         SharedPreferencesWriteHealth.resetForTests("chat_state")
         SecureStoreHealth.resetForTests()
         val recoveredCatalog = SecureStore(base).allConfigs().map { it.optString("id") }.toSet()
-        assertEquals(setOf("new-master", "new-coder", "gemini", "groq"), recoveredCatalog)
+        assertEquals(setOf("new-master", "new-coder"), recoveredCatalog)
 
         val recovered = AgentProviderAssignmentStore.reconcileExistingAssignments(
             base,
@@ -316,6 +316,7 @@ class AgentProviderAssignmentStoreTest {
         SharedPreferencesWriteHealth.resetForTests("chat_state")
         SecureStoreHealth.resetForTests()
         val recoveredCatalog = SecureStore(base).allConfigs().map { it.optString("id") }.toSet()
+        assertEquals(setOf("new-master", "new-coder", "gemini", "groq"), recoveredCatalog)
         val recovered = AgentProviderAssignmentStore.reconcileExistingAssignments(
             base, defaults, recoveredCatalog, "old-master"
         )
