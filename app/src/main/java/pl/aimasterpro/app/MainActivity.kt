@@ -2942,7 +2942,8 @@ class MainActivity : Activity() {
             chat.put("messages", arr).put("assistantTaskIds", ids).put("updatedAt", System.currentTimeMillis())
             true
         }
-        if (!found || !saved) {
+        if (!found) return false
+        if (!saved) {
             android.util.Log.e("AIMasterChat", "Nie udało się trwale dopisać odpowiedzi do poprzedniego czatu.")
             return false
         }
@@ -3096,7 +3097,7 @@ class MainActivity : Activity() {
             chat.put("agentActivity", rows).put("updatedAt", System.currentTimeMillis())
             true
         }
-        if (!found || !saved) {
+        if (found && !saved) {
             android.util.Log.e("AIMasterChat", "Nie udało się trwale dopisać aktywności poprzedniego czatu.")
         }
         if (screen == "Rozmowy" && collaborationChatId == chatId) {
