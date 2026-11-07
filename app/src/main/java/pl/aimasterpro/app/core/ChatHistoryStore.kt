@@ -95,20 +95,20 @@ object ChatHistoryStore {
     }.getOrDefault(false)
 
     @Synchronized
-    fun writeRoot(context: Context, root: JSONObject): Boolean {
-        if (SharedPreferencesWriteHealth.isUncertain(PREFS)) return false
-        // Re-validate before writing so callers cannot persist malformed chat structures.
-        val serialized = root.toString()
-        val validated = runCatching {
+    fun writeRoot(context: Context, root: JSONObject): Boolean = runCatching {
+        // Keep validation, existing-document check, and commit in the same file-wide critical
+        // section. updateRoot already owns this reentrant monitor; direct callers now get the
+        // same exclusion guarantee instead of a read/commit race.
+        SharedPreferencesWriteHealth.withHealthyAccess(PREFS) {
+            val serialized = root.toString()
             // Never allow a caller to replace an unreadable existing history with a fresh document.
-            if (readRoot(context) == null) return false
+            if (readRoot(context) == null) return@withHealthyAccess false
             val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
             val candidate = JSONObject(serialized)
             validate(candidate)
             SharedPreferencesWriteHealth.commit(PREFS, prefs.edit().putString(KEY, serialized))
-        }.getOrDefault(false)
-        return validated
-    }
+        }
+    }.getOrDefault(false)
 
     private fun validate(root: JSONObject) {
         if (!root.has("chats")) return
