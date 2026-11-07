@@ -958,3 +958,7 @@ Dodano logowanie awarii odtwarzania raportów agentów (`AIMasterRecovery`) i pr
 ### 0.6.139 — domknięcie blokady ChatHistoryStore.writeRoot
 
 Bezpośredni `writeRoot()` obejmuje teraz jedną wspólną sekcją krytyczną walidację, kontrolę istniejącego dokumentu i commit. Dodano test potwierdzający blokowanie zapisu pod blokadą `chat_state`. Commity `f9d566f9...` i `4028df55...`; test ADDED / NOT RUN.
+
+### 0.6.139 — atomowość identyfikatora czatu
+
+Usunięto dwufazowy zapis `currentId` oraz `last_user_chat_id`. Nowe API `updateRootAndLastUserChatId()` zapisuje oba pola jednym commitem pod blokadą `chat_state`; `MainActivity.saveCurrentId()` używa nowej ścieżki dla rozmów użytkownika. Dodano test poprawnego zapisu i test awarii niejednoznacznego commitu. Commity `c85a4a52...`, `e49f3d94...`, `a2c955b0...`; ADDED / NOT RUN.
