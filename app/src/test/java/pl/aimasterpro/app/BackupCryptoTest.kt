@@ -85,4 +85,31 @@ class BackupCryptoTest {
         val decrypted = BackupCrypto.decrypt(encrypted, password)
         assertEquals(plaintext, decrypted)
     }
+    @Test
+    fun testPayloadOverLimitIsRejectedBeforeEncryption() {
+        val oversized = "x".repeat(4 * 1024 * 1024 + 1)
+        try {
+            BackupCrypto.encrypt(oversized, "securepassword123".toCharArray())
+            fail("Payload above 4 MiB must be rejected.")
+        } catch (_: IllegalArgumentException) { }
+    }
+
+    @Test
+    fun testEnvelopeOverLimitIsRejectedBeforeParsing() {
+        val oversized = " ".repeat(6 * 1024 * 1024 + 1)
+        try {
+            BackupCrypto.decrypt(oversized, "securepassword123".toCharArray())
+            fail("Envelope above 6 MiB must be rejected.")
+        } catch (_: IllegalArgumentException) { }
+    }
+
+    @Test
+    fun testTooShortPasswordIsRejectedOnDecrypt() {
+        val encrypted = BackupCrypto.encrypt("secret", "securepassword123".toCharArray())
+        try {
+            BackupCrypto.decrypt(encrypted, "short".toCharArray())
+            fail("Password shorter than eight characters must be rejected.")
+        } catch (_: IllegalArgumentException) { }
+    }
+
 }
