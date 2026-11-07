@@ -412,12 +412,17 @@ class ProviderClient(
                 val output = exactNonNegativeCount(usageObj, "completion_tokens")
                 val reportedTotal = exactNonNegativeCount(usageObj, "total_tokens")
                 val reportedTotalFieldValid = usageObj == null || !usageObj.has("total_tokens") || reportedTotal != null
-                val realUsage = validUsageBreakdown(input, output, reportedTotal, 0L, 0L, reportedTotalFieldValid)
+                val promptDetails = usageObj?.optJSONObject("prompt_tokens_details")
+                val cached = exactNonNegativeCount(promptDetails, "cached_tokens", 0L)
+                val cacheWrite = exactNonNegativeCount(promptDetails, "cache_write_tokens", 0L)
+                val realUsage = validUsageBreakdown(input, output, reportedTotal, cached, 0L, reportedTotalFieldValid, cacheWrite)
                 val finalInput = if (realUsage) input!! else (systemPrompt.length + userText.length) / 4L
                 val finalOutput = if (realUsage) output!! else text.length / 4L
                 val finalTotal = if (realUsage) Math.addExact(finalInput, finalOutput) else finalInput + finalOutput
+                val finalCached = if (realUsage) cached!! else 0L
+                val finalCacheWrite = if (realUsage) cacheWrite!! else 0L
                 val status = if (realUsage) "REAL" else "ESTIMATED"
-                ChatResponse(text, TokenUsageResult(finalInput, finalOutput, finalTotal, 0L, 0L, status), providerId = config.id, model = responseModel(result, config.model))
+                ChatResponse(text, TokenUsageResult(finalInput, finalOutput, finalTotal, 0L, finalCached, status, finalCacheWrite), providerId = config.id, model = responseModel(result, config.model))
             } else {
                 // Native Gemini REST API
                 val encodedKey = java.net.URLEncoder.encode(config.apiKey, "UTF-8")
