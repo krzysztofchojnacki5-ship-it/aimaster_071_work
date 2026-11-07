@@ -1317,3 +1317,14 @@ Weryfikacja:
 - Krok :app:testDebugUnitTest :app:assembleDebug: IN_PROGRESS.
 - Run obejmuje Etap 15 i Etap 16; późniejszy commit checkpointu jest wyłącznie dokumentacyjny.
 - Nie ma jeszcze potwierdzonego wyniku PASS.
+
+
+### Przegląd współbieżności historii czatu — bez zmiany kodu
+
+Sprawdzono dokładniej wcześniejszy trop dotyczący możliwego wyścigu zapisu wiadomości i aktywności agentów. W MainActivity już istnieje wspólna synchronizacja instancyjna:
+- persistMessages() jest @Synchronized;
+- persistAgentActivity() jest @Synchronized;
+- appendAgentActivityForChat() jest @Synchronized;
+- appendToStoredChat() jest @Synchronized.
+
+Ponieważ te ścieżki używają tego samego monitora MainActivity, nie potwierdzono zgłoszonego wyścigu dla tych operacji. Nie wprowadzono zbędnej zmiany. Dodatkowo potwierdzono, że TeamRunEngine sprawdza boolean z onRequestStarting i nie wysyła POST, jeśli trwały checkpoint REQUESTING nie został zapisany.
