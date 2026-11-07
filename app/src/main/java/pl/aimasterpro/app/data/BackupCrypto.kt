@@ -65,7 +65,10 @@ object BackupCrypto {
         require(password.size >= 8) { "Hasło musi mieć co najmniej 8 znaków." }
         require(encoded.length <= MAX_ENVELOPE_CHARS) { "Plik kopii przekracza limit 6 MiB." }
         val envelope = runCatching { JSONObject(encoded) }.getOrElse { throw IllegalArgumentException("Nieprawidłowy format JSON kopii zapasowej.") }
-        require(envelope.optString("format") == "AIMASTER_BACKUP" && envelope.optInt("version") == 1) {
+        val formatValue = envelope.opt("format")
+        val versionValue = envelope.opt("version")
+        require(formatValue is String && formatValue == "AIMASTER_BACKUP" &&
+            (versionValue is Int || versionValue is Long) && (versionValue as Number).toLong() == 1L) {
             "To nie jest poprawna kopia zapasowa AI Master Pro (nieznany format lub wersja)."
         }
         val iterationsValue = envelope.opt("iterations")
