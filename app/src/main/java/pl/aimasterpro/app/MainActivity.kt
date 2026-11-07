@@ -5399,11 +5399,15 @@ class MainActivity : Activity() {
                 val p = proposals[which]
                 AlertDialog.Builder(this).setTitle("Wniosek • ${p.status}").setMessage("${p.text}\n\nDowody: ${p.evidenceCount} • Pewność: ${p.confidence}\nZadania źródłowe: ${p.sourceTaskIds.joinToString().ifBlank { "brak" }}\nAgenci: ${p.affectedAgents.joinToString()}\nModele: ${p.affectedModels.joinToString()}")
                     .setPositiveButton("Zatwierdź i dodaj do pamięci") { _, _ ->
-                        pl.aimasterpro.app.core.QualityLearningStore.setProposalStatus(this, p.id, "APPROVED")
-                        toast("Zatwierdzono. Wniosek będzie dołączany do pamięci MASTER-a."); showShell("Pamięć"); showMemory()
+                        val saved = pl.aimasterpro.app.core.QualityLearningStore.setProposalStatus(this, p.id, "APPROVED")
+                        toast(if (saved) "Zatwierdzono. Wniosek będzie dołączany do pamięci MASTER-a."
+                            else "Nie udało się trwale zatwierdzić wniosku i zsynchronizować pamięci.")
+                        showShell("Pamięć"); showMemory()
                     }.setNegativeButton("Odrzuć") { _, _ ->
-                        pl.aimasterpro.app.core.QualityLearningStore.setProposalStatus(this, p.id, "REJECTED")
-                        toast("Odrzucono wniosek."); showShell("Pamięć"); showMemory()
+                        val saved = pl.aimasterpro.app.core.QualityLearningStore.setProposalStatus(this, p.id, "REJECTED")
+                        toast(if (saved) "Odrzucono wniosek."
+                            else "Nie udało się trwale zmienić statusu wniosku.")
+                        showShell("Pamięć"); showMemory()
                     }.setNeutralButton("Zamknij", null).show()
             }.setNegativeButton("Zamknij", null).show()
         })
