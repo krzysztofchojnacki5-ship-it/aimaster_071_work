@@ -3766,7 +3766,8 @@ class MainActivity : Activity() {
         val saved = store.saveConfig(json)
         if (!saved) {
             if (store.isStorageUncertain()) {
-                toast("Błąd zapisu magazynu konfiguracji. Dla ochrony danych zamknij całkowicie AI MASTER PRO i uruchom ponownie aplikację.")
+                client.cancelActiveRequests()
+                toast("Błąd zapisu magazynu konfiguracji. Przerwano aktywne żądania API. Zamknij całkowicie AI MASTER PRO i uruchom ponownie aplikację.")
             } else {
                 toast("Nie udało się bezpiecznie zapisać klucza API. Konfiguracja nie została zapisana.")
             }
@@ -5781,7 +5782,14 @@ onRequestStarting = { task, actualProvider, estimatedInput, estimatedOutput, ide
                         selectedProviderId = configs.first().optString("id", "gemini")
                         showShell("Modele"); showProviders()
                         toast("Wczytano ${configs.size} konfiguracji modeli wraz z kluczami API.")
-                    }.onFailure { toast("Błąd bazy: ${it.message ?: "nieprawidłowy format"}") }
+                    }.onFailure {
+                        if (store.isStorageUncertain()) {
+                            client.cancelActiveRequests()
+                            toast("Błąd zapisu magazynu. Przerwano aktywne żądania API. Zamknij całkowicie AI MASTER PRO i uruchom ponownie aplikację.")
+                        } else {
+                            toast("Błąd bazy: ${it.message ?: "nieprawidłowy format"}")
+                        }
+                    }
                 }
             }.show()
     }
@@ -5937,7 +5945,12 @@ onRequestStarting = { task, actualProvider, estimatedInput, estimatedOutput, ide
             .setMessage("Znaleziono ${migrated.size} profili. Import odbywa się lokalnie. Profile z nieczytelnym, zaszyfrowanym polem klucza zostaną przeniesione bez klucza i będzie trzeba wpisać go ponownie. Zastąpić obecną konfigurację?")
             .setNegativeButton("Anuluj", null).setPositiveButton("Importuj") { _, _ ->
                 if (!store.replaceAllConfigs(migrated)) {
-                    toast("Import nie został zatwierdzony. Dotychczasowe konfiguracje pozostały bez zmian.")
+                    if (store.isStorageUncertain()) {
+                        client.cancelActiveRequests()
+                        toast("Błąd zapisu magazynu. Przerwano aktywne żądania API. Zamknij całkowicie AI MASTER PRO i uruchom ponownie aplikację.")
+                    } else {
+                        toast("Import nie został zatwierdzony. Dotychczasowe konfiguracje pozostały bez zmian.")
+                    }
                     return@setPositiveButton
                 }
                 modelCatalogPrefs.edit().remove("models_json").remove("last_sync").putLong("last_attempt", 0L).apply()
