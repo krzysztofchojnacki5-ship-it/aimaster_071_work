@@ -5,6 +5,8 @@ on:
     branches:
       - audit/0.6.137-routing-hardening
       - audit/0.6.140-chat-history-restore
+      - audit/0.6.141-navigation-atomicity
+      - audit/0.6.142-new-chat-atomicity
     paths-ignore:
       - '**/*.md'
       - '*.md'
