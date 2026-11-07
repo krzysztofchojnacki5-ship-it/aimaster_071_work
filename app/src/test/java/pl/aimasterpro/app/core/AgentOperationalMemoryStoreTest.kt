@@ -52,6 +52,19 @@ class AgentOperationalMemoryStoreTest {
         assertEquals(corrupt, prefs.getString("entries", null))
     }
 
+    @Test fun fractionalTimestampAndMalformedProvenanceInvalidateWholeMemory() {
+        val prefs = context.getSharedPreferences("ai_agent_operational_memory_v1", Context.MODE_PRIVATE)
+        val fractional = """[{"id":"entry-1","agentId":"tester","text":"valid memory entry","createdAt":1.5}]"""
+        assertTrue(prefs.edit().putString("entries", fractional).commit())
+        assertTrue(AgentOperationalMemoryStore.all(context).isEmpty())
+        assertNull(AgentOperationalMemoryStore.addApproved(context, "tester", "A nowa reguła po błędzie.") )
+        assertEquals(fractional, prefs.getString("entries", null))
+        val malformedSources = """[{"id":"entry-2","agentId":"tester","text":"valid memory entry","createdAt":1,"sourceTaskIds":[7]}]"""
+        assertTrue(prefs.edit().putString("entries", malformedSources).commit())
+        assertTrue(AgentOperationalMemoryStore.all(context).isEmpty())
+        assertEquals(malformedSources, prefs.getString("entries", null))
+    }
+
     @Test fun approvedOperationalMemoryIsCommittedBeforeReturning() {
         val prefs = context.getSharedPreferences("ai_agent_operational_memory_v1", Context.MODE_PRIVATE)
         val entry = AgentOperationalMemoryStore.addApproved(

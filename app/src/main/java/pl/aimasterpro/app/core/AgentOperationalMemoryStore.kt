@@ -4,6 +4,7 @@ import android.content.Context
 import org.json.JSONArray
 import org.json.JSONObject
 import java.util.Locale
+import java.math.BigDecimal
 import java.util.UUID
 
 /** Agent-scoped, locally persisted lessons. Only explicitly approved learning is stored here. */
@@ -97,20 +98,45 @@ object AgentOperationalMemoryStore {
     private fun read(context: Context): List<Entry>? = runCatching {
         val raw = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString(KEY, null) ?: "[]"
         val array = JSONArray(raw)
+        require(array.length() <= MAX_ENTRIES) { "Operational memory exceeds its supported size." }
+        val seenIds = hashSetOf<String>()
         (0 until array.length()).map { i ->
             val o = array.getJSONObject(i)
-            val id = o.optString("id").trim()
-            val agent = o.optString("agentId").trim()
-            val text = o.optString("text").trim()
-            require(id.isNotBlank() && agent.isNotBlank() && text.isNotBlank()) {
-                "Operational memory entry is missing its identity or content."
+            fun requiredText(name: String): String {
+                val value = o.opt(name)
+                require(value is String) { "Operational memory text field is invalid: $name." }
+                return value
             }
-            require(o.opt("createdAt") is Number) { "Operational memory timestamp is invalid." }
-            Entry(
-                id, agent, text.take(MAX_ENTRY_CHARS), o.optString("category").take(80),
-                o.optLong("createdAt"), strings(o.optJSONArray("sourceTaskIds")),
-                o.optString("confidence").take(40)
-            )
+            fun optionalText(name: String): String {
+                if (!o.has(name)) return ""
+                val value = o.opt(name)
+                require(value is String) { "Operational memory text field is invalid: $name." }
+                return value
+            }
+            val id = requiredText("id").trim()
+            val agent = requiredText("agentId").trim()
+            val text = requiredText("text").trim()
+            require(id.isNotBlank() && seenIds.add(id) && agent.isNotBlank() && text.isNotBlank()) {
+                "Operational memory entry is missing unique identity or content."
+            }
+            val createdValue = o.opt("createdAt")
+            require(createdValue is Int || createdValue is Long || createdValue is Double || createdValue is Float) {
+                "Operational memory timestamp is invalid."
+            }
+            val createdAt = if (createdValue is Int || createdValue is Long) (createdValue as Number).toLong()
+                else BigDecimal.valueOf((createdValue as Number).toDouble()).longValueExact()
+            require(createdAt >= 0L) { "Operational memory timestamp cannot be negative." }
+            val sources = if (!o.has("sourceTaskIds")) emptyList() else {
+                val sourceArray = o.optJSONArray("sourceTaskIds") ?: error("Operational memory provenance is invalid.")
+                require(sourceArray.length() <= 30)
+                (0 until sourceArray.length()).map { index ->
+                    val value = sourceArray.opt(index)
+                    require(value is String && value.isNotBlank()) { "Operational memory provenance contains an invalid ID." }
+                    value
+                }.also { require(it.distinct().size == it.size) }
+            }
+            Entry(id, agent, text.take(MAX_ENTRY_CHARS), optionalText("category").take(80),
+                createdAt, sources, optionalText("confidence").take(40))
         }
     }.getOrNull()
 
