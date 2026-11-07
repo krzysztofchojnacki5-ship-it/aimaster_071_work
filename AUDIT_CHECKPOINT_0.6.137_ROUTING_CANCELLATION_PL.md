@@ -1894,3 +1894,6 @@ Doprecyzowanie projektu SQLite:
 - Statyczna weryfikacja potwierdziła obecność czterech guardów. Commit: `e0400ed2`.
 - CI dla wcześniejszego SHA `fedc346d` nie waliduje tego commita; oczekujemy nowego runu. Nie przypisujemy PASS bez zakończonego joba.
 - Dokument projektu SQLite znajduje się na tej gałęzi w `SECURESTORE_SQLITE_MIGRATION_DESIGN_PL.md` (commit `c77f7386`). `main` zweryfikowany na SHA `752149d`, porównanie: 360 ahead / 0 behind przed najnowszym commitem kodu.
+
+
+- Doprecyzowano projekt SQLite (commit `f2265427`): tabela zachowuje pełny `config_json` po usunięciu wyłącznie `apiKey` i wewnętrznego `_secretUnavailable`, a relację rodzica przechowuje dodatkowo w kolumnie FK. To zachowuje nieznane/rozszerzone pola JSON, które obecny importer toleruje i przechowuje; prosty schemat z samymi znanymi kolumnami mógłby je utracić.
