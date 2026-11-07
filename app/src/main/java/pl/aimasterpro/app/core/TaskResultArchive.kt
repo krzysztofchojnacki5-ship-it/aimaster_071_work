@@ -90,6 +90,30 @@ object TaskResultArchive {
         }
     }
 
+    /** Acknowledges reports already durably present in chats_v2 without replaying history. */
+    @Synchronized
+    fun acknowledgePersisted(context: Context): Int {
+        val entries = latest(context).filter { it.chatId.isNotBlank() }
+        if (entries.isEmpty()) return 0
+        val root = ChatHistoryStore.readRoot(context) ?: return 0
+        val chats = root.optJSONObject("chats") ?: return 0
+        val acknowledged = entries.filter { entry ->
+            val chat = chats.optJSONObject(entry.chatId) ?: return@filter false
+            val rows = chat.optJSONArray("agentActivity") ?: JSONArray()
+            val marker = "[TASK_REPORT_ID:${entry.taskId}]"
+            if ((0 until rows.length()).any { rows.optString(it).contains(marker) }) return@filter true
+            val sameReportTaskCount = entries.count {
+                it.chatId == entry.chatId && it.report == entry.report
+            }
+            sameReportTaskCount == 1 && (0 until rows.length()).any { index ->
+                val existing = rows.optString(index)
+                !existing.contains("[TASK_REPORT_ID:") && existing.endsWith(entry.report)
+            }
+        }.map { it.taskId }.toSet()
+        if (acknowledged.isEmpty()) return 0
+        return if (acknowledge(context, acknowledged)) acknowledged.size else 0
+    }
+
     /**
      * Replays archived specialist reports into their owning chat activity timeline after a
      * process restart. A task marker makes the operation idempotent; no model/API request runs.
