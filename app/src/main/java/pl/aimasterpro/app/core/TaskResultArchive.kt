@@ -92,7 +92,9 @@ object TaskResultArchive {
         val root = ChatHistoryStore.readRoot(context) ?: return@runCatching 0
         val chats = root.optJSONObject("chats") ?: return@runCatching 0
         var restored = 0
-        entries.forEach { entry ->
+        // Archive rows are newest-first, while chat activity is an append-only timeline.
+        // Replay oldest-first so the timeline stays chronological and trimming keeps newest reports.
+        entries.asReversed().forEach { entry ->
             val chat = chats.optJSONObject(entry.chatId) ?: return@forEach
             val rows = chat.optJSONArray("agentActivity") ?: JSONArray()
             val marker = "[TASK_REPORT_ID:${entry.taskId}]"
