@@ -90,6 +90,62 @@ class TaskCheckpointStoreTest {
         assertTrue(TaskCheckpointStore.latest(context).single().detail.contains("trwały zapis wyniku"))
     }
 
+    @Test fun timedOutTaskCanBeReconciledOnlyAfterItsReportIsDurablyArchived() {
+        val taskId = "task-timeout-report-race"
+        val initial = TaskCheckpointStore.Event(
+            taskId = taskId, agentId = "RESEARCHER", status = "TIMED_OUT",
+            detail = "coordinator deadline elapsed", timestamp = 100L,
+            providerId = "openai", model = "gpt-4o-mini", attempts = 1,
+            processId = "previous-process", estimatedInputTokens = 200L,
+            estimatedOutputTokens = 500L, idempotencyKey = "team:$taskId:openai"
+        )
+        assertTrue(TaskCheckpointStore.record(context, initial))
+
+        // A late callback without durable evidence must not rewrite the terminal state.
+        assertTrue(TaskCheckpointStore.record(context, initial.copy(
+            status = "COMPLETED", detail = "late callback without archive"
+        )))
+        assertEquals("TIMED_OUT", TaskCheckpointStore.latest(context).single().status)
+
+        assertTrue(TaskResultArchive.put(
+            context, taskId, "RESEARCHER", "Late but durable report.",
+            "openai", "gpt-4o-mini", 150L, "chat-timeout-race"
+        ))
+        assertTrue(TaskCheckpointStore.record(context, initial.copy(
+            status = "COMPLETED", detail = "durable report archived", timestamp = 200L
+        )))
+        val reconciled = TaskCheckpointStore.latest(context).single()
+        assertEquals("COMPLETED", reconciled.status)
+        assertEquals("openai", reconciled.providerId)
+        assertEquals("team:$taskId:openai", reconciled.idempotencyKey)
+    }
+
+    @Test fun timedOutTaskMayRemainUsagePendingWhenArchivedReportExists() {
+        val taskId = "task-timeout-usage-race"
+        assertTrue(TaskCheckpointStore.record(context, TaskCheckpointStore.Event(
+            taskId = taskId, agentId = "RESEARCHER", status = "TIMED_OUT",
+            detail = "coordinator deadline elapsed", timestamp = 100L,
+            providerId = "openai", model = "gpt-4o-mini", attempts = 1,
+            processId = "previous-process", estimatedInputTokens = 200L,
+            estimatedOutputTokens = 500L, idempotencyKey = "team:$taskId:openai"
+        )))
+        assertTrue(TaskResultArchive.put(
+            context, taskId, "RESEARCHER", "Report with usage pending.",
+            "openai", "gpt-4o-mini", 150L, "chat-timeout-usage"
+        ))
+
+        assertTrue(TaskCheckpointStore.record(context, TaskCheckpointStore.Event(
+            taskId = taskId, agentId = "RESEARCHER", status = "USAGE_PENDING",
+            detail = "usage ledger write failed", timestamp = 200L,
+            providerId = "openai", model = "gpt-4o-mini", attempts = 1
+        )))
+        val pending = TaskCheckpointStore.latest(context).single()
+        assertEquals("USAGE_PENDING", pending.status)
+        assertEquals("team:$taskId:openai", pending.idempotencyKey)
+        assertEquals(200L, pending.estimatedInputTokens)
+        assertEquals(500L, pending.estimatedOutputTokens)
+    }
+
     @Test fun resultPersistPendingTaskIsCompletedWhenDurableArchiveAlreadyContainsReport() {
         assertTrue(TaskCheckpointStore.record(context, TaskCheckpointStore.Event(
             taskId = "task-result-archived", agentId = "RESEARCHER", status = "RESULT_PERSIST_PENDING",
