@@ -359,3 +359,11 @@ Rejestr rozróżnia paczkę źródłową od wersji aplikacji/APK. Numer paczki n
 - Commity produkcyjne: `4f5cc77994fa05ac9e7747e5f469182d9ddb977a` (bramka migracji w ChatHistoryStore), `42bf4479e77ff3b73cf93a025fd0c055406e55de` (restoreMessages).
 - Testy: `e7d1ae88f6c160f8c7743f3e754efe23241baa57` i `4baec9da3c72bcdf89a68431470cfec5749799e7`; obejmują brak/istnienie kanonicznego dokumentu oraz błąd odczytu i kwarantannę. ADDED / NOT RUN.
 - CI nadal dotyczy wyłącznie SHA `30e0f496...`; nowy kod nie ma jeszcze wyniku build/test. APK NOT BUILT; Companion NOT ACTIVATED.
+
+### Dodatkowy blok 0.6.139 — atomowe aktualizacje historii z MainActivity (2026-11-07)
+
+- Potwierdzona przyczyna ryzyka utraty aktualizacji: `ChatResponseArchive` i `TaskResultArchive` odtwarzają dane przez `ChatHistoryStore.updateRoot()`, natomiast metody MainActivity wcześniej wykonywały oddzielne `readRoot()` / `writeRoot()`. Monitor Activity nie serializuje się z zapisami archiwów.
+- Siedem ścieżek mutujących MainActivity przeniesiono do wspólnego atomowego read-modify-write: renameChat, deleteChat, persistMessages, persistAgentActivity, saveCurrentId, appendToStoredChat i appendAgentActivityForChat. W pliku MainActivity nie pozostał bezpośredni call site `ChatHistoryStore.writeRoot()`.
+- Commit produkcyjny: `49da9dcb2a9de7296301476b90c65301c000fc0e`; korekta zachowania no-op dla usuniętych czatów: `84c495ec0028394b6a1dab14b1599c31211c2f0e`.
+- Dodano test współbieżności `concurrentAtomicRootUpdatesPreserveMessageAndActivityChanges`, który równolegle dopisuje wiadomość i raport aktywności do tego samego czatu i sprawdza, że obie zmiany przetrwały. Commit testowy: `b4193751f496aa6d53846852deee1b77a969ad5f`.
+- Test ADDED / NOT RUN; CI 42411603439 nadal dotyczy SHA 30e0f496... i nie waliduje tych zmian. APK NOT BUILT; Companion NOT ACTIVATED.
