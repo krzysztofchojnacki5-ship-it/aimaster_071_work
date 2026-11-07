@@ -184,7 +184,7 @@ class MainActivity : Activity() {
             "Przywrócono $restoredReports archiwalnych raportów do historii właściwych rozmów."
         )
         seedDefaultProviders()
-        selectedProviderId = chatPrefs.getString("selected_provider", "gemini") ?: "gemini"
+        selectedProviderId = runCatching { chatPrefs.getString("selected_provider", "gemini") }.getOrNull() ?: ""
         restoreMessages()
         loadAgentActivity()
         client = ProviderClient()
@@ -193,10 +193,11 @@ class MainActivity : Activity() {
         }
         val validProviderIds = if (store.isStorageUncertain()) emptySet()
             else store.allConfigs().map { it.optString("id") }.filter { it.isNotBlank() }.toSet()
-        val recoveredAssignments = if (validProviderIds.isNotEmpty()) {
+        // A malformed legacy mirror is a storage-integrity failure, not a missing preference.
+        val legacyMasterRead = runCatching { chatPrefs.getString("selected_provider", null) }
+        val recoveredAssignments = if (validProviderIds.isNotEmpty() && legacyMasterRead.isSuccess) {
             pl.aimasterpro.app.core.AgentProviderAssignmentStore.reconcileExistingAssignments(
-                this, assignmentDefaults, validProviderIds,
-                chatPrefs.getString("selected_provider", null)
+                this, assignmentDefaults, validProviderIds, legacyMasterRead.getOrNull()
             )
         } else null
         if (recoveredAssignments != null) {
