@@ -568,7 +568,7 @@ object ApiTokenTracker {
                 perAgentUsed[agentKey] = addTokenCounts(agentUsed, estimate)
                 monthlyCostUsed = addNonNegativeCosts(monthlyCostUsed, estimatedPln)
                 reservedTokens += estimate
-                reservedCost += estimatedPln
+                reservedCost = addNonNegativeCosts(reservedCost, estimatedPln)
                 newReservationTasks += ActiveReservationTask(request.taskId, request.agentId, request.providerId, request.baseUrl, request.modelName, estimate, estimatedPln)
             } else {
                 blocked[request.taskId] = reason
