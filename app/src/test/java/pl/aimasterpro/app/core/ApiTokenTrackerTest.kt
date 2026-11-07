@@ -622,6 +622,18 @@ class ApiTokenTrackerTest {
         assertEquals(0.0, pricing.outputPer1MUsd, 0.0)
     }
 
+    @Test fun explicitPaidProviderCatalogOverridesStaleFreeAllowlist() {
+        ApiTokenTracker.replaceCatalogPricingForProvider(
+            context, "openrouter", "https://openrouter.ai/api/v1",
+            listOf(CatalogModelPrice("openrouter/free", 0.12, 0.34, explicitlyFree = false))
+        )
+        val pricing = ApiTokenTracker.getPricing(
+            context, "openrouter/free", "openrouter", "https://openrouter.ai/api/v1"
+        )
+        assertEquals(0.12, pricing.inputPer1MUsd, 0.0000001)
+        assertEquals(0.34, pricing.outputPer1MUsd, 0.0000001)
+    }
+
     @Test fun incompleteOrInvalidCatalogPricesAreRejected() {
         assertTrue(runCatching {
             ApiTokenTracker.replaceCatalogPricingForProvider(
