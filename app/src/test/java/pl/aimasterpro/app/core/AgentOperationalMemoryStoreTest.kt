@@ -61,6 +61,18 @@ class AgentOperationalMemoryStoreTest {
         assertEquals(entry.id, AgentOperationalMemoryStore.all(context).single().id)
     }
 
+    @Test fun preferenceAccessFailureDoesNotCrashOrPretendApprovedMemoryWasSaved() {
+        val failingContext = object : android.content.ContextWrapper(context) {
+            override fun getSharedPreferences(name: String, mode: Int): android.content.SharedPreferences {
+                throw IllegalStateException("controlled operational memory preferences failure")
+            }
+        }
+        assertNull(AgentOperationalMemoryStore.addApproved(
+            failingContext, "tester", "Ta zatwierdzona reguła nie może zostać utracona."
+        ))
+        assertTrue(AgentOperationalMemoryStore.all(failingContext).isEmpty())
+    }
+
     @Test fun malformedStorageDoesNotCrashReads() {
         context.getSharedPreferences("ai_agent_operational_memory_v1", Context.MODE_PRIVATE).edit().putString("entries", "not-json").commit()
         assertTrue(AgentOperationalMemoryStore.all(context).isEmpty())
