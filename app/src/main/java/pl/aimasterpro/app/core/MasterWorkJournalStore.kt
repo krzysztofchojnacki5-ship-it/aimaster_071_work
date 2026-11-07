@@ -62,6 +62,31 @@ object MasterWorkJournalStore {
         write(context, rows.filterNot { it.taskId == taskId })
     } ?: false
 
+    /**
+     * Applies progress/finalization only while a task is ACTIVE. Delayed callbacks cannot
+     * reopen PAUSED/BLOCKED work or overwrite a terminal COMPLETED record.
+     */
+    fun updateActive(context: Context, taskId: String, transform: (Record) -> Record?): Record? =
+        transaction(context) { rows ->
+            val current = rows.firstOrNull { it.taskId == taskId } ?: return@transaction null
+            if (current.status != "ACTIVE") return@transaction current
+            val next = runCatching { transform(current) }.getOrNull() ?: return@transaction null
+            if (next.taskId != current.taskId || !valid(next)) return@transaction null
+            if (!write(context, listOf(next) + rows.filterNot { it.taskId == taskId })) return@transaction null
+            next
+        }
+
+    /** Pauses one known task without touching unrelated work or terminal states. */
+    fun pauseActiveTask(context: Context, taskId: String, now: Long = System.currentTimeMillis()): Record? =
+        updateActive(context, taskId) { current ->
+            current.copy(
+                status = "PAUSED",
+                currentStep = "Przerwano przez użytkownika lub zamknięcie Activity; wznowienie wymaga jawnej decyzji koordynatora.",
+                nextSteps = (current.nextSteps + "Sprawdź checkpointy i zdecyduj o wznowieniu.").distinct().take(MAX_STEPS),
+                updatedAt = now.coerceAtLeast(0L)
+            )
+        }
+
     /** Marks work left ACTIVE by a previous process as interrupted; never claims it resumed. */
     fun pauseActive(context: Context, now: Long = System.currentTimeMillis()): Int =
         transaction(context) { rows ->

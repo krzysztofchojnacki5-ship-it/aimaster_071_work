@@ -67,6 +67,32 @@ class MasterWorkJournalStoreTest {
         assertEquals(0, MasterWorkJournalStore.pauseActive(context, 100L))
     }
 
+    @Test fun targetedPauseDoesNotAffectOtherTasksAndCannotRewriteTerminalStates() {
+        assertTrue(MasterWorkJournalStore.save(context, record("target-active")))
+        assertTrue(MasterWorkJournalStore.save(context, record("other-active")))
+        assertTrue(MasterWorkJournalStore.save(context, record("already-blocked").copy(status = "BLOCKED")))
+        assertTrue(MasterWorkJournalStore.save(context, record("already-completed").copy(status = "COMPLETED")))
+
+        val paused = MasterWorkJournalStore.pauseActiveTask(context, "target-active", 77L)
+        assertEquals("PAUSED", paused?.status)
+        assertEquals(77L, paused?.updatedAt)
+        assertEquals("ACTIVE", MasterWorkJournalStore.get(context, "other-active")?.status)
+        assertEquals("BLOCKED", MasterWorkJournalStore.pauseActiveTask(context, "already-blocked", 78L)?.status)
+        assertEquals("COMPLETED", MasterWorkJournalStore.pauseActiveTask(context, "already-completed", 79L)?.status)
+    }
+
+    @Test fun delayedProgressCannotReopenPausedBlockedOrCompletedWork() {
+        listOf("PAUSED", "BLOCKED", "COMPLETED").forEach { status ->
+            val id = "sticky-$status"
+            assertTrue(MasterWorkJournalStore.save(context, record(id).copy(status = status)))
+            val unchanged = MasterWorkJournalStore.updateActive(context, id) {
+                it.copy(status = "ACTIVE", currentStep = "opóźniony callback")
+            }
+            assertEquals(status, unchanged?.status)
+            assertTrue(unchanged?.currentStep != "opóźniony callback")
+        }
+    }
+
     @Test fun parallelProgressUpdatesDoNotLoseCompletedSteps() {
         assertTrue(MasterWorkJournalStore.save(context, record("shared-task")))
         val ready = java.util.concurrent.CountDownLatch(12)

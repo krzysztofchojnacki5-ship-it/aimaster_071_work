@@ -123,6 +123,9 @@ class MainActivity : Activity() {
     @Volatile private var activeWorkerThread: Thread? = null
     @Volatile private var activeWorkerGeneration = -1
     @Volatile private var activeRequestScope: ProviderClient.RequestScope? = null
+    /** Serializes MASTER journal creation against Stop/Activity teardown. */
+    private val masterJournalLifecycleLock = Any()
+    @Volatile private var activeMasterWorkTaskId = ""
     private var draft = ""
     private var composerInput: EditText? = null
 
@@ -1023,9 +1026,18 @@ class MainActivity : Activity() {
     }
 
     private fun stopGeneration() {
-        // Stop is a real cancellation: interrupt the orchestrator and disconnect active HTTP calls.
+        // Persist the targeted MASTER task before callbacks can observe cancellation.
+        // The same lock guards journal creation, so Stop cannot race ahead of a late ACTIVE save.
         val stopScreen = if (screen == "Asystent") "Asystent" else "Czat"
-        requestGen++
+        synchronized(masterJournalLifecycleLock) {
+            requestGen++
+            val taskId = activeMasterWorkTaskId
+            if (taskId.isNotBlank()) {
+                val paused = pl.aimasterpro.app.core.MasterWorkJournalStore.pauseActiveTask(this, taskId)
+                if (paused == null) android.util.Log.w("AIMasterRecovery", "Stop: dziennik MASTER-a $taskId nie istnieje lub nie jest dostępny.")
+                activeMasterWorkTaskId = ""
+            }
+        }
         activeWorkerGeneration = -1
         activeRequestScope?.let { scope -> client.cancelRequestScope(scope) }
         activeRequestScope = null
@@ -1674,6 +1686,7 @@ class MainActivity : Activity() {
         val gen = ++requestGen
         val requestId = UUID.randomUUID().toString()
         val requestTaskId = "chat-$chatId-$requestId"
+        if (chosenRole == AgentRole.MASTER) activeMasterWorkTaskId = requestTaskId
         val queuedCheckpointSaved = pl.aimasterpro.app.core.TaskCheckpointStore.record(
             this,
             pl.aimasterpro.app.core.TaskCheckpointStore.Event(
@@ -1683,6 +1696,7 @@ class MainActivity : Activity() {
             )
         )
         if (!queuedCheckpointSaved) {
+            if (activeMasterWorkTaskId == requestTaskId) activeMasterWorkTaskId = ""
             toast("Nie udało się trwale zapisać checkpointu. Żądanie API nie zostało wysłane.")
             return
         }
@@ -1817,8 +1831,12 @@ class MainActivity : Activity() {
                         nextSteps = listOf("Analiza specjalistów", "Peer Review (jeśli możliwy)", "Synteza MASTER-a"),
                         updatedAt = System.currentTimeMillis()
                     )
-                    check(pl.aimasterpro.app.core.MasterWorkJournalStore.save(this, workJournalRecord)) {
-                        "Nie udało się trwale zapisać dziennika pracy MASTER-a; zespół nie został uruchomiony."
+                    val journalSaved = synchronized(masterJournalLifecycleLock) {
+                        if (gen != requestGen || Thread.currentThread().isInterrupted) false
+                        else pl.aimasterpro.app.core.MasterWorkJournalStore.save(this, workJournalRecord)
+                    }
+                    check(journalSaved) {
+                        "Nie udało się trwale zapisać dziennika pracy MASTER-a albo zadanie zostało przerwane; zespół nie został uruchomiony."
                     }
                     if (adaptiveTasks.size < tasks.size) logAgentForChat(chatId, "🧠 Adaptacyjny budżet: ${adaptivePlan.reason}; ograniczono liczbę specjalistów ${tasks.size} → ${adaptiveTasks.size}.")
                     else logAgentForChat(chatId, "🧠 Adaptacyjny budżet: ${adaptivePlan.reason}.")
@@ -1951,6 +1969,7 @@ class MainActivity : Activity() {
                                 val journalUpdated = pl.aimasterpro.app.core.MasterWorkJournalStore.update(this, requestTaskId) { current ->
                                     val terminalProblem = state in setOf("BLOCKED", "FAILED", "TIMED_OUT", "CANCELLED", "USAGE_PENDING", "RESULT_PERSIST_PENDING")
                                     val stickyStatus = when {
+                                        current.status == "COMPLETED" -> "COMPLETED"
                                         current.status == "PAUSED" -> "PAUSED"
                                         current.status == "BLOCKED" -> "BLOCKED"
                                         state == "CANCELLED" -> "PAUSED"
@@ -1958,7 +1977,7 @@ class MainActivity : Activity() {
                                         else -> "ACTIVE"
                                     }
                                     val journalStep = when {
-                                        current.status in setOf("BLOCKED", "PAUSED") -> current.currentStep
+                                        current.status in setOf("COMPLETED", "BLOCKED", "PAUSED") -> current.currentStep
                                         state == "QUEUED" -> "W kolejce: ${task.agentId}"
                                         state == "RUNNING" -> "Analiza specjalisty: ${task.agentId}"
                                         state == "COMPLETED" -> "Raport zapisany: ${task.agentId}"
@@ -2234,7 +2253,7 @@ class MainActivity : Activity() {
                             )
                         )
                     }
-                    pl.aimasterpro.app.core.MasterWorkJournalStore.update(this, requestTaskId) { current ->
+                    pl.aimasterpro.app.core.MasterWorkJournalStore.updateActive(this, requestTaskId) { current ->
                         current.copy(
                             status = "ACTIVE",
                             currentStep = "Synteza MASTER-a: scalanie raportów i recenzji.",
@@ -2403,7 +2422,7 @@ class MainActivity : Activity() {
                 } else appendToStoredChat(chatId, "assistant", reply, requestTaskId)
                 val hasMasterJournal = pl.aimasterpro.app.core.MasterWorkJournalStore.get(this, requestTaskId) != null
                 val journalFinalized = if (!hasMasterJournal) true else
-                    pl.aimasterpro.app.core.MasterWorkJournalStore.update(this, requestTaskId) { current ->
+                    pl.aimasterpro.app.core.MasterWorkJournalStore.updateActive(this, requestTaskId) { current ->
                         current.copy(
                             status = if (ok && chatResultPersisted) "COMPLETED" else if (!chatResultPersisted) "PAUSED" else "BLOCKED",
                             currentStep = when {
@@ -2420,6 +2439,7 @@ class MainActivity : Activity() {
                         )
                     } != null
                 if (!journalFinalized) android.util.Log.e("AIMasterRecovery", "Nie udało się zamknąć dziennika pracy MASTER-a.")
+                if (activeMasterWorkTaskId == requestTaskId) activeMasterWorkTaskId = ""
                 if (chatResultPersisted) {
                     val checkpoint = pl.aimasterpro.app.core.TaskCheckpointStore.latest(this)
                         .firstOrNull { it.taskId == requestTaskId }
@@ -6219,6 +6239,17 @@ class MainActivity : Activity() {
 
     override fun onDestroy() {
         pulse?.cancel()
+        // Persist only this Activity's active MASTER task; startup recovery remains a second layer.
+        synchronized(masterJournalLifecycleLock) {
+            // Invalidate the worker before pausing: a not-yet-created journal must not be saved ACTIVE afterward.
+            requestGen++
+            val taskId = activeMasterWorkTaskId
+            if (taskId.isNotBlank()) {
+                val paused = pl.aimasterpro.app.core.MasterWorkJournalStore.pauseActiveTask(this, taskId)
+                if (paused == null) android.util.Log.w("AIMasterRecovery", "onDestroy: nie udało się potwierdzić PAUSED dla $taskId.")
+                activeMasterWorkTaskId = ""
+            }
+        }
         // Activity teardown must close blocking HTTP connections as well as interrupt workers.
         // Thread interruption alone does not reliably unblock HttpURLConnection reads.
         if (::client.isInitialized) {
