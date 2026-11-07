@@ -351,6 +351,25 @@ class ChatHistoryStoreTest {
         assertEquals("user-chat-atomic", prefs.getString("last_user_chat_id", null))
     }
 
+    @Test fun failedCurrentChatNavigationCommitKeepsPreviousMirrorAndQuarantinesStore() {
+        assertTrue(ChatHistoryStore.updateRootAndLastUserChatId(context, "previous-user-chat") { root ->
+            root.put("currentId", "previous-user-chat")
+            if (!root.has("chats")) root.put("chats", JSONObject())
+            true
+        })
+
+        val failing = AmbiguousCommitContext(context, "chat_state", applyBeforeFailure = false)
+        assertFalse(ChatHistoryStore.updateRootAndLastUserChatId(failing, "new-user-chat") { root ->
+            root.put("currentId", "new-user-chat")
+            true
+        })
+
+        assertTrue(SharedPreferencesWriteHealth.isUncertain("chat_state"))
+        val storedRoot = JSONObject(prefs.getString("chats_v2", null)!!)
+        assertEquals("previous-user-chat", storedRoot.getString("currentId"))
+        assertEquals("previous-user-chat", prefs.getString("last_user_chat_id", null))
+    }
+
     @Test fun ambiguousCurrentChatCommitNeverSplitsCanonicalIdFromNavigationMirror() {
         assertTrue(prefs.edit().putString("last_user_chat_id", "previous-user-chat").commit())
         val failing = AmbiguousCommitContext(context, "chat_state", applyBeforeFailure = true)

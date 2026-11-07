@@ -2069,3 +2069,11 @@ Doprecyzowanie projektu SQLite:
 - Jeśli zapis nie powiedzie się, nawigacja zostaje przerwana przed zmianą selectedAgent i currentChatId; użytkownik otrzymuje komunikat.
 - Regresja opiera się na istniejących testach currentChatAndLastUserNavigationMirrorCommitTogether i ambiguousCurrentChatCommitNeverSplitsCanonicalIdFromNavigationMirror; nie dodano duplikatu testu tego samego kontraktu.
 - Statyczny diff sprawdzony; JUnit/Gradle/Android debug CI oczekuje na wykonanie. APK nie utworzono; Companion nieaktywny.
+
+## 0.6.142 — atomowe tworzenie nowego czatu (2026-11-07)
+
+- Usunięto bezpośredni apply() dla last_user_chat_id i zbędny drugi zapis w newChat().
+- Nowy identyfikator jest zapisywany przez saveCurrentId(), które łączy chats_v2.currentId i last_user_chat_id w jednym commicie.
+- Widok wiadomości i załączników jest czyszczony dopiero po potwierdzonym zapisie. Przy błędzie currentChatId wraca do poprzedniej rozmowy, a przejście zostaje przerwane.
+- Dodano test failedCurrentChatNavigationCommitKeepsPreviousMirrorAndQuarantinesStore dla awarii commit() przed zastosowaniem zmian; istniejący test pokrywa niejednoznaczny commit po apply().
+- Statyczny diff sprawdzony; testy JUnit/Gradle/Android debug oczekują na CI. APK nie utworzono; Companion nieaktywny.

@@ -3057,15 +3057,18 @@ class MainActivity : Activity() {
             toast("Nie można bezpiecznie wyczyścić aktywnego zakresu dowodów. Nie utworzono nowego czatu.")
             return
         }
+        val previousChatId = currentChatId
         currentChatId = UUID.randomUUID().toString()
+        if (!saveCurrentId()) {
+            currentChatId = previousChatId
+            toast("Nie udało się trwale utworzyć nowego czatu. Poprzednia rozmowa pozostała aktywna.")
+            return
+        }
         messages.clear()
         assistantTaskIds.clear()
         agentActivity.clear()
         attachedText = ""; attachedName = ""; attachedMime = ""; attachedBase64 = ""
         draft = ""
-        // navigate("Czat") restores last_user_chat_id, so update it before navigating.
-        chatPrefs.edit().putString("last_user_chat_id", currentChatId).apply()
-        saveCurrentId()
         navigate("Czat")
     }
 
