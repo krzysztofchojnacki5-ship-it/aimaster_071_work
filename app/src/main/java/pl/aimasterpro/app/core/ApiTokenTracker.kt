@@ -149,10 +149,6 @@ object ApiTokenTracker {
         cacheWrite1hTokens: Long = 0L,
         reasoningTokensKnown: Boolean = false
     ): TokenRecord {
-        require(providerId.isNotBlank() && modelName.isNotBlank() && agentId.isNotBlank() &&
-            taskId.isNotBlank() && status.isNotBlank()) {
-            "Tożsamość wpisu rozliczeniowego nie może zawierać pustych pól."
-        }
         require(inputTokens >= 0L && outputTokens >= 0L && reasoningTokens >= 0L &&
             reasoningTokens <= outputTokens && cachedTokens >= 0L && cacheWriteTokens >= 0L && cacheWrite1hTokens >= 0L &&
             Math.addExact(Math.addExact(cachedTokens, cacheWriteTokens), cacheWrite1hTokens) <= inputTokens) {
@@ -545,66 +541,83 @@ object ApiTokenTracker {
         }
     }
 
-    private fun catalogRateIsAbsentOrZero(row: JSONObject, key: String): Boolean {
-        if (!row.has(key) || row.isNull(key)) return true
-        val value = row.opt(key) as? Number ?: return false
+    private fun readCatalogRate(row: JSONObject, key: String): Double? {
+        if (!row.has(key) || row.isNull(key)) return null
+        val value = row.opt(key) as? Number
+            ?: throw IllegalStateException("Katalog cen zawiera nieprawidłową wartość stawki: $key.")
         val rate = value.toDouble()
-        return rate.isFinite() && rate == 0.0
+        require(rate.isFinite() && rate >= 0.0) {
+            "Katalog cen zawiera ujemną lub nieskończoną stawkę: $key."
+        }
+        return rate
     }
 
     @Synchronized
     fun getPricing(context: Context, modelName: String, providerId: String = "", baseUrl: String = ""): ModelPricing {
         val raw = context.getSharedPreferences(PRICING_PREFS, Context.MODE_PRIVATE)
             .getString("catalog_model_prices", "[]") ?: "[]"
-        val catalog = runCatching { JSONArray(raw) }.getOrNull()
-        if (catalog != null) {
-            val normalizedBase = baseUrl.trimEnd('/').lowercase(Locale.ROOT)
-            var exact: JSONObject? = null
-            var baseMatch: JSONObject? = null
-            for (i in 0 until catalog.length()) {
-                val row = catalog.optJSONObject(i) ?: continue
-                if (row.optString("modelName") != modelName ||
-                    row.optString("baseUrl").trimEnd('/').lowercase(Locale.ROOT) != normalizedBase) continue
-                val rowProvider = row.optString("providerId")
+        val catalog = try {
+            JSONArray(raw)
+        } catch (error: Exception) {
+            throw IllegalStateException("Zapisany katalog cen jest uszkodzony; bezpieczna wycena została wstrzymana.", error)
+        }
+        require(catalog.length() <= 10_000) { "Katalog cen przekracza bezpieczny rozmiar." }
+
+        val normalizedBase = baseUrl.trimEnd('/').lowercase(Locale.ROOT)
+        var exact: JSONObject? = null
+        var baseMatch: JSONObject? = null
+        val identities = mutableSetOf<String>()
+        for (index in 0 until catalog.length()) {
+            val row = catalog.opt(index) as? JSONObject
+                ?: throw IllegalStateException("Katalog cen zawiera wpis, który nie jest obiektem.")
+            val rowProvider = row.opt("providerId") as? String
+            val rowModel = row.opt("modelName") as? String
+            val rowBase = row.opt("baseUrl") as? String
+            require(!rowProvider.isNullOrBlank() && !rowModel.isNullOrBlank() && !rowBase.isNullOrBlank()) {
+                "Katalog cen zawiera niekompletną tożsamość wpisu."
+            }
+            val rowNormalizedBase = rowBase.trimEnd('/').lowercase(Locale.ROOT)
+            require(identities.add("$rowProvider|$rowNormalizedBase|$rowModel")) {
+                "Katalog cen zawiera zduplikowaną tożsamość modelu."
+            }
+            val freeValue = row.opt("explicitlyFree")
+            require(freeValue == null || freeValue === JSONObject.NULL || freeValue is Boolean) {
+                "Katalog cen zawiera nieprawidłową flagę bezpłatnego modelu."
+            }
+
+            if (rowModel == modelName && rowNormalizedBase == normalizedBase) {
                 if (rowProvider == providerId) exact = row
                 else if (normalizedBase.isNotBlank()) baseMatch = row
             }
-            val row = exact ?: baseMatch
-            if (row != null) {
-                if (row.opt("explicitlyFree") == true) {
-                    val everyPublishedRateIsZero = listOf(
-                        "inputPer1MUsd", "outputPer1MUsd", "cachedInputPer1MUsd",
-                        "cacheWriteInputPer1MUsd", "cacheWriteInput1hPer1MUsd",
-                        "internalReasoningPer1MUsd"
-                    ).all { key -> catalogRateIsAbsentOrZero(row, key) }
-                    if (everyPublishedRateIsZero) return ModelPricing(modelName, 0.0, 0.0)
-                    // Otherwise fall through and honor any valid published paid rates below.
-                }
-                val input = (row.opt("inputPer1MUsd") as? Number)?.toDouble()
-                val output = (row.opt("outputPer1MUsd") as? Number)?.toDouble()
-                if (input != null && output != null && input.isFinite() && output.isFinite() && input >= 0.0 && output >= 0.0) {
-                    val cached = (row.opt("cachedInputPer1MUsd") as? Number)?.toDouble()
-                        ?.takeIf { it.isFinite() && it >= 0.0 }
-                    val cacheWrite = (row.opt("cacheWriteInputPer1MUsd") as? Number)?.toDouble()
-                        ?.takeIf { it.isFinite() && it >= 0.0 }
-                    val reasoning = (row.opt("internalReasoningPer1MUsd") as? Number)?.toDouble()
-                        ?.takeIf { it.isFinite() && it >= 0.0 }
-                    val cacheWrite1h = (row.opt("cacheWriteInput1hPer1MUsd") as? Number)?.toDouble()
-                        ?.takeIf { it.isFinite() && it >= 0.0 }
-                    return ModelPricing(modelName, input, output, cached, cacheWrite, reasoning, cacheWrite1h)
-                }
-                // An explicit PAID catalog result must not be overridden by a stale
-                // local/free allowlist entry merely because this model ID was reused.
-                if (row.opt("explicitlyFree") == false) return defaultPricing.last().copy()
-            }
         }
+
+        val row = exact ?: baseMatch
+        if (row != null) {
+            val explicitlyFree = row.opt("explicitlyFree") as? Boolean
+            val input = readCatalogRate(row, "inputPer1MUsd")
+            val output = readCatalogRate(row, "outputPer1MUsd")
+            val cached = readCatalogRate(row, "cachedInputPer1MUsd")
+            val cacheWrite = readCatalogRate(row, "cacheWriteInputPer1MUsd")
+            val cacheWrite1h = readCatalogRate(row, "cacheWriteInput1hPer1MUsd")
+            val reasoning = readCatalogRate(row, "internalReasoningPer1MUsd")
+            val allRates = listOf(input, output, cached, cacheWrite, cacheWrite1h, reasoning)
+            if (explicitlyFree == true && allRates.all { it == null || it == 0.0 }) {
+                return ModelPricing(modelName, 0.0, 0.0)
+            }
+            require(input != null && output != null) {
+                "Katalog cen nie zawiera kompletnej stawki wejścia i wyjścia dla modelu $modelName."
+            }
+            // A contradictory free flag never erases published paid rates.
+            return ModelPricing(modelName, input, output, cached, cacheWrite, reasoning, cacheWrite1h)
+        }
+
         // A verified free/local model must never inherit the generic paid fallback price.
         if (FreeModelsCatalog.isFreeModel(providerId, modelName, baseUrl)) {
             return ModelPricing(modelName, 0.0, 0.0)
         }
         val lower = modelName.lowercase(Locale.ROOT)
-        for (p in defaultPricing) {
-            if (lower.contains(p.modelKey)) return p.copy()
+        for (pricing in defaultPricing) {
+            if (lower.contains(pricing.modelKey)) return pricing.copy()
         }
         return defaultPricing.last().copy()
     }

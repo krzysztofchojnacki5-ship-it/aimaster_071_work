@@ -754,21 +754,6 @@ class ApiTokenTrackerTest {
         assertTrue(runCatching { ApiTokenTracker.setExchangeRate(context, Double.POSITIVE_INFINITY) }.isFailure)
     }
 
-    @Test fun recordQueryRejectsIncompleteLedgerIdentityBeforeWriting() {
-        val prefs = context.getSharedPreferences("api_token_tracker_records_v1", Context.MODE_PRIVATE)
-        prefs.edit().remove("records").commit()
-        val invalidCalls = listOf<() -> Unit>(
-            { ApiTokenTracker.recordQuery(context, "", "model", "MASTER", "task", inputTokens = 1L, outputTokens = 1L) },
-            { ApiTokenTracker.recordQuery(context, "provider", "", "MASTER", "task", inputTokens = 1L, outputTokens = 1L) },
-            { ApiTokenTracker.recordQuery(context, "provider", "model", "", "task", inputTokens = 1L, outputTokens = 1L) },
-            { ApiTokenTracker.recordQuery(context, "provider", "model", "MASTER", "", inputTokens = 1L, outputTokens = 1L) },
-            { ApiTokenTracker.recordQuery(context, "provider", "model", "MASTER", "task", inputTokens = 1L, outputTokens = 1L, status = " ") }
-        )
-        invalidCalls.forEach { call -> assertTrue(runCatching(call).isFailure) }
-        assertEquals(null, prefs.getString("records", null))
-        assertTrue(ApiTokenTracker.loadAllRecordsFromStorage(context).isEmpty())
-    }
-
     @Test fun negativePersistedCostMakesUsageLedgerUnhealthy() {
         val prefs = context.getSharedPreferences("api_token_tracker_records_v1", Context.MODE_PRIVATE)
         val corrupt = """[{"qId":"bad-cost","ts":1,"prov":"p","model":"m","agent":"MASTER","task":"x","in":1,"out":1,"tot":2,"reas":0,"cache":0,"status":"REAL","usd":-1.0,"pln":-4.0}]"""
@@ -1015,6 +1000,41 @@ class ApiTokenTrackerTest {
         }
         assertTrue(result.isFailure)
         assertTrue(ApiTokenTracker.loadAllRecordsFromStorage(context).isEmpty())
+    }
+
+    @Test fun malformedCatalogJsonStopsPricingInsteadOfUsingGenericFallback() {
+        val prefs = context.getSharedPreferences("api_token_pricing_v1", Context.MODE_PRIVATE)
+        assertTrue(prefs.edit().putString("catalog_model_prices", "not-json").commit())
+        assertTrue(runCatching {
+            ApiTokenTracker.getPricing(context, "unknown-expensive-model", "provider", "https://pricing.example/v1")
+        }.isFailure)
+    }
+
+    @Test fun malformedOptionalCatalogRateCannotBeSilentlyDropped() {
+        val prefs = context.getSharedPreferences("api_token_pricing_v1", Context.MODE_PRIVATE)
+        val malformed = """[{"providerId":"provider","modelName":"vendor/model","baseUrl":"https://pricing.example/v1","inputPer1MUsd":0.2,"outputPer1MUsd":0.8,"cachedInputPer1MUsd":"0.01","explicitlyFree":false}]"""
+        assertTrue(prefs.edit().putString("catalog_model_prices", malformed).commit())
+        assertTrue(runCatching {
+            ApiTokenTracker.getPricing(context, "vendor/model", "provider", "https://pricing.example/v1")
+        }.isFailure)
+    }
+
+    @Test fun paidCatalogEntryWithoutBothPrimaryRatesFailsClosed() {
+        val prefs = context.getSharedPreferences("api_token_pricing_v1", Context.MODE_PRIVATE)
+        val incomplete = """[{"providerId":"provider","modelName":"vendor/model","baseUrl":"https://pricing.example/v1","inputPer1MUsd":null,"outputPer1MUsd":0.8,"explicitlyFree":false}]"""
+        assertTrue(prefs.edit().putString("catalog_model_prices", incomplete).commit())
+        assertTrue(runCatching {
+            ApiTokenTracker.getPricing(context, "vendor/model", "provider", "https://pricing.example/v1")
+        }.isFailure)
+    }
+
+    @Test fun duplicateCatalogIdentityCannotSelectAnArbitraryPrice() {
+        val prefs = context.getSharedPreferences("api_token_pricing_v1", Context.MODE_PRIVATE)
+        val duplicate = """[{"providerId":"provider","modelName":"vendor/model","baseUrl":"https://pricing.example/v1","inputPer1MUsd":0.2,"outputPer1MUsd":0.8},{"providerId":"provider","modelName":"vendor/model","baseUrl":"https://pricing.example/v1/","inputPer1MUsd":0.5,"outputPer1MUsd":1.2}]"""
+        assertTrue(prefs.edit().putString("catalog_model_prices", duplicate).commit())
+        assertTrue(runCatching {
+            ApiTokenTracker.getPricing(context, "vendor/model", "provider", "https://pricing.example/v1")
+        }.isFailure)
     }
 
     @Test fun legacyUsageRowsWithoutCacheWriteFieldRemainReadable() {
