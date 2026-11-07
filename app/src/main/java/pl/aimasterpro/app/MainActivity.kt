@@ -123,8 +123,10 @@ class MainActivity : Activity() {
     @Volatile private var activeWorkerThread: Thread? = null
     @Volatile private var activeWorkerGeneration = -1
     @Volatile private var activeRequestScope: ProviderClient.RequestScope? = null
-    /** Serializes MASTER journal creation against Stop/Activity teardown. */
+    /** Serializes task creation against Stop/import/Activity teardown. */
     private val masterJournalLifecycleLock = Any()
+    @Volatile private var activeChatTaskId = ""
+    @Volatile private var activeChatTaskAgentId = ""
     @Volatile private var activeMasterWorkTaskId = ""
     private var draft = ""
     private var composerInput: EditText? = null
@@ -497,16 +499,38 @@ class MainActivity : Activity() {
      * Quiesce all provider work before replacing the provider set. An in-flight MASTER/agent
      * request must not resolve a fallback or reload a profile while the import swaps configs.
      */
-    private fun cancelProviderWorkBeforeConfigReplacement() {
-        // Match Stop/onDestroy: persist MASTER cancellation before any late worker can save ACTIVE.
+    private fun cancelActiveChatTaskForLifecycle(reason: String) {
+        // Invalidate the worker and persist its task state before late callbacks can finalize it.
         synchronized(masterJournalLifecycleLock) {
             requestGen++
-            val taskId = activeMasterWorkTaskId
-            if (taskId.isNotBlank()) {
-                pauseMasterTaskForLifecycle(taskId, "Import konfiguracji")
-                activeMasterWorkTaskId = ""
+            val taskId = activeChatTaskId.ifBlank { activeMasterWorkTaskId }
+            val agentId = activeChatTaskAgentId.ifBlank {
+                if (taskId.isNotBlank() && taskId == activeMasterWorkTaskId) AgentRole.MASTER.name else ""
             }
+            if (taskId.isNotBlank() && agentId.isNotBlank()) {
+                if (agentId == AgentRole.MASTER.name) {
+                    pauseMasterTaskForLifecycle(taskId, reason)
+                } else {
+                    val saved = pl.aimasterpro.app.core.TaskCheckpointStore.record(
+                        this,
+                        pl.aimasterpro.app.core.TaskCheckpointStore.Event(
+                            taskId = taskId, agentId = agentId, status = "CANCELLED",
+                            detail = "$reason: zadanie agenta przerwane przed finalizacją.",
+                            timestamp = System.currentTimeMillis(), providerId = "", model = "", attempts = 0
+                        )
+                    )
+                    if (!saved) android.util.Log.e("AIMasterRecovery", "$reason: nie udało się trwale zapisać checkpointu anulowania dla $taskId.")
+                }
+            }
+            if (activeMasterWorkTaskId == taskId) activeMasterWorkTaskId = ""
+            activeChatTaskId = ""
+            activeChatTaskAgentId = ""
         }
+    }
+
+    private fun cancelProviderWorkBeforeConfigReplacement() {
+        // Cancel both MASTER and direct specialist chats before replacing provider profiles.
+        cancelActiveChatTaskForLifecycle("Import konfiguracji")
         activeWorkerGeneration = -1
         activeRequestScope?.let { scope -> client.cancelRequestScope(scope) }
         activeRequestScope = null
@@ -1052,14 +1076,7 @@ class MainActivity : Activity() {
         // Persist the targeted MASTER task before callbacks can observe cancellation.
         // The same lock guards journal creation, so Stop cannot race ahead of a late ACTIVE save.
         val stopScreen = if (screen == "Asystent") "Asystent" else "Czat"
-        synchronized(masterJournalLifecycleLock) {
-            requestGen++
-            val taskId = activeMasterWorkTaskId
-            if (taskId.isNotBlank()) {
-                pauseMasterTaskForLifecycle(taskId, "Stop")
-                activeMasterWorkTaskId = ""
-            }
-        }
+        cancelActiveChatTaskForLifecycle("Stop")
         activeWorkerGeneration = -1
         activeRequestScope?.let { scope -> client.cancelRequestScope(scope) }
         activeRequestScope = null
@@ -1705,10 +1722,15 @@ class MainActivity : Activity() {
         hideKeyboard(input)
 
         val chatId = currentChatId
-        val gen = ++requestGen
         val requestId = UUID.randomUUID().toString()
         val requestTaskId = "chat-$chatId-$requestId"
-        if (chosenRole == AgentRole.MASTER) activeMasterWorkTaskId = requestTaskId
+        val gen = synchronized(masterJournalLifecycleLock) {
+            val nextGeneration = ++requestGen
+            activeChatTaskId = requestTaskId
+            activeChatTaskAgentId = chosenRole.name
+            if (chosenRole == AgentRole.MASTER) activeMasterWorkTaskId = requestTaskId
+            nextGeneration
+        }
         val queuedCheckpointSaved = pl.aimasterpro.app.core.TaskCheckpointStore.record(
             this,
             pl.aimasterpro.app.core.TaskCheckpointStore.Event(
@@ -1718,7 +1740,13 @@ class MainActivity : Activity() {
             )
         )
         if (!queuedCheckpointSaved) {
-            if (activeMasterWorkTaskId == requestTaskId) activeMasterWorkTaskId = ""
+            synchronized(masterJournalLifecycleLock) {
+                if (activeMasterWorkTaskId == requestTaskId) activeMasterWorkTaskId = ""
+                if (activeChatTaskId == requestTaskId) {
+                    activeChatTaskId = ""
+                    activeChatTaskAgentId = ""
+                }
+            }
             toast("Nie udało się trwale zapisać checkpointu. Żądanie API nie zostało wysłane.")
             return
         }
@@ -2430,6 +2458,12 @@ class MainActivity : Activity() {
                     activeWorkerGeneration = -1
                     activeWorkerThread = null
                     if (activeRequestScope === requestScope) activeRequestScope = null
+                }
+                synchronized(masterJournalLifecycleLock) {
+                    if (activeChatTaskId == requestTaskId) {
+                        activeChatTaskId = ""
+                        activeChatTaskAgentId = ""
+                    }
                 }
                 isThinking = false
                 val ok = result.isSuccess
@@ -6284,15 +6318,7 @@ class MainActivity : Activity() {
     override fun onDestroy() {
         pulse?.cancel()
         // Persist only this Activity's active MASTER task; startup recovery remains a second layer.
-        synchronized(masterJournalLifecycleLock) {
-            // Invalidate the worker before pausing: a not-yet-created journal must not be saved ACTIVE afterward.
-            requestGen++
-            val taskId = activeMasterWorkTaskId
-            if (taskId.isNotBlank()) {
-                pauseMasterTaskForLifecycle(taskId, "onDestroy")
-                activeMasterWorkTaskId = ""
-            }
-        }
+        cancelActiveChatTaskForLifecycle("onDestroy")
         // Activity teardown must close blocking HTTP connections as well as interrupt workers.
         // Thread interruption alone does not reliably unblock HttpURLConnection reads.
         if (::client.isInitialized) {
