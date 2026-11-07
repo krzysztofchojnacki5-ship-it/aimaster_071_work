@@ -1703,3 +1703,14 @@ Dodatkowe commity:
 - d7cd42e — bezpieczne wykrywanie dostępności aliasu;
 - 908bd1b — test polityki odzyskiwania;
 - e43a459 — UI nie oferuje mylącej naprawy przy braku aliasu.
+
+
+Dodatkowa korekta zgodności starszych zapisów:
+- stare wpisy SharedPreferences mogły zawierać pusty tekst w key_<id>; pusty wpis nie jest ciphertextem i powinien być traktowany jak brak klucza, nie jak awaria odszyfrowania;
+- dodano hasStoredCiphertext(), które rozróżnia pusty wpis od niepustego ciphertextu; w razie błędnego typu wartości traktuje wpis konserwatywnie jako istniejący;
+- odczyt profilu, diagnostyka, zapis pojedynczy, putSecret() i kontrola brakującego aliasu korzystają teraz ze spójnej definicji istniejącego ciphertextu;
+- dodano test pustego historycznego wpisu klucza.
+
+Commits:
+- f290633 — spójne rozpoznawanie pustych i nieprawidłowych wpisów sekretów;
+- 0af2423 — test zgodności pustego legacy wpisu.
