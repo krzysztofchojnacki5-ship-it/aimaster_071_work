@@ -453,11 +453,14 @@ object ApiTokenTracker {
         val costPln: Double
     )
 
+    private fun addNonNegativeCosts(left: Double, right: Double): Double {
+        val a = left.takeIf { it.isFinite() && it > 0.0 } ?: 0.0
+        val b = right.takeIf { it.isFinite() && it > 0.0 } ?: 0.0
+        return if (Double.MAX_VALUE - a < b) Double.MAX_VALUE else a + b
+    }
+
     private fun sumNonNegativeCosts(values: Iterable<Double>): Double =
-        values.fold(0.0) { total, value ->
-            val safe = value.takeIf { it.isFinite() && it > 0.0 } ?: 0.0
-            if (Double.MAX_VALUE - total < safe) Double.MAX_VALUE else total + safe
-        }
+        values.fold(0.0, ::addNonNegativeCosts)
 
     fun calculateSummary(records: List<TokenRecord>): SummaryStats = SummaryStats(
         totalQueries = records.size,
@@ -527,10 +530,12 @@ object ApiTokenTracker {
             val key = globalReserveAgentId.lowercase(Locale.ROOT)
             perAgentUsed[key] = addTokenCounts(perAgentUsed[key] ?: 0L, globalReserveTokens)
         }
-        var monthlyCostUsed = recent.sumOf { it.costPln.coerceAtLeast(0.0) } +
-            activeReservations.values.sumOf { r ->
-                r.globalReserveCostPln + r.tasks.sumOf { it.costPlnRemaining.coerceAtLeast(0.0) }
-            } + globalReserveCostPln
+        var monthlyCostUsed = sumNonNegativeCosts(
+            recent.map { it.costPln } +
+                activeReservations.values.flatMap { r ->
+                    listOf(r.globalReserveCostPln) + r.tasks.map { it.costPlnRemaining }
+                } + listOf(globalReserveCostPln)
+        )
         if (limits.monthlyCostPlnLimit > 0.0 && monthlyCostUsed > limits.monthlyCostPlnLimit) {
             val reason = "Wstrzymano: sama rezerwa kosztowa wraz z dotychczasowym użyciem przekracza miesięczny limit."
             return BatchBudgetPlan(emptySet(), requests.associate { it.taskId to reason }, 0L, 0.0)
@@ -554,14 +559,14 @@ object ApiTokenTracker {
                 !exchangeRate.isFinite() || exchangeRate <= 0.0 || !estimatedPln.isFinite() || estimatedPln < 0.0 -> "Wstrzymano: nieprawidłowy kurs waluty lub wycena modelu; nie można bezpiecznie obliczyć kosztu."
                 exceedsTokenLimit(dailyUsed, estimate, limits.dailyTokenLimit) -> "Pominięto: brak dziennego budżetu tokenów (limit ${limits.dailyTokenLimit})."
                 exceedsTokenLimit(agentUsed, estimate, limits.agentTokenLimit) -> "Pominięto: agent przekroczyłby dzienny limit ${limits.agentTokenLimit} tokenów."
-                limits.monthlyCostPlnLimit > 0.0 && monthlyCostUsed + estimatedPln > limits.monthlyCostPlnLimit -> "Pominięto: przekroczony zostałby miesięczny budżet ${limits.monthlyCostPlnLimit} PLN."
+                limits.monthlyCostPlnLimit > 0.0 && addNonNegativeCosts(monthlyCostUsed, estimatedPln) > limits.monthlyCostPlnLimit -> "Pominięto: przekroczony zostałby miesięczny budżet ${limits.monthlyCostPlnLimit} PLN."
                 else -> null
             }
             if (reason == null) {
                 allowed += request.taskId
                 dailyUsed = addTokenCounts(dailyUsed, estimate)
                 perAgentUsed[agentKey] = addTokenCounts(agentUsed, estimate)
-                monthlyCostUsed += estimatedPln
+                monthlyCostUsed = addNonNegativeCosts(monthlyCostUsed, estimatedPln)
                 reservedTokens += estimate
                 reservedCost += estimatedPln
                 newReservationTasks += ActiveReservationTask(request.taskId, request.agentId, request.providerId, request.baseUrl, request.modelName, estimate, estimatedPln)
@@ -610,7 +615,9 @@ object ApiTokenTracker {
         tokens = sumTokenCounts(activeReservations.values.map { r ->
             addTokenCounts(r.globalTokensRemaining, sumTokenCounts(r.tasks.map { it.tokensRemaining }))
         }),
-        costPln = activeReservations.values.sumOf { r -> r.globalReserveCostPln + r.tasks.sumOf { it.costPlnRemaining.coerceAtLeast(0.0) } }
+        costPln = sumNonNegativeCosts(activeReservations.values.flatMap { r ->
+            listOf(r.globalReserveCostPln) + r.tasks.map { it.costPlnRemaining }
+        })
     )
 
     /** A read-only budget snapshot shared by the API monitor and diagnostics screen. */
@@ -619,7 +626,7 @@ object ApiTokenTracker {
         val limits = getLimits(context)
         val records = loadAllRecordsFromStorage(context)
         val todayTokens = sumTokenCounts(filterRecords(records, "Dzisiaj").map { it.totalTokens })
-        val recentCost = filterRecords(records, "30 dni").sumOf { it.costPln.coerceAtLeast(0.0) }
+        val recentCost = sumNonNegativeCosts(filterRecords(records, "30 dni").map { it.costPln })
         val reservations = activeReservationStats()
         val ledgerIsHealthy = readPersistedRecords(context) != null
         val usedIncludingReservations = addTokenCounts(todayTokens, reservations.tokens)
@@ -715,10 +722,11 @@ object ApiTokenTracker {
         )
 
         val monthlyRecords = filterRecords(all, "30 dni")
-        val monthlyCost = monthlyRecords.sumOf { it.costPln.coerceAtLeast(0.0) } +
-            activeReservations.values.sumOf { r ->
-                r.globalReserveCostPln + r.tasks.sumOf { it.costPlnRemaining.coerceAtLeast(0.0) }
+        val monthlyCost = sumNonNegativeCosts(
+            monthlyRecords.map { it.costPln } + activeReservations.values.flatMap { r ->
+                listOf(r.globalReserveCostPln) + r.tasks.map { it.costPlnRemaining }
             }
+        )
 
         if (exceedsTokenLimit(todayTokens, estimatedTokens, limits.dailyTokenLimit)) {
             return LimitCheckResult(false, "Osiągnięto dzienny limit tokenów (${limits.dailyTokenLimit}). Zapytanie zostało wstrzymane dla agenta $agentId.")
