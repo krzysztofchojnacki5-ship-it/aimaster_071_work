@@ -88,7 +88,7 @@ class WorkBridgeTests(unittest.TestCase):
             "base_branch": "bridge/work-bridge-bootstrap",
             "allowed_paths": ["tools/work_bridge/**"],
         }
-        wildcard_inbox = "<!-- WB_TASK_V1\\n" + json.dumps(data) + "\\n-->\\n"
+        wildcard_inbox = "<!-- WB_TASK_V1\n" + json.dumps(data) + "\n-->\n"
         errors = self.check(inbox=wildcard_inbox)
         self.assertTrue(any("Unsafe allowed_paths" in e for e in errors))
 
