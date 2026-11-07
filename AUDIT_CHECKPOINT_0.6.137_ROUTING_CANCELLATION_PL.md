@@ -1925,3 +1925,12 @@ Doprecyzowanie projektu SQLite:
 
 
 - Dodatkowy przegląd migracji potwierdził `android:allowBackup="false"` w manifeście. W projekcie SQLite dopisano jawne `PRAGMA foreign_keys=ON`, kontrolę zgodności kolumn z JSON oraz `PRAGMA quick_check` i `PRAGMA foreign_key_check` po ponownym otwarciu bazy. Commit dokumentacji: `ae2fb547`. To nadal wyłącznie specyfikacja, bez zmiany kodu magazynu.
+
+
+### Anulowanie aktywnych żądań po awarii zapisu — 2026-11-07
+
+- Dodatkowo wdrożono reakcję na sam moment wykrycia niepewnego stanu: `saveProvider()` oraz ścieżki importu wywołują teraz `ProviderClient.cancelActiveRequests()` po nieudanym commit, jeśli `SecureStoreHealth` jest zablokowany.
+- To unieważnia aktywne request scopes i rozłącza połączenia HTTP, zamiast tylko blokować kolejne zadania. Dotychczasowa semantyka anulowania POST pozostaje: jeśli dostawca mógł już przetworzyć żądanie, rozliczenie oznaczane jest jako nieznane i nie uruchamia się fallback.
+- Zwykły błąd walidacji/importu, który nie ustawił latcha, nie anuluje żądań.
+- Commit kodu: `3c6fcb4b`.
+- CI dla SHA `3c6fcb4b07d7d04381451c0f041553f508588b91`: run `42330303816`, status `pending` przy ostatnim odczycie. Starszy run `42330058130` dotyczy poprzedniego SHA `c18c37c5`, nie najnowszego kodu.
