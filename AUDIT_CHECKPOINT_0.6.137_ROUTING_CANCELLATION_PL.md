@@ -1975,3 +1975,10 @@ Doprecyzowanie projektu SQLite:
 - Pokrycie: commit false przed apply (stary snapshot i kwarantanna), apply przed błędem (nowy snapshot i restart recovery), wyjątek callbacka update bez zapisu, niejednoznaczny commit updateRoot i odtworzenie.
 - Testy ADDED / NOT RUN. Aktywny CI 42411603439 nadal jest na SHA 30e0f496... i nie waliduje tych zmian ani 0.6.139.
 - Statyczny audyt call sites: mutacje historii w MainActivity są synchronizowane; na razie brak dowodu na rzeczywisty równoległy zapis wymagający zmiany produkcyjnej.
+
+### Checkpoint 0.6.139 — legacy mirror resurrection fix
+
+- Potwierdzony scenariusz: usunięcie ostatniego czatu pozostawia istniejący `chats_v2` z pustym `chats`; stary `chat_messages` mirror może zawierać poprzednie wiadomości. Poprzednia logika `restoreMessages()` sprawdzała tylko `chats.length() == 0`, więc mogła błędnie zaimportować stary mirror.
+- Naprawa: `ChatHistoryStore.shouldImportLegacyMirror()` rozróżnia brak kanonicznego pliku preferencji od istniejącego pustego dokumentu; wyjątek/kwarantanna daje null. `MainActivity.restoreMessages()` zatrzymuje odtwarzanie przy null i importuje mirror wyłącznie przy rzeczywistym braku `chats_v2`.
+- Commity: `4f5cc77994fa05ac9e7747e5f469182d9ddb977a`, `42bf4479e77ff3b73cf93a025fd0c055406e55de`, testy `e7d1ae88f6c160f8c7743f3e754efe23241baa57`, korekta testu kwarantanny `4baec9da3c72bcdf89a68431470cfec5749799e7`.
+- Testy ADDED / NOT RUN. CI 42411603439 nadal in_progress dla SHA 30e0f496...; nie obejmuje żadnego commita 0.6.139. Gałąź audytowa nie została dotknięta.
