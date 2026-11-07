@@ -202,7 +202,7 @@ class SecureStore(context: Context) {
             val prepared = copied.map { config ->
                 val id = config.optString("id", "default")
                 val encrypted = encryptSecret(config.optString("apiKey"))
-                val safe = JSONObject(config.toString()).apply { remove("apiKey") }
+                val safe = JSONObject(config.toString()).apply { remove("apiKey"); remove("_secretUnavailable") }
                 Triple(id, safe, encrypted)
             }
 
