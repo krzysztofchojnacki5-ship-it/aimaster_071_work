@@ -53,12 +53,13 @@ object TaskResultArchive {
             val row = old.getJSONObject(i)
             if (row.optString("taskId") != taskId) next.put(row)
         }
-        val trimmed = JSONArray()
-        for (i in 0 until minOf(next.length(), MAX_ENTRIES)) trimmed.put(next.getJSONObject(i))
+        // Pending recovery records are never evicted. Reject new reports at capacity
+        // until successful replay acknowledges existing entries.
+        if (next.length() > MAX_ENTRIES) return@withHealthyAccess false
         return@withHealthyAccess runCatching {
             SharedPreferencesWriteHealth.commit(
                 PREFS, context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
-                    .putString(KEY, trimmed.toString())
+                    .putString(KEY, next.toString())
             )
         }.getOrDefault(false)
     
@@ -104,6 +105,7 @@ object TaskResultArchive {
         val entries = latest(context).filter { it.chatId.isNotBlank() }
         if (entries.isEmpty()) return 0
         var restored = 0
+        val acknowledgedTaskIds = linkedSetOf<String>()
         val updated = ChatHistoryStore.updateRoot(context) { root ->
             val chats = root.optJSONObject("chats") ?: return@updateRoot false
             // Archive rows are newest-first, while chat activity is an append-only timeline.
@@ -115,7 +117,10 @@ object TaskResultArchive {
                 val alreadyMarked = (0 until rows.length()).any { index ->
                     rows.optString(index).contains(marker)
                 }
-                if (alreadyMarked) return@forEach
+                if (alreadyMarked) {
+                    acknowledgedTaskIds += entry.taskId
+                    return@forEach
+                }
 
                 // Older app versions logged reports without task IDs. Use that legacy fallback only
                 // when this report text belongs to exactly one archived task in this chat. Identical
@@ -128,19 +133,44 @@ object TaskResultArchive {
                         val existing = rows.optString(index)
                         !existing.contains("[TASK_REPORT_ID:") && existing.endsWith(entry.report)
                     }
-                if (hasUnmarkedLegacyCopy) return@forEach
+                if (hasUnmarkedLegacyCopy) {
+                    acknowledgedTaskIds += entry.taskId
+                    return@forEach
+                }
                 rows.put("📦 Odzyskany raport agenta ${entry.agentId} (${entry.providerId}/${entry.model}) $marker\n${entry.report}")
                 while (rows.length() > 150) rows.remove(0)
                 chat.put("agentActivity", rows).put("updatedAt", maxOf(chat.optLong("updatedAt"), entry.createdAt))
+                acknowledgedTaskIds += entry.taskId
                 restored++
             }
             restored > 0
         }
         if (!updated) {
-            throw IllegalStateException("Nie udało się trwale przywrócić raportów z archiwum do historii czatu.")
+            throw IllegalStateException("Nie udało się trwale odtworzyć raportów z archiwum do historii czatu.")
+        }
+        if (acknowledgedTaskIds.isNotEmpty() && !acknowledge(context, acknowledgedTaskIds)) {
+            android.util.Log.w("AIMasterResultArchive", "Historia została odzyskana, ale archiwum nie potwierdziło zwolnienia wpisów.")
         }
         return restored
     }
+    /** Removes only reports proven durable in canonical history; orphaned/legacy rows stay pending. */
+    private fun acknowledge(context: Context, taskIds: Set<String>): Boolean = runCatching {
+        SharedPreferencesWriteHealth.withHealthyAccess(PREFS) {
+            val rows = read(context) ?: return@withHealthyAccess false
+            val retained = JSONArray()
+            for (i in 0 until rows.length()) {
+                val row = rows.getJSONObject(i)
+                if (row.getString("taskId") !in taskIds) retained.put(row)
+            }
+            if (retained.length() == rows.length()) return@withHealthyAccess true
+            SharedPreferencesWriteHealth.commit(
+                PREFS,
+                context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
+                    .putString(KEY, retained.toString())
+            )
+        }
+    }.getOrDefault(false)
+
     private fun encode(entry: Entry): JSONObject = JSONObject()
         .put("taskId", entry.taskId)
         .put("agentId", entry.agentId)
