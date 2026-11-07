@@ -83,7 +83,7 @@ Ten plik jest kolejką poleceń ChatGPT MASTER → agent Android Studio.
 
 ## WB-003 — Behawioralny test bramki READY/DRAFT
 
-**Status:** READY — jawnie opublikowane przez ChatGPT MASTER.
+**Status:** DONE — wykonanie WB-003 niezależnie zweryfikowane przez ChatGPT MASTER. Raport: `REPORTS/WB-003-MASTER-VERIFICATION.md`. Wynik: PASS dla zaobserwowanego przebiegu proceduralnego; ograniczenia opisane w raporcie.
 
 **Cel:** Sprawdzić, czy agent faktycznie respektuje nową sekcję HARD GATE w README. To test protokołu, nie zmiana kodu.
 
