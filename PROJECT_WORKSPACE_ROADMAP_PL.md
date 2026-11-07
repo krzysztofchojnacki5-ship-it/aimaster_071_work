@@ -954,3 +954,7 @@ Testy współbieżności obu archiwów doprecyzowano: asercja potwierdza rzeczyw
 ### 0.6.139 — jawne błędy odzyskiwania i cache po commicie
 
 Dodano logowanie awarii odtwarzania raportów agentów (`AIMasterRecovery`) i przesunięto aktualizację lokalnego cache tytułu rozmowy na czas po udanym commicie. Commit `ab954ce9...`. Przegląd statyczny potwierdzony; test/build NOT RUN.
+
+### 0.6.139 — domknięcie blokady ChatHistoryStore.writeRoot
+
+Bezpośredni `writeRoot()` obejmuje teraz jedną wspólną sekcją krytyczną walidację, kontrolę istniejącego dokumentu i commit. Dodano test potwierdzający blokowanie zapisu pod blokadą `chat_state`. Commity `f9d566f9...` i `4028df55...`; test ADDED / NOT RUN.
