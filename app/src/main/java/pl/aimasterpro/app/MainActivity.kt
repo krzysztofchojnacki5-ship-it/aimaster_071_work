@@ -300,8 +300,11 @@ class MainActivity : Activity() {
             }
             "Asystent" -> {
                 val assistantId = assistantChatId()
-                if (!isAssistantChatId(currentChatId) && currentChatId.isNotBlank()) {
-                    chatPrefs.edit().putString("last_user_chat_id", currentChatId).apply()
+                if (!isAssistantChatId(currentChatId) && currentChatId.isNotBlank() &&
+                    !saveCurrentId()
+                ) {
+                    toast("Nie udało się trwale zapisać wyboru rozmowy. Nie przełączono widoku Asystenta.")
+                    return
                 }
                 selectedAgent = AgentRole.ASSISTANT
                 currentChatId = assistantId
@@ -3039,9 +3042,11 @@ class MainActivity : Activity() {
         agentActivity.clear()
         attachedText = ""; attachedName = ""; attachedMime = ""; attachedBase64 = ""
         draft = ""
-        // navigate("Czat") restores last_user_chat_id, so update it before navigating.
-        chatPrefs.edit().putString("last_user_chat_id", currentChatId).apply()
-        saveCurrentId()
+        // Persist currentId and last_user_chat_id together before navigating.
+        if (!saveCurrentId()) {
+            toast("Nie udało się trwale zapisać nowej rozmowy. Pozostań w bieżącym widoku.")
+            return
+        }
         navigate("Czat")
     }
 
