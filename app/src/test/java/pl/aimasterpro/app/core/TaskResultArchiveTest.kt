@@ -17,7 +17,9 @@ class TaskResultArchiveTest {
 
     @Before fun reset() {
         prefs.edit().clear().commit()
+        SharedPreferencesWriteHealth.resetForTests("task_result_archive_v1")
         context.getSharedPreferences("chat_state", Context.MODE_PRIVATE).edit().clear().commit()
+        SharedPreferencesWriteHealth.resetForTests("chat_state")
     }
 
     @Test fun successfulReportIsDurableAndAddressableByTaskId() {
@@ -241,5 +243,15 @@ class TaskResultArchiveTest {
         assertFalse(TaskResultArchive.put(context, "large", "developer", "x".repeat(32_001), "p", "m", 1_000L))
         assertNull(TaskResultArchive.get(context, "blank"))
         assertNull(TaskResultArchive.get(context, "large"))
+    }
+
+    @Test fun ambiguousArchiveCommitQuarantinesRecoveryReadsAndWrites() {
+        val failing = AmbiguousCommitContext(context, "task_result_archive_v1")
+        assertFalse(TaskResultArchive.put(
+            failing, "ambiguous-task", "developer", "Report with uncertain durability.", "p", "m", 3_000L
+        ))
+        assertFalse(TaskResultArchive.isArchiveReadable(context))
+        assertNull(TaskResultArchive.get(context, "ambiguous-task"))
+        assertFalse(TaskResultArchive.put(context, "second-task", "developer", "blocked", "p", "m", 4_000L))
     }
 }
