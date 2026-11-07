@@ -441,3 +441,10 @@ Rejestr rozróżnia paczkę źródłową od wersji aplikacji/APK. Numer paczki n
 - Nowy run `42415438103`, job `128532366193`, testowany SHA `c650c560...`; status `in_progress`. Na ostatnim odczycie konfiguracja Gradle trwała, testy/kompilacja oczekują.
 
 - Dodatkowo usunięto niezależne `apply()` zapisujące `last_user_chat_id` z przejść do Asystenta i tworzenia nowego czatu. Obie ścieżki korzystają teraz z `saveCurrentId()` i atomowego commitu `currentId` + `last_user_chat_id`; przy nieudanym zapisie przełączenie jest wstrzymywane. Statyczna kontrola MainActivity: pozostał wyłącznie odczyt `last_user_chat_id`, brak bezpośrednich zapisów `.apply()`. Commit `2db4679b21a5f908b150297d18e3ba23a7636d0a`; testy UI NOT RUN.
+
+### 0.6.139 — ochrona pomocniczej kopii legacy historii (2026-11-07)
+
+- Usunięto ostatni bezpośredni `commit()` z `MainActivity` do pliku `chat_state` (`chat_messages`).
+- Dodano `ChatHistoryStore.writeLegacyMirror()`, który serializuje zapis kopii kompatybilności przez wspólną blokadę i `SharedPreferencesWriteHealth.commit()`. Awaria kopii jest logowana jako ostrzeżenie; nie unieważnia potwierdzonego zapisu kanonicznego `chats_v2`, chyba że sam commit pomocniczy zwróci wynik niejednoznaczny — wtedy plik jest prawidłowo quarantined.
+- Testy: `legacyMirrorCommitFailureQuarantinesSharedPreferenceFileWithoutReplacingOldMirror`, `legacyMirrorWriteWaitsForSharedPreferenceFileLock`.
+- Commity: store `173e1ba8faff4870732209ac983c61a88c840bf4`, MainActivity `ff41c04fb8f0dba91a216f3fc75c7f60fbf1d347`, testy `bf3556baa3d4bb491b96e08b89cd062bc403f46b`. ADDED / NOT RUN.
