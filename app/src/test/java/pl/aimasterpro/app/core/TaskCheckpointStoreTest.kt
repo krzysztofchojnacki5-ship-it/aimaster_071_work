@@ -213,6 +213,22 @@ class TaskCheckpointStoreTest {
         assertEquals("INTERRUPTED", TaskCheckpointStore.latest(context).single().status)
     }
 
+    @Test fun timedOutRequestWithoutReportKeepsRetryablePendingStateWhenUsageWriteFails() {
+        val taskId = "task-timeout-no-report-pending"
+        assertTrue(TaskCheckpointStore.record(context, TaskCheckpointStore.Event(
+            taskId = taskId, agentId = "RESEARCHER", status = "TIMED_OUT",
+            detail = "coordinator deadline elapsed", timestamp = 100L,
+            providerId = "openai", model = "gpt-4o-mini", attempts = 1,
+            processId = "previous-process", estimatedInputTokens = 230L,
+            estimatedOutputTokens = 530L, idempotencyKey = "team:$taskId:openai"
+        )))
+
+        assertEquals(1, TaskCheckpointStore.recoverStaleRunning(context, 200L) { false })
+        assertEquals("INTERRUPTED_USAGE_PENDING", TaskCheckpointStore.latest(context).single().status)
+        assertEquals(1, TaskCheckpointStore.recoverStaleRunning(context, 300L) { true })
+        assertEquals("INTERRUPTED", TaskCheckpointStore.latest(context).single().status)
+    }
+
     @Test fun cancelledInFlightRequestWithoutReportStillReconcilesUnknownUsage() {
         val taskId = "task-cancelled-in-flight"
         assertTrue(TaskCheckpointStore.record(context, TaskCheckpointStore.Event(
