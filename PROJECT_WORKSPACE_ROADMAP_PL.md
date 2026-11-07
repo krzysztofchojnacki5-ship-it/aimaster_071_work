@@ -916,3 +916,7 @@ Dodano `CompanionApplication` jako klasę Application i zarejestrowano ją w man
 ## Bieżący stan prac — 0.6.139 (2026-11-07)
 
 Priorytetem jest domknięcie niezawodności magazynu profili przed powrotem do historii rozmów. W `SecureStore.saveConfig()` wdrożono zachowanie istniejącego ciphertextu przy pustym polu klucza API, po sprawdzeniu czy sekret jest czytelny. Cztery testy awarii i regresji dodano na roboczej gałęzi `work/0.6.139-saveconfig-secret-preservation`; testy są ADDED / NOT RUN. CI dla poprzedniego SHA `30e0f496...` nadal wykonuje testy i kompilację, więc nowego commita nie wysyłamy na gałąź audytową przed zakończeniem tego runu. Po walidacji 0.6.139 wracamy do odporności zapisu/odtwarzania historii rozmów. App source version pozostaje 0.6.54 / versionCode 80; nie utworzono APK, Companion pozostaje nieaktywny.
+
+### 0.6.139 — potwierdzony błąd migracji starego mirror historii
+
+W trakcie przeglądu startowego restoreMessages() wykryto i naprawiono ryzyko odtworzenia nieaktualnej rozmowy z `chat_messages`, gdy kanoniczne `chats_v2` istnieje, ale celowo zawiera pustą listę rozmów (np. po usunięciu ostatniej rozmowy). Migracja legacy jest teraz dozwolona wyłącznie przy braku kanonicznego dokumentu; niepewny odczyt blokuje restore. Dwa testy dodane, ADDED / NOT RUN. CI 42411603439 nadal waliduje starszy SHA 30e0f496..., więc poprawka nie jest jeszcze zweryfikowana.
