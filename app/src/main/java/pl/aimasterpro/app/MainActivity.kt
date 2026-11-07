@@ -293,10 +293,10 @@ class MainActivity : Activity() {
         // Resolve role and conversation before building the top bar so its model/provider are correct.
         when (label) {
             "Czat" -> {
-                selectedAgent = AgentRole.MASTER
                 val lastId = chatPrefs.getString("last_user_chat_id", "") ?: ""
-                currentChatId = if (lastId.isNotBlank()) lastId else UUID.randomUUID().toString()
-                restoreMessagesForCurrentChat()
+                val targetId = if (lastId.isNotBlank()) lastId else UUID.randomUUID().toString()
+                if (!restoreMessagesForCurrentChat(targetId)) return
+                selectedAgent = AgentRole.MASTER
             }
             "Asystent" -> {
                 val assistantId = assistantChatId()
@@ -304,9 +304,8 @@ class MainActivity : Activity() {
                     toast("Nie udało się trwale zapisać bieżącej rozmowy. Przejście do Asystenta zostało wstrzymane.")
                     return
                 }
+                if (!restoreMessagesForCurrentChat(assistantId)) return
                 selectedAgent = AgentRole.ASSISTANT
-                currentChatId = assistantId
-                restoreMessagesForCurrentChat()
             }
         }
         showShell(label)
@@ -3056,25 +3055,31 @@ class MainActivity : Activity() {
         }
     }
 
-    @Synchronized private fun restoreMessagesForCurrentChat() {
+    @Synchronized private fun restoreMessagesForCurrentChat(chatId: String): Boolean {
         val r = pl.aimasterpro.app.core.ChatHistoryStore.readRoot(this)
-            ?: run { toast("Historia rozmów jest uszkodzona. Zachowano dane; przywracanie zostało wstrzymane."); return }
+            ?: run {
+                toast("Historia rozmów jest uszkodzona. Zachowano poprzedni widok; przywracanie zostało wstrzymane.")
+                return false
+            }
+        val chatObj = r.optJSONObject("chats")?.optJSONObject(chatId)
+        val snapshot = pl.aimasterpro.app.core.ChatConversationSnapshot.parse(chatObj)
+            ?: run {
+                android.util.Log.e("AIMasterChat", "Nieprawidłowy zapis rozmowy $chatId; nie zmieniono bieżącego widoku.")
+                toast("Dane wybranej rozmowy są nieprawidłowe. Pozostawiono poprzednią rozmowę.")
+                return false
+            }
+
+        // Parse the complete snapshot before touching live UI state. A failed read/parse must
+        // not leave messages, task IDs, and agent activity belonging to different conversations.
         messages.clear()
+        messages.addAll(snapshot.messages)
         assistantTaskIds.clear()
+        assistantTaskIds.addAll(snapshot.assistantTaskIds)
         agentActivity.clear()
-        val chatObj = r.optJSONObject("chats")?.optJSONObject(currentChatId)
-        val arr = chatObj?.optJSONArray("messages") ?: JSONArray()
-        for (i in 0 until arr.length()) {
-            val item = arr.getJSONObject(i)
-            messages.add(item.optString("role") to item.optString("text"))
-        }
-        val taskIds = chatObj?.optJSONArray("assistantTaskIds") ?: JSONArray()
-        for (i in 0 until taskIds.length()) assistantTaskIds.add(taskIds.optString(i))
+        agentActivity.addAll(snapshot.agentActivity)
+        currentChatId = chatId
         alignAssistantTaskIds()
-        val actArr = chatObj?.optJSONArray("agentActivity") ?: JSONArray()
-        for (i in 0 until actArr.length()) {
-            agentActivity.add(actArr.getString(i))
-        }
+        return true
     }
 
     @Synchronized private fun newAssistantChat() {

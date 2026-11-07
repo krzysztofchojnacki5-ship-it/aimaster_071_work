@@ -438,3 +438,12 @@ Rejestr rozróżnia paczkę źródłową od wersji aplikacji/APK. Numer paczki n
 | 0.6.142-SOURCE | `audit/0.6.142-new-chat-atomicity` (commit źródłowy) | 0.6.54 | 80 | Tworzenie nowego czatu zapisuje `currentId` i `last_user_chat_id` jednym commitem przed czyszczeniem UI; przy błędzie przywraca poprzednie ID i zachowuje widok rozmowy | Statyczny diff PASS; dodano test awarii commitu przed apply; CI/JUnit NOT RUN do potwierdzenia |
 | 0.6.143-SOURCE | `audit/0.6.143-delete-current-chat` (commit źródłowy) | 0.6.54 | 80 | Usunięcie aktywnej rozmowy i wybór zastępczej nawigacji odbywają się w jednym commicie; ścieżka Asystenta zachowuje istniejący cel użytkownika | Statyczny diff PASS; dodano testy sukcesu i awarii przed apply; CI/JUnit NOT RUN do potwierdzenia |
 | 0.6.144-SOURCE | `audit/0.6.144-chat-pins-durability` (commit źródłowy) | 0.6.54 | 80 | ChatPinsStore serializuje odczyt i read-modify-write przypięć przez wspólną blokadę i uncertainty latch; UI sprawdza wynik zapisu | Statyczny diff PASS; dodano 4 testy JUnit/Robolectric; CI run 42419546568 IN PROGRESS, bez wyniku PASS/FAIL |
+
+
+## 0.6.145 — atomowe odtwarzanie rozmowy (2026-11-07)
+
+- Odtwarzanie rozmowy przed zmianą widoku korzysta z kompletnego `ChatConversationSnapshot`; wiadomości, identyfikatory zadań asystenta i aktywność agentów są parsowane jako jedna całość.
+- `restoreMessagesForCurrentChat(chatId)` najpierw odczytuje i waliduje cały snapshot, a dopiero potem zmienia stan UI oraz `currentChatId`.
+- `navigate("Czat")` i `navigate("Asystent")` przerywają przejście, jeśli odczyt lub parsowanie docelowej rozmowy zawiedzie; poprzedni widok i identyfikator pozostają aktywne.
+- Dodano testy parsera: pusty czat, poprawny snapshot trzech kolekcji, uszkodzona aktywność oraz uszkodzona wiadomość.
+- Testy i kompilacja Androida: ADDED / NOT RUN do potwierdzenia przez CI. APK nie utworzono; Companion pozostaje nieaktywny.

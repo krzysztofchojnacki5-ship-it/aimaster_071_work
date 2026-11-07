@@ -2095,3 +2095,13 @@ Doprecyzowanie projektu SQLite:
 - Statyczny diff sprawdzony; JUnit/Gradle/Android debug oczekują na CI. APK nie utworzono; Companion nieaktywny.
 
 - Aktualizacja walidacji 0.6.144: CI run `42419546568` (`beafd2f...`) jest IN PROGRESS; konfiguracja JDK/SDK/Gradle zakończona, wynik testów i kompilacji jeszcze nieznany.
+
+
+## Checkpoint 0.6.145 — atomowe odtwarzanie rozmowy (2026-11-07)
+
+- Baza: `audit/0.6.144-chat-pins-durability`, commit dokumentacyjny `d14d180370c96a710b7678da837b1dec5eddbdfe`.
+- Nowa gałąź: `audit/0.6.145-chat-restore-atomicity`.
+- Produkcyjna zmiana: nowy `ChatConversationSnapshot` parsuje messages, assistantTaskIds i agentActivity all-or-nothing; `MainActivity.restoreMessagesForCurrentChat(chatId)` zmienia stan dopiero po udanym parsowaniu.
+- Nawigacja do Czat/Asystent zatrzymuje się przy błędzie odczytu/parsowania zamiast pokazać poprzednie wiadomości pod nowym identyfikatorem rozmowy.
+- Dodano 4 testy jednostkowe parsera. Statyczna weryfikacja patcha; testy/Gradle/Android debug czekają na CI.
+- APK NOT BUILT; Companion NOT ACTIVATED; `main` untouched.
