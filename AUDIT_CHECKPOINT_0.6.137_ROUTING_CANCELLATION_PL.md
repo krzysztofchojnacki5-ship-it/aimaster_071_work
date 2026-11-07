@@ -2031,3 +2031,9 @@ Doprecyzowanie projektu SQLite:
 - Testy nadal ADDED / NOT RUN; nie ogłaszać zaliczenia bez wyniku CI.
 
 - Testy blokady `ChatResponseArchive` i `TaskResultArchive` wzmocniono do asercji stanu `Thread.State.BLOCKED` na wspólnej blokadzie; commity `b14f6ff8d48ff125b8c1bcc274889ecf15f1896b` oraz `808555f1fabbd45e51cd9f757b812a0601adc72e`. ADDED / NOT RUN.
+
+### Checkpoint 0.6.139 — obsługa startowego recovery
+
+- Awaria `TaskResultArchive.restoreArchivedReports()` jest teraz logowana na `AIMasterRecovery`; startup kontynuuje bez fałszywego komunikatu o odzyskaniu.
+- `chatTitles` aktualizuje się dopiero po udanym zapisie kanonicznego `chats_v2`.
+- Commit `ab954ce9e099afeecf6adfc68c251229d3c2e332`; statyczny przegląd kodu, bez uruchomionego testu/builda.
