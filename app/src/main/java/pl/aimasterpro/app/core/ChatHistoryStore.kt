@@ -13,10 +13,12 @@ object ChatHistoryStore {
     private const val KEY = "chats_v2"
 
     @Synchronized
-    fun readRoot(context: Context): JSONObject? {
+    fun readRoot(context: Context): JSONObject? = runCatching {
+        // Preference access itself can fail (not only JSON parsing). Treat that as unreadable,
+        // never as a missing first-run document that could later be overwritten.
         val raw = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString(KEY, null)
-            ?: return JSONObject()
-        return runCatching {
+            ?: return@runCatching JSONObject()
+        runCatching {
             val root = JSONObject(raw)
             if (root.has("chats")) {
                 val chats = root.optJSONObject("chats")
@@ -61,7 +63,7 @@ object ChatHistoryStore {
             }
             root
         }.getOrNull()
-    }
+    }.getOrNull()
 
     @Synchronized
     fun writeRoot(context: Context, root: JSONObject): Boolean {
