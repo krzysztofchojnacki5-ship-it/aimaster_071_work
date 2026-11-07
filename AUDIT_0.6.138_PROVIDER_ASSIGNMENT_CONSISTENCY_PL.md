@@ -115,3 +115,40 @@ Dodano `MasterProviderSelectionTest` z czterema przypadkami: rozbieżność wart
 - Companion: nieaktywowany.
 
 Następny krok: uruchomić testy resolvera i istniejący zestaw `AgentProviderAssignmentStoreTest` w Android Studio/CI, a następnie wykonać testy przeplotu importu z zapisem przypisania. Nie wprowadzać kolejnych blokad, dopóki testy nie wykażą konkretnego wyścigu.
+
+
+## Aktualizacja 0.6.138 — audyt przeplotu importu i zapisu przypisania
+
+### Zakres inspekcji
+
+Przejrzano na HEAD `2bc5da0edb29553615eecdc1a08610f0fcc2745d`:
+- `AgentProviderAssignmentStore.kt` i `AgentProviderAssignmentStoreTest.kt`;
+- `SharedPreferencesWriteHealth.kt`;
+- `SecureStore.kt` i `SecureStoreImportTest.kt`;
+- ścieżkę importu w `MainActivity.kt`, funkcję `persistAgentProviderAssignment()` oraz wszystkie znalezione wywołania tej funkcji.
+
+### Wynik
+
+Nie potwierdzono rzeczywistego wyścigu wymagającego nowej blokady produkcyjnej.
+
+1. Zapis przypisania i uzgadnianie przypisań korzystają z tego samego locka pliku preferencji `chat_state`. `save()` kończy zapis przez `SharedPreferencesWriteHealth.commit()`; odczyt/uzgodnienie jest objęte `withHealthyAccess()`. Operacje na tym pliku nie wykonują równoległych commitów poza sekcją krytyczną.
+2. Import profili w `MainActivity` wykonuje kolejno: anulowanie aktywnej pracy, synchroniczne `replaceAllConfigs()`, a następnie synchroniczne `reconcileAgentAssignmentsAfterImport()`. Obie operacje są wykonywane w obsłudze akcji UI; nie ma w tej ścieżce przekazania importu do executora.
+3. `persistAgentProviderAssignment()` jest wywoływane z akcji interfejsu (wybór modelu MASTER, zapis przypisania agenta oraz jawne przypisanie modelu). Nie znaleziono wywołania tej funkcji z workera w tle. Test połączenia agenta uruchamia worker, ale worker nie zapisuje przypisania; wynik wraca do UI.
+4. Pozostaje krótki logiczny przedział między commitem wymiany profili w `secure_provider_store` a commitem uzgodnienia `chat_state`. W obecnym przepływie nie może go wykorzystać konkurencyjna akcja UI, ponieważ import i uzgodnienie wykonują się sekwencyjnie na wątku UI. Jeśli uzgodnienie nie powiedzie się, `agentAssignmentsHealthy` pozostaje `false`, mapy routingu są czyszczone, a wysyłanie zadań jest blokowane.
+5. Dwa magazyny mają osobne locki i osobne commity; nie jest to transakcja atomowa między plikami. Ochroną na wypadek przerwania procesu pozostaje startup reconciliation. Nie należy opisywać tej pary commitów jako jednej transakcji.
+
+### Decyzja
+
+- Nie dodano globalnego locka ani kolejnej warstwy synchronizacji — byłaby to zmiana bez wykazanego współbieżnego wywołania, a mogłaby niepotrzebnie blokować operacje Keystore.
+- Nie dodano testu, który sztucznie przeplatałby dwa wywołania spoza rzeczywistego modelu wywołań aplikacji. Istniejący test `saveWaitsForAssignmentReconciliationReadLockBeforeCommitting` nadal sprawdza serializację operacji na `chat_state`.
+- Wniosek dotyczy przeanalizowanych call sites na tym HEAD; jeśli później zapis przypisań zostanie przeniesiony do workera lub import stanie się asynchroniczny, wymagany będzie ponowny audyt i test przeplotu obejmujący nowy model wykonania.
+
+### Weryfikacja
+
+- Inspekcja źródeł i call sites: wykonana.
+- Nowe testy: nie dodano — brak potwierdzonego wyścigu w obecnym modelu wykonania.
+- Testy JUnit/Robolectric i Android build: nieuruchomione.
+- APK: nie tworzono.
+- Companion: nieaktywowany.
+
+Następny krok: przejść do następnego punktu 0.6.138 — sprawdzić awarie na granicy pełnego importu: sukces commitu `secure_provider_store` i niepowodzenie commitu uzgodnienia `chat_state`, w tym stan po ponownym uruchomieniu i startup recovery.
