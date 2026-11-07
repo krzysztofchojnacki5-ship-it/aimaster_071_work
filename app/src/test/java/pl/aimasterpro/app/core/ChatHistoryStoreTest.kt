@@ -84,6 +84,53 @@ class ChatHistoryStoreTest {
         assertEquals(corrupt, prefs.getString("chats_v2", null))
     }
 
+    @Test fun preferenceReadExceptionIsNotTreatedAsMissingHistory() {
+        val failingContext = object : android.content.ContextWrapper(context) {
+            override fun getSharedPreferences(name: String, mode: Int): android.content.SharedPreferences {
+                throw IllegalStateException("controlled preferences read failure")
+            }
+        }
+        assertNull(ChatHistoryStore.readRoot(failingContext))
+        assertFalse(ChatHistoryStore.writeRoot(failingContext, JSONObject().put("chats", JSONObject())))
+    }
+
+    @Test fun failedDurableCommitReturnsFalseAndKeepsPreviousHistory() {
+        val original = JSONObject().put("currentId", "before")
+            .put("chats", JSONObject().put("before", JSONObject().put("messages", JSONArray())))
+        assertTrue(ChatHistoryStore.writeRoot(context, original))
+        val failingPrefs = java.lang.reflect.Proxy.newProxyInstance(
+            android.content.SharedPreferences::class.java.classLoader,
+            arrayOf(android.content.SharedPreferences::class.java)
+        ) { proxy, method, args ->
+            when (method.name) {
+                "getString" -> prefs.getString(args!![0] as String, args[1] as String?)
+                "edit" -> java.lang.reflect.Proxy.newProxyInstance(
+                    android.content.SharedPreferences.Editor::class.java.classLoader,
+                    arrayOf(android.content.SharedPreferences.Editor::class.java)
+                ) { _, editorMethod, editorArgs ->
+                    when (editorMethod.name) {
+                        "putString", "remove", "clear" -> null
+                        "commit" -> false
+                        "apply" -> Unit
+                        else -> null
+                    }
+                }
+                "toString" -> "FailingSharedPreferences"
+                "hashCode" -> System.identityHashCode(proxy)
+                "equals" -> proxy === args?.get(0)
+                else -> null
+            }
+        } as android.content.SharedPreferences
+        val failingContext = object : android.content.ContextWrapper(context) {
+            override fun getSharedPreferences(name: String, mode: Int): android.content.SharedPreferences =
+                if (name == "chat_state") failingPrefs else super.getSharedPreferences(name, mode)
+        }
+        val replacement = JSONObject().put("currentId", "after")
+            .put("chats", JSONObject().put("after", JSONObject().put("messages", JSONArray())))
+        assertFalse(ChatHistoryStore.writeRoot(failingContext, replacement))
+        assertEquals("before", ChatHistoryStore.readRoot(context)?.optString("currentId"))
+    }
+
     @Test fun writeRejectsStructurallyInvalidCandidate() {
         val root = JSONObject().put("chats", JSONObject().put("chat-1", JSONObject()
             .put("messages", JSONArray().put(JSONObject().put("role", 7).put("text", "bad")))))
