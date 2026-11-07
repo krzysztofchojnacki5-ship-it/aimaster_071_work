@@ -91,6 +91,28 @@ class TaskResultArchiveTest {
         assertEquals(1, afterRetry.length())
     }
 
+    @Test fun recoveryDoesNotDuplicateReportAlreadyPersistedInChatActivity() {
+        val chatId = "chat-already-has-report"
+        val report = "Raport zapisany przed przerwaniem procesu."
+        val activity = JSONArray().put("[11:00] RESEARCHER ➔ MASTER [REPORT]:\n$report")
+        val root = JSONObject()
+            .put("currentId", chatId)
+            .put("chats", JSONObject().put(chatId, JSONObject()
+                .put("title", "Existing report")
+                .put("messages", JSONArray())
+                .put("agentActivity", activity)))
+        assertTrue(ChatHistoryStore.writeRoot(context, root))
+        assertTrue(TaskResultArchive.put(
+            context, "task-existing-report", "RESEARCHER", report,
+            "provider-a", "model-a", 1_000L, chatId
+        ))
+
+        assertEquals(0, TaskResultArchive.restoreArchivedReports(context))
+        val savedActivity = ChatHistoryStore.readRoot(context)!!
+            .getJSONObject("chats").getJSONObject(chatId).getJSONArray("agentActivity")
+        assertEquals(1, savedActivity.length())
+    }
+
     @Test fun legacyArchiveWithoutChatIdIsNotAttachedToAnUnrelatedConversation() {
         val chatId = "chat-unrelated"
         val root = JSONObject()
