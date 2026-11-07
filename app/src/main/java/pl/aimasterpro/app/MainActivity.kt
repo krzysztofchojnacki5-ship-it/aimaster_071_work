@@ -5603,8 +5603,15 @@ onRequestStarting = { task, actualProvider, estimatedInput, estimatedOutput, ide
             .setView(box).setNegativeButton("Anuluj", null).setPositiveButton(if (export) "Dalej" else "Wczytaj") { _, _ ->
                 if (input.text.length < 8) { toast("Hasło musi mieć co najmniej 8 znaków."); return@setPositiveButton }
                 if (export) {
+                    val unavailable = store.unavailableSecretProviderIds()
+                    if (unavailable.isNotEmpty()) {
+                        toast("Eksport przerwany: nie można odszyfrować kluczy API profili ${unavailable.joinToString(", ")}. Kopia nie byłaby kompletna; istniejących danych nie zmieniono.")
+                        return@setPositiveButton
+                    }
                     val configs = JSONArray()
-                    store.allConfigs().forEach { configs.put(it) }
+                    store.allConfigs().forEach { config ->
+                        configs.put(JSONObject(config.toString()).apply { remove("_secretUnavailable") })
+                    }
                     if (configs.length() == 0) { toast("Brak zapisanych konfiguracji do eksportu."); return@setPositiveButton }
                     val passwordChars = CharArray(input.text.length)
                     input.text.getChars(0, input.text.length, passwordChars, 0)
