@@ -31,6 +31,9 @@ object ChangeSetStore {
         context: Context,
         storage: StringPreferenceStore = AndroidStringPreferenceStore(context, PREFERENCES_NAME)
     ): LedgerRead = try {
+        if (SharedPreferencesWriteHealth.isUncertain(PREFERENCES_NAME)) {
+            return LedgerRead(LedgerStatus.CORRUPT, error = "LEDGER_STORAGE_UNCERTAIN")
+        }
         val raw = storage.read(KEY) ?: "[]"
         require(raw.isNotBlank() && raw.length <= 2_000_000) { "LEDGER_EMPTY_OR_OVERSIZED" }
         val array = JSONArray(raw)
@@ -165,6 +168,7 @@ object ChangeSetStore {
     }
 
     private fun write(storage: StringPreferenceStore, rows: List<ChangeSet>) {
+        check(!SharedPreferencesWriteHealth.isUncertain(PREFERENCES_NAME)) { "LEDGER_STORAGE_UNCERTAIN" }
         val a = JSONArray()
         rows.take(MAX_ITEMS).forEach { c -> a.put(JSONObject().put("id", c.id).put("taskId", c.taskId)
             .put("summary", c.summary).put("paths", JSONArray(c.paths)).put("status", c.status)
