@@ -679,7 +679,14 @@ object ApiTokenTracker {
             val agentKey = request.agentId.lowercase(Locale.ROOT)
             val agentUsed = perAgentUsed[agentKey] ?: 0L
             val pricing = getPricing(context, request.modelName, request.providerId, request.baseUrl)
-            val usd = (request.estimatedInputTokens.coerceAtLeast(0L) * pricing.inputPer1MUsd +
+            // Reserve against the most expensive published input path. Automatic/provider
+            // caching can turn part of this prompt into cache writes with a premium rate.
+            val conservativeInputRate = maxOf(
+                pricing.inputPer1MUsd,
+                pricing.cachedInputPer1MUsd ?: pricing.inputPer1MUsd,
+                pricing.cacheWriteInputPer1MUsd ?: pricing.inputPer1MUsd
+            )
+            val usd = (request.estimatedInputTokens.coerceAtLeast(0L) * conservativeInputRate +
                 request.estimatedOutputTokens.coerceAtLeast(0L) * pricing.outputPer1MUsd) / 1_000_000.0
             val exchangeRate = getExchangeRate(context)
             val estimatedPln = usd * exchangeRate
