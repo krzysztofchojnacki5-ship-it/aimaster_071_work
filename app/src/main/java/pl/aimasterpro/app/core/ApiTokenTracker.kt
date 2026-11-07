@@ -116,8 +116,9 @@ object ApiTokenTracker {
             // An UNAVAILABLE checkpoint knows the requested alias, not necessarily the
             // canonical model selected by a gateway. Permit that one identity refinement
             // only when the same request is upgraded by authoritative REAL usage.
-            require(existing.modelName == modelName ||
-                (existing.status == "UNAVAILABLE" && status == "REAL")) {
+            val lateRealUpgrade = existing.status == "UNAVAILABLE" && status == "REAL"
+            val staleUnavailableReplay = existing.status == "REAL" && status == "UNAVAILABLE"
+            require(existing.modelName == modelName || lateRealUpgrade || staleUnavailableReplay) {
                 "Klucz idempotencji użycia API został ponownie użyty dla innego modelu."
             }
             // A late authoritative response may resolve an earlier UNAVAILABLE estimate for
