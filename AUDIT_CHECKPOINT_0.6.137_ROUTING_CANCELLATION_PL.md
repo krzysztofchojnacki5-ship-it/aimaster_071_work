@@ -1941,3 +1941,12 @@ Doprecyzowanie projektu SQLite:
 - Uporządkowano formatowanie trzech guardów `onRequestStarting` (commit `85922717`).
 - W peer review patcha znaleziono i poprawiono osobny błąd: URL providera był zapisywany z dosłownymi znakami ucieczki zamiast interpolowanej wartości hosta/protokołu. Commit: `e826de09`.
 - Najnowszy kod do walidacji: `7a6b24ad6050cf5e56704375279732858d0b60da`; CI run `42330603571` ma status `pending` przy ostatnim odczycie. Runy wcześniejszych SHA anulowano przez nowsze push'e.
+
+### Obsługa błędów odczytu SharedPreferences — 2026-11-07
+
+- Wcześniejszy latch obejmował nieudany commit, ale odczyty `provider_ids`, `config_<id>` i `key_<id>` nie miały jednolitej obsługi wyjątków. Część ścieżek mogła zwrócić pustą lub częściową listę albo kontynuować zapis po błędzie odczytu.
+- Dodano wspólne, defensywne odczyty identyfikatorów i ciphertextów. Wyjątek z API SharedPreferences ustawia ten sam procesowy latch; operacja zapisu sprawdza latch przed mutacją, a `allConfigs()` i `unavailableSecretProviderIds()` odrzucają wyniki częściowe.
+- `getSecret()` odróżnia błąd odczytu z SharedPreferences (latch) od błędu dekodowania/deszyfrowania ciphertextu (sekret pozostaje oznaczony jako niedostępny, bez automatycznego usuwania).
+- Dodano testy Robolectric z proxy SharedPreferences symulującym wyjątki: awaria drugiego odczytu konfiguracji odrzuca całą częściową listę; awaria odczytu `provider_ids` blokuje zapis przed commitem.
+- Commity: `115657d8` (odczyty fail-closed), `ba6c6dca` (odrzucanie częściowych wyników), `5779f298` (testy błędów odczytu).
+- CI dla `ba6c6dca` i `5779f298` uruchamia się osobno po kolejnych pushach; status końcowy musi być potwierdzony na najnowszym SHA. Nie traktować anulowanych runów jako PASS/FAIL.
