@@ -90,11 +90,17 @@ object TaskResultArchive {
      * Legacy archive rows without a chat ID remain safely addressable but cannot be replayed.
      */
     @Synchronized
-    fun restoreArchivedReports(context: Context): Int = runCatching {
+    fun restoreArchivedReports(context: Context): Int {
+        // A failed read is not an empty archive: surface it so recovery cannot be reported as a
+        // successful no-op while durable reports are actually inaccessible.
+        check(isArchiveReadable(context)) {
+            "Archiwum raportów zadań jest niedostępne lub uszkodzone; odzyskiwanie przerwano."
+        }
         val entries = latest(context).filter { it.chatId.isNotBlank() }
-        if (entries.isEmpty()) return@runCatching 0
-        val root = ChatHistoryStore.readRoot(context) ?: return@runCatching 0
-        val chats = root.optJSONObject("chats") ?: return@runCatching 0
+        if (entries.isEmpty()) return 0
+        val root = ChatHistoryStore.readRoot(context)
+            ?: throw IllegalStateException("Historia czatów jest niedostępna lub uszkodzona; odzyskiwanie przerwano.")
+        val chats = root.optJSONObject("chats") ?: return 0
         var restored = 0
         // Archive rows are newest-first, while chat activity is an append-only timeline.
         // Replay oldest-first so the timeline stays chronological and trimming keeps newest reports.
@@ -125,10 +131,10 @@ object TaskResultArchive {
             restored++
         }
         if (restored > 0 && !ChatHistoryStore.writeRoot(context, root)) {
-            error("Nie udało się trwale przywrócić raportów z archiwum do historii czatu.")
+            throw IllegalStateException("Nie udało się trwale przywrócić raportów z archiwum do historii czatu.")
         }
-        restored
-    }.getOrDefault(0)
+        return restored
+    }
     private fun encode(entry: Entry): JSONObject = JSONObject()
         .put("taskId", entry.taskId)
         .put("agentId", entry.agentId)

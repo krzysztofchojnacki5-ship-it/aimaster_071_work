@@ -176,6 +176,12 @@ class MainActivity : Activity() {
         )
         val restoredReports = runCatching {
             pl.aimasterpro.app.core.TaskResultArchive.restoreArchivedReports(this)
+        }.onFailure { error ->
+            android.util.Log.e(
+                "AIMasterRecovery",
+                "Nie udało się przywrócić raportów z archiwum; dane źródłowe pozostawiono bez zmian.",
+                error
+            )
         }.getOrDefault(0)
         if (restoredReports > 0) android.util.Log.w(
             "AIMasterRecovery",

@@ -17,6 +17,7 @@ class TaskResultArchiveTest {
 
     @Before fun reset() {
         prefs.edit().clear().commit()
+        context.getSharedPreferences("chat_state", Context.MODE_PRIVATE).edit().clear().commit()
     }
 
     @Test fun successfulReportIsDurableAndAddressableByTaskId() {
