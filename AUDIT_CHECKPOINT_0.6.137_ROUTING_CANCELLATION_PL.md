@@ -1369,3 +1369,21 @@ Weryfikacja:
 - najnowszy workflow run 42317859599 obejmuje SHA 93b99e1f6b6fed54695bb28e3c7368abd572a3d5 i ma status PENDING przy ostatnim odczycie;
 - branch roboczy: 268 commits ahead, 0 behind; main nadal 752149d40186144b0f458a32b5826c8928349c3a;
 - brak merge, APK, release i zmian main; Companion Transport pozostaje BLOCKED.
+
+
+## Dodatkowa kontrola — checkpoint REQUESTING w Peer Review (2026-11-07)
+
+Przegląd wszystkich trzech wywołań TeamRunEngine w MainActivity wykazał asymetrię: główna praca zespołu oraz recenzja patcha zapisywały trwały checkpoint REQUESTING przed wysłaniem żądania API, ale zwykły Peer Review nie przekazywał callbacku onRequestStarting. W razie przerwania procesu podczas recenzji mogło to pozostawić USAGE_PENDING bez kompletnych metadanych potrzebnych do bezpiecznego księgowania UNAVAILABLE. Mechanizm fail-closed chronił przed błędnym zerowym rozliczeniem, ale zadanie mogło pozostać nierozstrzygnięte.
+
+Poprawka:
+- dodano onRequestStarting do zwykłej ścieżki Peer Review;
+- przed POST zapisywane są providerId, model, estymacje input/output, idempotencyKey oraz bezpieczny baseUrl (bez ścieżki URL);
+- wynik Boolean zapisu checkpointu jest zwracany bezpośrednio do TeamRunEngine, więc brak potwierdzenia trwałego zapisu blokuje wysłanie żądania;
+- nie zmieniano logiki peer-review, budżetu ani routingu.
+
+Commit kodu: cd6fe6e301abf3e24f57326bd139976223b6378d.
+
+Weryfikacja źródła po zapisie:
+- MainActivity zawiera 3 callbacki onTaskResult i 3 callbacki onRequestStarting; liczby odpowiadają trzem ścieżkom raportowania i trzem ścieżkom zapisu metadanych REQUESTING.
+- Testy i kompilacja tej poprawki oczekują na nowy run CI; nie oznaczono ich jako PASS.
+- main, APK i release pozostają nietknięte; Companion Transport nadal BLOCKED.
