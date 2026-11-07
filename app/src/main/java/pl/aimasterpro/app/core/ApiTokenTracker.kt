@@ -31,6 +31,13 @@ data class ModelPricing(
     var outputPer1MUsd: Double
 )
 
+data class CatalogModelPrice(
+    val modelName: String,
+    val inputPer1MUsd: Double?,
+    val outputPer1MUsd: Double?,
+    val explicitlyFree: Boolean? = null
+)
+
 data class BudgetRequest(
     val taskId: String,
     val agentId: String,
@@ -402,24 +409,25 @@ object ApiTokenTracker {
     }
 
     /**
-     * Persists authoritative per-model prices supplied by a provider catalog.
-     * Prices are USD per million tokens; absent prices are never converted to zero.
+     * Atomically replaces one provider's catalog prices. One commit per catalog refresh
+     * avoids O(n²) preference rewrites when a provider exposes hundreds of models.
      */
     @Synchronized
-    fun setCatalogPricing(
-        context: Context, providerId: String, modelName: String, baseUrl: String,
-        inputPer1MUsd: Double?, outputPer1MUsd: Double?, explicitlyFree: Boolean? = null
+    fun replaceCatalogPricingForProvider(
+        context: Context, providerId: String, baseUrl: String, models: List<CatalogModelPrice>
     ) {
-        require(providerId.isNotBlank() && modelName.isNotBlank()) { "Dostawca i model cennika nie mogą być puste." }
-        require((inputPer1MUsd == null && outputPer1MUsd == null) ||
-            (inputPer1MUsd != null && outputPer1MUsd != null &&
-                inputPer1MUsd.isFinite() && outputPer1MUsd.isFinite() &&
-                inputPer1MUsd >= 0.0 && outputPer1MUsd >= 0.0)) {
-            "Ceny katalogowe muszą być podane parami jako skończone wartości nieujemne."
-        }
-        if (explicitlyFree == true) {
-            require(inputPer1MUsd == null || inputPer1MUsd == 0.0)
-            require(outputPer1MUsd == null || outputPer1MUsd == 0.0)
+        require(providerId.isNotBlank()) { "Id dostawcy cennika nie może być pusty." }
+        require(models.all { it.modelName.isNotBlank() &&
+            ((it.inputPer1MUsd == null && it.outputPer1MUsd == null) ||
+                (it.inputPer1MUsd != null && it.outputPer1MUsd != null &&
+                    it.inputPer1MUsd.isFinite() && it.outputPer1MUsd.isFinite() &&
+                    it.inputPer1MUsd >= 0.0 && it.outputPer1MUsd >= 0.0)) &&
+            (it.explicitlyFree != true ||
+                ((it.inputPer1MUsd == null || it.inputPer1MUsd == 0.0) &&
+                    (it.outputPer1MUsd == null || it.outputPer1MUsd == 0.0)))
+        }) { "Katalog zawiera nieprawidłowe ceny modelu." }
+        require(models.map { it.modelName }.distinct().size == models.size) {
+            "Katalog zawiera zduplikowane identyfikatory modeli."
         }
         val prefs = context.getSharedPreferences(PRICING_PREFS, Context.MODE_PRIVATE)
         val arr = runCatching { JSONArray(prefs.getString("catalog_model_prices", "[]") ?: "[]") }.getOrDefault(JSONArray())
@@ -427,18 +435,19 @@ object ApiTokenTracker {
         val kept = JSONArray()
         for (i in 0 until arr.length()) {
             val row = arr.optJSONObject(i) ?: continue
-            val same = row.optString("providerId") == providerId &&
-                row.optString("modelName") == modelName &&
+            val sameProviderCatalog = row.optString("providerId") == providerId &&
                 row.optString("baseUrl").trimEnd('/').lowercase(Locale.ROOT) == normalizedBase
-            if (!same) kept.put(row)
+            if (!sameProviderCatalog) kept.put(row)
         }
-        kept.put(JSONObject()
-            .put("providerId", providerId)
-            .put("modelName", modelName)
-            .put("baseUrl", normalizedBase)
-            .put("inputPer1MUsd", inputPer1MUsd ?: JSONObject.NULL)
-            .put("outputPer1MUsd", outputPer1MUsd ?: JSONObject.NULL)
-            .put("explicitlyFree", explicitlyFree ?: JSONObject.NULL))
+        models.forEach { model ->
+            kept.put(JSONObject()
+                .put("providerId", providerId)
+                .put("modelName", model.modelName)
+                .put("baseUrl", normalizedBase)
+                .put("inputPer1MUsd", model.inputPer1MUsd ?: JSONObject.NULL)
+                .put("outputPer1MUsd", model.outputPer1MUsd ?: JSONObject.NULL)
+                .put("explicitlyFree", model.explicitlyFree ?: JSONObject.NULL))
+        }
         check(prefs.edit().putString("catalog_model_prices", kept.toString()).commit()) {
             "Nie udało się trwale zapisać cennika katalogowego."
         }
