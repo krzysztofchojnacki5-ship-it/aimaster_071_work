@@ -99,7 +99,9 @@ object AgentOperationalMemoryStore {
         check(!SharedPreferencesWriteHealth.isUncertain(PREFS)) {
             "Operational memory is unavailable after an ambiguous durable write."
         }
-        val raw = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString(KEY, null) ?: "[]"
+        val raw = SharedPreferencesWriteHealth.withHealthyAccess(PREFS) {
+            context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString(KEY, null)
+        } ?: "[]"
         val array = JSONArray(raw)
         require(array.length() <= MAX_ENTRIES) { "Operational memory exceeds its supported size." }
         val seenIds = hashSetOf<String>()
