@@ -36,6 +36,7 @@ class ProviderClientNetworkTest {
             assertEquals(result.usage.inputTokens + result.usage.outputTokens, result.usage.totalTokens)
             assertEquals(0L, result.usage.cachedTokens)
             assertEquals(0L, result.usage.cacheWriteTokens)
+            assertEquals(0L, result.usage.cacheWrite1hTokens)
             assertEquals(0L, result.usage.reasoningTokens)
         } finally { server.stop(0) }
     }
@@ -626,6 +627,44 @@ class ProviderClientNetworkTest {
                 "vendor/non-openrouter", false, 0.0, 0.0, null, null
             )
         )
+    }
+
+    @Test
+    fun anthropicCacheCreationBreaksOutFiveMinuteAndOneHourWritesAndThinkingTokens() {
+        val (server, _) = server { _, _ ->
+            200 to """{"content":[{"type":"text","text":"response"}],"usage":{"input_tokens":10,"output_tokens":4,"cache_read_input_tokens":20,"cache_creation_input_tokens":5,"cache_creation":{"ephemeral_5m_input_tokens":3,"ephemeral_1h_input_tokens":2},"output_tokens_details":{"thinking_tokens":2}}}"""
+        }
+        try {
+            val cfg = ProviderConfig(
+                "anthropic-ttl-local-test", "Anthropic TTL local test", ProviderKind.ANTHROPIC,
+                "http://127.0.0.1:${server.address.port}/v1", "test-model", ""
+            )
+            val result = ProviderClient().chat(cfg, "system", "test")
+            assertEquals("REAL", result.usage.status)
+            assertEquals(35L, result.usage.inputTokens)
+            assertEquals(39L, result.usage.totalTokens)
+            assertEquals(20L, result.usage.cachedTokens)
+            assertEquals(3L, result.usage.cacheWriteTokens)
+            assertEquals(2L, result.usage.cacheWrite1hTokens)
+            assertEquals(2L, result.usage.reasoningTokens)
+        } finally { server.stop(0) }
+    }
+
+    @Test
+    fun openAiCompatibleUsageCanSeparateFiveMinuteAndOneHourCacheWrites() {
+        val (server, _) = server { _, _ ->
+            200 to """{"choices":[{"message":{"content":"response"}}],"usage":{"prompt_tokens":100,"completion_tokens":4,"total_tokens":104,"prompt_tokens_details":{"cached_tokens":10,"cache_write_5m_tokens":20,"cache_write_1h_tokens":30},"completion_tokens_details":{"reasoning_tokens":2}}}"""
+        }
+        try {
+            val result = ProviderClient().chat(
+                config("http://127.0.0.1:${server.address.port}/v1"), "system", "test"
+            )
+            assertEquals("REAL", result.usage.status)
+            assertEquals(10L, result.usage.cachedTokens)
+            assertEquals(20L, result.usage.cacheWriteTokens)
+            assertEquals(30L, result.usage.cacheWrite1hTokens)
+            assertEquals(2L, result.usage.reasoningTokens)
+        } finally { server.stop(0) }
     }
 
 }
