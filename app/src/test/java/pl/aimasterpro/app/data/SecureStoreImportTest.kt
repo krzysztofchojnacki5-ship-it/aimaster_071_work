@@ -220,4 +220,19 @@ class SecureStoreImportTest {
         assertFalse(canReplaceUnreadableSecret(aliasExists = false, keyIsSecretKey = true))
     }
 
+    @Test fun blankLegacyCiphertextIsTreatedAsMissingSecretNotKeystoreFailure() {
+        val context = org.robolectric.RuntimeEnvironment.getApplication()
+        val prefs = context.getSharedPreferences("secure_provider_store", Context.MODE_PRIVATE)
+        prefs.edit()
+            .putStringSet("provider_ids", setOf("provider_one"))
+            .putString("config_provider_one", validConfig().toString())
+            .putString("key_provider_one", "")
+            .commit()
+
+        val config = SecureStore(context).readConfig("provider_one")
+
+        assertEquals(false, config?.optBoolean("_secretUnavailable", true))
+        assertTrue(SecureStore(context).unavailableSecretProviderIds().isEmpty())
+    }
+
 }
