@@ -473,4 +473,51 @@ class ProviderClientNetworkTest {
         assertEstimatedUsage("""{"prompt_tokens":3,"completion_tokens":2,"total_tokens":5,"completion_tokens_details":{"reasoning_tokens":3}}""")
     }
 
+
+    @Test
+    fun anthropicStringUsageCountersAreEstimated() {
+        val (server, _) = server { _, _ ->
+            200 to """{"content":[{"type":"text","text":"response"}],"usage":{"input_tokens":"3","output_tokens":2}}"""
+        }
+        try {
+            val cfg = ProviderConfig(
+                "anthropic-local-test", "Anthropic local test", ProviderKind.ANTHROPIC,
+                "http://127.0.0.1:${server.address.port}/v1", "test-model", ""
+            )
+            val result = ProviderClient().chat(cfg, "system", "test")
+            assertEquals("ESTIMATED", result.usage.status)
+        } finally { server.stop(0) }
+    }
+
+    @Test
+    fun nativeGeminiFractionalUsageCountersAreEstimated() {
+        val (server, _) = server { _, _ ->
+            200 to """{"modelVersion":"test-model","candidates":[{"content":{"parts":[{"text":"response"}]}}],"usageMetadata":{"promptTokenCount":3.5,"candidatesTokenCount":2,"totalTokenCount":5.5}}"""
+        }
+        try {
+            val cfg = ProviderConfig(
+                "gemini-native-local-test", "Gemini native local test", ProviderKind.GEMINI,
+                "http://127.0.0.1:${server.address.port}/v1beta", "test-model", ""
+            )
+            val result = ProviderClient().chat(cfg, "system", "test")
+            assertEquals("ESTIMATED", result.usage.status)
+        } finally { server.stop(0) }
+    }
+
+    @Test
+    fun anthropicCachedReadTokensAreNotComparedToUncachedInputCount() {
+        val (server, _) = server { _, _ ->
+            200 to """{"content":[{"type":"text","text":"response"}],"usage":{"input_tokens":3,"output_tokens":2,"cache_read_input_tokens":8}}"""
+        }
+        try {
+            val cfg = ProviderConfig(
+                "anthropic-cache-local-test", "Anthropic cache local test", ProviderKind.ANTHROPIC,
+                "http://127.0.0.1:${server.address.port}/v1", "test-model", ""
+            )
+            val result = ProviderClient().chat(cfg, "system", "test")
+            assertEquals("REAL", result.usage.status)
+            assertEquals(8L, result.usage.cachedTokens)
+        } finally { server.stop(0) }
+    }
+
 }
