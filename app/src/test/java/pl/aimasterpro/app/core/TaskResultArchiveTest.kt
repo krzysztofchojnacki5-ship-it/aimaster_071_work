@@ -278,4 +278,42 @@ class TaskResultArchiveTest {
         assertEquals("task-locked-archive", TaskResultArchive.latest(context).single().taskId)
     }
 
+
+@Test fun archivedReportSurvivesHistoryCommitFailureBeforeApplyAndReplaysAfterRestart() {
+        val chatId = "task-report-before-apply"
+        createChat(chatId)
+        assertTrue(TaskResultArchive.put(
+            context, "report-before-apply", "RESEARCHER", "Recover this report.",
+            "provider-a", "model-a", 22_000L, chatId
+        ))
+        val failing = AmbiguousCommitContext(context, "chat_state", applyBeforeFailure = false)
+        assertTrue(runCatching { TaskResultArchive.restoreArchivedReports(failing) }.isFailure)
+        assertNotNull(TaskResultArchive.get(context, "report-before-apply"))
+
+        SharedPreferencesWriteHealth.resetForTests("chat_state")
+        assertEquals(1, TaskResultArchive.restoreArchivedReports(context))
+        assertEquals(0, TaskResultArchive.restoreArchivedReports(context))
+        val rows = ChatHistoryStore.readRoot(context)!!.getJSONObject("chats")
+            .getJSONObject(chatId).getJSONArray("agentActivity")
+        assertEquals(1, (0 until rows.length()).count { rows.getString(it).contains("[TASK_REPORT_ID:report-before-apply]") })
+    }
+
+    @Test fun archivedReportAppliedBeforeAmbiguousFailureIsNotDuplicatedAfterRestart() {
+        val chatId = "task-report-after-apply"
+        createChat(chatId)
+        assertTrue(TaskResultArchive.put(
+            context, "report-after-apply", "RESEARCHER", "Already applied report.",
+            "provider-a", "model-a", 23_000L, chatId
+        ))
+        val failing = AmbiguousCommitContext(context, "chat_state", applyBeforeFailure = true)
+        assertTrue(runCatching { TaskResultArchive.restoreArchivedReports(failing) }.isFailure)
+        assertNotNull(TaskResultArchive.get(context, "report-after-apply"))
+
+        SharedPreferencesWriteHealth.resetForTests("chat_state")
+        assertEquals(0, TaskResultArchive.restoreArchivedReports(context))
+        val rows = ChatHistoryStore.readRoot(context)!!.getJSONObject("chats")
+            .getJSONObject(chatId).getJSONArray("agentActivity")
+        assertEquals(1, (0 until rows.length()).count { rows.getString(it).contains("[TASK_REPORT_ID:report-after-apply]") })
+    }
+
 }
