@@ -4086,14 +4086,30 @@ class MainActivity : Activity() {
         }
 
         fun refreshCatalog(showToast: Boolean) {
+            if (store.isStorageUncertain()) {
+                refreshBtn.text = "↻ Odśwież katalog"
+                refreshBtn.isEnabled = false
+                toast("Synchronizacja katalogu zablokowana. Uruchom ponownie AI MASTER PRO.")
+                return
+            }
             refreshBtn.text = "⏳ Pobieranie z API…"
             refreshBtn.isEnabled = false
             executor.execute {
+                if (store.isStorageUncertain()) {
+                    runOnUiThread {
+                        refreshBtn.text = "↻ Odśwież katalog"
+                        refreshBtn.isEnabled = false
+                        if (showToast) toast("Synchronizacja przerwana: magazyn konfiguracji wymaga ponownego uruchomienia.")
+                    }
+                    return@execute
+                }
                 val savedConfigs = store.allConfigs().mapNotNull { j -> runCatching { loadProvider(j.optString("id")) }.getOrNull() }
                 val discoveredList = mutableListOf<pl.aimasterpro.app.core.FreeModelSpec>()
                 val refreshedProviders = mutableSetOf<String>()
                 savedConfigs.forEach { cfg ->
+                    if (store.isStorageUncertain()) return@forEach
                     if (providerReady(cfg)) {
+                        if (store.isStorageUncertain()) return@forEach
                         val result = runCatching { client.discoverModels(cfg) }
                         if (result.isSuccess) {
                             val canonicalProvider = when {
@@ -4119,12 +4135,20 @@ class MainActivity : Activity() {
                     if (discoveredList.none { it.providerId == cached.providerId && it.modelId == cached.modelId })
                         discoveredList.add(cached.copy(isOnline = false))
                 }
+                if (store.isStorageUncertain()) {
+                    runOnUiThread {
+                        refreshBtn.text = "↻ Odśwież katalog"
+                        refreshBtn.isEnabled = false
+                        if (showToast) toast("Synchronizacja przerwana: magazyn konfiguracji wymaga ponownego uruchomienia.")
+                    }
+                    return@execute
+                }
                 if (refreshedProviders.isNotEmpty()) {
                     pl.aimasterpro.app.core.FreeModelsCatalog.saveCatalog(this@MainActivity, discoveredList)
                 }
                 runOnUiThread {
                     refreshBtn.text = "↻ Odśwież katalog"
-                    refreshBtn.isEnabled = true
+                    refreshBtn.isEnabled = !store.isStorageUncertain()
                     if (refreshedProviders.isNotEmpty()) {
                         updatedTv.text = "Ostatnia synchronizacja: ${pl.aimasterpro.app.core.FreeModelsCatalog.lastUpdatedFormatted(this@MainActivity)}"
                     }
