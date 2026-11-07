@@ -388,3 +388,9 @@ Rejestr rozróżnia paczkę źródłową od wersji aplikacji/APK. Numer paczki n
 - Dodano test ambiguousArchiveCommitQuarantinesRecoveryReadsAndWrites dla ChatResponseArchive.put(): symulowany commit niejednoznaczny (apply przed false) musi zwrócić false, oznaczyć archiwum jako niepewne, zablokować odczyt wpisu i kolejne zapisy.
 - Commit testu: e08735883591841b645202f33e72d307f809f1b5.
 - Test ADDED / NOT RUN. CI 42411603439 nadal in_progress na SHA 30e0f496...; nie obejmuje tego commita. APK NOT BUILT; Companion NOT ACTIVATED.
+
+### 0.6.139 — blokada replayu po kwarantannie archiwum (2026-11-07)
+
+- Rozszerzono testy niejednoznacznego commit obu archiwów: po wykryciu awarii test jawnie wywołuje restoreArchivedResponses/restoreArchivedReports i wymaga przerwania odzyskiwania wyjątkiem, zanim odczyt lub replay mógłby udawać pusty, zdrowy magazyn.
+- Commity: ChatResponseArchiveTest 5eb52b62daf2fa1ae1cff91bcfac2abcbad53769; TaskResultArchiveTest 5fbfa1269fba52deb88ff8d1938339998bec2129.
+- Testy ADDED / NOT RUN; aktywny CI 42411603439 nadal testuje SHA 30e0f496..., więc nowe asercje nie są zweryfikowane.
