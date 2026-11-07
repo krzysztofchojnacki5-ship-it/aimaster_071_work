@@ -5419,8 +5419,9 @@ class MainActivity : Activity() {
                 .setPositiveButton("Zapisz zasadę") { _, _ ->
                     val value = input.text.toString().trim()
                     if (value.isNotBlank()) {
-                        pl.aimasterpro.app.core.AiMemoryStore.addMemory(this, value)
-                        toast("Zapisano zasadę. Będzie dołączana do kolejnych zadań.")
+                        val saved = pl.aimasterpro.app.core.AiMemoryStore.addMemory(this, value)
+                        toast(if (saved) "Zapisano zasadę. Będzie dołączana do kolejnych zadań."
+                            else "Nie udało się zapisać zasady. Dotychczasowa pamięć pozostała bez zmian.")
                         showShell("Pamięć"); showMemory()
                     }
                 }.show()
@@ -5439,8 +5440,9 @@ class MainActivity : Activity() {
                 .setMessage("Usunie wyłącznie historię zdarzeń i metryki używane do oceny operacyjnej. Oceny jakości, propozycje uczenia, zatwierdzone zasady pamięci, historia czatów, modele i klucze pozostaną bez zmian.")
                 .setNegativeButton("Anuluj", null)
                 .setPositiveButton("Wyczyść") { _, _ ->
-                    pl.aimasterpro.app.core.LearningJournalStore.clear(this)
-                    toast("Wyczyszczono dziennik uczenia.")
+                    val cleared = pl.aimasterpro.app.core.LearningJournalStore.clear(this)
+                    toast(if (cleared) "Wyczyszczono dziennik uczenia."
+                        else "Nie udało się potwierdzić wyczyszczenia dziennika.")
                     showShell("Pamięć"); showMemory()
                 }.show()
         })
