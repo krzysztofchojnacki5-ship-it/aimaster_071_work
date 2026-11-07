@@ -9,6 +9,42 @@ import pl.aimasterpro.app.data.BackupCrypto
 @RunWith(RobolectricTestRunner::class)
 class BackupCryptoTest {
     @Test
+    fun testProviderPayloadAcceptsValidStrictSchema() {
+        val plain = """{"app":"AI_MASTER_PRO_ANDROID","schemaVersion":1,"providers":[{"id":"p1"}]}"""
+        assertEquals("p1", BackupCrypto.parseProviderConfigs(plain).single().getString("id"))
+    }
+
+    @Test
+    fun testProviderPayloadRejectsStringSchemaVersion() {
+        val plain = """{"app":"AI_MASTER_PRO_ANDROID","schemaVersion":"1","providers":[{"id":"p1"}]}"""
+        try {
+            BackupCrypto.parseProviderConfigs(plain)
+            fail("String schema version must not be coerced.")
+        } catch (_: IllegalArgumentException) { }
+    }
+
+    @Test
+    fun testProviderPayloadRejectsNonStringAppIdentifier() {
+        val plain = """{"app":123,"schemaVersion":1,"providers":[{"id":"p1"}]}"""
+        try {
+            BackupCrypto.parseProviderConfigs(plain)
+            fail("Non-string app identifier must be rejected.")
+        } catch (_: IllegalArgumentException) { }
+    }
+
+    @Test
+    fun testProviderPayloadRejectsNonArrayProvidersAndNonObjectEntries() {
+        val wrongContainer = """{"app":"AI_MASTER_PRO_ANDROID","schemaVersion":1,"providers":{}}"""
+        val wrongEntry = """{"app":"AI_MASTER_PRO_ANDROID","schemaVersion":1,"providers":[null]}"""
+        for (plain in listOf(wrongContainer, wrongEntry)) {
+            try {
+                BackupCrypto.parseProviderConfigs(plain)
+                fail("Malformed provider collection must be rejected.")
+            } catch (_: IllegalArgumentException) { }
+        }
+    }
+
+    @Test
     fun testEncryptDecrypt() {
         val plaintext = "{\"app\":\"AI_MASTER_PRO_ANDROID\",\"providers\":[]}"
         val password = "securepassword123".toCharArray()
