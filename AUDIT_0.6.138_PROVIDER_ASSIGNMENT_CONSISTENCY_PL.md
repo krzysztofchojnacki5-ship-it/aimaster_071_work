@@ -217,3 +217,29 @@ Nie zmieniono jeszcze formatu magazynu ani nie dodano markera zamiaru importu. T
 
 
 Test starego snapshotu został doprecyzowany tak, aby katalog testowy obejmował również profile domyślne Gemini i Groq, które aplikacja dodaje przed startup reconciliation. Oczekiwany wynik testu odpowiada więc rzeczywistemu fallbackowi przy utracie preferencji importu: MASTER wraca do Gemini, a role specjalistyczne do Groq, o ile te profile są obecne.
+
+
+## Aktualizacja — odzyskiwanie po niejednoznacznym commicie SecureStore
+
+Dodano testy w `SecureStoreReplacementRecoveryTest.kt` dla dwóch możliwych wyników nieudanego commitu `replaceAllConfigs()`:
+- nowy katalog jest widoczny w pamięci po `apply()`, mimo że commit zgłasza false;
+- stary katalog pozostaje bez zmian, gdy edytor nie został zastosowany.
+
+Testy odtwarzają teraz także istotną część rzeczywistego startu `MainActivity`: po wyczyszczeniu latcha procesu dodawane są domyślne profile Gemini i Groq, a dopiero potem wykonywane jest `reconcileExistingAssignments()`. W scenariuszu, w którym nowy katalog przetrwał, ale stare przypisanie MASTER wskazuje na usunięty profil, oczekiwanym fallbackiem jest Gemini, a role specjalistyczne wskazują na Groq. Gdy stary katalog przetrwał, poprawne stare przypisania pozostają zachowane.
+
+### Kontrola czterech obszarów
+
+1. Odzyskiwanie po niejednoznacznym commicie katalogu: testy dla obu wyników commitu dodane.
+2. Latch `SecureStoreHealth`: potwierdzono blokowanie kolejnych odczytów i zapisów w bieżącym procesie po niepewnym commicie lub błędzie odczytu; reset jest wyłącznie testową symulacją granicy procesu.
+3. Częściowy import: `replaceAllConfigs()` waliduje i przygotowuje wszystkie wpisy oraz zaszyfrowane sekrety przed jednym końcowym commitem. Istniejące testy pokrywają m.in. duplikaty ID, błędny schemat, brakującego rodzica, cykle i niedostępne sekrety.
+4. Spójność ról: startup reconciliation zapisuje wszystkie role i `selected_provider` jednym commitem; przy niepowodzeniu zwraca null, a startup pozostawia routing zablokowany.
+
+### Status weryfikacji
+
+- Kod testów: zapisany w commicie `b11fdebd35db63ece157256d99d3421fb0f94a7a`.
+- CI `42411214421`: nadal `in_progress` na wcześniejszym SHA `7c2c38c06bf2e3e8abf5f33a66815b35e9f4bcc7`; nie obejmuje korekty testów z commita `b11fdebd`.
+- Dla commita `b11fdebd` nie ma jeszcze powiązanego runu Actions. Nie oznaczono testów ani kompilacji jako PASS.
+- Testy Robolectric nie symulują fizycznego zaniku zasilania ani rzeczywistego procesu Android; odtwarzają logiczne warianty stanu SharedPreferences i reset latchy.
+- APK nie tworzono; Companion pozostaje nieaktywny.
+
+Następny krok: uruchomić workflow Android audit dla aktualnego HEAD i dopiero po wyniku rozstrzygnąć, czy potrzebna jest poprawka testu lub kodu produkcyjnego.
