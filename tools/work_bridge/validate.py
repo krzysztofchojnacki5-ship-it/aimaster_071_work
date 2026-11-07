@@ -35,8 +35,16 @@ def parse_manifest(inbox: str, task_id: str) -> dict:
         raise PolicyError(f"Invalid Task ID: {task_id!r}")
     found = []
     for raw in BLOCK_RE.findall(inbox):
+        def reject_duplicate_keys(pairs):
+            item = {}
+            for key, value in pairs:
+                if key in item:
+                    raise PolicyError(f"Duplicate JSON key in WB_TASK_V1: {key}")
+                item[key] = value
+            return item
+
         try:
-            item = json.loads(raw)
+            item = json.loads(raw, object_pairs_hook=reject_duplicate_keys)
         except json.JSONDecodeError as exc:
             raise PolicyError(f"Malformed WB_TASK_V1 JSON: {exc}") from exc
         if not isinstance(item, dict):
@@ -63,7 +71,8 @@ def parse_manifest(inbox: str, task_id: str) -> dict:
     for pattern in allowed:
         if (not pattern or pattern.startswith("/")
                 or "\\" in pattern or any(p in {"", ".", ".."} for p in PurePosixPath(pattern).parts)
-                or pattern in {"*", "**", "**/*"}):
+                or any(char in pattern for char in "*?[")
+                or PurePosixPath(pattern).as_posix() != pattern):
             raise PolicyError(f"Unsafe allowed_paths pattern: {pattern!r}")
     return item
 
