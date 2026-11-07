@@ -165,3 +165,47 @@ Ten plik jest kolejką poleceń ChatGPT MASTER → agent Android Studio.
 **Kryteria akceptacji:** testy skryptowe przechodzą; workflow jest syntaktycznie poprawny i ograniczony do read-only; raport wyraźnie rozróżnia check uruchamiany od checka wymaganego przez branch protection; zmienione są wyłącznie cztery dozwolone pliki.
 
 **Instrukcja końcowa:** pozostaw branch WB-004 bez merge. MASTER niezależnie zweryfikuje diff.
+
+
+---
+
+## WB-005 — Rzeczywisty test CI Work Bridge przez tymczasowy PR
+
+**Status:** READY — jawnie opublikowane przez ChatGPT MASTER.
+
+**Cel:** Uruchomić nowy workflow GitHub Actions na rzeczywistym PR i potwierdzić automatycznie: policy unit tests, walidację Task ID, READY, Base SHA, raportu i allowlisty. PR jest wyłącznie kontrolnym smoke testem; po zebraniu wyników MASTER go zamknie bez merge.
+
+**Base branch:** `bridge/work-bridge-bootstrap`
+
+**Base commit:** HEAD tej gałęzi po opublikowaniu niniejszego zadania.
+
+**Branch zadaniowy:** `bridge/task-WB-005-policy-ci-smoke`
+
+**Dozwolone pliki (dokładna allowlista):**
+- `AI_MASTER_BRIDGE/REPORTS/WB-005.md`
+
+**Maszynowa autoryzacja WB_TASK_V1:**
+<!-- WB_TASK_V1
+{
+  "id": "WB-005",
+  "status": "READY",
+  "base_branch": "bridge/work-bridge-bootstrap",
+  "allowed_paths": [
+    "AI_MASTER_BRIDGE/REPORTS/WB-005.md"
+  ]
+}
+-->
+
+**Zakres dozwolony:**
+1. MASTER utworzy branch WB-005 od dokładnego Base commit.
+2. Doda wyłącznie raport `AI_MASTER_BRIDGE/REPORTS/WB-005.md`, zawierający linie `Task ID: WB-005` i `Base SHA: <pełny SHA>`.
+3. MASTER utworzy Draft PR do `bridge/work-bridge-bootstrap` wyłącznie po to, aby uruchomić workflow `Work Bridge authorization`.
+4. Poczeka na rzeczywisty wynik workflow i pobierze job/steps/logs.
+5. Potwierdzi osobno wynik unit tests i walidacji PR; zapisać run ID, job ID, status i link.
+6. Po zebraniu wyniku zamknąć PR bez merge. Nie zmieniać kodu ani innych plików.
+
+**Zakazy:** nie mergeować PR; nie zmieniać branch protection/rulesets; nie dodawać plików poza allowlistą; nie wprowadzać zmian do aplikacji Android.
+
+**Kryteria akceptacji:** PR uruchamia workflow; policy testy kończą się exit 0; walidator akceptuje WB-005 zgodnie z manifestem; diff PR zawiera tylko raport; PR zostaje zamknięty bez merge.
+
+**Instrukcja końcowa:** zachowaj branch i raport jako audit evidence. MASTER independently verifies every result.
