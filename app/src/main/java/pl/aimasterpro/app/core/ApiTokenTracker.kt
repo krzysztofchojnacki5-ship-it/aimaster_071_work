@@ -26,7 +26,9 @@ data class TokenRecord(
     /** Tokens written to the default (5-minute) prompt cache. */
     val cacheWriteTokens: Long = 0L,
     /** Tokens written to a 1-hour prompt cache; zero for legacy ledger rows. */
-    val cacheWrite1hTokens: Long = 0L
+    val cacheWrite1hTokens: Long = 0L,
+    /** False when the provider did not expose a reasoning-token breakdown. */
+    val reasoningTokensKnown: Boolean = false
 )
 
 data class ModelPricing(
@@ -106,20 +108,26 @@ object ApiTokenTracker {
 
     private fun calculateUsdCost(
         inputTokens: Long, outputTokens: Long, reasoningTokens: Long, cachedTokens: Long,
-        cacheWriteTokens: Long, cacheWrite1hTokens: Long, pricing: ModelPricing
+        cacheWriteTokens: Long, cacheWrite1hTokens: Long, reasoningTokensKnown: Boolean,
+        pricing: ModelPricing
     ): Double {
         val cachedRead = minOf(inputTokens, cachedTokens)
         val cacheWrite = minOf(inputTokens - cachedRead, cacheWriteTokens)
         val cacheWrite1h = minOf(inputTokens - cachedRead - cacheWrite, cacheWrite1hTokens)
         val regularInput = inputTokens - cachedRead - cacheWrite - cacheWrite1h
-        val reasoning = minOf(outputTokens, reasoningTokens)
+        val reasoningBreakdownKnown = reasoningTokensKnown || reasoningTokens > 0L
+        val reasoning = if (reasoningBreakdownKnown) minOf(outputTokens, reasoningTokens) else 0L
         val visibleOutput = outputTokens - reasoning
         return (regularInput.toDouble() * pricing.inputPer1MUsd +
             cachedRead.toDouble() * (pricing.cachedInputPer1MUsd ?: pricing.inputPer1MUsd) +
             cacheWrite.toDouble() * (pricing.cacheWriteInputPer1MUsd ?: pricing.inputPer1MUsd) +
             cacheWrite1h.toDouble() * (pricing.cacheWriteInput1hPer1MUsd ?: pricing.cacheWriteInputPer1MUsd ?: pricing.inputPer1MUsd) +
-            visibleOutput.toDouble() * pricing.outputPer1MUsd +
-            reasoning.toDouble() * (pricing.internalReasoningPer1MUsd ?: pricing.outputPer1MUsd)) / 1_000_000.0
+            (if (!reasoningBreakdownKnown && pricing.internalReasoningPer1MUsd != null) {
+                outputTokens.toDouble() * maxOf(pricing.outputPer1MUsd, pricing.internalReasoningPer1MUsd)
+            } else {
+                visibleOutput.toDouble() * pricing.outputPer1MUsd +
+                    reasoning.toDouble() * (pricing.internalReasoningPer1MUsd ?: pricing.outputPer1MUsd)
+            })) / 1_000_000.0
     }
 
     @Synchronized
@@ -138,7 +146,8 @@ object ApiTokenTracker {
         reservationId: String = "",
         idempotencyKey: String = "",
         cacheWriteTokens: Long = 0L,
-        cacheWrite1hTokens: Long = 0L
+        cacheWrite1hTokens: Long = 0L,
+        reasoningTokensKnown: Boolean = false
     ): TokenRecord {
         require(inputTokens >= 0L && outputTokens >= 0L && reasoningTokens >= 0L &&
             reasoningTokens <= outputTokens && cachedTokens >= 0L && cacheWriteTokens >= 0L && cacheWrite1hTokens >= 0L &&
@@ -176,7 +185,7 @@ object ApiTokenTracker {
                 require(upgradeRate.isFinite() && upgradeRate > 0.0) {
                     "Nieprawidłowy kurs USD/PLN; rozliczenie API wstrzymano."
                 }
-                val upgradeUsd = calculateUsdCost(inputTokens, outputTokens, reasoningTokens, cachedTokens, cacheWriteTokens, cacheWrite1hTokens, upgradePricing)
+                val upgradeUsd = calculateUsdCost(inputTokens, outputTokens, reasoningTokens, cachedTokens, cacheWriteTokens, cacheWrite1hTokens, reasoningTokensKnown, upgradePricing)
                 val upgradePln = upgradeUsd * upgradeRate
                 require(upgradeUsd.isFinite() && upgradePln.isFinite() && upgradeUsd >= 0.0 && upgradePln >= 0.0) {
                     "Nieprawidłowy koszt użycia API."
@@ -190,6 +199,7 @@ object ApiTokenTracker {
                     cachedTokens = cachedTokens,
                     cacheWriteTokens = cacheWriteTokens,
                     cacheWrite1hTokens = cacheWrite1hTokens,
+                    reasoningTokensKnown = reasoningTokensKnown || reasoningTokens > 0L,
                     modelName = modelName,
                     status = "REAL",
                     costUsd = upgradeUsd,
@@ -217,7 +227,7 @@ object ApiTokenTracker {
             pricing.inputPer1MUsd >= 0.0 && pricing.outputPer1MUsd >= 0.0) { "Nieprawidłowy cennik modelu." }
         val exchangeRate = getExchangeRate(context)
         require(exchangeRate.isFinite() && exchangeRate > 0.0) { "Nieprawidłowy kurs USD/PLN; rozliczenie API wstrzymano." }
-        val usd = calculateUsdCost(inputTokens, outputTokens, reasoningTokens, cachedTokens, cacheWriteTokens, cacheWrite1hTokens, pricing)
+        val usd = calculateUsdCost(inputTokens, outputTokens, reasoningTokens, cachedTokens, cacheWriteTokens, cacheWrite1hTokens, reasoningTokensKnown, pricing)
         val pln = usd * exchangeRate
         require(usd.isFinite() && pln.isFinite() && usd >= 0.0 && pln >= 0.0) { "Nieprawidłowy koszt użycia API." }
 
@@ -235,6 +245,7 @@ object ApiTokenTracker {
             cachedTokens = cachedTokens,
             cacheWriteTokens = cacheWriteTokens,
             cacheWrite1hTokens = cacheWrite1hTokens,
+            reasoningTokensKnown = reasoningTokensKnown || reasoningTokens > 0L,
             status = status,
             costUsd = usd,
             costPln = pln
@@ -350,6 +361,7 @@ object ApiTokenTracker {
                 .put("cache", r.cachedTokens)
                 .put("cacheWrite", r.cacheWriteTokens)
                 .put("cacheWrite1h", r.cacheWrite1hTokens)
+                .put("reasKnown", r.reasoningTokensKnown)
                 .put("status", r.status)
                 .put("usd", r.costUsd)
                 .put("pln", r.costPln)
@@ -399,6 +411,7 @@ object ApiTokenTracker {
             // Legacy records predate separate cache-write accounting; treat missing as zero.
             val cacheWrite = if (o.has("cacheWrite")) exactLong("cacheWrite") else 0L
             val cacheWrite1h = if (o.has("cacheWrite1h")) exactLong("cacheWrite1h") else 0L
+            val reasoningKnown = if (o.has("reasKnown")) o.opt("reasKnown") as? Boolean ?: throw IllegalArgumentException("Invalid reasoning-known flag.") else false
             val usdValue = o.opt("usd")
             val plnValue = o.opt("pln")
             require(usdValue is Number && plnValue is Number) { "Usage cost fields are not numeric." }
@@ -433,6 +446,7 @@ object ApiTokenTracker {
                 cachedTokens = cached,
                 cacheWriteTokens = cacheWrite,
                 cacheWrite1hTokens = cacheWrite1h,
+                reasoningTokensKnown = reasoningKnown,
                 status = status,
                 costUsd = costUsd,
                 costPln = costPln
