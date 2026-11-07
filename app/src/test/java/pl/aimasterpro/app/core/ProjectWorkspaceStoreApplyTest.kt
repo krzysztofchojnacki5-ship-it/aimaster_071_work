@@ -232,7 +232,18 @@ class ProjectWorkspaceStoreApplyTest {
         val applied = store.applyPreview(patch, changeSetId = "changeset-third", chatId = "chat-third")
         assertTrue(store.markPatchReceiptRollbackRequested("changeset-third", applied.transactionId))
 
-        File(root, "current.manifest").writeText("third workspace identity")
+        val thirdRoot = Files.createTempDirectory("aimaster-third-workspace").toFile()
+        ProjectWorkspaceStore(thirdRoot).importZip(
+            ByteArrayInputStream(zip("README.md" to "third workspace\\n")), "third.zip"
+        )
+        Files.copy(
+            File(thirdRoot, "current.manifest").toPath(),
+            File(root, "current.manifest").toPath(),
+            java.nio.file.StandardCopyOption.REPLACE_EXISTING
+        )
+        assertNotNull(store.currentIdentity())
+        assertNotEquals(applied.workspaceIdentity, store.currentIdentity())
+
         val result = runCatching {
             store.restoreSnapshotForPatchRollback(applied.snapshot.id, "changeset-third", applied.transactionId)
         }
