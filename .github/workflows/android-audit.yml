@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - audit/0.6.137-routing-hardening
+      - audit/0.6.140-chat-history-restore
     paths-ignore:
       - '**/*.md'
       - '*.md'
