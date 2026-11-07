@@ -192,3 +192,25 @@ To test odtwarzania obu możliwych stanów logicznych po niejednoznacznym commic
 - Companion: nieaktywowany.
 
 Następny krok: rozszerzyć awaryjną macierz o drugi możliwy wynik niejednoznacznego commitu — stary snapshot przypisań pozostał na dysku — i sprawdzić, czy startup recovery naprawia go bez polegania na zmianach widocznych wyłącznie w pamięci procesu.
+
+
+### Drugi wariant niejednoznacznego commitu — stary snapshot pozostał
+
+Rozszerzono test helper `AmbiguousCommitContext` o parametr `applyBeforeFailure` (domyślnie `true`, zachowując dotychczasowe zachowanie wszystkich istniejących testów). Dzięki temu można symulować oba wyniki:
+- nowy snapshot widoczny po `apply()`, mimo że commit zgłasza false;
+- brak zastosowania edytora, czyli pozostawienie starego snapshotu przypisań.
+
+Dodano test `startupRecoveryRepairsOldDurableAssignmentsWhenImportReconciliationCommitDidNotPersist`. Po udanym zastąpieniu katalogu profili i nieudanym commicie przypisań test pozostawia stare ID w `chat_state`, resetuje latch'e procesu i uruchamia startup reconciliation. Sprawdza, że wszystkie role zostają skierowane wyłącznie na ID istniejące w nowym katalogu.
+
+### Zaobserwowana właściwość / ograniczenie
+
+Jeśli stary snapshot `chat_state` przetrwa awarię, startup nie zna już `preferredMasterId` przekazanego do przerwanego importu — ta wartość nie jest zapisywana w `secure_provider_store`. Mechanizm wybiera więc deterministycznie pierwsze poprawne ID z posortowanego katalogu, jeśli ani zapis MASTER, ani legacy `selected_provider`, ani domyślne ID MASTER nie są aktualne. To zachowanie jest bezpieczne (nie kieruje do usuniętego profilu), ale może różnić się od preferencji importu (np. pierwszy profil kopii albo Gemini przy imporcie starej bazy).
+
+Nie zmieniono jeszcze formatu magazynu ani nie dodano markera zamiaru importu. Taka zmiana wymaga osobnej decyzji, ponieważ marker musi mieć jasno określony cykl życia, aby nie nadpisywać późniejszego, świadomego wyboru użytkownika.
+
+### Weryfikacja uzupełniająca
+
+- Dwa warianty awarii commit: testy dodane.
+- Startup recovery po starym i nowym snapshotcie: pokryte testami.
+- Testy nieuruchomione; brak potwierdzenia JUnit/Robolectric.
+- Android build nieuruchomiony; APK nie tworzono.
