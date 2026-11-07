@@ -461,6 +461,7 @@ class ProviderClientNetworkTest {
     @Test
     fun inconsistentAndOverflowingReportedTotalsAreEstimated() {
         assertEstimatedUsage("""{"prompt_tokens":3,"completion_tokens":2,"total_tokens":99}""")
+        assertEstimatedUsage("""{"prompt_tokens":3,"completion_tokens":2,"total_tokens":"5"}""")
         assertEstimatedUsage("""{"prompt_tokens":9223372036854775807,"completion_tokens":1}""")
     }
 
