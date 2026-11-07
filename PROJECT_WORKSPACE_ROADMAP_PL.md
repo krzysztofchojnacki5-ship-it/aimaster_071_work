@@ -962,3 +962,7 @@ Bezpośredni `writeRoot()` obejmuje teraz jedną wspólną sekcją krytyczną wa
 ### 0.6.139 — atomowość identyfikatora czatu
 
 Usunięto dwufazowy zapis `currentId` oraz `last_user_chat_id`. Nowe API `updateRootAndLastUserChatId()` zapisuje oba pola jednym commitem pod blokadą `chat_state`; `MainActivity.saveCurrentId()` używa nowej ścieżki dla rozmów użytkownika. Dodano test poprawnego zapisu i test awarii niejednoznacznego commitu. Commity `c85a4a52...`, `e49f3d94...`, `a2c955b0...`; ADDED / NOT RUN.
+
+### CI 0.6.139 — run na aktualnym kodzie
+
+Run `42411603439` zakończył się `cancelled` (nie jest to wynik testów). Uruchomiono nowy run `42415438103` dla scalonego HEAD `c650c5604074449593d138730bd7e2e2b89da9d2` na gałęzi audytowej. Job `128532366193`; status `in_progress`; testy i kompilacja jeszcze oczekują na start.
