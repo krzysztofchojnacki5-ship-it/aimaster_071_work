@@ -340,7 +340,7 @@ class ProviderClient(
             val finalTotal = if (total >= 0) total else finalInput + finalOutput
             val status = if (input >= 0 && output >= 0) "REAL" else "ESTIMATED"
 
-            ChatResponse(text, TokenUsageResult(finalInput, finalOutput, finalTotal, reasoning, cached, status), providerId = config.id, model = responseModel(result, config.model, "modelVersion"))
+            ChatResponse(text, TokenUsageResult(finalInput, finalOutput, finalTotal, reasoning, cached, status), providerId = config.id, model = responseModel(result, config.model))
         }
         ProviderKind.GEMINI -> {
             val root = config.baseUrl.trimEnd('/')
@@ -391,7 +391,8 @@ class ProviderClient(
                 val finalTotal = if (total >= 0) total else finalInput + finalOutput
                 val status = if (input >= 0 && output >= 0) "REAL" else "ESTIMATED"
 
-                ChatResponse(text, TokenUsageResult(finalInput, finalOutput, finalTotal, reasoning, cached, status))
+                ChatResponse(text, TokenUsageResult(finalInput, finalOutput, finalTotal, reasoning, cached, status),
+                    providerId = config.id, model = responseModel(result, config.model, "modelVersion"))
             }
         }
     }
