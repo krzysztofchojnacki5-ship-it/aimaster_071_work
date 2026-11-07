@@ -974,3 +974,14 @@ Uzupełnienie: przejście do Asystenta i tworzenie nowego czatu nie zapisują ju
 Zapis legacy mirror `chat_messages` przeniesiono do `ChatHistoryStore.writeLegacyMirror()`, który używa wspólnej blokady i latcha niejednoznacznego commitu. MainActivity nie ma już bezpośredniego `commit()` do `chat_state`; błąd kopii legacy jest ostrzeżeniem, a kanoniczny zapis pozostaje rozstrzygający. Dodano test awarii commit i test blokady. Commity `173e1ba8...`, `ff41c04f...`, `bf3556ba...`; ADDED / NOT RUN.
 
 Korekta: zapis legacy mirror jest best-effort `apply()` pod blokadą, bez latcha awarii trwałego commitu, bo kanoniczne `chats_v2` ma już potwierdzony commit. Awaria samego mirror nie może blokować zdrowej historii. Test dostępu aktualizuje tę semantykę. Commity `f8a9f87...`, `a97eebb...`.
+
+### 0.6.139 — bezpieczne zwalnianie miejsca w archiwach replayu (2026-11-07)
+
+Audyt ujawnił, że limity 25 odpowiedzi MASTER i 80 raportów agentów były realizowane przez obcięcie najstarszych rekordów bez wiedzy, czy kanoniczna historia je już otrzymała. To mogło utracić nieodtworzone dane, gdy `chat_state` pozostawał niedostępny. Zmieniono politykę na backpressure: przy pełnym archiwum nowy wpis jest odrzucany, a istniejące rekordy nie są wypierane. Po potwierdzonym replayu archiwum usuwa tylko wpisy, które mają istniejący czat i są już obecne w kanonicznej historii lub zostały do niej dopisane. Osierocone wpisy pozostają do odzyskania; stare rekordy TaskResultArchive bez chatId również pozostają zachowane.
+
+- Produkcja: ChatResponseArchive `2b689a7cd54cd11c600764df4f91bf110073a229`; TaskResultArchive `270281ab07942d4274034a25b3ab899d5ae1440a`.
+- Testy: ChatResponseArchive `f3d1e5e40776276133de5c231947c7483911c895`; TaskResultArchive `589480a34f41579905a6bbcf9fcd69ea71c89f57`.
+- Testy ADDED / NOT RUN. Aktywny run `42415438103` dotyczy SHA `c650c560...`, a więc nie waliduje tego bloku. Work HEAD `589480a34f41579905a6bbcf9fcd69ea71c89f57`.
+- Nie zmieniono formatu wpisów ani markerów idempotencji. Nie utworzono APK; Companion pozostaje nieaktywny.
+
+Następny krok: przejrzeć konsekwencje backpressure dla ścieżek wywołujących `put()` — czy odmowa zapisu archiwum jest raportowana/obsługiwana bez cichego porzucenia wyniku, oraz czy istnieje bezpieczny retry po zwolnieniu pojemności. Dopiero potem rozszerzać audyt na kolejne punkty historii.
