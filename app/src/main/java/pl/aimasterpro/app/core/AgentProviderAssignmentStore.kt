@@ -15,6 +15,7 @@ object AgentProviderAssignmentStore {
         context: Context,
         roleDefaults: Map<String, String>
     ): Map<String, String> {
+        check(!SharedPreferencesWriteHealth.isUncertain(PREFS)) { "Provider assignments are unavailable after an ambiguous storage write." }
         val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
         return roleDefaults.mapValues { (role, defaultId) ->
             // Missing/blank is a legitimate first-run state; a type mismatch is corruption.
@@ -25,12 +26,12 @@ object AgentProviderAssignmentStore {
 
     /** Returns false on a failed/throwing commit; callers must not mutate in-memory state then. */
     fun save(context: Context, role: String, providerId: String): Boolean {
-        if (role.isBlank() || providerId.isBlank()) return false
+        if (role.isBlank() || providerId.isBlank() || SharedPreferencesWriteHealth.isUncertain(PREFS)) return false
         return runCatching {
             val editor = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
                 .putString(key(role), providerId)
             if (role == MASTER) editor.putString(SELECTED_KEY, providerId)
-            editor.commit()
+            SharedPreferencesWriteHealth.commit(PREFS, editor)
         }.getOrDefault(false)
     }
 
@@ -45,7 +46,7 @@ object AgentProviderAssignmentStore {
         validProviderIds: Set<String>,
         legacyMasterId: String?
     ): Map<String, String>? {
-        if (validProviderIds.isEmpty() || validProviderIds.any { it.isBlank() }) return null
+        if (validProviderIds.isEmpty() || validProviderIds.any { it.isBlank() } || SharedPreferencesWriteHealth.isUncertain(PREFS)) return null
         return runCatching {
             val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
             val oldMaster = prefs.getString(key(MASTER), null)
@@ -64,7 +65,7 @@ object AgentProviderAssignmentStore {
             val editor = prefs.edit()
             resolved.forEach { (role, id) -> editor.putString(key(role), id) }
             editor.putString(SELECTED_KEY, masterId)
-            if (!editor.commit()) return null
+            if (!SharedPreferencesWriteHealth.commit(PREFS, editor)) return null
             resolved
         }.getOrNull()
     }
