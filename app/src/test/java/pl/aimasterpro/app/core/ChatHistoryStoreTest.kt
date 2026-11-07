@@ -156,6 +156,10 @@ class ChatHistoryStoreTest {
         assertFalse(ChatHistoryStore.writeRoot(failing, root))
         assertNull(ChatHistoryStore.readRoot(context))
         assertFalse(ChatHistoryStore.writeRoot(context, JSONObject()))
+        // The injected apply-before-failure path leaves the new in-memory snapshot visible.
+        assertEquals(chatId, JSONObject(prefs.getString("chats_v2", null)!!).getString("currentId"))
+        SharedPreferencesWriteHealth.resetForTests("chat_state")
+        assertEquals(chatId, ChatHistoryStore.readRoot(context)?.optString("currentId"))
     }
     @Test fun concurrentAtomicRootUpdatesPreserveBothActivityChanges() {
         val chatId = "concurrent-root-update"
