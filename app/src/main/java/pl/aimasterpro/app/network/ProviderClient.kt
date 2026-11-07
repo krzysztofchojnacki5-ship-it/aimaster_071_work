@@ -477,8 +477,10 @@ class ProviderClient(
                         val pricing = o.optJSONObject("pricing")
                         val promptRaw = pricing?.optString("prompt")
                         val completionRaw = pricing?.optString("completion")
+                        val cachedReadRaw = pricing?.optString("input_cache_read")
                         val prompt = promptRaw?.toDoubleOrNull()?.times(1_000_000.0)
                         val completion = completionRaw?.toDoubleOrNull()?.times(1_000_000.0)
+                        val cachedRead = cachedReadRaw?.toDoubleOrNull()?.times(1_000_000.0)
                         val hasPricing = prompt != null && completion != null
                         val explicitFree = id.equals("openrouter/free", true) || id.endsWith(":free", true)
                         val free = if (isOpenRouter) {
@@ -496,7 +498,8 @@ class ProviderClient(
                             promptPricePerMillion = prompt,
                             completionPricePerMillion = completion,
                             freeByPricing = free,
-                            description = o.optString("description", "")
+                            description = o.optString("description", ""),
+                            cachedPromptPricePerMillion = cachedRead
                         )
                     }.sortedBy { it.id }
                 }
