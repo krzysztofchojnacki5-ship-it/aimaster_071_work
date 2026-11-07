@@ -16,6 +16,7 @@ class AgentProviderAssignmentStoreTest {
 
     @Before fun reset() {
         prefs.edit().clear().commit()
+        SharedPreferencesWriteHealth.resetForTests("chat_state")
     }
 
     @Test fun saveMasterCommitsBothLegacyKeysTogether() {
@@ -137,5 +138,14 @@ class AgentProviderAssignmentStoreTest {
         assertFalse(AgentProviderAssignmentStore.save(context, "MASTER", " "))
         assertFalse(AgentProviderAssignmentStore.save(context, " ", "gemini"))
         assertNull(prefs.getString("agent_provider_MASTER", null))
+    }
+
+    @Test fun ambiguousAssignmentCommitQuarantinesRoutingState() {
+        val failing = AmbiguousCommitContext(context, "chat_state")
+        assertFalse(AgentProviderAssignmentStore.save(failing, "MASTER", "provider-new"))
+        assertTrue(runCatching { AgentProviderAssignmentStore.read(context, defaults) }.isFailure)
+        assertNull(AgentProviderAssignmentStore.reconcileExistingAssignments(
+            context, defaults, setOf("gemini", "groq"), "gemini"
+        ))
     }
 }
