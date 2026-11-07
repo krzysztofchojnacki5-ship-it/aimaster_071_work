@@ -1398,11 +1398,7 @@ class MainActivity : Activity() {
                 try {
                     requestAttempt++
                     requestIdempotencyKey = "chat:$requestTaskId:${cfg.id}".take(240)
-                    safeCheckpointBaseUrl = runCatching {
-                        java.net.URL(cfg.baseUrl).let { url ->
-                            "${url.protocol}://${url.host}" + if (url.port >= 0) ":${url.port}" else ""
-                        }
-                    }.getOrDefault("")
+                    safeCheckpointBaseUrl = pl.aimasterpro.app.core.TaskCheckpointStore.safeBaseUrlForCheckpoint(cfg.baseUrl)
                     val requestCheckpointSaved = pl.aimasterpro.app.core.TaskCheckpointStore.record(
                         this,
                         pl.aimasterpro.app.core.TaskCheckpointStore.Event(
@@ -1893,11 +1889,7 @@ class MainActivity : Activity() {
                                     logAgentForChat(chatId, "⛔ Magazyn konfiguracji ma niepewny stan. Żądanie do dostawcy nie zostało wysłane; uruchom ponownie aplikację.")
                                     false
                                 } else {
-                                    val safeBaseUrl = runCatching {
-                                        java.net.URL(actualProvider.baseUrl).let { url ->
-                                            "${url.protocol}://${url.host}" + if (url.port >= 0) ":${url.port}" else ""
-                                        }
-                                    }.getOrDefault("")
+                                    val safeBaseUrl = pl.aimasterpro.app.core.TaskCheckpointStore.safeBaseUrlForCheckpoint(actualProvider.baseUrl)
                                     pl.aimasterpro.app.core.TaskCheckpointStore.record(
                                         this,
                                         pl.aimasterpro.app.core.TaskCheckpointStore.Event(
@@ -2057,11 +2049,7 @@ class MainActivity : Activity() {
                                             logAgentForChat(chatId, "⛔ Magazyn konfiguracji ma niepewny stan. Żądanie do dostawcy nie zostało wysłane; uruchom ponownie aplikację.")
                                             false
                                         } else {
-                                            val safeBaseUrl = runCatching {
-                                                java.net.URL(actualProvider.baseUrl).let { url ->
-                                                    "${url.protocol}://${url.host}" + if (url.port >= 0) ":${url.port}" else ""
-                                                }
-                                            }.getOrDefault("")
+                                            val safeBaseUrl = pl.aimasterpro.app.core.TaskCheckpointStore.safeBaseUrlForCheckpoint(actualProvider.baseUrl)
                                             pl.aimasterpro.app.core.TaskCheckpointStore.record(
                                                 this,
                                                 pl.aimasterpro.app.core.TaskCheckpointStore.Event(
@@ -4620,11 +4608,7 @@ class MainActivity : Activity() {
                                 logAgentForChat(chatId, "⛔ Magazyn konfiguracji ma niepewny stan. Żądanie do dostawcy nie zostało wysłane; uruchom ponownie aplikację.")
                                 false
                             } else {
-                                val safeBaseUrl = runCatching {
-                                    java.net.URL(actualProvider.baseUrl).let { url ->
-                                        "${url.protocol}://${url.host}" + if (url.port >= 0) ":${url.port}" else ""
-                                    }
-                                }.getOrDefault("")
+                                val safeBaseUrl = pl.aimasterpro.app.core.TaskCheckpointStore.safeBaseUrlForCheckpoint(actualProvider.baseUrl)
                                 pl.aimasterpro.app.core.TaskCheckpointStore.record(
                                     this,
                                     pl.aimasterpro.app.core.TaskCheckpointStore.Event(
