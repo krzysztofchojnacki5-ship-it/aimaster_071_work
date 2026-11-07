@@ -1592,3 +1592,12 @@ Uwagi:
 - Android Keystore nie udostępnia aplikacji możliwości ręcznego wyzerowania klucza sprzętowego; materiał klucza pozostaje zarządzany przez system.
 - Nie usuwano ani nie regenerowano istniejącego aliasu Keystore przy błędzie odczytu, aby nie zniszczyć dostępu do już zapisanych sekretów.
 
+
+
+Dodatkowa kontrola Etapu 23:
+- wykryto, że saveConfig() nadal przyjmował identyfikator i pola profilu bez walidacji, mimo że import używał rygorystycznego schematu;
+- saveConfig() korzysta teraz z tej samej walidacji profilu przed szyfrowaniem i przed zmianą SharedPreferences;
+- dodano test odrzucenia wadliwego ID w pojedynczym zapisie bez naruszenia poprzednich danych.
+Commits:
+- 1266eac — walidacja profilu przy pojedynczym zapisie;
+- d835e41 — test regresyjny.
