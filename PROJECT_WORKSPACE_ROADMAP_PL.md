@@ -928,3 +928,7 @@ Audyt wykazał, że MainActivity używała sekwencji osobnych read/write, podcza
 ### 0.6.139 — wspólny lock dla zapisów historii i replayów archiwów
 
 Wszystkie siedem mutujących ścieżek MainActivity zostało przeniesionych na ChatHistoryStore.updateRoot(), wspólny z replayem archiwów odpowiedzi i raportów. Statyczny przegląd potwierdził 0 bezpośrednich wywołań writeRoot w MainActivity. Dodano test równoległego dopisania wiadomości i agentActivity. Test ADDED / NOT RUN; walidacja CI dla nowych zmian oczekuje na zwolnienie aktywnego runu.
+
+### 0.6.139 — awarie replayu archiwów odpowiedzi i raportów
+
+Dodano scenariusze commit failure przed i po apply dla replayu ChatResponseArchive i TaskResultArchive. Testy sprawdzają zachowanie archiwum jako źródła odzyskiwania, idempotencję po restarcie i brak duplikacji, gdy apply zmienił już widoczny snapshot. Cztery testy + fixture dodane, NOT RUN.
