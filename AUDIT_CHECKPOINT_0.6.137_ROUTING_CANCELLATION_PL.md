@@ -1934,3 +1934,10 @@ Doprecyzowanie projektu SQLite:
 - Zwykły błąd walidacji/importu, który nie ustawił latcha, nie anuluje żądań.
 - Commit kodu: `3c6fcb4b`.
 - CI dla SHA `3c6fcb4b07d7d04381451c0f041553f508588b91`: run `42330303816`, status `pending` przy ostatnim odczycie. Starszy run `42330058130` dotyczy poprzedniego SHA `c18c37c5`, nie najnowszego kodu.
+
+### Domknięcie testu bramki żądania i korekta checkpointu
+
+- Rozszerzono `requestCheckpointIsDurableBeforeHttpAndBlocksSendWhenPersistenceFails()` o drugi serwer fallback. Test potwierdza, że odrzucenie `onRequestStarting` blokuje także POST do każdego fallback providera, nie tylko do providera głównego. Commit testu: `7a6b24ad`.
+- Uporządkowano formatowanie trzech guardów `onRequestStarting` (commit `85922717`).
+- W peer review patcha znaleziono i poprawiono osobny błąd: URL providera był zapisywany z dosłownymi znakami ucieczki zamiast interpolowanej wartości hosta/protokołu. Commit: `e826de09`.
+- Najnowszy kod do walidacji: `7a6b24ad6050cf5e56704375279732858d0b60da`; CI run `42330603571` ma status `pending` przy ostatnim odczycie. Runy wcześniejszych SHA anulowano przez nowsze push'e.
