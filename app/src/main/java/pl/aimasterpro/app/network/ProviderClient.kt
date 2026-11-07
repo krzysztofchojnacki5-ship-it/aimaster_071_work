@@ -44,6 +44,28 @@ data class ProviderModelInfo(
     val cachedPromptWritePricePerMillion: Double? = null
 )
 
+/** Only classify an OpenRouter model as free when every published token path is free. */
+internal fun resolveOpenRouterFreePricing(
+    modelId: String,
+    isOpenRouter: Boolean,
+    promptPrice: Double?,
+    completionPrice: Double?,
+    cachedReadPrice: Double?,
+    cacheWritePrice: Double?
+): Boolean? {
+    if (!isOpenRouter) return null
+    val hasPricing = promptPrice != null && completionPrice != null
+    val explicitlyFree = modelId.equals("openrouter/free", true) || modelId.endsWith(":free", true)
+    return when {
+        hasPricing && promptPrice == 0.0 && completionPrice == 0.0 &&
+            (cachedReadPrice == null || cachedReadPrice == 0.0) &&
+            (cacheWritePrice == null || cacheWritePrice == 0.0) -> true
+        hasPricing -> false
+        explicitlyFree -> true
+        else -> null
+    }
+}
+
 class ProviderClient(
     private val connectTimeoutMs: Int = 15_000,
     private val readTimeoutMs: Int = 45_000
@@ -500,18 +522,9 @@ class ProviderClient(
                             ?.takeIf { it.isFinite() && it >= 0.0 }
                         val cachedWrite = cachedWriteRaw?.toDoubleOrNull()?.times(1_000_000.0)
                             ?.takeIf { it.isFinite() && it >= 0.0 }
-                        val hasPricing = prompt != null && completion != null
-                        val explicitFree = id.equals("openrouter/free", true) || id.endsWith(":free", true)
-                        val free = if (isOpenRouter) {
-                            when {
-                                hasPricing && prompt == 0.0 && completion == 0.0 &&
-                                    (cachedRead == null || cachedRead == 0.0) &&
-                                    (cachedWrite == null || cachedWrite == 0.0) -> true
-                                hasPricing -> false
-                                explicitFree -> true
-                                else -> null
-                            }
-                        } else null
+                        val free = resolveOpenRouterFreePricing(
+                            id, isOpenRouter, prompt, completion, cachedRead, cachedWrite
+                        )
                         ProviderModelInfo(
                             id = id,
                             name = o.optString("name", id),
