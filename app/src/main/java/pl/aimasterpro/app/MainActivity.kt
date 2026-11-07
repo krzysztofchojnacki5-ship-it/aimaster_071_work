@@ -3243,6 +3243,10 @@ class MainActivity : Activity() {
     private fun showProviders() {
         val allSaved = store.allConfigs().mapNotNull { j -> runCatching { loadProvider(j.optString("id")) }.getOrNull() }
         val baseProfiles = allSaved.filter { it.parentProviderId.isBlank() }
+        val unavailableSecretIds = store.unavailableSecretProviderIds()
+        if (unavailableSecretIds.isNotEmpty()) {
+            card("⚠ Klucze API niedostępne", "Nie udało się odszyfrować kluczy w profilach: ${unavailableSecretIds.joinToString(", ")}. Profile są wyłączone z użycia. Nie nadpisuj ani nie usuwaj danych; sprawdź dostępność oryginalnego klucza Android Keystore.")
+        }
 
         card("MODELE • centrum zarządzania", "Jedno miejsce do pobierania modeli, sprawdzania cen, kopiowania identyfikatorów i tworzenia profili modeli. Agenci korzystają później z gotowych profili.")
 
@@ -3683,11 +3687,13 @@ class MainActivity : Activity() {
 
     private fun loadProvider(id: String): ProviderConfig? {
         val j = store.readConfig(id) ?: return null
+        if (j.optBoolean("_secretUnavailable", false)) return null
         val kind = runCatching { ProviderKind.valueOf(j.optString("kind")) }.getOrDefault(ProviderKind.OPENAI_COMPATIBLE)
         val parentId = j.optString("parentProviderId", "")
         val stored = ProviderConfig(j.optString("id", id), j.optString("name", id), kind, j.optString("baseUrl"), j.optString("model"), j.optString("apiKey").trim().removePrefix("Bearer ").trim(), j.optBoolean("enabled", true), parentId)
         if (parentId.isBlank()) return stored
-        val parentJson = store.readConfig(parentId) ?: return stored
+        val parentJson = store.readConfig(parentId) ?: return null
+        if (parentJson.optBoolean("_secretUnavailable", false)) return null
         val parentKind = runCatching { ProviderKind.valueOf(parentJson.optString("kind")) }.getOrDefault(stored.kind)
         return stored.copy(
             kind = parentKind,
