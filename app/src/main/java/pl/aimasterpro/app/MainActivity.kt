@@ -160,6 +160,13 @@ class MainActivity : Activity() {
             "AIMasterRecovery",
             "Odzyskano stan $recoveredTasks przerwanych zadań; niektóre mogą nadal oczekiwać na trwałe księgowanie UNAVAILABLE."
         )
+        val restoredReports = runCatching {
+            pl.aimasterpro.app.core.TaskResultArchive.restoreArchivedReports(this)
+        }.getOrDefault(0)
+        if (restoredReports > 0) android.util.Log.w(
+            "AIMasterRecovery",
+            "Przywrócono $restoredReports archiwalnych raportów do historii właściwych rozmów."
+        )
         seedDefaultProviders()
         selectedProviderId = chatPrefs.getString("selected_provider", "gemini") ?: "gemini"
         restoreMessages()
@@ -1845,7 +1852,7 @@ class MainActivity : Activity() {
                             onTaskResult = { taskResult ->
                                 val archived = pl.aimasterpro.app.core.TaskResultArchive.put(
                                     this, taskResult.taskId, taskResult.agentId, taskResult.report,
-                                    taskResult.providerId, taskResult.model
+                                    taskResult.providerId, taskResult.model, chatId = chatId
                                 )
                                 if (!archived) {
                                     logAgentForChat(chatId, "❌ Nie udało się trwale zarchiwizować raportu ${taskResult.agentId}; zadanie pozostaje oczekujące na odzyskanie.")
@@ -2039,7 +2046,8 @@ class MainActivity : Activity() {
                                     },
                                     onTaskResult = { result ->
                                         val archived = pl.aimasterpro.app.core.TaskResultArchive.put(
-                                            this, result.taskId, result.agentId, result.report, result.providerId, result.model
+                                            this, result.taskId, result.agentId, result.report, result.providerId, result.model,
+                                            chatId = chatId
                                         )
                                         if (!archived) logAgentForChat(chatId, "❌ Nie udało się trwale zarchiwizować raportu peer review ${result.agentId}.")
                                         archived
@@ -4601,7 +4609,8 @@ class MainActivity : Activity() {
                         },
                         onTaskResult = { result ->
                             val archived = pl.aimasterpro.app.core.TaskResultArchive.put(
-                                this, result.taskId, result.agentId, result.report, result.providerId, result.model
+                                this, result.taskId, result.agentId, result.report, result.providerId, result.model,
+                                chatId = chatId
                             )
                             if (!archived) logAgentForChat(chatId, "❌ Nie udało się trwale zarchiwizować raportu recenzji patcha ${result.agentId}.")
                             archived
