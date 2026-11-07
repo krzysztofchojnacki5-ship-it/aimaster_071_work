@@ -948,3 +948,5 @@ Dodano dwa testy ChatResponseArchive: błąd dostępu do preferencji nie może w
 ### 0.6.139 — poprawka kontraktu błędu zapisu archiwów
 
 Wykryto i poprawiono propagowanie wyjątku z dostępu do SharedPreferences w `ChatResponseArchive.put()` i `TaskResultArchive.put()`. Oba API zwracają teraz `false` przy błędzie dostępu, pozostawiając dane nietknięte. Testy regresji istnieją dla obu archiwów; ADDED / NOT RUN. Commity: `d8223a7b...`, `9692a908...`.
+
+Testy współbieżności obu archiwów doprecyzowano: asercja potwierdza rzeczywiste oczekiwanie wątku na monitorze (`BLOCKED`), a nie tylko brak zakończenia w krótkim oknie czasowym. Commity `b14f6ff8...` i `808555f1...`; ADDED / NOT RUN.
