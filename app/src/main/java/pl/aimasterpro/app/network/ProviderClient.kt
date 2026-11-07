@@ -520,7 +520,8 @@ class ProviderClient(
                 val totalFieldValid = meta == null || !meta.has("totalTokenCount") || total != null
                 val cached = exactNonNegativeCount(meta, "cachedContentTokenCount", 0L)
                 val reasoning = exactNonNegativeCount(meta, "thoughtsTokenCount", 0L)
-                val reasoningKnown = meta?.has("thoughtsTokenCount") == true
+                val reasoningKnown = meta?.has("thoughtsTokenCount") == true &&
+                    !meta.isNull("thoughtsTokenCount") && reasoning != null
                 val realUsage = validUsageBreakdown(input, output, total, cached, reasoning, totalFieldValid)
 
                 val finalInput = if (realUsage) input!! else (systemPrompt.length + userText.length) / 4.toLong()
