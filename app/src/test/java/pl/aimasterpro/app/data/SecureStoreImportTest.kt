@@ -168,4 +168,15 @@ class SecureStoreImportTest {
         assertEquals(beforeConfig, prefs.getString("config_provider_one", null))
     }
 
+    @Test fun blankPutSecretCannotDeleteUnreadableCiphertext() {
+        val context = org.robolectric.RuntimeEnvironment.getApplication()
+        val prefs = context.getSharedPreferences("secure_provider_store", Context.MODE_PRIVATE)
+        prefs.edit().putString("key_provider_one", "!").commit()
+
+        val result = SecureStore(context).putSecret("key_provider_one", "")
+
+        assertFalse(result)
+        assertEquals("!", prefs.getString("key_provider_one", null))
+    }
+
 }
