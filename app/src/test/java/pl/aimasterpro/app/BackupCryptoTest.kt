@@ -76,6 +76,35 @@ class BackupCryptoTest {
         } catch (_: IllegalArgumentException) { }
     }
 
+
+    @Test
+    fun testMalformedIvAfterSaltDecodeIsRejected() {
+        val encrypted = BackupCrypto.encrypt("secret", "securepassword123".toCharArray())
+        val malformed = encrypted.replace(
+            Regex("\\"iv\\":\\s*\\"[^\\"]+\\""),
+            "\\"iv\\":\\"!\\""
+        )
+        assertNotEquals(encrypted, malformed)
+        try {
+            BackupCrypto.decrypt(malformed, "securepassword123".toCharArray())
+            fail("Malformed IV Base64 must be rejected.")
+        } catch (_: IllegalArgumentException) { }
+    }
+
+    @Test
+    fun testMalformedDataAfterSaltAndIvDecodeIsRejected() {
+        val encrypted = BackupCrypto.encrypt("secret", "securepassword123".toCharArray())
+        val malformed = encrypted.replace(
+            Regex("\\"data\\":\\s*\\"[^\\"]+\\""),
+            "\\"data\\":\\"!\\""
+        )
+        assertNotEquals(encrypted, malformed)
+        try {
+            BackupCrypto.decrypt(malformed, "securepassword123".toCharArray())
+            fail("Malformed ciphertext Base64 must be rejected.")
+        } catch (_: IllegalArgumentException) { }
+    }
+
     @Test
     fun testLargePayload() {
         val largeText = "x".repeat(50_000)
