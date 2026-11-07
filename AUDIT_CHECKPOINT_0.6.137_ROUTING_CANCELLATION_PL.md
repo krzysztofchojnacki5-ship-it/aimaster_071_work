@@ -1982,3 +1982,10 @@ Doprecyzowanie projektu SQLite:
 - Naprawa: `ChatHistoryStore.shouldImportLegacyMirror()` rozróżnia brak kanonicznego pliku preferencji od istniejącego pustego dokumentu; wyjątek/kwarantanna daje null. `MainActivity.restoreMessages()` zatrzymuje odtwarzanie przy null i importuje mirror wyłącznie przy rzeczywistym braku `chats_v2`.
 - Commity: `4f5cc77994fa05ac9e7747e5f469182d9ddb977a`, `42bf4479e77ff3b73cf93a025fd0c055406e55de`, testy `e7d1ae88f6c160f8c7743f3e754efe23241baa57`, korekta testu kwarantanny `4baec9da3c72bcdf89a68431470cfec5749799e7`.
 - Testy ADDED / NOT RUN. CI 42411603439 nadal in_progress dla SHA 30e0f496...; nie obejmuje żadnego commita 0.6.139. Gałąź audytowa nie została dotknięta.
+
+### Checkpoint 0.6.139 — atomowość MainActivity vs archiwa
+
+- ChatResponseArchive.restoreArchivedResponses() i TaskResultArchive.restoreArchivedReports() używają ChatHistoryStore.updateRoot(). Wcześniejsze readRoot()+writeRoot() w MainActivity mogło zapisać przestarzały snapshot po aktualizacji archiwum.
+- Przeniesiono 7 mutujących ścieżek MainActivity do updateRoot(): rename, delete, persistMessages, persistAgentActivity, saveCurrentId, appendToStoredChat i appendAgentActivityForChat. Bezpośrednie ChatHistoryStore.writeRoot() w MainActivity: brak po zmianie.
+- Produkcja: `49da9dcb2a9de7296301476b90c65301c000fc0e`, `84c495ec0028394b6a1dab14b1599c31211c2f0e`; test współbieżności: `b4193751f496aa6d53846852deee1b77a969ad5f`.
+- Test ADDED / NOT RUN. Nie ma jeszcze build/test wyniku dla tych commitów; CI 42411603439 nadal in_progress dla SHA 30e0f496...; branch audytowy bez zmian.
