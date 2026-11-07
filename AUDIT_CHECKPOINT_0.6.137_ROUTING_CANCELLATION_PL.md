@@ -2003,3 +2003,9 @@ Doprecyzowanie projektu SQLite:
 - Dodano analogiczne dwa warianty dla TaskResultArchive; archiwum ma pozostać dostępne, gdy zapis do chats_v2 jest niejednoznaczny.
 - Testy: `4ef5bc95e44c57ba7b12635fe67c13365b1dc5e8`, `d2fc3f5518fc60956bbda42403884289793d6a7d`; fixture `c08164e06135fb0d0815db4145591a544a254e61`.
 - Status: ADDED / NOT RUN. CI 42411603439 nadal in_progress dla SHA 30e0f496...; nie waliduje work branch.
+
+### Checkpoint 0.6.139 — niejednoznaczny commit archiwum odpowiedzi
+
+- Dodano test ambiguousArchiveCommitQuarantinesRecoveryReadsAndWrites dla ChatResponseArchive: commit zwraca false po symulowanym apply; wymagane jest oznaczenie archiwum jako uncertain, blokada odczytów i kolejnych zapisów.
+- Commit: e08735883591841b645202f33e72d307f809f1b5.
+- ADDED / NOT RUN. CI 42411603439 nadal in_progress dla SHA 30e0f496...; nowy test nie jest jeszcze zweryfikowany.
