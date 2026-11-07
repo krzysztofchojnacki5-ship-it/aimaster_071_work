@@ -48,9 +48,15 @@ class TaskResultArchiveTest {
         assertTrue(TaskResultArchive.get(context, "secret-task")?.report?.contains("[REDACTED]") == true)
     }
 
+    @Test fun emptyArchiveIsReadableAndDistinguishedFromCorruption() {
+        assertTrue(TaskResultArchive.isArchiveReadable(context))
+        assertTrue(TaskResultArchive.latest(context).isEmpty())
+    }
+
     @Test fun corruptArchiveIsNotReplacedByAnEmptyArchive() {
         val corrupt = """[{"taskId":"task-1","agentId":"developer","report":"saved","providerId":"p","model":"m","createdAt":1000},null]"""
         assertTrue(prefs.edit().putString("entries", corrupt).commit())
+        assertFalse(TaskResultArchive.isArchiveReadable(context))
         assertNull(TaskResultArchive.get(context, "missing"))
         assertFalse(TaskResultArchive.put(context, "task-2", "developer", "new report", "p", "m", 2_000L))
         assertEquals(corrupt, prefs.getString("entries", null))
@@ -197,6 +203,7 @@ class TaskResultArchiveTest {
                 throw IllegalStateException("controlled result archive preferences failure")
             }
         }
+        assertFalse(TaskResultArchive.isArchiveReadable(failingContext))
         assertNull(TaskResultArchive.get(failingContext, "task-1"))
         assertTrue(TaskResultArchive.latest(failingContext).isEmpty())
         assertFalse(TaskResultArchive.put(
