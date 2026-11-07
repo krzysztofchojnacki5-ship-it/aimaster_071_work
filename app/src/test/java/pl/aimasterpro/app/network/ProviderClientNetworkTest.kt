@@ -575,6 +575,7 @@ class ProviderClientNetworkTest {
 
         assertEstimatedUsage("""{"prompt_tokens":100,"completion_tokens":2,"total_tokens":102,"prompt_tokens_details":{"cached_tokens":20,"cache_write_tokens":"30"}}""")
         assertEstimatedUsage("""{"prompt_tokens":100,"completion_tokens":2,"total_tokens":102,"prompt_tokens_details":{"cached_tokens":80,"cache_write_tokens":30}}""")
+        assertEstimatedUsage("""{"prompt_tokens":100,"completion_tokens":2,"total_tokens":102,"completion_tokens_details":{"reasoning_tokens":"2"}}""")
     }
 
     @Test
