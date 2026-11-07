@@ -19,53 +19,54 @@ object AiMemoryStore {
         "this", "that", "have", "will", "your", "into", "when", "what", "how"
     )
 
-    fun getMemories(context: Context): List<String> {
-        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-        val raw = prefs.getString("memories", null) ?: return defaultMemories()
-        return runCatching {
-            val arr = JSONArray(raw)
-            val list = mutableListOf<String>()
-            for (i in 0 until arr.length()) list.add(arr.getString(i))
-            list.ifEmpty { defaultMemories() }
-        }.getOrDefault(defaultMemories())
-    }
+    fun getMemories(context: Context): List<String> = runCatching {
+        val raw = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            .getString("memories", null) ?: return@runCatching defaultMemories()
+        val arr = JSONArray(raw)
+        val list = mutableListOf<String>()
+        for (i in 0 until arr.length()) {
+            val value = arr.get(i)
+            require(value is String) { "Memory entry must be a string." }
+            list.add(value)
+        }
+        list.ifEmpty { defaultMemories() }
+    }.getOrDefault(defaultMemories())
 
     /**
      * A missing preference is a valid first-run state. Corrupt JSON is not an empty memory
      * library: mutation callers must stop rather than replace the unreadable source.
      */
-    private fun readStoredMemories(context: Context): List<String>? {
-        val raw = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).getString("memories", null)
-            ?: return defaultMemories()
-        return runCatching {
-            val arr = JSONArray(raw)
-            (0 until arr.length()).map { index ->
-                val value = arr.get(index)
-                require(value is String) { "Memory entry must be a string." }
-                value
-            }
-        }.getOrNull()
-    }
+    private fun readStoredMemories(context: Context): List<String>? = runCatching {
+        val raw = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            .getString("memories", null) ?: return@runCatching defaultMemories()
+        val arr = JSONArray(raw)
+        (0 until arr.length()).map { index ->
+            val value = arr.get(index)
+            require(value is String) { "Memory entry must be a string." }
+            value
+        }
+    }.getOrNull()
 
-    fun addMemory(context: Context, memory: String): Boolean {
-        if (memory.isBlank()) return false
-        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-        val list = readStoredMemories(context)?.toMutableList() ?: return false
-        if (list.contains(memory)) return true
+    fun addMemory(context: Context, memory: String): Boolean = runCatching {
+        if (memory.isBlank()) return@runCatching false
+        val list = readStoredMemories(context)?.toMutableList() ?: return@runCatching false
+        if (list.contains(memory)) return@runCatching true
         list.add(0, memory)
         val arr = JSONArray()
         list.take(100).forEach { arr.put(it) }
-        return prefs.edit().putString("memories", arr.toString()).commit()
-    }
+        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit()
+            .putString("memories", arr.toString()).commit()
+    }.getOrDefault(false)
 
-    fun removeMemory(context: Context, exactMemory: String): Boolean {
+    fun removeMemory(context: Context, exactMemory: String): Boolean = runCatching {
         val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-        if (prefs.getString("memories", null) == null) return true
-        val remaining = readStoredMemories(context)?.filterNot { it == exactMemory } ?: return false
+        if (prefs.getString("memories", null) == null) return@runCatching true
+        val remaining = readStoredMemories(context)?.filterNot { it == exactMemory }
+            ?: return@runCatching false
         val arr = JSONArray()
         remaining.forEach { arr.put(it) }
-        return prefs.edit().putString("memories", arr.toString()).commit()
-    }
+        prefs.edit().putString("memories", arr.toString()).commit()
+    }.getOrDefault(false)
 
     /**
      * Selects a small set of memories relevant to the current request. Operational counters are
