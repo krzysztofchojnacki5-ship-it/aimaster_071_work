@@ -38,8 +38,9 @@ object BackupCrypto {
             "To nie jest poprawna kopia zapasowa AI Master Pro (nieznany format lub wersja)."
         }
         val iterationsValue = envelope.opt("iterations")
-        require((iterationsValue is Int || iterationsValue is Long) &&
-            (iterationsValue as Number).toLong() == ITERATIONS.toLong()) {
+        require(!envelope.has("iterations") ||
+            ((iterationsValue is Int || iterationsValue is Long) &&
+                (iterationsValue as Number).toLong() == ITERATIONS.toLong())) {
             "Nieobsługiwana lub nieprawidłowa liczba iteracji KDF."
         }
         val saltBase64 = envelope.optString("salt", "")
