@@ -112,6 +112,30 @@ class TaskCheckpointStoreTest {
         assertEquals("Pełny raport odzyskiwalny po restarcie.", TaskResultArchive.get(context, "task-result-archived")?.report)
     }
 
+    @Test fun archivedReportIsRecoveredEvenWhenUsageAccountingWasPending() {
+        assertTrue(TaskCheckpointStore.record(context, TaskCheckpointStore.Event(
+            taskId = "task-usage-and-report", agentId = "RESEARCHER", status = "USAGE_PENDING",
+            detail = "usage write failed after response", timestamp = 100L, providerId = "openai",
+            model = "gpt-4o-mini", attempts = 1, processId = "previous-process",
+            estimatedInputTokens = 200L, estimatedOutputTokens = 500L,
+            idempotencyKey = "team:task-usage-and-report:openai"
+        )))
+        assertTrue(TaskResultArchive.put(
+            context, "task-usage-and-report", "RESEARCHER", "Odzyskiwalny raport.",
+            "openai", "gpt-4o-mini", 150L
+        ))
+
+        assertEquals(1, TaskCheckpointStore.recoverStaleRunning(context, 200L) { false })
+        assertEquals("INTERRUPTED_USAGE_PENDING", TaskCheckpointStore.latest(context).single().status)
+        assertEquals("Odzyskiwalny raport.", TaskResultArchive.get(context, "task-usage-and-report")?.report)
+
+        assertEquals(1, TaskCheckpointStore.recoverStaleRunning(context, 300L) { true })
+        val recovered = TaskCheckpointStore.latest(context).single()
+        assertEquals("COMPLETED", recovered.status)
+        assertTrue(recovered.detail.contains("archiwum"))
+        assertEquals("Odzyskiwalny raport.", TaskResultArchive.get(context, "task-usage-and-report")?.report)
+    }
+
     @Test fun usageRecordedTaskIsMarkedInterruptedWithoutDuplicateRecoveryCallback() {
         assertTrue(TaskCheckpointStore.record(context, TaskCheckpointStore.Event(
             taskId = "task-usage-done", agentId = "RESEARCHER", status = "USAGE_RECORDED",
