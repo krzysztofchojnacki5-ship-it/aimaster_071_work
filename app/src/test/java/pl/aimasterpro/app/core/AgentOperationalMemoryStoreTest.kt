@@ -13,6 +13,7 @@ class AgentOperationalMemoryStoreTest {
     private val context get() = RuntimeEnvironment.getApplication()
 
     @Before fun reset() {
+        SharedPreferencesWriteHealth.resetForTests("ai_agent_operational_memory_v1")
         context.getSharedPreferences("ai_agent_operational_memory_v1", Context.MODE_PRIVATE).edit().clear().commit()
     }
 
@@ -89,5 +90,18 @@ class AgentOperationalMemoryStoreTest {
     @Test fun malformedStorageDoesNotCrashReads() {
         context.getSharedPreferences("ai_agent_operational_memory_v1", Context.MODE_PRIVATE).edit().putString("entries", "not-json").commit()
         assertTrue(AgentOperationalMemoryStore.all(context).isEmpty())
+    }
+    @Test fun ambiguousCommitQuarantinesOperationalMemoryUntilProcessRestart() {
+        val prefs = context.getSharedPreferences("ai_agent_operational_memory_v1", Context.MODE_PRIVATE)
+        val original = "[]"
+        assertTrue(prefs.edit().putString("entries", original).commit())
+        val failingEditor = object : android.content.SharedPreferences.Editor by prefs.edit().putString("entries", "[ambiguous]") {
+            override fun commit(): Boolean = false
+        }
+        assertFalse(SharedPreferencesWriteHealth.commit("ai_agent_operational_memory_v1", failingEditor))
+
+        assertTrue(AgentOperationalMemoryStore.all(context).isEmpty())
+        assertNull(AgentOperationalMemoryStore.addApproved(context, "tester", "Nie zapisuj po niepewnym commit."))
+        assertEquals(original, prefs.getString("entries", null))
     }
 }
