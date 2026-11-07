@@ -1226,3 +1226,27 @@ Test authorizedRollbackRefusesAThirdWorkspaceIdentity został doprecyzowany: zam
 - Workflow run dla tego SHA: 42316019301 — PENDING przy ostatnim odczycie.
 - Run 42315729083 dla poprzedniej wersji testu nadal był IN_PROGRESS; nowszy run powinien go zastąpić przez concurrency.
 - Test i kompilacja pozostają NOT VERIFIED.
+
+
+## Etap 14 — weryfikacja rzeczywistej integralności przed rollbackiem (2026-11-07)
+
+Kontrola Etapu 13 została rozszerzona: manifest identity może pozostać taka sama po zewnętrznej modyfikacji pliku, ponieważ identity jest skrótem manifestu, a nie ponownym skrótem całego drzewa. Sama zgodność identity nie wystarcza więc do bezpiecznego rollbacku.
+
+Zmiana:
+- restoreSnapshotForPatchRollback() oprócz exact identity sprawdza teraz verifyCurrentWorkspaceInternal().valid;
+- rollback jest blokowany, jeśli choć jeden plik jest zmieniony, brakujący, dodatkowy lub ma niebezpieczne dowiązanie;
+- chroni to również przed nadpisaniem plików zmienionych po zatwierdzeniu patcha, nawet gdy manifest pozostał ten sam.
+
+Test:
+- authorizedRollbackRefusesTamperedFilesEvenWhenManifestIdentityMatches;
+- zmienia treść pliku po trwałym zapisaniu żądania rollbacku, pozostawiając manifest bez zmian;
+- sprawdza, że identity nadal odpowiada patchowi, ale kontrola integralności blokuje restore i pozostawia zmienioną treść oraz receipt do ręcznego odzyskania.
+
+Commity:
+- kontrola integralności: d2e7fb50f16249fa139d331efa2f19b2f6755c45
+- test regresyjny: e29615a4a23ba3d4208183eebd3a3e3b0eeaa039
+
+Weryfikacja:
+- pliki zapisane na branchu; test oczekuje na CI;
+- workflow run 42316275613 dla SHA d2e7fb50f16249fa139d331efa2f19b2f6755c45 był PENDING przy ostatnim odczycie;
+- brak merge, APK, release i zmian main; Companion Transport pozostaje BLOCKED.
