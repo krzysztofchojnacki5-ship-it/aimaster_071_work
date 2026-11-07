@@ -431,7 +431,7 @@ class TeamRunEngine(
                                         "RESULT_PERSIST_FAILED") }
                                 }
                                 runCatching {
-                                    onLog(agent.name, "MASTER", report, "REPORT")
+                                    onLog(agent.name, "MASTER", "[TASK_REPORT_ID:${task.id}]\n$report", "REPORT")
                                 }
                                 runCatching {
                                     onTaskState(
