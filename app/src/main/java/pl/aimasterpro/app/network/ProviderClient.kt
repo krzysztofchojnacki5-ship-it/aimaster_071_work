@@ -388,7 +388,8 @@ class ProviderClient(
             } else null
             val reasoningDetails = usageObj?.optJSONObject("output_tokens_details")
             val reasoning = exactNonNegativeCount(reasoningDetails, "thinking_tokens", 0L)
-            val reasoningKnown = reasoningDetails?.has("thinking_tokens") == true
+            val reasoningKnown = reasoningDetails?.has("thinking_tokens") == true &&
+                !reasoningDetails.isNull("thinking_tokens") && reasoning != null
             val realUsage = cacheBreakdownValid && validUsageBreakdown(
                 input, output, null, cached, reasoning, cacheWrite = cacheWrite, cacheWrite1h = cacheWrite1h
             )
@@ -450,7 +451,8 @@ class ProviderClient(
             }
             val reasoningDetails = usageObj?.optJSONObject("completion_tokens_details")
             val reasoning = exactNonNegativeCount(reasoningDetails, "reasoning_tokens", 0L)
-            val reasoningKnown = reasoningDetails?.has("reasoning_tokens") == true
+            val reasoningKnown = reasoningDetails?.has("reasoning_tokens") == true &&
+                !reasoningDetails.isNull("reasoning_tokens") && reasoning != null
             val realUsage = validUsageBreakdown(input, output, reportedTotal, cached, reasoning, reportedTotalFieldValid, cacheWrite, cacheWrite1h)
 
             val finalInput = if (realUsage) input!! else (systemPrompt.length + userText.length) / 4.toLong()
