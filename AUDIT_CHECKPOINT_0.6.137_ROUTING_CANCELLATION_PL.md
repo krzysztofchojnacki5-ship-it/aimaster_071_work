@@ -1955,3 +1955,15 @@ Doprecyzowanie projektu SQLite:
 
 - Doprecyzowano komentarz `SecureStoreHealth`: latch dotyczy zarówno nieudanego commitu, jak i wyjątku uniemożliwiającego wiarygodny odczyt; jedynym sposobem wyczyszczenia produkcyjnego latcha pozostaje restart procesu. Commit: `c787f228`.
 - Aktualny kod do CI: `c787f22841be0a5de451b3fdbdf4a4fe8463e2e9`, run `42331335074` w statusie `pending` przy aktualizacji checkpointu. Starszy run `42331107485` dotyczy wcześniejszego SHA `115657d8` i nie waliduje najnowszych testów.
+
+
+## Checkpoint wznowienia — 0.6.139 (2026-11-07)
+
+- Aktywna robocza gałąź: `work/0.6.139-saveconfig-secret-preservation`, HEAD `7ee0908d8f7fbefe603493b48f154e5752e3f951`.
+- Baza: `30e0f496a4383d935563a35e7b61b1742f853c71`.
+- Zmiana produkcyjna: commit `d3fd3060b797c2ca127bb2d97395a19f253aab6c`; zachowanie istniejącego ciphertextu, gdy `apiKey` jest pusty i sekret jest czytelny.
+- Testy: commit `7ee0908d8f7fbefe603493b48f154e5752e3f951`; cztery testy dodane, bez uruchomienia.
+- CI run `42411603439` / job `128520747624`, SHA `30e0f496...`: nadal `in_progress`; kroki checkout/JDK/SDK/API36/Gradle zakończone, główny krok test+debug compile w toku. Limit 45 min; nie wysyłać commita na branch audytowy przed rozstrzygnięciem, bo concurrency może anulować run.
+- Brak workflow run dla gałęzi roboczej; workflow push jest skonfigurowany dla gałęzi audytowej, a pull_request tylko dla `main`.
+- Następny ruch: poczekać na wynik runu; następnie przenieść 0.6.139 do gałęzi audytowej, uruchomić CI na nowym SHA, pobrać raporty i rozstrzygnąć każdy błąd. Nie oznaczać testów jako PASS wcześniej.
+- APK NOT BUILT; Companion NOT ACTIVATED; `main` untouched.
