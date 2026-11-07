@@ -38,6 +38,7 @@ class ProviderClientNetworkTest {
             assertEquals(0L, result.usage.cacheWriteTokens)
             assertEquals(0L, result.usage.cacheWrite1hTokens)
             assertEquals(0L, result.usage.reasoningTokens)
+            assertFalse(result.usage.reasoningTokensKnown)
         } finally { server.stop(0) }
     }
 
@@ -654,6 +655,7 @@ class ProviderClientNetworkTest {
             assertEquals(3L, result.usage.cacheWriteTokens)
             assertEquals(2L, result.usage.cacheWrite1hTokens)
             assertEquals(2L, result.usage.reasoningTokens)
+            assertTrue(result.usage.reasoningTokensKnown)
         } finally { server.stop(0) }
     }
 
@@ -671,6 +673,7 @@ class ProviderClientNetworkTest {
             assertEquals(20L, result.usage.cacheWriteTokens)
             assertEquals(30L, result.usage.cacheWrite1hTokens)
             assertEquals(2L, result.usage.reasoningTokens)
+            assertTrue(result.usage.reasoningTokensKnown)
         } finally { server.stop(0) }
     }
 
