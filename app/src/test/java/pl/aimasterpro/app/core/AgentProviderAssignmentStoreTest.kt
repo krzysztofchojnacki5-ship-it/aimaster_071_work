@@ -79,6 +79,16 @@ class AgentProviderAssignmentStoreTest {
         assertEquals("legacy-valid", prefs.getString("selected_provider", null))
     }
 
+    @Test fun startupRecoveryFailsClosedAndPreservesWronglyTypedAssignment() {
+        prefs.edit().putString("agent_provider_MASTER", "gemini")
+            .putInt("agent_provider_CODER", 42).putString("selected_provider", "gemini").commit()
+        assertNull(AgentProviderAssignmentStore.reconcileExistingAssignments(
+            context, defaults, setOf("gemini", "groq"), "gemini"
+        ))
+        assertEquals(42, prefs.getInt("agent_provider_CODER", -1))
+        assertEquals("gemini", prefs.getString("agent_provider_MASTER", null))
+    }
+
     @Test fun startupRecoveryPrefersValidCanonicalMasterOverLegacyMirror() {
         prefs.edit().putString("agent_provider_MASTER", "mistral")
             .putString("selected_provider", "gemini").commit()
