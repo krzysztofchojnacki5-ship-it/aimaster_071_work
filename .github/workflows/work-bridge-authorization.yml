@@ -32,6 +32,12 @@ jobs:
           fetch-depth: 0
           persist-credentials: true
 
+      - name: Test trusted Work Bridge policy
+        run: |
+          set -euo pipefail
+          python3 -m py_compile tools/work_bridge/validate.py
+          python3 -m unittest discover -s tools/work_bridge -p 'test_*.py' -v
+
       - name: Fetch PR head commit
         env:
           PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
