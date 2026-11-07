@@ -1948,27 +1948,31 @@ class MainActivity : Activity() {
                                     pl.aimasterpro.app.core.TaskCheckpointStore.Event(task.id, task.agentId, state, detail,
                                         System.currentTimeMillis(), providerId, model, attempts))
                                 if (!saved) android.util.Log.e("AIMasterRecovery", "Nie udało się trwale zapisać checkpointu zadania.")
-                                val journalStatus = when (state) {
-                                    "CANCELLED" -> "PAUSED"
-                                    "BLOCKED", "FAILED", "TIMED_OUT", "USAGE_PENDING", "RESULT_PERSIST_PENDING" -> "BLOCKED"
-                                    else -> "ACTIVE"
-                                }
-                                val journalStep = when (state) {
-                                    "QUEUED" -> "W kolejce: ${task.agentId}"
-                                    "RUNNING" -> "Analiza specjalisty: ${task.agentId}"
-                                    "COMPLETED" -> "Raport zapisany: ${task.agentId}"
-                                    "USAGE_PENDING" -> "Raport ${task.agentId} wymaga odzyskania księgowania usage."
-                                    "RESULT_PERSIST_PENDING" -> "Raport ${task.agentId} wymaga potwierdzenia trwałego zapisu."
-                                    else -> "Agent ${task.agentId}: $state"
-                                }
                                 val journalUpdated = pl.aimasterpro.app.core.MasterWorkJournalStore.update(this, requestTaskId) { current ->
+                                    val terminalProblem = state in setOf("BLOCKED", "FAILED", "TIMED_OUT", "CANCELLED", "USAGE_PENDING", "RESULT_PERSIST_PENDING")
+                                    val stickyStatus = when {
+                                        current.status == "PAUSED" -> "PAUSED"
+                                        current.status == "BLOCKED" -> "BLOCKED"
+                                        state == "CANCELLED" -> "PAUSED"
+                                        terminalProblem -> "BLOCKED"
+                                        else -> "ACTIVE"
+                                    }
+                                    val journalStep = when {
+                                        current.status in setOf("BLOCKED", "PAUSED") -> current.currentStep
+                                        state == "QUEUED" -> "W kolejce: ${task.agentId}"
+                                        state == "RUNNING" -> "Analiza specjalisty: ${task.agentId}"
+                                        state == "COMPLETED" -> "Raport zapisany: ${task.agentId}"
+                                        state == "USAGE_PENDING" -> "Raport ${task.agentId} wymaga odzyskania księgowania usage."
+                                        state == "RESULT_PERSIST_PENDING" -> "Raport ${task.agentId} wymaga potwierdzenia trwałego zapisu."
+                                        else -> "Agent ${task.agentId}: $state"
+                                    }
                                     current.copy(
-                                        status = journalStatus,
+                                        status = stickyStatus,
                                         currentStep = journalStep,
                                         completedSteps = if (state == "COMPLETED")
                                             (current.completedSteps + "Raport specjalisty ${task.agentId} zapisany").distinct().take(40)
                                         else current.completedSteps,
-                                        nextSteps = if (state in setOf("BLOCKED", "FAILED", "TIMED_OUT", "CANCELLED", "USAGE_PENDING", "RESULT_PERSIST_PENDING"))
+                                        nextSteps = if (stickyStatus in setOf("BLOCKED", "PAUSED"))
                                             listOf("Sprawdź checkpointy i archiwum raportów przed wznowieniem.")
                                         else current.nextSteps,
                                         updatedAt = System.currentTimeMillis()
@@ -2397,23 +2401,25 @@ class MainActivity : Activity() {
                     assistantTaskIds.add(requestTaskId)
                     persistMessages()
                 } else appendToStoredChat(chatId, "assistant", reply, requestTaskId)
-                val journalFinalized = pl.aimasterpro.app.core.MasterWorkJournalStore.update(this, requestTaskId) { current ->
-                    current.copy(
-                        status = if (ok && chatResultPersisted) "COMPLETED" else if (!chatResultPersisted) "PAUSED" else "BLOCKED",
-                        currentStep = when {
-                            ok && chatResultPersisted -> "Odpowiedź MASTER-a zapisana w historii czatu."
-                            !chatResultPersisted -> "Odpowiedź nie została trwale zapisana; wymaga odzyskania."
-                            else -> "Zadanie zakończone błędem; wymagane sprawdzenie checkpointów."
-                        },
-                        completedSteps = if (ok && chatResultPersisted)
-                            (current.completedSteps + "Końcowa synteza MASTER-a zapisana").distinct().take(40)
-                        else current.completedSteps,
-                        nextSteps = if (ok && chatResultPersisted) emptyList()
-                            else listOf("Sprawdź historię czatu, checkpointy i archiwum przed ponownym uruchomieniem."),
-                        updatedAt = System.currentTimeMillis()
-                    )
-                }
-                if (journalFinalized == null) android.util.Log.e("AIMasterRecovery", "Nie udało się zamknąć dziennika pracy MASTER-a.")
+                val hasMasterJournal = pl.aimasterpro.app.core.MasterWorkJournalStore.get(this, requestTaskId) != null
+                val journalFinalized = if (!hasMasterJournal) true else
+                    pl.aimasterpro.app.core.MasterWorkJournalStore.update(this, requestTaskId) { current ->
+                        current.copy(
+                            status = if (ok && chatResultPersisted) "COMPLETED" else if (!chatResultPersisted) "PAUSED" else "BLOCKED",
+                            currentStep = when {
+                                ok && chatResultPersisted -> "Odpowiedź MASTER-a zapisana w historii czatu."
+                                !chatResultPersisted -> "Odpowiedź nie została trwale zapisana; wymaga odzyskania."
+                                else -> "Zadanie zakończone błędem; wymagane sprawdzenie checkpointów."
+                            },
+                            completedSteps = if (ok && chatResultPersisted)
+                                (current.completedSteps + "Końcowa synteza MASTER-a zapisana").distinct().take(40)
+                            else current.completedSteps,
+                            nextSteps = if (ok && chatResultPersisted) emptyList()
+                                else listOf("Sprawdź historię czatu, checkpointy i archiwum przed ponownym uruchomieniem."),
+                            updatedAt = System.currentTimeMillis()
+                        )
+                    } != null
+                if (!journalFinalized) android.util.Log.e("AIMasterRecovery", "Nie udało się zamknąć dziennika pracy MASTER-a.")
                 if (chatResultPersisted) {
                     val checkpoint = pl.aimasterpro.app.core.TaskCheckpointStore.latest(this)
                         .firstOrNull { it.taskId == requestTaskId }

@@ -67,6 +67,34 @@ class MasterWorkJournalStoreTest {
         assertEquals(0, MasterWorkJournalStore.pauseActive(context, 100L))
     }
 
+    @Test fun parallelProgressUpdatesDoNotLoseCompletedSteps() {
+        assertTrue(MasterWorkJournalStore.save(context, record("shared-task")))
+        val ready = java.util.concurrent.CountDownLatch(12)
+        val start = java.util.concurrent.CountDownLatch(1)
+        val failures = java.util.Collections.synchronizedList(mutableListOf<Throwable>())
+        val workers = (1..12).map { index ->
+            Thread {
+                ready.countDown()
+                try {
+                    start.await()
+                    assertNotNull(MasterWorkJournalStore.update(context, "shared-task") { current ->
+                        current.copy(
+                            completedSteps = (current.completedSteps + "Agent-$index zakończył").distinct().take(40),
+                            updatedAt = index.toLong() + 1L
+                        )
+                    })
+                } catch (error: Throwable) { failures += error }
+            }.apply { start() }
+        }
+        assertTrue(ready.await(3, java.util.concurrent.TimeUnit.SECONDS))
+        start.countDown()
+        workers.forEach { it.join(5_000L) }
+        assertTrue(workers.none { it.isAlive })
+        assertTrue(failures.isEmpty())
+        val saved = MasterWorkJournalStore.get(context, "shared-task")!!
+        assertEquals(12, saved.completedSteps.count { it.startsWith("Agent-") })
+    }
+
     @Test fun corruptMasterJournalIsNotReplacedByFreshPlan() {
         val prefs = context.getSharedPreferences("ai_master_work_journal_v1", Context.MODE_PRIVATE)
         val corrupt = """[{"taskId":"broken","status":"ACTIVE"},null]"""
