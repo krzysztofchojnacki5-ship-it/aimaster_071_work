@@ -4,4 +4,7 @@ package pl.aimasterpro.app.core
 object ChatScreenPolicy {
     fun destination(currentScreen: String): String =
         if (currentScreen.equals("Asystent", ignoreCase = true)) "Asystent" else "Czat"
+
+    /** A navigation snapshot already contains agent activity; avoid a second, racy storage read. */
+    fun shouldRefreshAgentActivity(snapshotAlreadyRestored: Boolean): Boolean = !snapshotAlreadyRestored
 }

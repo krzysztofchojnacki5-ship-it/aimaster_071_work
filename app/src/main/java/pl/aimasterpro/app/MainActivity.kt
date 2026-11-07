@@ -309,7 +309,7 @@ class MainActivity : Activity() {
         }
         showShell(label)
         when (label) {
-            "Czat", "Asystent" -> showChat()
+            "Czat", "Asystent" -> showChat(snapshotAlreadyRestored = true)
             "Centrum" -> showCommandCenter()
             "Rozmowy" -> showAgentCollaborationScreen()
             "Monitor API" -> showApiMonitoringScreen()
@@ -859,9 +859,11 @@ class MainActivity : Activity() {
     //  Ekran czatu
     // =====================================================================
 
-    private fun showChat() {
+    private fun showChat(snapshotAlreadyRestored: Boolean = false) {
         val chatDestination = pl.aimasterpro.app.core.ChatScreenPolicy.destination(screen)
-        loadAgentActivity()
+        if (pl.aimasterpro.app.core.ChatScreenPolicy.shouldRefreshAgentActivity(snapshotAlreadyRestored)) {
+            loadAgentActivity()
+        }
         val screenW = resources.displayMetrics.widthPixels
         val side = maxOf(dp(16), (screenW - dp(760)) / 2)
         val textW = minOf(screenW, dp(760)) - dp(32)

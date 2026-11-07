@@ -470,3 +470,11 @@ Rejestr rozróżnia paczkę źródłową od wersji aplikacji/APK. Numer paczki n
 - Na bazie 0.6.147 (jawny warunek nullable w odtwarzaniu startowym) przywrócono metodę jako fail-safe: najpierw odczytuje i parsuje kompletny snapshot rozmowy, a dopiero potem podmienia `agentActivity`; błąd odczytu lub parsowania zachowuje poprzedni stan pamięci.
 - Dodano test odrzucania `agentActivity` zapisanej jako obiekt zamiast tablicy.
 - Testy JUnit i kompilacja debug: ADDED / NOT RUN do potwierdzenia przez CI. APK nie utworzono; Companion pozostaje nieaktywny.
+
+
+## 0.6.149 — pojedynczy snapshot przy nawigacji do czatu (2026-11-07)
+
+- Audyt call-site potwierdził, że `onCreate()` wywołuje `navigate("Czat")`, które najpierw odtwarza pełny snapshot przez `restoreMessagesForCurrentChat()`, ale `showChat()` wykonywał jeszcze drugi odczyt przez `loadAgentActivity()`.
+- Dodano jawny parametr `snapshotAlreadyRestored` i politykę `ChatScreenPolicy.shouldRefreshAgentActivity()`: ścieżka nawigacji nie wykonuje redundantnego odczytu, a bezpośrednie wywołania `showChat()` nadal odświeżają aktywność.
+- Dodano dwa testy polityki: pominięcie drugiego odczytu po restore oraz zachowanie odświeżania dla bezpośredniego renderowania.
+- Testy JUnit i kompilacja debug: ADDED / NOT RUN do potwierdzenia przez CI. APK nie utworzono; Companion pozostaje nieaktywny.

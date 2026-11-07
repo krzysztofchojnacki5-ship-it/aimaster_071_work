@@ -14,4 +14,12 @@ class ChatScreenPolicyTest {
         assertEquals("Czat", ChatScreenPolicy.destination("Historia"))
         assertEquals("Czat", ChatScreenPolicy.destination(""))
     }
+
+    @Test fun restoredNavigationSnapshotSkipsRedundantAgentActivityRead() {
+        assertEquals(false, ChatScreenPolicy.shouldRefreshAgentActivity(snapshotAlreadyRestored = true))
+    }
+
+    @Test fun directChatRenderStillRefreshesAgentActivity() {
+        assertEquals(true, ChatScreenPolicy.shouldRefreshAgentActivity(snapshotAlreadyRestored = false))
+    }
 }

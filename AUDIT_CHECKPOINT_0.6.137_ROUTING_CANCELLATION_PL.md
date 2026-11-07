@@ -2134,3 +2134,13 @@ Doprecyzowanie projektu SQLite:
 - Metoda nie czyści aktywności przed udanym odczytem i parsowaniem kompletnego snapshotu; przy błędzie zachowuje poprzednie dane w pamięci.
 - Dodano test dla nieprawidłowego typu `agentActivity` (obiekt zamiast tablicy).
 - Testy/Gradle/Android debug NOT RUN do potwierdzenia przez CI. APK NOT BUILT; Companion NOT ACTIVATED; `main` untouched.
+
+
+## Checkpoint 0.6.149 — pojedynczy snapshot przy nawigacji do czatu (2026-11-07)
+
+- Baza: commit 0.6.148 `f2a9a02d966781497a24d78a79f8e2eaea57ca93`.
+- Nowa gałąź: `audit/0.6.149-single-chat-snapshot`.
+- Audyt potwierdził, że startup wykonuje `restoreMessagesForCurrentChat(targetId)`, a następnie `showChat()` ponownie odczytywał `chats_v2` przez `loadAgentActivity()`. Mogło to mieszać wiadomości i aktywność z różnych chwil.
+- `showChat(snapshotAlreadyRestored = true)` jest używane wyłącznie po pełnym restore w `navigate()`; pozostałe bezpośrednie wywołania zachowują odświeżanie aktywności.
+- Dodano dwa testy `ChatScreenPolicy` dla obu ścieżek.
+- Testy/Gradle/Android debug NOT RUN do potwierdzenia przez CI. APK NOT BUILT; Companion NOT ACTIVATED; `main` untouched.
