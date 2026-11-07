@@ -37,7 +37,8 @@ internal fun canReplaceUnreadableSecret(aliasExists: Boolean, keyIsSecretKey: Bo
 
 class SecureStore internal constructor(
     context: Context,
-    private val commitEditor: (android.content.SharedPreferences.Editor) -> Boolean = { it.commit() }
+    private val commitEditor: (android.content.SharedPreferences.Editor) -> Boolean = { it.commit() },
+    private val secretDecryptorForTests: ((String) -> String?)? = null
 ) {
     private val prefs = context.getSharedPreferences("secure_provider_store", Context.MODE_PRIVATE)
     private val alias = "ai_master_provider_key_v1"
@@ -148,6 +149,9 @@ class SecureStore internal constructor(
             SecureStoreHealth.markUncertain()
             return@synchronized null
         } ?: return@synchronized null
+        secretDecryptorForTests?.let { decryptor ->
+            return@synchronized runCatching { decryptor(encoded) }.getOrNull()
+        }
         runCatching {
             val packed = Base64.decode(encoded, Base64.NO_WRAP)
             try {
@@ -180,12 +184,17 @@ class SecureStore internal constructor(
             validateImportedConfig(config)
             val id = config.getString("id")
             val incomingSecret = config.optString("apiKey")
-            val existingSecretPresent = hasStoredCiphertext("key_$id")
+            val existingCiphertext = try { prefs.getString("key_$id", null)?.takeIf { it.isNotBlank() } }
+            catch (_: Exception) {
+                SecureStoreHealth.markUncertain()
+                throw IllegalStateException("Nie można bezpiecznie odczytać istniejącego klucza API.")
+            }
             check(!SecureStoreHealth.isUncertain()) { "Nie można bezpiecznie odczytać magazynu konfiguracji." }
-            if (existingSecretPresent && incomingSecret.isBlank() && getSecret("key_$id") == null) {
+            val preserveExistingSecret = incomingSecret.isBlank() && existingCiphertext != null
+            if (preserveExistingSecret && getSecret("key_$id") == null) {
                 throw IllegalStateException("Istniejący klucz API jest niedostępny. Nie nadpisano go pustą wartością.")
             }
-            val encrypted = encryptSecret(incomingSecret)
+            val encrypted = if (preserveExistingSecret) existingCiphertext else encryptSecret(incomingSecret)
             val safe = JSONObject(config.toString()).apply { remove("apiKey"); remove("_secretUnavailable") }
             val ids = readProviderIds().toMutableSet()
             check(!SecureStoreHealth.isUncertain()) { "Nie można bezpiecznie odczytać identyfikatorów dostawców." }
