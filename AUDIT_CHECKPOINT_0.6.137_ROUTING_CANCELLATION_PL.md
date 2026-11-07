@@ -2066,3 +2066,5 @@ Doprecyzowanie projektu SQLite:
 - Zapis używa blokady `chat_state` i wspólnego `SharedPreferencesWriteHealth.commit()`.
 - Testy pokrywają awarię przed apply (stary mirror pozostaje) oraz oczekiwanie na blokadę.
 - Commity `173e1ba8faff4870732209ac983c61a88c840bf4`, `ff41c04fb8f0dba91a216f3fc75c7f60fbf1d347`, `bf3556baa3d4bb491b96e08b89cd062bc403f46b`. ADDED / NOT RUN.
+
+Korekta implementacji legacy mirror: `writeLegacyMirror()` wykonuje best-effort `apply()` pod blokadą pliku, bez użycia trwałego commitu i bez quarantinowania całej historii z powodu awarii pomocniczej kopii. Test sprawdza, że błąd dostępu zachowuje poprzednią kopię i nie ustawia latcha. Commity `f8a9f87bb15e520853b1daa3e470c48198613c1c`, `a97eebbdb72c07f4668e16f91fb25c951468788f`.
