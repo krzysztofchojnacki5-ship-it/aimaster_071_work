@@ -2044,3 +2044,10 @@ Doprecyzowanie projektu SQLite:
 - Test `directWriteRootWaitsForSharedPreferenceLockThroughValidationAndCommit` dodany; ADDED / NOT RUN.
 - Commity: `f9d566f9d837b8aea8596cc5ad2bb89d22caa5a0`, `4028df55984d1b0c19927c3abeed9659dcf0ce22`.
 - CI 42411603439 nadal w toku dla starszego SHA `30e0f496...`.
+
+### Checkpoint 0.6.139 — atomowa nawigacja czatu
+
+- `currentId` i `last_user_chat_id` są zapisywane w jednym commicie przez `ChatHistoryStore.updateRootAndLastUserChatId()`.
+- `MainActivity.saveCurrentId()` nie wykonuje już drugiego niezależnego commitu.
+- Dodano testy `currentChatAndLastUserNavigationMirrorCommitTogether` i `ambiguousCurrentChatCommitNeverSplitsCanonicalIdFromNavigationMirror`.
+- Commity `c85a4a5288746e3b964376297020a6199bb9dc57`, `e49f3d94fb17ca9f39972ddf9f7aba631edd2b33`, `a2c955b0eeff9b41c428f69c197db8aec230d112`. ADDED / NOT RUN.
