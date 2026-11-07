@@ -54,10 +54,14 @@ def parse_manifest(inbox: str, task_id: str) -> dict:
     if item.get("base_branch") != "bridge/work-bridge-bootstrap":
         raise PolicyError("Manifest base_branch is not bridge/work-bridge-bootstrap")
     allowed = item.get("allowed_paths")
-    if not isinstance(allowed, list) or not allowed or len(set(allowed)) != len(allowed):
-        raise PolicyError("allowed_paths must be a non-empty list without duplicates")
+    if not isinstance(allowed, list) or not allowed:
+        raise PolicyError("allowed_paths must be a non-empty list")
+    if any(not isinstance(pattern, str) for pattern in allowed):
+        raise PolicyError("Every allowed_paths entry must be a string")
+    if len(set(allowed)) != len(allowed):
+        raise PolicyError("allowed_paths must not contain duplicates")
     for pattern in allowed:
-        if (not isinstance(pattern, str) or not pattern or pattern.startswith("/")
+        if (not pattern or pattern.startswith("/")
                 or "\\" in pattern or any(p in {"", ".", ".."} for p in PurePosixPath(pattern).parts)
                 or pattern in {"*", "**", "**/*"}):
             raise PolicyError(f"Unsafe allowed_paths pattern: {pattern!r}")
