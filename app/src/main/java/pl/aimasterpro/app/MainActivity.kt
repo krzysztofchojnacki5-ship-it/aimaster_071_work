@@ -5970,7 +5970,8 @@ class MainActivity : Activity() {
                 modelCatalogPrefs.edit().remove("models_json").remove("last_sync").putLong("last_attempt", 0L).apply()
                 seedMissingDefaultProviders()
                 val preferredMasterId = migrated.firstOrNull { it.optString("id") == "gemini" }?.optString("id") ?: migrated.first().optString("id")
-                if (!reconcileAgentAssignmentsAfterImport(migrated, preferredMasterId)) {
+                val importedProviderRows = store.allConfigs()
+                if (!reconcileAgentAssignmentsAfterImport(importedProviderRows, preferredMasterId)) {
                     toast("Konfiguracje zaimportowano, ale nie udało się trwale uzgodnić przypisań agentów. Zamknij i uruchom ponownie aplikację.")
                     return@setPositiveButton
                 }
