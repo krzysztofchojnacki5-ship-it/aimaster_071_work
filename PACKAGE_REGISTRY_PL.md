@@ -425,3 +425,10 @@ Rejestr rozróżnia paczkę źródłową od wersji aplikacji/APK. Numer paczki n
 - Test `directWriteRootWaitsForSharedPreferenceLockThroughValidationAndCommit` sprawdza oczekiwanie wątku na wspólnej blokadzie.
 - Commity: produkcja `f9d566f9d837b8aea8596cc5ad2bb89d22caa5a0`, test `4028df55984d1b0c19927c3abeed9659dcf0ce22`.
 - Status: statyczny przegląd wykonany; test ADDED / NOT RUN; CI nadal pracuje na SHA `30e0f496...`.
+
+### 0.6.139 — atomowy zapis bieżącego czatu i nawigacji (2026-11-07)
+
+- `saveCurrentId()` zapisywał `chats_v2.currentId` i `last_user_chat_id` w dwóch commitach tego samego `chat_state`. Rozdzielenie mogło pozostawić niespójny wybór rozmowy po awarii drugiego commitu.
+- Dodano `ChatHistoryStore.updateRootAndLastUserChatId()`: oba klucze trafiają do jednego `SharedPreferences.Editor` i jednego commitu pod wspólną blokadą. `MainActivity.saveCurrentId()` korzysta teraz z tej ścieżki dla zwykłych rozmów; czatów MASTER/ASSISTANT to nie dotyczy.
+- Testy: `currentChatAndLastUserNavigationMirrorCommitTogether`, `ambiguousCurrentChatCommitNeverSplitsCanonicalIdFromNavigationMirror`.
+- Commity: storage `c85a4a5288746e3b964376297020a6199bb9dc57`, MainActivity `e49f3d94fb17ca9f39972ddf9f7aba631edd2b33`, testy `a2c955b0eeff9b41c428f69c197db8aec230d112`. Testy ADDED / NOT RUN.
