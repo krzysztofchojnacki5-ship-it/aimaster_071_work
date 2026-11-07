@@ -479,8 +479,11 @@ class ProviderClient(
                         val completionRaw = pricing?.optString("completion")
                         val cachedReadRaw = pricing?.optString("input_cache_read")
                         val prompt = promptRaw?.toDoubleOrNull()?.times(1_000_000.0)
+                            ?.takeIf { it.isFinite() && it >= 0.0 }
                         val completion = completionRaw?.toDoubleOrNull()?.times(1_000_000.0)
+                            ?.takeIf { it.isFinite() && it >= 0.0 }
                         val cachedRead = cachedReadRaw?.toDoubleOrNull()?.times(1_000_000.0)
+                            ?.takeIf { it.isFinite() && it >= 0.0 }
                         val hasPricing = prompt != null && completion != null
                         val explicitFree = id.equals("openrouter/free", true) || id.endsWith(":free", true)
                         val free = if (isOpenRouter) {
