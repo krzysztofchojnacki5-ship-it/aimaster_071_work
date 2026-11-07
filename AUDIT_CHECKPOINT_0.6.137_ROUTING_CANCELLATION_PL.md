@@ -1387,3 +1387,20 @@ Weryfikacja źródła po zapisie:
 - MainActivity zawiera 3 callbacki onTaskResult i 3 callbacki onRequestStarting; liczby odpowiadają trzem ścieżkom raportowania i trzem ścieżkom zapisu metadanych REQUESTING.
 - Testy i kompilacja tej poprawki oczekują na nowy run CI; nie oznaczono ich jako PASS.
 - main, APK i release pozostają nietknięte; Companion Transport nadal BLOCKED.
+
+
+## Dodatkowa walidacja — integralne znaczniki czasu archiwum raportów (2026-11-07)
+
+Przegląd ścisłego parsera TaskResultArchive wykazał, że kontrola `createdAt is Number` dopuszczała także wartości zmiennoprzecinkowe. JSONObject.getLong() konwertuje taką wartość przez obcięcie części ułamkowej, co mogło zaakceptować uszkodzony rekord i zmienić jego znacznik czasu.
+
+Poprawka:
+- parser akceptuje teraz wyłącznie integralne typy JSON odczytane jako Int lub Long;
+- wartości Double/Float (w tym ułamkowe znaczniki czasu) powodują odrzucenie całego archiwum;
+- przy nieprawidłowym rekordzie put() nie nadpisuje istniejących danych;
+- dodano test fractionalArchiveTimestampIsRejectedWithoutOverwritingExistingData.
+
+Commity:
+- implementacja: 921e81cd03b785ba1d42977589a59d39787380cd
+- test: 05d0266cf3789bfe3bfd669266f221f028faa896
+
+Weryfikacja CI dla najnowszej poprawki jest oczekiwana. Nie oznaczono testu jako PASS przed wykonaniem workflow.
