@@ -972,3 +972,5 @@ Uzupełnienie: przejście do Asystenta i tworzenie nowego czatu nie zapisują ju
 ### 0.6.139 — wszystkie zapisy MainActivity do chat_state pod kontrolą store
 
 Zapis legacy mirror `chat_messages` przeniesiono do `ChatHistoryStore.writeLegacyMirror()`, który używa wspólnej blokady i latcha niejednoznacznego commitu. MainActivity nie ma już bezpośredniego `commit()` do `chat_state`; błąd kopii legacy jest ostrzeżeniem, a kanoniczny zapis pozostaje rozstrzygający. Dodano test awarii commit i test blokady. Commity `173e1ba8...`, `ff41c04f...`, `bf3556ba...`; ADDED / NOT RUN.
+
+Korekta: zapis legacy mirror jest best-effort `apply()` pod blokadą, bez latcha awarii trwałego commitu, bo kanoniczne `chats_v2` ma już potwierdzony commit. Awaria samego mirror nie może blokować zdrowej historii. Test dostępu aktualizuje tę semantykę. Commity `f8a9f87...`, `a97eebb...`.
