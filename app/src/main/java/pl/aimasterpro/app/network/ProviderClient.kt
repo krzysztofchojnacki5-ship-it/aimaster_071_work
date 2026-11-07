@@ -57,9 +57,11 @@ internal fun resolveOpenRouterFreePricing(
     cachedReadPrice: Double?,
     cacheWritePrice: Double?,
     internalReasoningPrice: Double? = null,
-    cacheWrite1hPrice: Double? = null
+    cacheWrite1hPrice: Double? = null,
+    hasInvalidPriceMetadata: Boolean = false
 ): Boolean? {
     if (!isOpenRouter) return null
+    if (hasInvalidPriceMetadata) return false
     val hasPricing = promptPrice != null && completionPrice != null
     val explicitlyFree = modelId.equals("openrouter/free", true) || modelId.endsWith(":free", true)
     val hasPaidCacheRate = (cachedReadPrice != null && cachedReadPrice > 0.0) ||
@@ -587,15 +589,24 @@ class ProviderClient(
                             ?.takeIf { it.isFinite() && it >= 0.0 }
                         val reasoning = reasoningRaw?.toDoubleOrNull()?.times(1_000_000.0)
                             ?.takeIf { it.isFinite() && it >= 0.0 }
+                        val invalidPriceMetadata = pricing != null && (
+                            (pricing.has("prompt") && prompt == null) ||
+                                (pricing.has("completion") && completion == null) ||
+                                (pricing.has("input_cache_read") && cachedRead == null) ||
+                                (pricing.has("input_cache_write") && cachedWrite == null) ||
+                                (pricing.has("input_cache_write_1h") && cachedWrite1h == null) ||
+                                (pricing.has("internal_reasoning") && reasoning == null)
+                            )
                         val free = resolveOpenRouterFreePricing(
-                            id, isOpenRouter, prompt, completion, cachedRead, cachedWrite, reasoning, cachedWrite1h
+                            id, isOpenRouter, prompt, completion, cachedRead, cachedWrite,
+                            reasoning, cachedWrite1h, invalidPriceMetadata
                         )
                         ProviderModelInfo(
                             id = id,
                             name = o.optString("name", id),
                             contextLength = o.optLong("context_length", -1L).takeIf { it > 0 },
-                            promptPricePerMillion = prompt,
-                            completionPricePerMillion = completion,
+                            promptPricePerMillion = if (invalidPriceMetadata) null else prompt,
+                            completionPricePerMillion = if (invalidPriceMetadata) null else completion,
                             freeByPricing = free,
                             description = o.optString("description", ""),
                             cachedPromptPricePerMillion = cachedRead,
