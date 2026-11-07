@@ -1746,3 +1746,21 @@ Stan weryfikacji:
 - CI run 42323653129, SHA 0af24234d852f1bf502879387823e1c06549b385, ostatni odczyt: in_progress; zasadniczy krok testów i assembleDebug nie zakończył się.
 - Nie oznaczać testów ani kompilacji jako PASS.
 - Niniejszy wpis jest dokumentacją audytu; workflow android-audit ignoruje zmiany *.md, więc ten checkpoint nie powinien uruchomić ani anulować testów.
+
+
+## Dodatkowy przegląd integracji SecureStore z UI — 2026-11-07 02:55 CET
+
+Potwierdzone na MainActivity.kt:
+- saveProvider() propaguje wynik SecureStore.saveConfig(); dialog naprawy klucza wymaga nowej wartości i nie przypisuje profilu po błędzie zapisu.
+- Import zaszyfrowanej bazy i import legacy wyświetlają komunikat „Dotychczasowe konfiguracje pozostały bez zmian” po false z replaceAllConfigs(). To stwierdzenie jest zbyt mocne w świetle semantyki SharedPreferences.commit(): false nie gwarantuje rollbacku mapy w pamięci ani stanu na dysku.
+- seedDefaultProviders() i seedMissingDefaultProviders() odczytują listę profili, a następnie próbują dopisać brakujące profile. Po nieudanym commit() i potencjalnej rozbieżności pamięć/dysk nie mogą być traktowane jako wiarygodny stan magazynu.
+- allConfigs()/readConfig() nie udostępniają obecnie stanu „storage uncertain”; UI nie ma sposobu odróżnienia pustego magazynu od magazynu, którego zapis zakończył się niepewnie.
+- putSecret(), saveConfig() i replaceAllConfigs() nie mają wspólnej blokady mutacji po false z commit(). Wymagany jest jeden, współdzielony mechanizm awarii magazynu, nie tylko lokalne false.
+
+Wniosek projektowy przed zmianą kodu:
+1. Nie maskować stanu niepewnego jako pustej bazy ani jako potwierdzonego rollbacku.
+2. Krótkoterminowa osłona musi blokować wszystkie dalsze zapisy w SecureStore po pierwszym nieudanym commit() w bieżącym procesie oraz jawnie informować UI, że stan wymaga ponownego uruchomienia i weryfikacji. Odczyty w tej sesji również nie mogą być przedstawiane jako wiarygodny snapshot.
+3. Długoterminowo przenieść metadane i ciphertexty do SQLite z transakcją, zachowując SharedPreferences jako źródło migracji do czasu pełnego zapisu, odczytu kontrolnego i zatwierdzenia wersji migracji. Nie usuwać starego magazynu w tej samej fazie migracji.
+4. Przed migracją dodać testy awarii/odtworzenia i jasno rozdzielić awarię przygotowania danych od awarii commit/dysku.
+
+To jest ustalenie audytowe i plan; nie wprowadzono jeszcze zmian w kodzie SecureStore. Nie wolno twierdzić, że import pozostawia poprzednią bazę nietkniętą, jeśli commit() zwróci false.
