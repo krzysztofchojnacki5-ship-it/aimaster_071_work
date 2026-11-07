@@ -54,6 +54,14 @@ class TaskResultArchiveTest {
         assertEquals(corrupt, prefs.getString("entries", null))
     }
 
+    @Test fun fractionalArchiveTimestampIsRejectedWithoutOverwritingExistingData() {
+        val corrupt = """[{"taskId":"fractional-time","agentId":"developer","report":"saved","providerId":"p","model":"m","createdAt":1000.5}]"""
+        assertTrue(prefs.edit().putString("entries", corrupt).commit())
+        assertNull(TaskResultArchive.get(context, "fractional-time"))
+        assertFalse(TaskResultArchive.put(context, "new-task", "developer", "new report", "p", "m", 2_000L))
+        assertEquals(corrupt, prefs.getString("entries", null))
+    }
+
     @Test fun blankAndOversizedReportsAreRejected() {
         assertFalse(TaskResultArchive.put(context, "blank", "developer", " ", "p", "m", 1_000L))
         assertFalse(TaskResultArchive.put(context, "large", "developer", "x".repeat(32_001), "p", "m", 1_000L))
