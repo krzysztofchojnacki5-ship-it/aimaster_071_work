@@ -52,6 +52,14 @@ class BackupCryptoTest {
     }
 
     @Test
+    fun testLegacyV1BackupWithoutIterationFieldUsesFixedWorkFactor() {
+        val encrypted = BackupCrypto.encrypt("legacy-compatible", "securepassword123".toCharArray())
+        val legacy = encrypted.replace(Regex(",\\s*\\"iterations\\":\\s*210000"), "")
+        assertNotEquals(encrypted, legacy)
+        assertEquals("legacy-compatible", BackupCrypto.decrypt(legacy, "securepassword123".toCharArray()))
+    }
+
+    @Test
     fun testUnsupportedKdfIterationCountIsRejectedBeforeKeyDerivation() {
         val encrypted = BackupCrypto.encrypt("secret", "securepassword123".toCharArray())
         val weakened = encrypted.replace("\"iterations\": 210000", "\"iterations\": 1")
