@@ -95,8 +95,8 @@ object QualityLearningStore {
         }
         val now = System.currentTimeMillis()
         val p = Proposal(UUID.randomUUID().toString(), text.take(3000), "PROPOSAL", now, now,
-            evidenceCount.coerceAtLeast(0), confidence.take(40), sourceTaskIds.distinct().take(100),
-            agents.distinct().take(50), models.distinct().take(50))
+            evidenceCount.coerceAtLeast(0), confidence.take(40), sourceTaskIds.filter(String::isNotBlank).distinct().take(100),
+            agents.filter(String::isNotBlank).distinct().take(50), models.filter(String::isNotBlank).distinct().take(50))
         check(saveProposals(context, listOf(p) + proposals(context))) {
             "Nie udało się trwale zapisać propozycji uczenia."
         }
