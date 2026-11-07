@@ -138,12 +138,18 @@ class MainActivity : Activity() {
         val recoveredTasks = runCatching {
             pl.aimasterpro.app.core.TaskCheckpointStore.recoverStaleRunning(this, onAmbiguousRequest = { event ->
                 if (event.status !in setOf("REQUESTING", "USAGE_PENDING", "INTERRUPTED_USAGE_PENDING")) true
-                else {
+                else if (!pl.aimasterpro.app.core.TaskCheckpointStore.hasRecoverableUsageMetadata(event)) {
+                    android.util.Log.e(
+                        "AIMasterRecovery",
+                        "Brak kompletnych metadanych żądania dla ${event.taskId}; nie księguję zerowego ani zgadywanego usage."
+                    )
+                    false
+                } else {
                     pl.aimasterpro.app.core.ApiTokenTracker.recordQuery(
                         this, event.providerId, event.model, event.agentId, event.taskId,
                         event.estimatedInputTokens, event.estimatedOutputTokens,
                         status = "UNAVAILABLE", baseUrl = event.baseUrl,
-                        idempotencyKey = event.idempotencyKey.ifBlank { "team:${event.taskId}:${event.providerId}" }
+                        idempotencyKey = event.idempotencyKey
                     )
                     true
                 }
