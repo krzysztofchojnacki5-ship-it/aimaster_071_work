@@ -36,7 +36,7 @@ object ChatResponseArchive {
         providerId: String,
         model: String,
         createdAt: Long = System.currentTimeMillis()
-    ): Boolean = SharedPreferencesWriteHealth.withHealthyAccess(PREFS) {
+    ): Boolean = runCatching { SharedPreferencesWriteHealth.withHealthyAccess(PREFS) {
         if (SharedPreferencesWriteHealth.isUncertain(PREFS) ||
             taskId.isBlank() || chatId.isBlank() || chatId.length > 200 ||
             agentId.isBlank() || providerId.isBlank() || model.isBlank() ||
@@ -62,7 +62,7 @@ object ChatResponseArchive {
                     .putString(KEY, trimmed.toString())
             )
         }.getOrDefault(false)
-    }
+    } }.getOrDefault(false)
 
     @Synchronized
     fun get(context: Context, taskId: String): Entry? {
