@@ -198,6 +198,30 @@ class TaskResultArchiveTest {
         assertEquals(0, activity.length())
     }
 
+    @Test fun restoreSurfacesCorruptArchiveInsteadOfReportingSuccessfulNoOp() {
+        val corrupt = """[{"taskId":"task-1","agentId":"developer","report":"saved","providerId":"p","model":"m","createdAt":"invalid"}]"""
+        assertTrue(prefs.edit().putString("entries", corrupt).commit())
+
+        assertTrue(runCatching { TaskResultArchive.restoreArchivedReports(context) }.isFailure)
+        assertEquals(corrupt, prefs.getString("entries", null))
+    }
+
+    @Test fun restoreSurfacesUnreadableChatHistoryInsteadOfDroppingArchivedReport() {
+        val chatId = "chat-corrupt-during-recovery"
+        val report = "Durable report must remain recoverable."
+        assertTrue(TaskResultArchive.put(
+            context, "task-preserve-on-chat-error", "RESEARCHER", report,
+            "provider-a", "model-a", 1_000L, chatId
+        ))
+        val chatPrefs = context.getSharedPreferences("chat_state", Context.MODE_PRIVATE)
+        val corruptHistory = """{"chats":{"broken":{"messages":[null]}}}"""
+        assertTrue(chatPrefs.edit().putString("chats_v2", corruptHistory).commit())
+
+        assertTrue(runCatching { TaskResultArchive.restoreArchivedReports(context) }.isFailure)
+        assertEquals(report, TaskResultArchive.get(context, "task-preserve-on-chat-error")?.report)
+        assertEquals(corruptHistory, chatPrefs.getString("chats_v2", null))
+    }
+
     @Test fun preferenceAccessFailureDoesNotPretendArchiveIsEmptyOrAcceptNewReport() {
         val failingContext = object : android.content.ContextWrapper(context) {
             override fun getSharedPreferences(name: String, mode: Int): android.content.SharedPreferences {
