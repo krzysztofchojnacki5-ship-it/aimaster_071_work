@@ -386,7 +386,9 @@ class ProviderClient(
             val input = if (uncachedInput != null && cached != null && cacheWriteSum != null) {
                 runCatching { Math.addExact(Math.addExact(uncachedInput, cached), cacheWriteSum) }.getOrNull()
             } else null
-            val reasoning = 0L
+            val reasoning = exactNonNegativeCount(
+                usageObj?.optJSONObject("output_tokens_details"), "thinking_tokens", 0L
+            )
             val realUsage = cacheBreakdownValid && validUsageBreakdown(
                 input, output, null, cached, reasoning, cacheWrite = cacheWrite, cacheWrite1h = cacheWrite1h
             )
