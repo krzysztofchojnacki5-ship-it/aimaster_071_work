@@ -418,4 +418,17 @@ class ProviderClientNetworkTest {
         }
     }
 
+
+    @Test
+    fun responsePreservesCanonicalProviderAndModelIdentity() {
+        val (server, _) = server { _, _ ->
+            200 to """{"model":"vendor/canonical-model-v2","choices":[{"message":{"content":"OK"}}],"usage":{"prompt_tokens":3,"completion_tokens":2,"total_tokens":5}}"""
+        }
+        try {
+            val configured = config("http://127.0.0.1:${server.address.port}/v1")
+            val result = ProviderClient().chat(configured, "system", "test")
+            assertEquals(configured.id, result.providerId)
+            assertEquals("vendor/canonical-model-v2", result.model)
+        } finally { server.stop(0) }
+    }
 }
