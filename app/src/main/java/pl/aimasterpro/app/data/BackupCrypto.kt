@@ -37,12 +37,17 @@ object BackupCrypto {
         val key = deriveKey(password, salt)
         val cipher = Cipher.getInstance("AES/GCM/NoPadding")
         cipher.init(Cipher.ENCRYPT_MODE, key, GCMParameterSpec(128, iv))
-        val ciphertext = cipher.doFinal(plainBytes)
-        plainBytes.fill(0)
+        val ciphertext = try {
+            cipher.doFinal(plainBytes)
+        } finally {
+            plainBytes.fill(0)
+        }
         return JSONObject().put("format", "AIMASTER_BACKUP").put("version", 1)
             .put("iterations", ITERATIONS).put("salt", Base64.encodeToString(salt, Base64.NO_WRAP))
             .put("iv", Base64.encodeToString(iv, Base64.NO_WRAP))
-            .put("data", Base64.encodeToString(ciphertext, Base64.NO_WRAP)).toString(2)
+            .put("data", Base64.encodeToString(ciphertext, Base64.NO_WRAP)).toString(2).also {
+                ciphertext.fill(0)
+            }
     }
 
     fun decrypt(encoded: String, password: CharArray): String {
@@ -75,7 +80,11 @@ object BackupCrypto {
         val cipher = Cipher.getInstance("AES/GCM/NoPadding")
         cipher.init(Cipher.DECRYPT_MODE, key, GCMParameterSpec(GCM_TAG_BITS, iv))
         val plain = cipher.doFinal(data)
-        require(plain.size <= MAX_PLAIN_BYTES) { "Dane kopii przekraczają dozwolony rozmiar." }
-        return try { String(plain, Charsets.UTF_8) } finally { plain.fill(0) }
+        return try {
+            require(plain.size <= MAX_PLAIN_BYTES) { "Dane kopii przekraczają dozwolony rozmiar." }
+            String(plain, Charsets.UTF_8)
+        } finally {
+            plain.fill(0)
+        }
     }
 }
