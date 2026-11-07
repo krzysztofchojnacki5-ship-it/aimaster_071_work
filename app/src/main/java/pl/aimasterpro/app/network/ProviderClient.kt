@@ -386,9 +386,9 @@ class ProviderClient(
             val input = if (uncachedInput != null && cached != null && cacheWriteSum != null) {
                 runCatching { Math.addExact(Math.addExact(uncachedInput, cached), cacheWriteSum) }.getOrNull()
             } else null
-            val reasoning = exactNonNegativeCount(
-                usageObj?.optJSONObject("output_tokens_details"), "thinking_tokens", 0L
-            )
+            val reasoningDetails = usageObj?.optJSONObject("output_tokens_details")
+            val reasoning = exactNonNegativeCount(reasoningDetails, "thinking_tokens", 0L)
+            val reasoningKnown = reasoningDetails?.has("thinking_tokens") == true
             val realUsage = cacheBreakdownValid && validUsageBreakdown(
                 input, output, null, cached, reasoning, cacheWrite = cacheWrite, cacheWrite1h = cacheWrite1h
             )
@@ -400,7 +400,7 @@ class ProviderClient(
             val finalCacheWrite1h = if (realUsage) cacheWrite1h!! else 0L
             val status = if (realUsage) "REAL" else "ESTIMATED"
 
-            ChatResponse(text, TokenUsageResult(finalInput, finalOutput, finalTotal, reasoning, finalCached, status, finalCacheWrite, finalCacheWrite1h), providerId = config.id, model = responseModel(result, config.model))
+            ChatResponse(text, TokenUsageResult(finalInput, finalOutput, finalTotal, reasoning, finalCached, status, finalCacheWrite, finalCacheWrite1h, reasoningKnown), providerId = config.id, model = responseModel(result, config.model))
         }
         ProviderKind.OPENAI_COMPATIBLE -> {
             val root = config.baseUrl.trimEnd('/')
@@ -447,7 +447,9 @@ class ProviderClient(
                     exactNonNegativeCount(usageObj, "claude_cache_creation_1_h_tokens", 0L)
                 else -> 0L
             }
-            val reasoning = exactNonNegativeCount(usageObj?.optJSONObject("completion_tokens_details"), "reasoning_tokens", 0L)
+            val reasoningDetails = usageObj?.optJSONObject("completion_tokens_details")
+            val reasoning = exactNonNegativeCount(reasoningDetails, "reasoning_tokens", 0L)
+            val reasoningKnown = reasoningDetails?.has("reasoning_tokens") == true
             val realUsage = validUsageBreakdown(input, output, reportedTotal, cached, reasoning, reportedTotalFieldValid, cacheWrite, cacheWrite1h)
 
             val finalInput = if (realUsage) input!! else (systemPrompt.length + userText.length) / 4.toLong()
@@ -459,7 +461,7 @@ class ProviderClient(
             val finalReasoning = if (realUsage) reasoning!! else 0L
             val status = if (realUsage) "REAL" else "ESTIMATED"
 
-            ChatResponse(text, TokenUsageResult(finalInput, finalOutput, finalTotal, finalReasoning, finalCached, status, finalCacheWrite, finalCacheWrite1h), providerId = config.id, model = responseModel(result, config.model))
+            ChatResponse(text, TokenUsageResult(finalInput, finalOutput, finalTotal, finalReasoning, finalCached, status, finalCacheWrite, finalCacheWrite1h, reasoningKnown), providerId = config.id, model = responseModel(result, config.model))
         }
         ProviderKind.GEMINI -> {
             val root = config.baseUrl.trimEnd('/')
@@ -484,7 +486,10 @@ class ProviderClient(
                 val cached = exactNonNegativeCount(promptDetails, "cached_tokens", 0L)
                 val cacheWrite = exactNonNegativeCount(promptDetails, "cache_write_tokens", 0L)
                 val cacheWrite1h = exactNonNegativeCount(promptDetails, "cache_write_1h_tokens", 0L)
-                val realUsage = validUsageBreakdown(input, output, reportedTotal, cached, 0L, reportedTotalFieldValid, cacheWrite, cacheWrite1h)
+                val reasoningDetails = usageObj?.optJSONObject("completion_tokens_details")
+                val reasoning = exactNonNegativeCount(reasoningDetails, "reasoning_tokens", 0L)
+                val reasoningKnown = reasoningDetails?.has("reasoning_tokens") == true
+                val realUsage = validUsageBreakdown(input, output, reportedTotal, cached, reasoning, reportedTotalFieldValid, cacheWrite, cacheWrite1h)
                 val finalInput = if (realUsage) input!! else (systemPrompt.length + userText.length) / 4L
                 val finalOutput = if (realUsage) output!! else text.length / 4L
                 val finalTotal = if (realUsage) Math.addExact(finalInput, finalOutput) else finalInput + finalOutput
@@ -492,7 +497,7 @@ class ProviderClient(
                 val finalCacheWrite = if (realUsage) cacheWrite!! else 0L
                 val finalCacheWrite1h = if (realUsage) cacheWrite1h!! else 0L
                 val status = if (realUsage) "REAL" else "ESTIMATED"
-                ChatResponse(text, TokenUsageResult(finalInput, finalOutput, finalTotal, 0L, finalCached, status, finalCacheWrite, finalCacheWrite1h), providerId = config.id, model = responseModel(result, config.model))
+                ChatResponse(text, TokenUsageResult(finalInput, finalOutput, finalTotal, if (realUsage) reasoning!! else 0L, finalCached, status, finalCacheWrite, finalCacheWrite1h, reasoningKnown), providerId = config.id, model = responseModel(result, config.model))
             } else {
                 // Native Gemini REST API
                 val encodedKey = java.net.URLEncoder.encode(config.apiKey, "UTF-8")
@@ -511,7 +516,8 @@ class ProviderClient(
                 val total = exactNonNegativeCount(meta, "totalTokenCount")
                 val totalFieldValid = meta == null || !meta.has("totalTokenCount") || total != null
                 val cached = exactNonNegativeCount(meta, "cachedContentTokenCount", 0L)
-                val reasoning = 0L
+                val reasoning = exactNonNegativeCount(meta, "thoughtsTokenCount", 0L)
+                val reasoningKnown = meta?.has("thoughtsTokenCount") == true
                 val realUsage = validUsageBreakdown(input, output, total, cached, reasoning, totalFieldValid)
 
                 val finalInput = if (realUsage) input!! else (systemPrompt.length + userText.length) / 4.toLong()
@@ -520,7 +526,7 @@ class ProviderClient(
                 val finalCached = if (realUsage) cached!! else 0L
                 val status = if (realUsage) "REAL" else "ESTIMATED"
 
-                ChatResponse(text, TokenUsageResult(finalInput, finalOutput, finalTotal, reasoning, finalCached, status),
+                ChatResponse(text, TokenUsageResult(finalInput, finalOutput, finalTotal, reasoning, finalCached, status, reasoningTokensKnown = reasoningKnown),
                     providerId = config.id, model = responseModel(result, config.model, "modelVersion"))
             }
         }
