@@ -3,6 +3,8 @@ package pl.aimasterpro.app.core
 import android.content.Context
 import org.json.JSONArray
 import org.json.JSONObject
+import java.math.BigDecimal
+import java.math.BigInteger
 
 /** Persistent, privacy-conscious execution journal. It stores operational metadata, never prompts, answers or secrets. */
 object LearningJournalStore {
@@ -27,6 +29,12 @@ object LearningJournalStore {
 
     @Synchronized
     fun record(context: Context, event: Event) {
+        if (event.timestamp < 0L || event.kind.isBlank() || event.agentId.isBlank() ||
+            event.status.isBlank() || event.durationMs < 0L || event.attempts < 0 ||
+            event.inputTokens < 0L || event.outputTokens < 0L) {
+            android.util.Log.e("AIMasterLearning", "Nie zapisano zdarzenia: nieprawidłowa tożsamość lub liczniki.")
+            return
+        }
         val all = readStrict(context)?.toMutableList() ?: run {
             android.util.Log.e("AIMasterLearning", "Nie zapisano zdarzenia: dziennik operacyjny jest uszkodzony.")
             return
@@ -41,9 +49,9 @@ object LearningJournalStore {
             json.put(JSONObject()
                 .put("ts", e.timestamp).put("kind", e.kind).put("agent", e.agentId)
                 .put("provider", e.providerId).put("model", e.model).put("status", e.status)
-                .put("duration", e.durationMs.coerceAtLeast(0L)).put("attempts", e.attempts.coerceAtLeast(0))
+                .put("duration", e.durationMs).put("attempts", e.attempts)
                 .put("category", e.category).put("taskId", e.taskId)
-                .put("inputTokens", e.inputTokens.coerceAtLeast(0L)).put("outputTokens", e.outputTokens.coerceAtLeast(0L)))
+                .put("inputTokens", e.inputTokens).put("outputTokens", e.outputTokens))
         }
         val saved = runCatching {
             context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
@@ -61,26 +69,43 @@ object LearningJournalStore {
             .getString(KEY, null) ?: return@runCatching emptyList()
         runCatching {
             val arr = JSONArray(raw)
+            require(arr.length() <= MAX_EVENTS) { "Learning journal exceeds its supported size." }
             (0 until arr.length()).map { i ->
                 val o = arr.getJSONObject(i)
-                require(o.opt("ts") is Number && o.opt("duration") is Number &&
-                    o.opt("attempts") is Number) { "Learning journal row has invalid numeric fields." }
-                // Token totals were added after the first journal schema; absence is a valid legacy row.
-                if (o.has("inputTokens")) require(o.opt("inputTokens") is Number)
-                if (o.has("outputTokens")) require(o.opt("outputTokens") is Number)
-                require(listOf("kind", "agent", "provider", "model", "status", "category").all { o.opt(it) is String }) {
-                    "Learning journal row has invalid text fields."
+                fun exactLong(name: String, optional: Boolean = false): Long {
+                    if (optional && !o.has(name)) return 0L
+                    val value = o.opt(name)
+                    require(value is Int || value is Long || value is Double || value is Float) {
+                        "Learning journal numeric field is invalid: $name."
+                    }
+                    return if (value is Int || value is Long) (value as Number).toLong()
+                    else BigDecimal.valueOf((value as Number).toDouble()).longValueExact()
                 }
-                val duration = o.optLong("duration")
-                val attempts = o.optInt("attempts")
-                val input = o.optLong("inputTokens")
-                val output = o.optLong("outputTokens")
-                require(duration >= 0L && attempts >= 0 && input >= 0L && output >= 0L) {
-                    "Learning journal row has negative counters."
+                fun requiredText(name: String): String {
+                    val value = o.opt(name)
+                    require(value is String) { "Learning journal text field is invalid: $name." }
+                    return value
                 }
-                Event(o.optLong("ts"), o.optString("kind"), o.optString("agent"), o.optString("provider"),
-                    o.optString("model"), o.optString("status"), duration, attempts, o.optString("category"),
-                    o.optString("taskId"), input, output)
+                val timestamp = exactLong("ts")
+                val duration = exactLong("duration")
+                val attemptsLong = exactLong("attempts")
+                val input = exactLong("inputTokens", optional = true)
+                val output = exactLong("outputTokens", optional = true)
+                require(timestamp >= 0L && duration >= 0L && attemptsLong in 0..Int.MAX_VALUE.toLong() && input >= 0L && output >= 0L) {
+                    "Learning journal contains negative or out-of-range counters."
+                }
+                val kind = requiredText("kind")
+                val agent = requiredText("agent")
+                val provider = requiredText("provider")
+                val model = requiredText("model")
+                val status = requiredText("status")
+                val category = requiredText("category")
+                val taskId = if (o.has("taskId")) requiredText("taskId") else ""
+                require(kind.isNotBlank() && agent.isNotBlank() && status.isNotBlank()) {
+                    "Learning journal row is missing its event identity."
+                }
+                Event(timestamp, kind, agent, provider, model, status, duration, attemptsLong.toInt(), category,
+                    taskId, input, output)
             }
         }.getOrNull()
     }.getOrNull()
@@ -90,8 +115,11 @@ object LearningJournalStore {
             .groupBy { it.agentId }.map { (id, events) ->
                 val completed = events.count { it.status.equals("COMPLETED", true) }
                 val rate = if (events.isEmpty()) 0 else completed * 100 / events.size
-                val avgAttempts = events.sumOf { it.attempts.coerceAtLeast(0) }.toDouble() / events.size.coerceAtLeast(1)
-                val avgSeconds = events.sumOf { it.durationMs.coerceAtLeast(0L) } / events.size.coerceAtLeast(1) / 1000
+                val avgAttempts = events.sumOf { it.attempts.toLong() }.toDouble() / events.size.coerceAtLeast(1)
+                val durationTotal = events.asSequence().map { BigInteger.valueOf(it.durationMs) }
+                    .fold(BigInteger.ZERO, BigInteger::add)
+                val avgSeconds = durationTotal.divide(BigInteger.valueOf(events.size.coerceAtLeast(1).toLong()))
+                    .divide(BigInteger.valueOf(1000L))
                 "$id: $rate% ukończonych przebiegów (${events.size} zapisów), średnio ${avgSeconds}s, ${"%.1f".format(java.util.Locale.US, avgAttempts)} prób"
             }.sorted()
         if (rows.isEmpty()) return ""

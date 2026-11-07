@@ -66,6 +66,27 @@ class LearningJournalStoreTest {
         assertTrue(LearningJournalStore.load(context).isEmpty())
     }
 
+    @Test fun fractionalAndNegativeCountersInvalidateWholeJournal() {
+        val prefs = context.getSharedPreferences("ai_learning_journal_v1", Context.MODE_PRIVATE)
+        val fractional = """[{"ts":1.5,"kind":"agent","agent":"coder","provider":"groq","model":"m","status":"COMPLETED","duration":10,"attempts":1,"category":""}]"""
+        assertTrue(prefs.edit().putString("events", fractional).commit())
+        assertTrue(LearningJournalStore.load(context).isEmpty())
+        LearningJournalStore.record(context, LearningJournalStore.Event(20L, "agent", "tester", "groq", "m", "COMPLETED", 10L, 1, ""))
+        assertEquals(fractional, prefs.getString("events", null))
+        val negative = """[{"ts":1,"kind":"agent","agent":"coder","provider":"groq","model":"m","status":"COMPLETED","duration":-1,"attempts":1,"category":""}]"""
+        assertTrue(prefs.edit().putString("events", negative).commit())
+        assertTrue(LearningJournalStore.load(context).isEmpty())
+        assertEquals(negative, prefs.getString("events", null))
+    }
+
+    @Test fun invalidNewEventIsRejectedInsteadOfClampedToZero() {
+        val prefs = context.getSharedPreferences("ai_learning_journal_v1", Context.MODE_PRIVATE)
+        val valid = """[{"ts":1,"kind":"agent","agent":"coder","provider":"groq","model":"m","status":"COMPLETED","duration":10,"attempts":1,"category":""}]"""
+        assertTrue(prefs.edit().putString("events", valid).commit())
+        LearningJournalStore.record(context, LearningJournalStore.Event(2L, "agent", "tester", "groq", "m", "FAILED", -1L, 1, ""))
+        assertEquals(valid, prefs.getString("events", null))
+    }
+
     @Test fun preferenceAccessFailureDoesNotCrashOrReportSuccessfulClear() {
         val failingContext = object : android.content.ContextWrapper(context) {
             override fun getSharedPreferences(name: String, mode: Int): android.content.SharedPreferences {
