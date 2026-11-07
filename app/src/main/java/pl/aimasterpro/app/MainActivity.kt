@@ -165,11 +165,14 @@ class MainActivity : Activity() {
         restoreMessages()
         loadAgentActivity()
         client = ProviderClient()
-        AgentRole.values().forEach { role ->
-            val defaultProvider = if (role == AgentRole.MASTER) selectedProviderId else "groq"
-            agentProviders[role.name] = chatPrefs.getString("agent_provider_${role.name}", defaultProvider) ?: defaultProvider
-            agentConnection[role.name] = "unknown"
+        val assignmentDefaults = AgentRole.values().associate { role ->
+            role.name to if (role == AgentRole.MASTER) selectedProviderId else "groq"
         }
+        agentProviders.putAll(
+            pl.aimasterpro.app.core.AgentProviderAssignmentStore.read(this, assignmentDefaults)
+        )
+        selectedProviderId = agentProviders[AgentRole.MASTER.name] ?: selectedProviderId
+        AgentRole.values().forEach { role -> agentConnection[role.name] = "unknown" }
         window.statusBarColor = bg
         window.navigationBarColor = bg
         window.setBackgroundDrawable(ColorDrawable(bg))
@@ -403,8 +406,23 @@ class MainActivity : Activity() {
     }
 
     private fun activeConfig(): ProviderConfig? =
-        if (selectedAgent == AgentRole.MASTER) loadProvider(selectedProviderId)
-        else loadProvider(agentProviders[selectedAgent.name] ?: selectedProviderId)
+        loadProvider(agentProviders[selectedAgent.name] ?: selectedProviderId)
+
+    /** Persist first; only then publish the assignment to in-memory UI/runtime state. */
+    private fun persistAgentProviderAssignment(role: AgentRole, providerId: String): Boolean {
+        if (store.isStorageUncertain()) {
+            toast("Magazyn konfiguracji ma niepewny stan. Przypisanie nie zostało zmienione.")
+            return false
+        }
+        val saved = pl.aimasterpro.app.core.AgentProviderAssignmentStore.save(this, role.name, providerId)
+        if (!saved) {
+            toast("Nie udało się trwale zapisać przypisania. Zachowano poprzedni wybór.")
+            return false
+        }
+        agentProviders[role.name] = providerId
+        if (role == AgentRole.MASTER) selectedProviderId = providerId
+        return true
+    }
 
     private fun providerReady(config: ProviderConfig?): Boolean {
         if (config == null || config.model.isBlank() || config.baseUrl.isBlank()) return false
@@ -3902,12 +3920,7 @@ class MainActivity : Activity() {
             action("Zapisz przypisanie", box) {
                 if (configs.isEmpty()) { toast("Najpierw dodaj dostawcę w zakładce Modele."); return@action }
                 val cfg = configs[spinner.selectedItemPosition]
-                agentProviders[role.name] = cfg.id
-                chatPrefs.edit().putString("agent_provider_${role.name}", cfg.id).apply()
-                if (role == AgentRole.MASTER) {
-                    selectedProviderId = cfg.id
-                    chatPrefs.edit().putString("selected_provider", cfg.id).apply()
-                }
+                if (!persistAgentProviderAssignment(role, cfg.id)) return@action
                 agentConnection[role.name] = "unknown"
                 showShell("Agenci"); showAgents()
                 toast("${role.label}: przypisano ${cfg.name}")
@@ -3915,12 +3928,6 @@ class MainActivity : Activity() {
             action("Testuj połączenie agenta", box) {
                 if (configs.isEmpty()) { toast("Brak dostawców."); return@action }
                 val cfg = configs[spinner.selectedItemPosition]
-                agentProviders[role.name] = cfg.id
-                chatPrefs.edit().putString("agent_provider_${role.name}", cfg.id).apply()
-                if (role == AgentRole.MASTER) {
-                    selectedProviderId = cfg.id
-                    chatPrefs.edit().putString("selected_provider", cfg.id).apply()
-                }
                 if (!providerReady(cfg)) {
                     agentConnection[role.name] = "error"
                     showShell("Agenci"); showAgents()
@@ -3932,7 +3939,8 @@ class MainActivity : Activity() {
                 executor.execute {
                     val result = runBudgetedModelTest(cfg, "AGENT:${role.name}", "Odpowiadaj krótko po polsku.", "Odpowiedz dokładnie: AGENT OK", testScope)
                     runOnUiThread {
-                        agentConnection[role.name] = if (result.isSuccess) "connected" else "error"
+                        val assignmentSaved = if (result.isSuccess) persistAgentProviderAssignment(role, cfg.id) else false
+                        agentConnection[role.name] = if (result.isSuccess && assignmentSaved) "connected" else "error"
                         logAgent("${role.label}: test połączenia ${if (result.isSuccess) "OK" else "BŁĄD"} • ${cfg.name} / ${cfg.model}")
                         showShell("Agenci"); showAgents()
                         if (result.isSuccess) toast("${role.label}: połączenie działa")
@@ -3998,12 +4006,7 @@ class MainActivity : Activity() {
             // Do not persist an agent assignment unless its provider profile was saved.
             return
         }
-        agentProviders[role.name] = finalConfig.id
-        chatPrefs.edit().putString("agent_provider_${role.name}", finalConfig.id).apply()
-        if (role == AgentRole.MASTER) {
-            selectedProviderId = finalConfig.id
-            chatPrefs.edit().putString("selected_provider", finalConfig.id).apply()
-        }
+        if (!persistAgentProviderAssignment(role, finalConfig.id)) return
         showShell("Agenci")
         showAgents()
 
