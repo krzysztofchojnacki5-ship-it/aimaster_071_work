@@ -61,6 +61,33 @@ object BackupCrypto {
         }
     }
 
+    /** Strictly validates decrypted provider-backup payload before any persistent mutation. */
+    fun parseProviderConfigs(plain: String): List<JSONObject> {
+        val payload = try {
+            JSONObject(plain)
+        } catch (_: Exception) {
+            throw IllegalArgumentException("Nieprawidłowa zawartość kopii konfiguracji.")
+        }
+        val appValue = payload.opt("app")
+        val schemaValue = payload.opt("schemaVersion")
+        require(appValue is String && appValue == "AI_MASTER_PRO_ANDROID") {
+            "To nie jest baza tej aplikacji."
+        }
+        require((schemaValue is Int || schemaValue is Long) &&
+            (schemaValue as Number).toLong() == 1L) {
+            "Nieobsługiwana lub nieprawidłowa wersja schematu kopii konfiguracji."
+        }
+        val providersValue = payload.opt("providers")
+        require(providersValue is org.json.JSONArray && providersValue.length() > 0) {
+            "Kopia nie zawiera konfiguracji."
+        }
+        return (0 until providersValue.length()).map { index ->
+            val provider = providersValue.opt(index)
+            require(provider is JSONObject) { "Nieprawidłowy wpis dostawcy w kopii." }
+            provider
+        }
+    }
+
     fun decrypt(encoded: String, password: CharArray): String {
         require(password.size >= 8) { "Hasło musi mieć co najmniej 8 znaków." }
         require(encoded.length <= MAX_ENVELOPE_CHARS) { "Plik kopii przekracza limit 6 MiB." }
