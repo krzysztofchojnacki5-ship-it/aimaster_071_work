@@ -197,6 +197,8 @@ class MainActivity : Activity() {
         )
         val restoredReports = runCatching {
             pl.aimasterpro.app.core.TaskResultArchive.restoreArchivedReports(this)
+        }.onFailure {
+            android.util.Log.e("AIMasterRecovery", "Nie udało się przywrócić archiwalnych raportów agentów; zachowano archiwum do ponowienia.", it)
         }.getOrDefault(0)
         if (restoredReports > 0) android.util.Log.w(
             "AIMasterRecovery",
@@ -2855,6 +2857,7 @@ class MainActivity : Activity() {
         agentActivitySnapshot().forEach { actArr.put(it) }
         val taskIdArr = JSONArray()
         assistantTaskIds.forEach { taskIdArr.put(it) }
+        var persistedTitle: String? = null
         val saved = pl.aimasterpro.app.core.ChatHistoryStore.updateRoot(this) { root ->
             val chats = root.optJSONObject("chats") ?: JSONObject()
             val existing = chats.optJSONObject(currentChatId) ?: JSONObject()
@@ -2862,7 +2865,7 @@ class MainActivity : Activity() {
             val title = chatTitles[currentChatId]?.takeIf { it.isNotBlank() && it != placeholder }
                 ?: existing.optString("title").takeIf { it.isNotBlank() && it != placeholder }
                 ?: deriveTitle()
-            chatTitles[currentChatId] = title
+            persistedTitle = title
             chats.put(currentChatId, JSONObject()
                 .put("title", title)
                 .put("updatedAt", System.currentTimeMillis())
@@ -2877,6 +2880,7 @@ class MainActivity : Activity() {
             android.util.Log.e("AIMasterChat", "Nie udało się trwale zapisać historii rozmowy.")
             return false
         }
+        persistedTitle?.let { chatTitles[currentChatId] = it }
         // Legacy mirror is best-effort only; chats_v2 is the canonical durable document.
         chatPrefs.edit().putString("chat_messages", arr.toString()).commit()
         true
