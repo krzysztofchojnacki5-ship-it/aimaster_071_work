@@ -263,4 +263,43 @@ class ChatResponseArchiveTest {
         ))
     }
 
+
+    @Test fun preferenceAccessFailureDoesNotPretendResponseArchiveIsEmptyOrAcceptNewAnswer() {
+        val failingContext = object : android.content.ContextWrapper(context) {
+            override fun getSharedPreferences(name: String, mode: Int): android.content.SharedPreferences {
+                throw IllegalStateException("controlled response archive preferences failure")
+            }
+        }
+        assertFalse(ChatResponseArchive.isArchiveReadable(failingContext))
+        assertNull(ChatResponseArchive.get(failingContext, "task-1"))
+        assertTrue(ChatResponseArchive.latest(failingContext).isEmpty())
+        assertFalse(ChatResponseArchive.put(
+            failingContext, "task-new", "chat", "MASTER", "New answer", "provider-a", "model-a", 2_000L
+        ))
+    }
+
+    @Test fun archivePutWaitsForSharedPreferenceLockAcrossReadModifyWrite() {
+        val ready = java.util.concurrent.CountDownLatch(1)
+        val finished = java.util.concurrent.CountDownLatch(1)
+        val result = java.util.concurrent.atomic.AtomicBoolean(false)
+        val worker = Thread {
+            ready.countDown()
+            result.set(ChatResponseArchive.put(
+                context, "task-locked-response", "chat-locked", "MASTER", "Atomic response.",
+                "provider", "model", 2_000L
+            ))
+            finished.countDown()
+        }
+        SharedPreferencesWriteHealth.withHealthyAccess("chat_response_archive_v1") {
+            worker.start()
+            assertTrue(ready.await(2, java.util.concurrent.TimeUnit.SECONDS))
+            assertFalse("Archive put must wait while its preference file is locked",
+                finished.await(150, java.util.concurrent.TimeUnit.MILLISECONDS))
+        }
+        worker.join(3_000L)
+        assertTrue(finished.await(1, java.util.concurrent.TimeUnit.SECONDS))
+        assertTrue(result.get())
+        assertEquals("task-locked-response", ChatResponseArchive.latest(context).single().taskId)
+    }
+
 }
