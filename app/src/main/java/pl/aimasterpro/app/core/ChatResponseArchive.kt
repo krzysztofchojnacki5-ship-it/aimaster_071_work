@@ -53,13 +53,14 @@ object ChatResponseArchive {
             val row = old.getJSONObject(i)
             if (row.optString("taskId") != taskId) next.put(row)
         }
-        val trimmed = JSONArray()
-        for (i in 0 until minOf(next.length(), MAX_ENTRIES)) trimmed.put(next.getJSONObject(i))
+        // Never evict an unacknowledged recovery record. A full archive applies backpressure
+        // to new writes until successful replay frees capacity.
+        if (next.length() > MAX_ENTRIES) return@withHealthyAccess false
         runCatching {
             SharedPreferencesWriteHealth.commit(
                 PREFS,
                 context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
-                    .putString(KEY, trimmed.toString())
+                    .putString(KEY, next.toString())
             )
         }.getOrDefault(false)
     } }.getOrDefault(false)
@@ -99,6 +100,7 @@ object ChatResponseArchive {
         val entries = latest(context)
         if (entries.isEmpty()) return 0
         var restored = 0
+        val acknowledgedTaskIds = linkedSetOf<String>()
         val updated = ChatHistoryStore.updateRoot(context) { root ->
             val chats = root.optJSONObject("chats") ?: return@updateRoot false
             entries.asReversed().forEach { entry ->
@@ -112,7 +114,10 @@ object ChatResponseArchive {
                     (0 until storedIds.length()).map { storedIds.optString(it) },
                     assistantCount
                 )
-                if (entry.taskId in alignedIds) return@forEach
+                if (entry.taskId in alignedIds) {
+                    acknowledgedTaskIds += entry.taskId
+                    return@forEach
+                }
 
                 messages.put(JSONObject().put("role", "assistant").put("text", entry.response))
                 val nextIds = JSONArray()
@@ -121,6 +126,7 @@ object ChatResponseArchive {
                 chat.put("messages", messages)
                     .put("assistantTaskIds", nextIds)
                     .put("updatedAt", maxOf(chat.optLong("updatedAt"), entry.createdAt))
+                acknowledgedTaskIds += entry.taskId
                 restored++
             }
             restored > 0
@@ -128,8 +134,29 @@ object ChatResponseArchive {
         if (!updated) {
             throw IllegalStateException("Nie udało się trwale odtworzyć odpowiedzi czatu z archiwum.")
         }
+        if (acknowledgedTaskIds.isNotEmpty() && !acknowledge(context, acknowledgedTaskIds)) {
+            android.util.Log.w("AIMasterChatArchive", "Historia została odzyskana, ale archiwum nie potwierdziło zwolnienia wpisów.")
+        }
         return restored
     }
+
+    /** Removes only records proven durable in canonical history; missing chats remain pending. */
+    private fun acknowledge(context: Context, taskIds: Set<String>): Boolean = runCatching {
+        SharedPreferencesWriteHealth.withHealthyAccess(PREFS) {
+            val rows = read(context) ?: return@withHealthyAccess false
+            val retained = JSONArray()
+            for (i in 0 until rows.length()) {
+                val row = rows.getJSONObject(i)
+                if (row.getString("taskId") !in taskIds) retained.put(row)
+            }
+            if (retained.length() == rows.length()) return@withHealthyAccess true
+            SharedPreferencesWriteHealth.commit(
+                PREFS,
+                context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
+                    .putString(KEY, retained.toString())
+            )
+        }
+    }.getOrDefault(false)
 
     private fun encode(entry: Entry): JSONObject = JSONObject()
         .put("taskId", entry.taskId)
