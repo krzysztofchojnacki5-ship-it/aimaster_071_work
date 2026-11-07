@@ -2029,3 +2029,5 @@ Doprecyzowanie projektu SQLite:
 - Testy istnieją: `preferenceAccessFailureDoesNotPretendResponseArchiveIsEmptyOrAcceptNewAnswer` oraz `preferenceAccessFailureDoesNotPretendArchiveIsEmptyOrAcceptNewReport`; test blokady transakcji read-modify-write dla obu archiwów.
 - Commity: `d8223a7b90d9a27c117ca98a1943002160186577`, `9692a908422a227f1078133837ea5aa0e03277ab`, `bccb390d38f4ecb42ffb64fcf60fe128a4ddb8bd`.
 - Testy nadal ADDED / NOT RUN; nie ogłaszać zaliczenia bez wyniku CI.
+
+- Testy blokady `ChatResponseArchive` i `TaskResultArchive` wzmocniono do asercji stanu `Thread.State.BLOCKED` na wspólnej blokadzie; commity `b14f6ff8d48ff125b8c1bcc274889ecf15f1896b` oraz `808555f1fabbd45e51cd9f757b812a0601adc72e`. ADDED / NOT RUN.
