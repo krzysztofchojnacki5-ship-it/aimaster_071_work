@@ -375,3 +375,10 @@ Rejestr rozróżnia paczkę źródłową od wersji aplikacji/APK. Numer paczki n
 - Zachowano semantykę no-op dla odpowiedzi/aktywności kierowanych do czatu, który został już usunięty; korekta w commicie `84c495ec0028394b6a1dab14b1599c31211c2f0e`.
 - Test współbieżności wiadomość + agentActivity dodany w commicie `b4193751f496aa6d53846852deee1b77a969ad5f`; ADDED / NOT RUN.
 - Robocza gałąź po aktualizacji dokumentacji: `f614a5f5c2369824a75f99b7f780826e793b44c0`. CI 42411603439 nadal in_progress dla starszego SHA `30e0f496...`; nie ma jeszcze wyniku dla zmian 0.6.139.
+
+### 0.6.139 — testy awarii replayu obu archiwów (2026-11-07)
+
+- Dodano cztery testy awarii zapisu kanonicznej historii podczas replayu: odpowiedź MASTER oraz raport agenta, każdy w wariancie commit failure przed apply i po apply.
+- Testy sprawdzają, że wpis pozostaje w swoim archiwum, po symulowanym restarcie brakujący zapis zostaje odtworzony, zapis już widoczny nie jest dublowany, a kolejne replaye są idempotentne.
+- Commity testowe: `4ef5bc95e44c57ba7b12635fe67c13365b1dc5e8` (ChatResponseArchive), `d2fc3f5518fc60956bbda42403884289793d6a7d` (TaskResultArchive), `c08164e06135fb0d0815db4145591a544a254e61` (fixture).
+- Testy ADDED / NOT RUN. CI 42411603439 pozostaje in_progress na SHA 30e0f496... i nie obejmuje tych zmian.
