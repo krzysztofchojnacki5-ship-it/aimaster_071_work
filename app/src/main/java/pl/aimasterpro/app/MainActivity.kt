@@ -1522,7 +1522,7 @@ class MainActivity : Activity() {
                             taskId = requestTaskId, agentId = requestAgentId, status = "REQUESTING",
                             detail = "Pojedyncze żądanie czatu wysyłane do providera.",
                             timestamp = System.currentTimeMillis(),
-                            providerId = res.providerId.ifBlank { cfg.id }, model = res.model.ifBlank { cfg.model },
+                            providerId = cfg.id, model = cfg.model,
                             attempts = requestAttempt, estimatedInputTokens = estimatedRequestInput,
                             estimatedOutputTokens = 4_096L, idempotencyKey = requestIdempotencyKey,
                             baseUrl = safeCheckpointBaseUrl
@@ -6317,7 +6317,7 @@ class MainActivity : Activity() {
 
     override fun onDestroy() {
         pulse?.cancel()
-        // Persist only this Activity's active MASTER task; startup recovery remains a second layer.
+        // Persist this Activity's active chat task (MASTER or specialist); startup recovery remains a second layer.
         cancelActiveChatTaskForLifecycle("onDestroy")
         // Activity teardown must close blocking HTTP connections as well as interrupt workers.
         // Thread interruption alone does not reliably unblock HttpURLConnection reads.
