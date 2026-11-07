@@ -4,6 +4,8 @@ import android.content.Context
 import org.json.JSONArray
 import org.json.JSONObject
 import java.net.URL
+import java.math.BigDecimal
+import java.math.BigInteger
 import java.util.Locale
 
 /** Local, privacy-safe model reliability history. No prompts, responses or API keys are stored. */
@@ -49,12 +51,16 @@ object ModelHealthTracker {
     private fun exactNonNegativeLong(value: Any?, field: String): Long {
         val number = value as? Number
             ?: throw IllegalStateException("Historia kondycji zawiera nieprawidłowe pole: $field.")
-        val doubleValue = number.toDouble()
-        val longValue = number.toLong()
-        require(doubleValue.isFinite() && doubleValue >= 0.0 && doubleValue == longValue.toDouble()) {
-            "Historia kondycji zawiera nieprawidłową wartość liczbową: $field."
+        val exact = when (number) {
+            is Int -> number.toLong()
+            is Long -> number
+            is BigDecimal -> number.longValueExact()
+            is Double -> BigDecimal.valueOf(number).longValueExact()
+            is Float -> BigDecimal(number.toString()).longValueExact()
+            else -> BigDecimal(number.toString()).longValueExact()
         }
-        return longValue
+        require(exact >= 0L) { "Historia kondycji zawiera ujemną wartość liczbową: $field." }
+        return exact
     }
 
     @Synchronized
@@ -115,7 +121,11 @@ object ModelHealthTracker {
         val failures = matching.size - successes
         val successRate = successes.toDouble() / matching.size
         val averageLatency = matching.filter { it.success && it.latencyMs > 0L }
-            .let { rows -> if (rows.isEmpty()) 0L else rows.sumOf { it.latencyMs } / rows.size }
+            .let { rows ->
+                if (rows.isEmpty()) 0L else rows.asSequence().map { BigInteger.valueOf(it.latencyMs) }
+                    .fold(BigInteger.ZERO, BigInteger::add)
+                    .divide(BigInteger.valueOf(rows.size.toLong())).longValueExact()
+            }
         val recentFailure = matching.firstOrNull { !it.success }?.category.orEmpty()
         val severityPenalty = matching.filterNot { it.success }.sumOf { event ->
             when (event.category.uppercase(Locale.ROOT)) {

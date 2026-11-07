@@ -60,6 +60,20 @@ class ModelHealthTrackerTest {
         assertEquals(corrupt, prefs.getString("events", null))
     }
 
+    @Test fun outOfRangeIntegerBeyondLongMaxIsRejected() {
+        val prefs = context.getSharedPreferences("model_health_history_v1", Context.MODE_PRIVATE)
+        val corrupt = """[{"ts":9223372036854775808,"provider":"p1","host":"api.primary.test","model":"model-a","ok":true,"category":"","latency":1}]"""
+        assertTrue(prefs.edit().putString("events", corrupt).commit())
+        assertTrue(runCatching { ModelHealthTracker.load(context) }.isFailure)
+        assertEquals(corrupt, prefs.getString("events", null))
+    }
+
+    @Test fun averageLatencyDoesNotOverflowLongAccumulation() {
+        ModelHealthTracker.record(context, primary, true, "", Long.MAX_VALUE)
+        ModelHealthTracker.record(context, primary, true, "", Long.MAX_VALUE - 2L)
+        assertEquals(Long.MAX_VALUE - 1L, ModelHealthTracker.snapshot(context, primary)?.averageLatencyMs)
+    }
+
     @Test fun negativeOrFractionalHistoryCountersAreRejected() {
         val prefs = context.getSharedPreferences("model_health_history_v1", Context.MODE_PRIVATE)
         val negative = """[{"ts":-1,"provider":"p1","host":"api.primary.test","model":"model-a","ok":true,"category":"","latency":1}]"""
