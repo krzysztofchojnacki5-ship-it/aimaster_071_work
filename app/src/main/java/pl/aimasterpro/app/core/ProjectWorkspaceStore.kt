@@ -261,7 +261,7 @@ class ProjectWorkspaceStore(private val root: File) {
             "Snapshot rollbacku jest uszkodzony lub nie odpowiada bazowej identity."
         }
         when (currentIdentity()) {
-            receipt.workspaceIdentity -> restoreSnapshot(receipt.snapshotId)
+            receipt.workspaceIdentity -> restoreSnapshotForPatchRollback(receipt.snapshotId, changeSetId, transactionId)
             receipt.beforeWorkspaceIdentity -> Unit // restore completed before the process died
             else -> error("Workspace ma trzecią identity; rollback zablokowano, aby nie nadpisać późniejszego projektu.")
         }
@@ -389,6 +389,29 @@ class ProjectWorkspaceStore(private val root: File) {
      */
     @Synchronized
     fun restoreSnapshot(snapshotId: String, now: Long = System.currentTimeMillis()): WorkspaceInfo {
+        require(!patchReceiptFile.exists()) {
+            "Przywracanie zablokowane: poprzedni patch nie został jeszcze uzgodniony z rejestrem ChangeSet."
+        }
+        return restoreSnapshotInternal(snapshotId, now)
+    }
+
+    /** Explicit rollback path: only the exact pending patch transaction may use its snapshot. */
+    @Synchronized
+    fun restoreSnapshotForPatchRollback(
+        snapshotId: String,
+        changeSetId: String,
+        transactionId: String,
+        now: Long = System.currentTimeMillis()
+    ): WorkspaceInfo {
+        val receipt = readPatchReceiptFile() ?: error("Brak potwierdzenia patcha do rollbacku.")
+        require(receipt.changeSetId == changeSetId && receipt.transactionId == transactionId &&
+            receipt.snapshotId == snapshotId && receipt.rollbackRequested && !receipt.rolledBack) {
+            "Żądanie rollbacku nie odpowiada dokładnie oczekującej transakcji patcha."
+        }
+        return restoreSnapshotInternal(snapshotId, now)
+    }
+
+    private fun restoreSnapshotInternal(snapshotId: String, now: Long): WorkspaceInfo {
         val verified = verifySnapshot(snapshotId)
         require(verified.valid) {
             "Przywracanie zablokowane: snapshot jest uszkodzony (brak ${verified.missing.size}, zmienione ${verified.modified.size}, dodatkowe ${verified.unexpected.size})."
