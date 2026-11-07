@@ -377,6 +377,41 @@ class TaskCheckpointStoreTest {
         assertEquals("INTERRUPTED", TaskCheckpointStore.latest(context).single().status)
     }
 
+    @Test fun lifecycleCancellationWithBlankMetadataPreservesRequestingUsageForRecovery() {
+        val taskId = "task-lifecycle-cancel-preserves-usage"
+        assertTrue(TaskCheckpointStore.record(context, TaskCheckpointStore.Event(
+            taskId = taskId, agentId = "RESEARCHER", status = "REQUESTING",
+            detail = "POST started", timestamp = 100L,
+            providerId = "openai", model = "gpt-4o-mini", attempts = 1,
+            processId = "previous-process", estimatedInputTokens = 240L,
+            estimatedOutputTokens = 540L, idempotencyKey = "chat:$taskId:openai",
+            baseUrl = "https://api.openai.com"
+        )))
+        // Activity lifecycle cancellation supplies no request metadata; the store must retain
+        // the REQUESTING envelope so startup can reconcile a potentially billable POST.
+        assertTrue(TaskCheckpointStore.record(context, TaskCheckpointStore.Event(
+            taskId = taskId, agentId = "RESEARCHER", status = "CANCELLED",
+            detail = "Activity stopped", timestamp = 110L,
+            providerId = "", model = "", attempts = 0
+        )))
+        val cancelled = TaskCheckpointStore.latest(context).single()
+        assertEquals("CANCELLED", cancelled.status)
+        assertEquals("openai", cancelled.providerId)
+        assertEquals("gpt-4o-mini", cancelled.model)
+        assertEquals(240L, cancelled.estimatedInputTokens)
+        assertEquals(540L, cancelled.estimatedOutputTokens)
+        assertEquals("chat:$taskId:openai", cancelled.idempotencyKey)
+        assertEquals("https://api.openai.com", cancelled.baseUrl)
+
+        var recovered: TaskCheckpointStore.Event? = null
+        assertEquals(1, TaskCheckpointStore.recoverStaleRunning(context, 200L) {
+            recovered = it
+            true
+        })
+        assertEquals("CANCELLED", recovered?.status)
+        assertEquals("INTERRUPTED", TaskCheckpointStore.latest(context).single().status)
+    }
+
     @Test fun cancelledQueuedTaskWithoutRequestMetadataDoesNotTriggerUsageRecovery() {
         assertTrue(TaskCheckpointStore.record(context, TaskCheckpointStore.Event(
             taskId = "task-cancelled-before-request", agentId = "RESEARCHER", status = "CANCELLED",
