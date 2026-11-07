@@ -113,6 +113,30 @@ class ApiTokenTrackerTest {
         assertEquals(Double.MAX_VALUE, summary.costPln, 0.0)
     }
 
+    @Test fun disabledMonthlyLimitStillRejectsCostAggregateOverflow() {
+        ApiTokenTracker.setLimits(context, daily = 10_000L, monthly = 0.0, perAgent = 10_000L)
+        ApiTokenTracker.setExchangeRate(context, 1_000.0)
+        ApiTokenTracker.replaceCatalogPricingForProvider(
+            context, "huge-cost-provider", "https://huge-cost.example/v1",
+            listOf(CatalogModelPrice("huge-cost-model", Double.MAX_VALUE, 0.0, explicitlyFree = false))
+        )
+
+        val plan = ApiTokenTracker.planBatch(
+            context,
+            listOf(BudgetRequest(
+                "huge-cost-task", "MASTER", "huge-cost-provider",
+                "https://huge-cost.example/v1", "huge-cost-model", 1L, 0L
+            )),
+            globalReserveCostPln = Double.MAX_VALUE
+        )
+
+        assertTrue("An individually finite estimate must not overflow the aggregate when the money gate is disabled",
+            plan.allowedTaskIds.isEmpty())
+        assertTrue(plan.blockedReasons.getValue("huge-cost-task").contains("zakres bezpiecznej reprezentacji"))
+        ApiTokenTracker.releaseBatchReservation(plan.reservationId)
+        ApiTokenTracker.setExchangeRate(context, 4.0)
+    }
+
     @Test fun activeReservationCostAggregatesSaturateInsteadOfBecomingInfinite() {
         ApiTokenTracker.setLimits(context, daily = 10_000L, monthly = 0.0, perAgent = 10_000L)
         val first = ApiTokenTracker.planBatch(
