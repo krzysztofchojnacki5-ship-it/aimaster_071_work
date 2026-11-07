@@ -152,3 +152,43 @@ Nie potwierdzono rzeczywistego wyścigu wymagającego nowej blokady produkcyjnej
 - Companion: nieaktywowany.
 
 Następny krok: przejść do następnego punktu 0.6.138 — sprawdzić awarie na granicy pełnego importu: sukces commitu `secure_provider_store` i niepowodzenie commitu uzgodnienia `chat_state`, w tym stan po ponownym uruchomieniu i startup recovery.
+
+
+## Aktualizacja 0.6.138 — awaria między wymianą profili a odzyskiwaniem przypisań
+
+### Potwierdzony przebieg
+
+Prześledzono dwa niezależne punkty trwałego zapisu:
+1. `SecureStore.replaceAllConfigs()` zapisuje nowy katalog profili, ich metadane i sekrety jednym commitem w `secure_provider_store`.
+2. `AgentProviderAssignmentStore.reconcileAfterProviderImport()` zapisuje przypisania wszystkich ról i lustrzany `selected_provider` jednym commitem w `chat_state`.
+
+Nie są to wspólne transakcje. Jeżeli drugi commit zwróci błąd/wyjątek, stan `chat_state` zostaje objęty latch'em niepewności, a aplikacja w bieżącym procesie blokuje routing. Po restarcie latch'e pamięciowe są odtwarzane od zera, a `MainActivity.onCreate()` najpierw odczytuje aktualny katalog przez `SecureStore.allConfigs()`, następnie uruchamia `reconcileExistingAssignments()`. Ta funkcja zachowuje przypisania nadal wskazujące na istniejące profile, naprawia brakujące ID, zapisuje role wraz z lustrem MASTER jednym commitem i zwraca null przy błędzie zapisu/odczytu. Przy null UI pozostaje w stanie `agentAssignmentsHealthy = false`.
+
+### Zmiana testowa
+
+Dodano test integracyjny Robolectric:
+`startupRecoveryRepairsAssignmentsAfterImportReconciliationCommitFailure`.
+
+Test:
+- zapisuje nowy katalog profili przez rzeczywisty `SecureStore.replaceAllConfigs()`;
+- symuluje niejednoznaczny commit `chat_state` (zastosowanie mapy SharedPreferences, po którym commit zgłasza false);
+- symuluje granicę restartu przez wyczyszczenie wyłącznie procesowych latch'y niepewności;
+- ponownie odczytuje katalog i wykonuje startup reconciliation;
+- sprawdza zachowanie poprawnego przypisania CODER, naprawę nieaktualnego MASTER/RESEARCHER oraz spójność `selected_provider`.
+
+Dodano także `@After` do resetowania latch'y testowych, aby awaria w jednym teście nie wpływała na kolejne testy klasy.
+
+### Ograniczenia modelu testowego
+
+To test odtwarzania obu możliwych stanów logicznych po niejednoznacznym commicie w pamięci Robolectric, a nie test rzeczywistego zabicia procesu Android ani gwarancja zachowania pliku XML na dysku po zaniku zasilania. Test odtwarza restart warstwy procesu, pozostawiając bieżący snapshot SharedPreferences. Nie symuluje fizycznej utraty lub częściowego zapisu pliku preferencji.
+
+### Weryfikacja
+
+- Inspekcja kolejności startup recovery i obu commitów: wykonana.
+- Test integracyjny: dodany, **nieuruchomiony**.
+- Pozostałe testy JUnit/Robolectric: **nieuruchomione**.
+- Android Gradle build: **nieuruchomiony**.
+- APK: nie tworzono.
+- Companion: nieaktywowany.
+
+Następny krok: rozszerzyć awaryjną macierz o drugi możliwy wynik niejednoznacznego commitu — stary snapshot przypisań pozostał na dysku — i sprawdzić, czy startup recovery naprawia go bez polegania na zmianach widocznych wyłącznie w pamięci procesu.
