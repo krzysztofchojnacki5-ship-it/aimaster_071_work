@@ -1279,3 +1279,33 @@ Weryfikacja:
 - kod i test zapisane; nie wykonano jeszcze testów lokalnych;
 - workflow run 42316466914 dla SHA 55f5b1bc8939e56a9537e27b6dbb319b670d2cdd ma status PENDING przy ostatnim odczycie;
 - brak merge, APK, release i zmian main; Companion Transport pozostaje BLOCKED.
+
+
+## Etap 16 — fail-closed przy niekompletnych metadanych odzyskiwania usage (2026-11-07)
+
+Po zachowaniu metadanych w Etapie 15 dodano kontrolę dla starszych/uszkodzonych checkpointów, w których tych pól nie ma. Startup recovery wcześniej używał zastępczego idempotencyKey i mimo zerowych estymacji mógł zapisać UNAVAILABLE z niepełnym usage, co groziło zaniżeniem rozliczenia.
+
+Zmiana:
+- TaskCheckpointStore.hasRecoverableUsageMetadata() wymaga providerId, model, dodatnich estymacji input/output i niepustego idempotencyKey;
+- MainActivity nie wykonuje automatycznego księgowania, gdy którykolwiek z tych elementów jest nieobecny;
+- taki checkpoint pozostaje INTERRUPTED_USAGE_PENDING do bezpiecznego wyjaśnienia/ponowienia; nie zapisujemy zera ani zgadywanego klucza;
+- dla kompletnych metadanych recovery używa dokładnie zachowanego idempotencyKey.
+
+Test:
+- automaticUsageRecoveryRequiresCompleteRequestMetadata;
+- sprawdza odrzucenie brakujących estymacji, klucza i modelu oraz akceptację kompletnego zestawu.
+
+Pliki:
+- app/src/main/java/pl/aimasterpro/app/core/TaskCheckpointStore.kt
+- app/src/main/java/pl/aimasterpro/app/MainActivity.kt
+- app/src/test/java/pl/aimasterpro/app/core/TaskCheckpointStoreTest.kt
+
+Commity:
+- walidacja kompletności metadanych: cd63fbf09999476284ba49b079057bfe8d7a923d
+- fail-closed w startup recovery: 79b64cd661efe0e7889ad598752fe306bd3bdccb
+- test regresyjny: 34a85b2ae984df0553281418a9a1839b1ba044d1
+
+Weryfikacja:
+- test i kod zapisane na branchu; brak potwierdzonego wykonania;
+- workflow run 42316584880 dla SHA 34a85b2ae984df0553281418a9a1839b1ba044d1 ma status PENDING przy ostatnim odczycie;
+- brak merge, APK, release i zmian main; Companion Transport pozostaje BLOCKED.
