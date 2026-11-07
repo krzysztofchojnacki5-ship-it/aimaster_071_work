@@ -81,7 +81,7 @@ object AgentProviderAssignmentStore {
         validProviderIds: Set<String>,
         preferredMasterId: String
     ): Map<String, String>? {
-        if (validProviderIds.isEmpty() || validProviderIds.any { it.isBlank() }) return null
+        if (validProviderIds.isEmpty() || validProviderIds.any { it.isBlank() } || SharedPreferencesWriteHealth.isUncertain(PREFS)) return null
         return runCatching {
             val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
             val masterFallback = preferredMasterId.takeIf { it in validProviderIds }
@@ -101,7 +101,7 @@ object AgentProviderAssignmentStore {
             val editor = prefs.edit()
             resolved.forEach { (role, id) -> editor.putString(key(role), id) }
             editor.putString(SELECTED_KEY, resolved[MASTER] ?: masterFallback)
-            if (!editor.commit()) return null
+            if (!SharedPreferencesWriteHealth.commit(PREFS, editor)) return null
             resolved
         }.getOrNull()
     }
