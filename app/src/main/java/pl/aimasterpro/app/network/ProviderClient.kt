@@ -56,10 +56,11 @@ internal fun resolveOpenRouterFreePricing(
     if (!isOpenRouter) return null
     val hasPricing = promptPrice != null && completionPrice != null
     val explicitlyFree = modelId.equals("openrouter/free", true) || modelId.endsWith(":free", true)
+    val hasPaidCacheRate = (cachedReadPrice != null && cachedReadPrice > 0.0) ||
+        (cacheWritePrice != null && cacheWritePrice > 0.0)
     return when {
-        hasPricing && promptPrice == 0.0 && completionPrice == 0.0 &&
-            (cachedReadPrice == null || cachedReadPrice == 0.0) &&
-            (cacheWritePrice == null || cacheWritePrice == 0.0) -> true
+        hasPaidCacheRate -> false
+        hasPricing && promptPrice == 0.0 && completionPrice == 0.0 -> true
         hasPricing -> false
         explicitlyFree -> true
         else -> null
