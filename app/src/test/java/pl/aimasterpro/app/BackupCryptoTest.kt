@@ -80,13 +80,9 @@ class BackupCryptoTest {
     @Test
     fun testMalformedIvAfterSaltDecodeIsRejected() {
         val encrypted = BackupCrypto.encrypt("secret", "securepassword123".toCharArray())
-        val malformed = encrypted.replace(
-            Regex("\\"iv\\":\\s*\\"[^\\"]+\\""),
-            "\\"iv\\":\\"!\\""
-        )
-        assertNotEquals(encrypted, malformed)
+        val envelope = org.json.JSONObject(encrypted).put("iv", "!")
         try {
-            BackupCrypto.decrypt(malformed, "securepassword123".toCharArray())
+            BackupCrypto.decrypt(envelope.toString(), "securepassword123".toCharArray())
             fail("Malformed IV Base64 must be rejected.")
         } catch (_: IllegalArgumentException) { }
     }
@@ -94,13 +90,9 @@ class BackupCryptoTest {
     @Test
     fun testMalformedDataAfterSaltAndIvDecodeIsRejected() {
         val encrypted = BackupCrypto.encrypt("secret", "securepassword123".toCharArray())
-        val malformed = encrypted.replace(
-            Regex("\\"data\\":\\s*\\"[^\\"]+\\""),
-            "\\"data\\":\\"!\\""
-        )
-        assertNotEquals(encrypted, malformed)
+        val envelope = org.json.JSONObject(encrypted).put("data", "!")
         try {
-            BackupCrypto.decrypt(malformed, "securepassword123".toCharArray())
+            BackupCrypto.decrypt(envelope.toString(), "securepassword123".toCharArray())
             fail("Malformed ciphertext Base64 must be rejected.")
         } catch (_: IllegalArgumentException) { }
     }
