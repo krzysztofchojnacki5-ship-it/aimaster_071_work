@@ -340,3 +340,14 @@ Rejestr rozróżnia paczkę źródłową od wersji aplikacji/APK. Numer paczki n
 - Testy 0.6.139: ADDED / NOT RUN. Android build dla nowych commitów: NOT RUN. APK: NOT BUILT. Companion: NOT ACTIVATED.
 - Nie scalono jeszcze roboczej gałęzi z `audit/0.6.137-routing-hardening`; nie zmieniono `main`.
 - Następny krok: po rozstrzygnięciu aktywnego runu CI przenieść zmianę na gałąź audytową, uruchomić pełne testy i debug compilation, przeanalizować raporty, a następnie kontynuować odporność historii rozmów.
+
+
+### Dodatkowy blok 0.6.139 — historia rozmów: awarie zapisu i odtwarzanie (2026-11-07)
+
+- Test failedDurableCommitReturnsFalseAndKeepsPreviousHistory poprawiono: po nieudanym commit() oczekuje teraz kwarantanny odczytu, weryfikuje bezpośrednio niezmieniony surowy snapshot, resetuje latch wyłącznie jako symulację restartu i dopiero wtedy odczytuje stary dokument.
+- Test ambiguousHistoryCommitQuarantinesReadsAndFutureWrites rozszerzono o sprawdzenie nowego snapshotu widocznego po apply() mimo nieudanego commitu oraz odczyt po symulowanym restarcie.
+- Dodano updateCallbackFailureDoesNotPersistPartialMutationOrPoisonHistory: mutacja lokalnego obiektu zakończona wyjątkiem nie może zostać zapisana ani ustawić latcha; następna poprawna aktualizacja musi działać.
+- Dodano updateRootAmbiguousCommitQuarantinesAndRecoversAppliedSnapshotAfterRestart: niejednoznaczny commit w ścieżce read-modify-write blokuje odczyty/zapisy, a po symulowanym restarcie odtwarzany jest snapshot widoczny po apply.
+- Commity testowe: 9700c65beb50f7cbe7e02e50cca9937192613b48, a2966d67b70e8b80c4f6f4ffd7ac02ba85074e1e, 401f40d3e95a3cb166916a681e52b84258176735, 36a907e73df06c3f2b58a21703eb5106bcab58df.
+- Statyczny przegląd call sites w MainActivity.kt: mutujące ścieżki persistMessages, persistAgentActivity, saveCurrentId, appendToStoredChat i appendAgentActivityForChat są synchronizowane na instancji Activity; usuwanie i zmiana nazwy także obejmują sekcję synchronized(this). Nie potwierdzono na tym etapie rzeczywistego równoległego call site wymagającego zmiany produkcyjnego API.
+- Wszystkie cztery nowe/rozszerzone testy: ADDED / NOT RUN. CI 42411603439 nadal dotyczy wcześniejszego SHA 30e0f496...; brak walidacji nowych commitów. APK NOT BUILT; Companion NOT ACTIVATED.
