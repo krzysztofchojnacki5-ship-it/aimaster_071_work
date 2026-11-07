@@ -2440,7 +2440,7 @@ class MainActivity : Activity() {
                     } != null
                 if (!journalFinalized) android.util.Log.e("AIMasterRecovery", "Nie udało się zamknąć dziennika pracy MASTER-a.")
                 if (activeMasterWorkTaskId == requestTaskId) activeMasterWorkTaskId = ""
-                if (chatResultPersisted) {
+                if (chatResultPersisted && journalFinalized) {
                     val checkpoint = pl.aimasterpro.app.core.TaskCheckpointStore.latest(this)
                         .firstOrNull { it.taskId == requestTaskId }
                     if (checkpoint?.status !in setOf("USAGE_PENDING", "INTERRUPTED_USAGE_PENDING")) {
@@ -2455,8 +2455,10 @@ class MainActivity : Activity() {
                             )
                         )
                     }
-                } else {
+                } else if (!chatResultPersisted) {
                     android.util.Log.e("AIMasterRecovery", "Wynik czatu $requestTaskId nie został trwale zapisany; checkpoint pozostaje niekońcowy do odzyskania.")
+                } else {
+                    android.util.Log.w("AIMasterRecovery", "Checkpoint $requestTaskId pozostaje niekońcowy, ponieważ dziennik MASTER-a nie potwierdził finalizacji.")
                 }
                 if (chatId == currentChatId && screen == responseScreen) {
                     showShell(responseScreen)
