@@ -1,0 +1,65 @@
+name: Work Bridge authorization
+
+on:
+  pull_request:
+    branches:
+      - bridge/work-bridge-bootstrap
+    types:
+      - opened
+      - synchronize
+      - reopened
+      - edited
+      - ready_for_review
+
+permissions:
+  contents: read
+
+concurrency:
+  group: work-bridge-auth-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  validate-task:
+    name: validate-task
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      # Run policy code from trusted PR base, never from PR head.
+      - name: Checkout trusted base
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Test trusted Work Bridge policy
+        run: |
+          set -euo pipefail
+          python3 -m py_compile tools/work_bridge/validate.py
+          python3 -m unittest discover -s tools/work_bridge -p 'test_*.py' -v
+
+      - name: Fetch PR head commit
+        env:
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin "$PR_HEAD_SHA"
+          git cat-file -e "${PR_HEAD_SHA}^{commit}"
+
+      - name: Validate Work Bridge authorization
+        env:
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PR_BASE_REF: ${{ github.event.pull_request.base.ref }}
+          PR_HEAD_REF: ${{ github.event.pull_request.head.ref }}
+          PR_HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+          BASE_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          python3 tools/work_bridge/validate.py \
+            --base-sha "$PR_BASE_SHA" \
+            --head-sha "$PR_HEAD_SHA" \
+            --base-branch "$PR_BASE_REF" \
+            --head-branch "$PR_HEAD_REF" \
+            --head-repo "$PR_HEAD_REPO" \
+            --base-repo "$BASE_REPO"
