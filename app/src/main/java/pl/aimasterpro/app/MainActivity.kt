@@ -138,6 +138,12 @@ class MainActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         store = SecureStore(this)
+        // Reconcile approved/revoked learning before any agent can consume persisted memory.
+        runCatching {
+            pl.aimasterpro.app.core.QualityLearningStore.syncApprovedAgentMemories(this)
+        }.onFailure {
+            android.util.Log.e("AIMasterQuality", "Nie udało się uzgodnić pamięci jakościowej przy starcie.", it)
+        }
         val checkpointJournalReadable = runCatching {
             pl.aimasterpro.app.core.TaskCheckpointStore.isJournalReadable(this)
         }.getOrDefault(false)
