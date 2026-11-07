@@ -187,6 +187,15 @@ object TaskCheckpointStore {
         return recovered
     }
 
+    /** Stores only provider origin in the checkpoint; credentials, path and query are excluded. */
+    fun safeBaseUrlForCheckpoint(raw: String): String = runCatching {
+        java.net.URL(raw).let { url ->
+            require(url.protocol.equals("http", true) || url.protocol.equals("https", true))
+            require(url.host.isNotBlank())
+            "${url.protocol}://${url.host}" + if (url.port >= 0) ":${url.port}" else ""
+        }
+    }.getOrDefault("")
+
     /** Only complete request metadata can authorize automatic UNAVAILABLE reconciliation. */
     fun hasRecoverableUsageMetadata(event: Event): Boolean =
         event.providerId.isNotBlank() &&
