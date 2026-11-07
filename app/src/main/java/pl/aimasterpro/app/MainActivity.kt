@@ -498,7 +498,15 @@ class MainActivity : Activity() {
      * request must not resolve a fallback or reload a profile while the import swaps configs.
      */
     private fun cancelProviderWorkBeforeConfigReplacement() {
-        requestGen++
+        // Match Stop/onDestroy: persist MASTER cancellation before any late worker can save ACTIVE.
+        synchronized(masterJournalLifecycleLock) {
+            requestGen++
+            val taskId = activeMasterWorkTaskId
+            if (taskId.isNotBlank()) {
+                pauseMasterTaskForLifecycle(taskId, "Import konfiguracji")
+                activeMasterWorkTaskId = ""
+            }
+        }
         activeWorkerGeneration = -1
         activeRequestScope?.let { scope -> client.cancelRequestScope(scope) }
         activeRequestScope = null
