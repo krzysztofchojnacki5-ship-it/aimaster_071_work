@@ -1850,3 +1850,11 @@ Doprecyzowanie projektu SQLite:
 - Wcześniej dodane guardy chat/fallback i selektora modeli pozostają aktywne. Główne wejścia do użycia profili nie powinny traktować pustej listy zwróconej przez fail-closed `SecureStore` jako prawidłowej konfiguracji.
 - Commit kodu: `739a7658`.
 - CI dla wcześniejszego kodu `23c3b590` jest osobnym uruchomieniem i nie waliduje tego dodatkowego commita. Oczekiwany jest run dla najnowszego kodu; nie przypisujemy mu wyniku przed zakończeniem.
+
+
+### Walidacja po rozszerzeniu guardów
+
+- Aktualny kod aplikacji do walidacji: `739a7658abbeee7b280d5fc218fcffb6a665049b`.
+- CI run: `42328556129`; job `128269544334`; krok `Run unit tests and compile debug variant` jest w toku. Konfiguracja JDK 17, Android SDK/API 36 i Gradle 8.13 zakończyła się powodzeniem.
+- Commit dokumentacji checkpointu po zmianach: `6ce958af`; nie zmienia kodu aplikacji.
+- Stan porównania z `main`: 355 commitów ahead, 0 behind. Brak merge i brak zmian w `main`.
