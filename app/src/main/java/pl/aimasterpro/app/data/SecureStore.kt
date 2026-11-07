@@ -137,9 +137,15 @@ class SecureStore(context: Context) {
             require(newIds.size == newIds.toSet().size) { "Kopia zawiera powtórzone identyfikatory dostawców." }
             copied.forEach(::validateImportedConfig)
             val idSet = newIds.toSet()
-            copied.forEach { config ->
-                val parent = config.optString("parentProviderId", "")
+            val parentById = copied.associate { it.optString("id") to it.optString("parentProviderId", "") }
+            parentById.forEach { (id, parent) ->
                 require(parent.isEmpty() || parent in idSet) { "Profil wskazuje na nieistniejącego dostawcę nadrzędnego." }
+                val visited = mutableSetOf<String>()
+                var cursor = id
+                while (cursor.isNotEmpty()) {
+                    require(visited.add(cursor)) { "Wykryto cykl w relacjach profili dostawców." }
+                    cursor = parentById[cursor].orEmpty()
+                }
             }
             val prepared = copied.map { config ->
                 val id = config.optString("id", "default")
