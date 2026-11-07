@@ -115,3 +115,53 @@ Ten plik jest kolejką poleceń ChatGPT MASTER → agent Android Studio.
 - Raport opublikowany na GitHub i niezależnie zweryfikowany przez ChatGPT MASTER.
 
 **Instrukcja końcowa:** Pozostaw branch na GitHubie. Nie wykonuj merge.
+
+
+---
+
+## WB-004 — Techniczna walidacja zadań Work Bridge w GitHub Actions
+
+**Status:** READY — jawnie opublikowane przez ChatGPT MASTER.
+
+**Cel:** Dodać fail-closed walidator PR dla task branchy. Walidator ma weryfikować Task ID, status READY zapisany w INBOX w bazowym commicie zadania, zgodność base SHA oraz allowlistę zmienionych plików.
+
+**Base branch:** `bridge/work-bridge-bootstrap`
+
+**Base commit:** HEAD tej gałęzi po opublikowaniu tego wpisu. MASTER utworzy branch zadaniowy dokładnie od SHA commita, który zawiera to autoryzowane zadanie.
+
+**Branch zadaniowy:** `bridge/task-WB-004-ci-gate`
+
+**Dozwolone pliki (dokładna allowlista):**
+- `.github/workflows/work-bridge-authorization.yml`
+- `tools/work_bridge/validate.py`
+- `tools/work_bridge/test_validate.py`
+- `AI_MASTER_BRIDGE/REPORTS/WB-004.md`
+
+**Maszynowa autoryzacja WB_TASK_V1:**
+<!-- WB_TASK_V1
+{
+  "id": "WB-004",
+  "status": "READY",
+  "base_branch": "bridge/work-bridge-bootstrap",
+  "allowed_paths": [
+    ".github/workflows/work-bridge-authorization.yml",
+    "tools/work_bridge/validate.py",
+    "tools/work_bridge/test_validate.py",
+    "AI_MASTER_BRIDGE/REPORTS/WB-004.md"
+  ]
+}
+-->
+
+**Zakres dozwolony:**
+1. Dodać skrypt walidujący PR do `bridge/work-bridge-bootstrap`.
+2. Walidować dokładny Task ID z nazwy branchu i raportu, status dokładnie READY w INBOX odczytanym z rzeczywistego merge-base task brancha, target branch, zgodność deklarowanego base SHA z merge-base i wszystkie zmienione ścieżki względem allowlisty.
+3. Odrzucać fail-closed: brak/duplikat/malformed manifestu, brak raportu, niepoprawny identyfikator, inny status, zły base SHA, fork PR, rename/delete/type-change i pliki spoza allowlisty.
+4. Dodać GitHub Actions workflow uruchamiany przy PR do `bridge/work-bridge-bootstrap`, z uprawnieniami tylko `contents: read`. Walidator musi być pobrany z base commita, nie z PR head.
+5. Dodać testy standardowej biblioteki Python dla dozwolonego READY, DRAFT, MASTER_DONE, braku Task ID/manifestu, złego base SHA, nieautoryzowanego pliku, złej nazwy brancha, brakującego raportu, PR z forka i błędnego JSON.
+6. Raportować wymagane ustawienie branch protection/ruleset osobno. Sam workflow nie jest egzekwowany jako wymagany check, dopóki właściciel repo nie ustawi go jako required status check.
+
+**Zakazy:** brak zmian kodu Android, Gradle, providerów, pamięci, main i branchy audit/*. Bez merge, bez APK, bez testów Android. Nie deklarować aktywnej branch protection bez potwierdzenia.
+
+**Kryteria akceptacji:** testy skryptowe przechodzą; workflow jest syntaktycznie poprawny i ograniczony do read-only; raport wyraźnie rozróżnia check uruchamiany od checka wymaganego przez branch protection; zmienione są wyłącznie cztery dozwolone pliki.
+
+**Instrukcja końcowa:** pozostaw branch WB-004 bez merge. MASTER niezależnie zweryfikuje diff.
