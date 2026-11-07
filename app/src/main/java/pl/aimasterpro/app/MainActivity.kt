@@ -476,9 +476,17 @@ class MainActivity : Activity() {
         return wrap
     }
 
+    /** MASTER's role assignment is canonical; selected_provider is legacy fallback only. */
+    private fun resolvedMasterProviderId(): String? =
+        if (!agentAssignmentsHealthy) null
+        else pl.aimasterpro.app.core.MasterProviderSelection.resolve(agentProviders, selectedProviderId)
+
     private fun activeConfig(): ProviderConfig? =
         if (!agentAssignmentsHealthy) null
-        else loadProvider(agentProviders[selectedAgent.name] ?: selectedProviderId)
+        else loadProvider(
+            if (selectedAgent == AgentRole.MASTER) resolvedMasterProviderId().orEmpty()
+            else agentProviders[selectedAgent.name] ?: resolvedMasterProviderId().orEmpty()
+        )
 
     /** Persist first; only then publish the assignment to in-memory UI/runtime state. */
     private fun persistAgentProviderAssignment(role: AgentRole, providerId: String): Boolean {
@@ -1713,7 +1721,9 @@ class MainActivity : Activity() {
         if (attachedName.isNotBlank() && attachedText.isBlank()) prompt += "\n\nZałącznik: $attachedName ($attachedMime). Przeanalizuj załącznik, jeśli ten dostawca obsługuje jego format."
         if (prompt.isBlank() && attachedName.isBlank()) { toast("Wpisz wiadomość lub dodaj plik."); return }
         val chosenRole = selectedAgent
-        val config = if (chosenRole == AgentRole.MASTER) loadProvider(agentProviders[AgentRole.MASTER.name] ?: selectedProviderId) else loadProvider(agentProviders[chosenRole.name] ?: selectedProviderId)
+        val masterProviderId = resolvedMasterProviderId().orEmpty()
+        val config = if (chosenRole == AgentRole.MASTER) loadProvider(masterProviderId)
+            else loadProvider(agentProviders[chosenRole.name] ?: masterProviderId)
         if (!providerReady(config)) { toast("Skonfiguruj adres, model i klucz API (lokalny Ollama nie wymaga klucza)."); return }
         val safeConfig = config!!
 
@@ -1865,7 +1875,7 @@ class MainActivity : Activity() {
                     val batchAgentConfigsMap = tasks.mapNotNull { task ->
                         val spec = AgentCatalog.find(task.agentId) ?: return@mapNotNull null
                         val role = AgentProviderRouting.roleFor(spec)
-                        val assignedId = agentProviders[role.name] ?: selectedProviderId
+                        val assignedId = agentProviders[role.name] ?: resolvedMasterProviderId().orEmpty()
                         val assigned = loadProvider(assignedId)
                         val usableAssigned = assigned?.takeIf { candidate ->
                             providerReady(candidate) && isVerifiedFreeConfig(candidate)
@@ -2628,7 +2638,7 @@ class MainActivity : Activity() {
         val configs = store.allConfigs().mapNotNull { j -> runCatching { loadProvider(j.optString("id")) }.getOrNull() }.filter { providerReady(it) && isModelPresentInCatalog(it) }
         configs.forEach { p ->
             val sub = p.model + if (p.apiKey.isBlank() && !p.id.equals("ollama", true)) " • brak klucza API" else if (p.id.equals("ollama", true)) " • lokalny / bez klucza" else ""
-            box.addView(pickerRow(p.name, sub, p.id == selectedProviderId) {
+            box.addView(pickerRow(p.name, sub, p.id == resolvedMasterProviderId()) {
                 if (!persistAgentProviderAssignment(AgentRole.MASTER, p.id)) return@pickerRow
                 dialog.dismiss(); navigate("Czat")
             })
@@ -3774,7 +3784,7 @@ class MainActivity : Activity() {
         if (savedModelProfiles.isNotEmpty()) {
             val profilesCard = card("ZAPISANE PROFILE MODELI", "Każdy profil ma własny identyfikator modelu, ale korzysta z klucza API profilu bazowego. Dzięki temu różni agenci mogą używać różnych modeli tego samego dostawcy.")
             savedModelProfiles.forEach { profile ->
-                val selected = selectedProviderId == profile.id
+                val selected = resolvedMasterProviderId() == profile.id
                 val row = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(10), dp(9), dp(10), dp(9)); background = rounded(cardBg, 10, border) }
                 row.addView(TextView(this).apply { text = (if (selected) "✓ AKTYWNY • " else "") + profile.name; setTextColor(if (selected) orange else white); textSize = 13f; typeface = Typeface.DEFAULT_BOLD })
                 row.addView(TextView(this).apply { text = profile.model; setTextColor(muted); textSize = 11f; setPadding(0, dp(2), 0, dp(4)); setTextIsSelectable(true) })
@@ -5656,7 +5666,7 @@ class MainActivity : Activity() {
         action("🧠 Przeanalizuj jakość — MASTER (zużywa tokeny)", onClick = {
             if (!agentAssignmentsHealthy) { toast("Analiza zablokowana: przypisania agentów nie zostały bezpiecznie uzgodnione."); return@action }
             if (isThinking) { toast("Poczekaj na zakończenie bieżącego zapytania."); return@action }
-            val cfg = loadProvider(agentProviders[AgentRole.MASTER.name] ?: selectedProviderId)
+            val cfg = loadProvider(resolvedMasterProviderId().orEmpty())
             if (!providerReady(cfg)) { toast("Najpierw skonfiguruj działający profil MASTER-a."); return@action }
             AlertDialog.Builder(this).setTitle("Uruchomić analizę jakości?")
                 .setMessage("To jednorazowe wywołanie modelu MASTER i zużyje tokeny zgodnie z Monitor API. Statystyki lokalne i oceny nie zużywają tokenów. Analiza nie zmieni routingu automatycznie.")
