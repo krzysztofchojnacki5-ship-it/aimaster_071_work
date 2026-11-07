@@ -23,8 +23,10 @@ data class TokenUsageResult(
     /** Tokens read from an existing prompt cache; subset of inputTokens. */
     val cachedTokens: Long,
     val status: String, // "REAL", "ESTIMATED", "UNAVAILABLE"
-    /** Tokens written to prompt cache during this request; subset of inputTokens. */
-    val cacheWriteTokens: Long = 0L
+    /** Tokens written to the default (5-minute) prompt cache; subset of inputTokens. */
+    val cacheWriteTokens: Long = 0L,
+    /** Tokens written to a 1-hour prompt cache; subset of inputTokens. */
+    val cacheWrite1hTokens: Long = 0L
 )
 
 data class ChatResponse(
