@@ -2059,7 +2059,7 @@ class MainActivity : Activity() {
                                         } else {
                                             val safeBaseUrl = runCatching {
                                                 java.net.URL(actualProvider.baseUrl).let { url ->
-                                                    "${url.protocol}://${url.host}" + if (url.port >= 0) ":\${url.port}" else ""
+                                                    "${url.protocol}://${url.host}" + if (url.port >= 0) ":${url.port}" else ""
                                                 }
                                             }.getOrDefault("")
                                             pl.aimasterpro.app.core.TaskCheckpointStore.record(
