@@ -1647,3 +1647,24 @@ Commits:
 - 79da584 — jawna, testowalna polityka generowania klucza;
 - 6012537 — testy polityki odzyskiwania.
 
+
+
+Dalsze rozszerzenie Etapu 24 — import, eksport i ręczna naprawa:
+- replaceAllConfigs() sprawdza wszystkie istniejące zaszyfrowane wpisy przed przygotowaniem importu; jeżeli choć jeden sekret jest nieczytelny, cały import jest odrzucany przed mutacją SharedPreferences;
+- dodano helper hasUnreadableExistingSecrets() oraz testy: import nie usuwa nieczytelnego ciphertextu ani nie zmienia listy profili, testy pokrywają zbiór mieszany i pusty;
+- metadane wewnętrzne _secretUnavailable są usuwane przed zapisaniem profilu i nie trafiają do importowanych metadanych;
+- eksport bazy jest blokowany, jeśli choć jeden sekret nie daje się odszyfrować — aplikacja nie tworzy pozornie poprawnej kopii z pustym kluczem;
+- przy prawidłowym eksporcie wewnętrzny marker diagnostyczny jest usuwany z eksportowanych profili;
+- ekran MODELE pokazuje akcję NAPRAW KLUCZ dla profili z niedostępnym sekretem; dialog wymaga wprowadzenia nowego klucza, a zapis i dalsze przypisanie profilu są blokowane, jeśli zapis się nie powiedzie.
+
+Dodatkowe commity Etapu 24:
+- 517995f — blokada replaceAllConfigs przy istniejących nieczytelnych sekretach;
+- d833be3 — testy ochrony importu pełnej konfiguracji;
+- 9ce915d — usuwanie wewnętrznego markera z metadanych importu;
+- 9e45375 — UI ręcznej naprawy profilu;
+- 5820a5f — wymaganie nowego klucza w trybie naprawy;
+- 4221e12 — blokada eksportu niekompletnej kopii.
+
+Ważne ograniczenie naprawy:
+- jeżeli stary alias Keystore nadal działa, ale pojedynczy ciphertext jest uszkodzony, ręczne wprowadzenie nowego klucza może zastąpić wyłącznie ten profil;
+- jeżeli alias Keystore zniknął, aplikacja nie wygeneruje nowego klucza automatycznie, ponieważ zrobiłoby to pozostałe ciphertexty nieczytelnymi. W takim przypadku ręczna naprawa pojedynczego profilu zostanie bezpiecznie odrzucona; potrzebny jest osobny, jawnie zatwierdzany proces rotacji/resetu magazynu z pełnym ostrzeżeniem o utracie starych sekretów.
