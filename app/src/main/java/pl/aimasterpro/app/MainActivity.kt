@@ -3542,9 +3542,11 @@ class MainActivity : Activity() {
             if (id.isBlank() || providerId.isBlank()) continue
             val prompt = if (o.isNull("promptPricePerMillion")) null else o.optDouble("promptPricePerMillion", Double.NaN).takeIf { it.isFinite() }
             val completion = if (o.isNull("completionPricePerMillion")) null else o.optDouble("completionPricePerMillion", Double.NaN).takeIf { it.isFinite() }
+            val cachedPrompt = if (o.isNull("cachedPromptPricePerMillion")) null else o.optDouble("cachedPromptPricePerMillion", Double.NaN).takeIf { it.isFinite() }
             val free = if (o.isNull("freeByPricing")) null else o.optBoolean("freeByPricing")
             out.add(CatalogEntry(providerId, o.optString("providerName", providerId), o.optString("baseUrl"), ProviderModelInfo(
-                id, o.optString("modelName", id), o.optLong("contextLength", -1L).takeIf { it > 0 }, prompt, completion, free, o.optString("description")
+                id, o.optString("modelName", id), o.optLong("contextLength", -1L).takeIf { it > 0 },
+                prompt, completion, free, o.optString("description"), cachedPrompt
             )))
         }
         return out.distinctBy { "${it.providerId}:${it.info.id}" }.sortedWith(compareBy({ it.providerName.lowercase() }, { it.info.id.lowercase() }))
@@ -3559,6 +3561,7 @@ class MainActivity : Activity() {
                 .put("modelId", e.info.id).put("modelName", e.info.name).put("contextLength", e.info.contextLength ?: JSONObject.NULL)
                 .put("promptPricePerMillion", e.info.promptPricePerMillion ?: JSONObject.NULL)
                 .put("completionPricePerMillion", e.info.completionPricePerMillion ?: JSONObject.NULL)
+                .put("cachedPromptPricePerMillion", e.info.cachedPromptPricePerMillion ?: JSONObject.NULL)
                 .put("freeByPricing", e.info.freeByPricing ?: JSONObject.NULL).put("description", e.info.description))
         }
         modelCatalogPrefs.edit().putString("models_json", arr.toString()).apply()
@@ -3568,7 +3571,8 @@ class MainActivity : Activity() {
             this, provider.id, provider.baseUrl,
             models.map { info ->
                 pl.aimasterpro.app.core.CatalogModelPrice(
-                    info.id, info.promptPricePerMillion, info.completionPricePerMillion, info.freeByPricing
+                    info.id, info.promptPricePerMillion, info.completionPricePerMillion, info.freeByPricing,
+                    info.cachedPromptPricePerMillion
                 )
             }
         )
