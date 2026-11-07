@@ -22,14 +22,17 @@ data class TokenRecord(
     val cachedTokens: Long,
     val status: String, // "REAL", "ESTIMATED", "UNAVAILABLE"
     val costUsd: Double,
-    val costPln: Double
+    val costPln: Double,
+    /** Tokens written to prompt cache; zero for legacy ledger rows. */
+    val cacheWriteTokens: Long = 0L
 )
 
 data class ModelPricing(
     val modelKey: String, // model name or prefix
     var inputPer1MUsd: Double,
     var outputPer1MUsd: Double,
-    val cachedInputPer1MUsd: Double? = null
+    val cachedInputPer1MUsd: Double? = null,
+    val cacheWriteInputPer1MUsd: Double? = null
 )
 
 data class CatalogModelPrice(
@@ -37,7 +40,8 @@ data class CatalogModelPrice(
     val inputPer1MUsd: Double?,
     val outputPer1MUsd: Double?,
     val explicitlyFree: Boolean? = null,
-    val cachedInputPer1MUsd: Double? = null
+    val cachedInputPer1MUsd: Double? = null,
+    val cacheWriteInputPer1MUsd: Double? = null
 )
 
 data class BudgetRequest(
@@ -95,12 +99,15 @@ object ApiTokenTracker {
     )
 
     private fun calculateUsdCost(
-        inputTokens: Long, outputTokens: Long, cachedTokens: Long, pricing: ModelPricing
+        inputTokens: Long, outputTokens: Long, cachedTokens: Long, cacheWriteTokens: Long,
+        pricing: ModelPricing
     ): Double {
-        val cached = if (pricing.cachedInputPer1MUsd != null) minOf(inputTokens, cachedTokens) else 0L
-        val regularInput = inputTokens - cached
+        val cachedRead = minOf(inputTokens, cachedTokens)
+        val cacheWrite = minOf(inputTokens - cachedRead, cacheWriteTokens)
+        val regularInput = inputTokens - cachedRead - cacheWrite
         return (regularInput.toDouble() * pricing.inputPer1MUsd +
-            cached.toDouble() * (pricing.cachedInputPer1MUsd ?: pricing.inputPer1MUsd) +
+            cachedRead.toDouble() * (pricing.cachedInputPer1MUsd ?: pricing.inputPer1MUsd) +
+            cacheWrite.toDouble() * (pricing.cacheWriteInputPer1MUsd ?: pricing.inputPer1MUsd) +
             outputTokens.toDouble() * pricing.outputPer1MUsd) / 1_000_000.0
     }
 
@@ -118,10 +125,13 @@ object ApiTokenTracker {
         status: String = "ESTIMATED",
         baseUrl: String = "",
         reservationId: String = "",
-        idempotencyKey: String = ""
+        idempotencyKey: String = "",
+        cacheWriteTokens: Long = 0L
     ): TokenRecord {
-        require(inputTokens >= 0L && outputTokens >= 0L && reasoningTokens >= 0L && cachedTokens >= 0L && cachedTokens <= inputTokens) {
-            "Liczby tokenów nie mogą być ujemne."
+        require(inputTokens >= 0L && outputTokens >= 0L && reasoningTokens >= 0L &&
+            cachedTokens >= 0L && cacheWriteTokens >= 0L &&
+            Math.addExact(cachedTokens, cacheWriteTokens) <= inputTokens) {
+            "Liczby tokenów nie mogą być ujemne ani przekraczać liczby tokenów wejściowych."
         }
         val stableQueryId = idempotencyKey.trim().ifBlank { UUID.randomUUID().toString() }
         val persistedBefore = readPersistedRecords(context)
@@ -154,7 +164,7 @@ object ApiTokenTracker {
                 require(upgradeRate.isFinite() && upgradeRate > 0.0) {
                     "Nieprawidłowy kurs USD/PLN; rozliczenie API wstrzymano."
                 }
-                val upgradeUsd = calculateUsdCost(inputTokens, outputTokens, cachedTokens, upgradePricing)
+                val upgradeUsd = calculateUsdCost(inputTokens, outputTokens, cachedTokens, cacheWriteTokens, upgradePricing)
                 val upgradePln = upgradeUsd * upgradeRate
                 require(upgradeUsd.isFinite() && upgradePln.isFinite() && upgradeUsd >= 0.0 && upgradePln >= 0.0) {
                     "Nieprawidłowy koszt użycia API."
@@ -166,6 +176,7 @@ object ApiTokenTracker {
                     totalTokens = upgradedTotal,
                     reasoningTokens = reasoningTokens,
                     cachedTokens = cachedTokens,
+                    cacheWriteTokens = cacheWriteTokens,
                     modelName = modelName,
                     status = "REAL",
                     costUsd = upgradeUsd,
@@ -193,7 +204,7 @@ object ApiTokenTracker {
             pricing.inputPer1MUsd >= 0.0 && pricing.outputPer1MUsd >= 0.0) { "Nieprawidłowy cennik modelu." }
         val exchangeRate = getExchangeRate(context)
         require(exchangeRate.isFinite() && exchangeRate > 0.0) { "Nieprawidłowy kurs USD/PLN; rozliczenie API wstrzymano." }
-        val usd = calculateUsdCost(inputTokens, outputTokens, cachedTokens, pricing)
+        val usd = calculateUsdCost(inputTokens, outputTokens, cachedTokens, cacheWriteTokens, pricing)
         val pln = usd * exchangeRate
         require(usd.isFinite() && pln.isFinite() && usd >= 0.0 && pln >= 0.0) { "Nieprawidłowy koszt użycia API." }
 
@@ -209,6 +220,7 @@ object ApiTokenTracker {
             totalTokens = total,
             reasoningTokens = reasoningTokens,
             cachedTokens = cachedTokens,
+            cacheWriteTokens = cacheWriteTokens,
             status = status,
             costUsd = usd,
             costPln = pln
@@ -322,6 +334,7 @@ object ApiTokenTracker {
                 .put("tot", r.totalTokens)
                 .put("reas", r.reasoningTokens)
                 .put("cache", r.cachedTokens)
+                .put("cacheWrite", r.cacheWriteTokens)
                 .put("status", r.status)
                 .put("usd", r.costUsd)
                 .put("pln", r.costPln)
@@ -368,6 +381,8 @@ object ApiTokenTracker {
             val output = exactLong("out")
             val reasoning = exactLong("reas")
             val cached = exactLong("cache")
+            // Legacy records predate separate cache-write accounting; treat missing as zero.
+            val cacheWrite = if (o.has("cacheWrite")) exactLong("cacheWrite") else 0L
             val usdValue = o.opt("usd")
             val plnValue = o.opt("pln")
             require(usdValue is Number && plnValue is Number) { "Usage cost fields are not numeric." }
@@ -382,7 +397,9 @@ object ApiTokenTracker {
                 agentId.isNotBlank() && taskId.isNotBlank() && status.isNotBlank()) {
                 "Usage record is missing valid identity or timestamp fields."
             }
-            require(input >= 0L && output >= 0L && total >= 0L && reasoning >= 0L && cached >= 0L) { "Usage record has negative token counts." }
+            require(input >= 0L && output >= 0L && total >= 0L && reasoning >= 0L &&
+                cached >= 0L && cacheWrite >= 0L &&
+                Math.addExact(cached, cacheWrite) <= input) { "Usage record has invalid token counts." }
             val expectedTotal = Math.addExact(input, output)
             require(total == expectedTotal) { "Usage record total does not match input plus output token counts." }
             require(costUsd.isFinite() && costPln.isFinite() && costUsd >= 0.0 && costPln >= 0.0) { "Usage record has invalid cost values." }
@@ -398,6 +415,7 @@ object ApiTokenTracker {
                 totalTokens = total,
                 reasoningTokens = reasoning,
                 cachedTokens = cached,
+                cacheWriteTokens = cacheWrite,
                 status = status,
                 costUsd = costUsd,
                 costPln = costPln
@@ -434,6 +452,7 @@ object ApiTokenTracker {
                     it.inputPer1MUsd.isFinite() && it.outputPer1MUsd.isFinite() &&
                     it.inputPer1MUsd >= 0.0 && it.outputPer1MUsd >= 0.0)) &&
             (it.cachedInputPer1MUsd == null || (it.cachedInputPer1MUsd.isFinite() && it.cachedInputPer1MUsd >= 0.0)) &&
+            (it.cacheWriteInputPer1MUsd == null || (it.cacheWriteInputPer1MUsd.isFinite() && it.cacheWriteInputPer1MUsd >= 0.0)) &&
             (it.explicitlyFree != true ||
                 ((it.inputPer1MUsd == null || it.inputPer1MUsd == 0.0) &&
                     (it.outputPer1MUsd == null || it.outputPer1MUsd == 0.0)))
@@ -459,6 +478,7 @@ object ApiTokenTracker {
                 .put("inputPer1MUsd", model.inputPer1MUsd ?: JSONObject.NULL)
                 .put("outputPer1MUsd", model.outputPer1MUsd ?: JSONObject.NULL)
                 .put("cachedInputPer1MUsd", model.cachedInputPer1MUsd ?: JSONObject.NULL)
+                .put("cacheWriteInputPer1MUsd", model.cacheWriteInputPer1MUsd ?: JSONObject.NULL)
                 .put("explicitlyFree", model.explicitlyFree ?: JSONObject.NULL))
         }
         check(prefs.edit().putString("catalog_model_prices", kept.toString()).commit()) {
@@ -491,7 +511,9 @@ object ApiTokenTracker {
                 if (input != null && output != null && input.isFinite() && output.isFinite() && input >= 0.0 && output >= 0.0) {
                     val cached = (row.opt("cachedInputPer1MUsd") as? Number)?.toDouble()
                         ?.takeIf { it.isFinite() && it >= 0.0 }
-                    return ModelPricing(modelName, input, output, cached)
+                    val cacheWrite = (row.opt("cacheWriteInputPer1MUsd") as? Number)?.toDouble()
+                        ?.takeIf { it.isFinite() && it >= 0.0 }
+                    return ModelPricing(modelName, input, output, cached, cacheWrite)
                 }
                 // An explicit PAID catalog result must not be overridden by a stale
                 // local/free allowlist entry merely because this model ID was reused.
