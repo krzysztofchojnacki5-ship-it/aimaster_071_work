@@ -1147,3 +1147,36 @@ Weryfikacja:
 - nowy workflow run 42315138948 dla SHA 0cb89f62550299e3343cf446360b0aa590301d7c ma status queued;
 - poprzedni run 42313083194 zakończył się jako cancelled po uruchomieniu nowszej wersji workflow; nie był wynikiem testów PASS;
 - brak merge, APK, release i zmian main; Companion Transport pozostaje BLOCKED.
+
+
+## Etap 12 — receipt-gated restore i jawnie autoryzowany rollback (2026-11-07)
+
+Kontynuacja etapu 11 wykazała, że analogiczna luka istniała w publicznym restoreSnapshot(): ręczne przywrócenie snapshotu mogło zastąpić workspace, mimo że receipt poprzedniego patcha nadal czekał na uzgodnienie. Taki restore mógł doprowadzić do tej samej niezgodności identity co import ZIP.
+
+Zmiana:
+- zwykłe restoreSnapshot() odmawia teraz działania, gdy istnieje nierozliczony patch receipt;
+- wydzielono restoreSnapshotInternal(), używane przez dwa jawne, kontrolowane wejścia;
+- dodano restoreSnapshotForPatchRollback(), które wymaga dokładnej zgodności changeSetId, transactionId i snapshotId oraz trwałego rollbackRequested=true;
+- recoverRequestedPatchRollback() korzysta z tej autoryzowanej ścieżki;
+- MainActivity podczas kompensacji po nieudanym zapisie ChangeSet przekazuje dokładny identyfikator transakcji do restoreSnapshotForPatchRollback();
+- zwykła weryfikacja projektu nadal korzysta z restoreSnapshot(); w obecności pending receipt rollback jest bezpiecznie blokowany zamiast nadpisywać transakcję oczekującą na recovery.
+
+Test regresyjny:
+- manualRestoreCannotBypassPendingPatchReceiptButExplicitRollbackCan;
+- sprawdza, że ręczny restore jest odrzucony, oryginalny nowy workspace pozostaje nienaruszony, a jawny rollback po trwałym zapisaniu żądania przywraca dokładny snapshot, oznacza receipt jako rolledBack i dopiero potem pozwala go uzgodnić.
+
+Pliki:
+- app/src/main/java/pl/aimasterpro/app/core/ProjectWorkspaceStore.kt
+- app/src/main/java/pl/aimasterpro/app/MainActivity.kt
+- app/src/test/java/pl/aimasterpro/app/core/ProjectWorkspaceStoreApplyTest.kt
+
+Commity:
+- blokada zwykłego restore i ścieżka autoryzowanego rollbacku: c0fa19e7e0f48a06dc831a94d6e31cdb977c7c03
+- integracja MainActivity: fad2a0e4430425f1aa3a05659f07952a47b305f0
+- test regresyjny: 47484ab862994fc77b44f5586646c522a75a9e45
+
+Weryfikacja:
+- ponownie odczytano zmienione pliki i potwierdzono, że wszystkie wywołania rollbacku używają autoryzowanej ścieżki; zwykłe przywracanie pozostaje zablokowane przy pending receipt;
+- testy pozostają NOT VERIFIED do czasu zakończenia CI;
+- najnowszy workflow run 42315490004 dla SHA 47484ab862994fc77b44f5586646c522a75a9e45 ma status in_progress; wcześniejsze uruchomienia pośrednich commitów zostały anulowane przez concurrency;
+- brak merge, APK, release i zmian main; Companion Transport pozostaje BLOCKED.
