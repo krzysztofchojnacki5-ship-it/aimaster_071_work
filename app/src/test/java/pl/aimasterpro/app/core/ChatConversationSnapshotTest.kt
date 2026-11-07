@@ -40,5 +40,12 @@ class ChatConversationSnapshotTest {
             .put("agentActivity", JSONArray().put("agent-started"))
 
         assertNull(ChatConversationSnapshot.parse(chat))
+    } 
+    @Test fun nonArrayCollectionRejectsWholeSnapshot() {
+        val chat = JSONObject()
+            .put("messages", JSONArray().put(JSONObject().put("role", "user").put("text", "hello")))
+            .put("assistantTaskIds", JSONObject())
+        assertNull(ChatConversationSnapshot.parse(chat))
     }
+
 }

@@ -216,7 +216,6 @@ class MainActivity : Activity() {
         seedDefaultProviders()
         selectedProviderId = runCatching { chatPrefs.getString("selected_provider", "gemini") }.getOrNull() ?: ""
         restoreMessages()
-        loadAgentActivity()
         client = ProviderClient()
         val assignmentDefaults = AgentRole.values().associate { role ->
             role.name to if (role == AgentRole.MASTER) selectedProviderId else "groq"
@@ -3007,9 +3006,16 @@ class MainActivity : Activity() {
         val shouldImportLegacyHistory = pl.aimasterpro.app.core.ChatHistoryStore.shouldImportLegacyMirror(this)
             ?: run { toast("Nie można bezpiecznie odczytać stanu historii. Przywracanie zostało wstrzymane."); return }
         val chats = r.optJSONObject("chats") ?: JSONObject()
+        val restoredChatId = r.optString("currentId", "")
+        val currentChat = restoredChatId.takeIf { it.isNotBlank() }?.let { chats.optJSONObject(it) }
+        val snapshot = pl.aimasterpro.app.core.ChatConversationSnapshot.parse(currentChat)
+            ?: run {
+                android.util.Log.e("AIMasterChat", "Nieprawidłowy snapshot bieżącej rozmowy; stan pamięci pozostawiono bez zmian.")
+                toast("Dane bieżącej rozmowy są nieprawidłowe. Przywracanie zostało wstrzymane.")
+                return
+            }
 
-        // Parse the legacy mirror before mutating in-memory state. A failed read or malformed
-        // row must not turn a recoverable legacy document into a partially restored empty chat.
+        // Parse the legacy mirror and the canonical snapshot before mutating any live collection.
         val legacyMessages = if (chats.length() == 0 && shouldImportLegacyHistory) {
             val legacyRaw = try {
                 chatPrefs.getString("chat_messages", null)
@@ -3028,23 +3034,19 @@ class MainActivity : Activity() {
             null
         }
 
+        val restoredMessages = legacyMessages?.map { it.role to it.text } ?: snapshot.messages
+        val targetChatId = if (restoredChatId.isBlank() ||
+            (!currentChat?.has("messages").orFalse() && restoredMessages.isEmpty())
+        ) UUID.randomUUID().toString() else restoredChatId
+
         messages.clear()
+        messages.addAll(restoredMessages)
         assistantTaskIds.clear()
+        assistantTaskIds.addAll(snapshot.assistantTaskIds)
+        agentActivity.clear()
+        agentActivity.addAll(snapshot.agentActivity)
         for (id in chats.keys()) chatTitles[id] = chats.optJSONObject(id)?.optString("title", "") ?: ""
-        currentChatId = r.optString("currentId", "")
-        val currentChat = if (currentChatId.isNotBlank()) chats.optJSONObject(currentChatId) else null
-        val arr = currentChat?.optJSONArray("messages")
-        if (arr != null) {
-            for (i in 0 until arr.length()) {
-                val item = arr.getJSONObject(i)
-                messages.add(item.optString("role") to item.optString("text"))
-            }
-            val ids = currentChat.optJSONArray("assistantTaskIds") ?: JSONArray()
-            for (i in 0 until ids.length()) assistantTaskIds.add(ids.optString(i))
-        } else if (legacyMessages != null) {
-            legacyMessages.forEach { messages.add(it.role to it.text) }
-        }
-        if (currentChatId.isBlank() || (arr == null && messages.isEmpty())) currentChatId = UUID.randomUUID().toString()
+        currentChatId = targetChatId
         alignAssistantTaskIds()
         if (messages.isNotEmpty() && !persistMessages()) {
             toast("Historia została odtworzona tylko w pamięci. Trwały zapis nie powiódł się; dane nie są potwierdzone jako zapisane.")
@@ -3685,15 +3687,6 @@ class MainActivity : Activity() {
             collaborationRenderedEntries.add(rows[index])
         }
         if (scrollToEnd) collaborationScrollView?.post { collaborationScrollView?.fullScroll(View.FOCUS_DOWN) }
-    }
-
-    @Synchronized private fun loadAgentActivity() {
-        agentActivity.clear()
-        if (currentChatId.isBlank()) return
-        val r = pl.aimasterpro.app.core.ChatHistoryStore.readRoot(this) ?: return
-        val chatObj = r.optJSONObject("chats")?.optJSONObject(currentChatId) ?: return
-        val arr = chatObj.optJSONArray("agentActivity") ?: return
-        for (i in 0 until arr.length()) { agentActivity.add(arr.getString(i)) }
     }
 
     private fun chooseAttachment() = showAttachmentOptions()

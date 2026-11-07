@@ -2105,3 +2105,14 @@ Doprecyzowanie projektu SQLite:
 - Nawigacja do Czat/Asystent zatrzymuje się przy błędzie odczytu/parsowania zamiast pokazać poprzednie wiadomości pod nowym identyfikatorem rozmowy.
 - Dodano 4 testy jednostkowe parsera. Statyczna weryfikacja patcha; testy/Gradle/Android debug czekają na CI.
 - APK NOT BUILT; Companion NOT ACTIVATED; `main` untouched.
+
+
+## Checkpoint 0.6.146 — spójny snapshot historii przy starcie (2026-11-07)
+
+- Baza: commit 0.6.145 `4a4472aaeb2733032d54b8d3d95b0214b8ae3bce`.
+- Nowa gałąź: `audit/0.6.146-startup-chat-snapshot`.
+- `restoreMessages()` odczytuje i parsuje pełny snapshot kanonicznej rozmowy przed modyfikacją kolekcji w pamięci; razem odtwarza messages, assistantTaskIds i agentActivity.
+- Usunięto drugi odczyt historii przez `loadAgentActivity()`, eliminując możliwość mieszania snapshotów z różnych chwil.
+- Parser odrzuca kolekcje zapisane pod nieprawidłowym typem JSON; dodano test regresji.
+- CI dla 0.6.145 pozostaje osobnym, aktywnym runem; 0.6.146 ma własny branch filter. Testy/Gradle NOT RUN do potwierdzenia przez CI.
+- APK NOT BUILT; Companion NOT ACTIVATED; `main` untouched.

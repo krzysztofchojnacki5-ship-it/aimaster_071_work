@@ -447,3 +447,12 @@ Rejestr rozróżnia paczkę źródłową od wersji aplikacji/APK. Numer paczki n
 - `navigate("Czat")` i `navigate("Asystent")` przerywają przejście, jeśli odczyt lub parsowanie docelowej rozmowy zawiedzie; poprzedni widok i identyfikator pozostają aktywne.
 - Dodano testy parsera: pusty czat, poprawny snapshot trzech kolekcji, uszkodzona aktywność oraz uszkodzona wiadomość.
 - Testy i kompilacja Androida: ADDED / NOT RUN do potwierdzenia przez CI. APK nie utworzono; Companion pozostaje nieaktywny.
+
+
+## 0.6.146 — spójny snapshot historii przy starcie (2026-11-07)
+
+- `restoreMessages()` odtwarza wiadomości, assistantTaskIds i agentActivity z jednego wcześniej sparsowanego snapshotu kanonicznego; nie wykonuje już osobnego odczytu aktywności agentów po odtworzeniu historii.
+- Usunięto redundantne `loadAgentActivity()`, które wykonywało drugi odczyt `chats_v2` i mogło dać stan z innego momentu niż wiadomości.
+- `ChatConversationSnapshot.parse()` odrzuca również pola kolekcji o złym typie (np. obiekt zamiast tablicy), zamiast traktować je jak puste dane.
+- Dodano regresję dla nieprawidłowego typu kolekcji. Testy/kompilacja Androida ADDED / NOT RUN do potwierdzenia przez CI.
+- APK nie utworzono; Companion pozostaje nieaktywny.

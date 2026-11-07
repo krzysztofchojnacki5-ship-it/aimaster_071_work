@@ -13,8 +13,13 @@ data class ChatConversationSnapshot(
     val agentActivity: List<String>
 ) {
     companion object {
+        private fun array(chat: JSONObject?, key: String): JSONArray {
+            if (chat == null || !chat.has(key)) return JSONArray()
+            return chat.optJSONArray(key) ?: error("Invalid $key array.")
+        }
+
         fun parse(chat: JSONObject?): ChatConversationSnapshot? = runCatching {
-            val messageRows = chat?.optJSONArray("messages") ?: JSONArray()
+            val messageRows = array(chat, "messages")
             val restoredMessages = ArrayList<Pair<String, String>>(messageRows.length())
             for (index in 0 until messageRows.length()) {
                 val row = messageRows.optJSONObject(index) ?: error("Invalid message row.")
@@ -23,7 +28,7 @@ data class ChatConversationSnapshot(
                 restoredMessages += row.getString("role") to row.getString("text")
             }
 
-            val taskRows = chat?.optJSONArray("assistantTaskIds") ?: JSONArray()
+            val taskRows = array(chat, "assistantTaskIds")
             val restoredTaskIds = ArrayList<String>(taskRows.length())
             for (index in 0 until taskRows.length()) {
                 val value = taskRows.opt(index)
@@ -31,7 +36,7 @@ data class ChatConversationSnapshot(
                 restoredTaskIds += value
             }
 
-            val activityRows = chat?.optJSONArray("agentActivity") ?: JSONArray()
+            val activityRows = array(chat, "agentActivity")
             val restoredActivity = ArrayList<String>(activityRows.length())
             for (index in 0 until activityRows.length()) {
                 val value = activityRows.opt(index)
