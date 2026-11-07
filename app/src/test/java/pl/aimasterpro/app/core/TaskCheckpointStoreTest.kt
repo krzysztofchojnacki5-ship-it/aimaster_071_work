@@ -198,6 +198,39 @@ class TaskCheckpointStoreTest {
         assertTrue(TaskCheckpointStore.latest(context).single().detail.contains("trwały zapis wyniku"))
     }
 
+    @Test fun unreadableResultArchivePreservesPendingCheckpointsForLaterRecovery() {
+        assertTrue(TaskCheckpointStore.record(context, TaskCheckpointStore.Event(
+            taskId = "task-archive-unreadable-request", agentId = "RESEARCHER", status = "REQUESTING",
+            detail = "request may already have completed", timestamp = 100L,
+            providerId = "openai", model = "gpt-4o-mini", attempts = 1,
+            processId = "previous-process", estimatedInputTokens = 200L,
+            estimatedOutputTokens = 500L, idempotencyKey = "team:task-archive-unreadable-request:openai"
+        )))
+        assertTrue(TaskCheckpointStore.record(context, TaskCheckpointStore.Event(
+            taskId = "task-archive-unreadable-result", agentId = "DEVELOPER", status = "RESULT_PERSIST_PENDING",
+            detail = "archive write may have committed", timestamp = 110L,
+            providerId = "openai", model = "gpt-4o-mini", attempts = 1,
+            processId = "previous-process", estimatedInputTokens = 220L,
+            estimatedOutputTokens = 520L, idempotencyKey = "team:task-archive-unreadable-result:openai"
+        )))
+        val corruptArchive = """[{"taskId":"broken","agentId":"DEVELOPER","report":"saved","providerId":"openai","model":"gpt-4o-mini","createdAt":"invalid"}]"""
+        assertTrue(context.getSharedPreferences("task_result_archive_v1", Context.MODE_PRIVATE)
+            .edit().putString("entries", corruptArchive).commit())
+        assertFalse(TaskResultArchive.isArchiveReadable(context))
+
+        var usageRecoveryCalled = false
+        assertEquals(0, TaskCheckpointStore.recoverStaleRunning(context, 200L) {
+            usageRecoveryCalled = true
+            true
+        })
+        assertFalse(usageRecoveryCalled)
+        val latest = TaskCheckpointStore.latest(context).associateBy { it.taskId }
+        assertEquals("REQUESTING", latest["task-archive-unreadable-request"]?.status)
+        assertEquals("RESULT_PERSIST_PENDING", latest["task-archive-unreadable-result"]?.status)
+        assertEquals(corruptArchive, context.getSharedPreferences("task_result_archive_v1", Context.MODE_PRIVATE)
+            .getString("entries", null))
+    }
+
     @Test fun timedOutTaskCanBeReconciledOnlyAfterItsReportIsDurablyArchived() {
         val taskId = "task-timeout-report-race"
         val initial = TaskCheckpointStore.Event(
