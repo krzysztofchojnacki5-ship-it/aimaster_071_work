@@ -330,4 +330,19 @@ class ProjectWorkspaceStoreTest {
         }
     }
 
+
+    @Test fun manifestPublicationProducesVerifiedAtomicTargetWithoutTemporaryArtifacts() {
+        val root = tempDir("workspace-manifest-atomic-")
+        try {
+            val store = ProjectWorkspaceStore(root)
+            store.importZip(ByteArrayInputStream(zip("src/Main.kt" to "durable manifest")), "atomic.zip", 42L)
+            val manifest = File(root, "current.manifest")
+            assertTrue(manifest.isFile)
+            assertTrue(store.verifyCurrentWorkspace().valid)
+            assertEquals("durable manifest", store.readTextFile("src/Main.kt").content)
+            assertTrue(root.listFiles().orEmpty().none {
+                it.name.startsWith(".current.manifest.") && it.name.endsWith(".tmp")
+            })
+        } finally { root.deleteRecursively() }
+    }
 }
