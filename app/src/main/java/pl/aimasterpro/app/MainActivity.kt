@@ -2913,17 +2913,24 @@ class MainActivity : Activity() {
         id == "assistant_dedicated_chat_id" || id.startsWith("assistant-")
 
     @Synchronized private fun saveCurrentId(): Boolean {
-        val saved = pl.aimasterpro.app.core.ChatHistoryStore.updateRoot(this) { root ->
+        val lastUserChatId = currentChatId.takeIf {
+            it.isNotBlank() && !isAssistantChatId(it)
+        }
+        val update: (JSONObject) -> Boolean = { root ->
             if (!root.has("chats")) root.put("chats", JSONObject())
             root.put("currentId", currentChatId)
             true
         }
+        val saved = if (lastUserChatId != null) {
+            pl.aimasterpro.app.core.ChatHistoryStore.updateRootAndLastUserChatId(
+                this, lastUserChatId, update
+            )
+        } else {
+            pl.aimasterpro.app.core.ChatHistoryStore.updateRoot(this, update)
+        }
         if (!saved) {
             android.util.Log.e("AIMasterChat", "Nie udało się trwale zapisać identyfikatora bieżącego czatu.")
             return false
-        }
-        if (currentChatId.isNotBlank() && !isAssistantChatId(currentChatId)) {
-            return chatPrefs.edit().putString("last_user_chat_id", currentChatId).commit()
         }
         true
     }
