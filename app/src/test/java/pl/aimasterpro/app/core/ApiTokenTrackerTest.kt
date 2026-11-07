@@ -575,6 +575,39 @@ class ApiTokenTrackerTest {
             50.0, ApiTokenTracker.getLimits(context).monthlyCostPlnLimit, 0.0)
     }
 
+    @Test fun corruptStoredCatalogIsPreservedAndBlocksProviderRefresh() {
+        val prefs = context.getSharedPreferences("api_token_pricing_v1", Context.MODE_PRIVATE)
+        val corrupt = """[{"providerId":"kept-provider","modelName":"paid-model","baseUrl":"https://kept.example/v1"}"""
+        prefs.edit().putString("catalog_model_prices", corrupt).commit()
+
+        val refresh = runCatching {
+            ApiTokenTracker.replaceCatalogPricingForProvider(
+                context, "new-provider", "https://new.example/v1",
+                listOf(CatalogModelPrice("new-model", 0.1, 0.2, explicitlyFree = false))
+            )
+        }
+
+        assertTrue("A corrupt catalog must fail closed instead of being replaced", refresh.isFailure)
+        assertEquals("The original bytes must remain available for recovery",
+            corrupt, prefs.getString("catalog_model_prices", null))
+    }
+
+    @Test fun catalogRefreshRejectsMalformedRowsWithoutDroppingOtherProviders() {
+        val prefs = context.getSharedPreferences("api_token_pricing_v1", Context.MODE_PRIVATE)
+        val malformed = """[{"providerId":"kept-provider","modelName":"paid-model","baseUrl":7}]"""
+        prefs.edit().putString("catalog_model_prices", malformed).commit()
+
+        val refresh = runCatching {
+            ApiTokenTracker.replaceCatalogPricingForProvider(
+                context, "new-provider", "https://new.example/v1",
+                listOf(CatalogModelPrice("new-model", 0.1, 0.2, explicitlyFree = false))
+            )
+        }
+
+        assertTrue("A malformed catalog identity must block destructive replacement", refresh.isFailure)
+        assertEquals(malformed, prefs.getString("catalog_model_prices", null))
+    }
+
     @Test fun discoveredCatalogPricesOverrideGenericModelFallback() {
         ApiTokenTracker.replaceCatalogPricingForProvider(
             context, "catalog-provider", "https://catalog.example/v1",
