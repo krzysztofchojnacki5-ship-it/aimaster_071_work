@@ -80,18 +80,25 @@ object BackupCrypto {
         require(saltBase64.isNotBlank() && ivBase64.isNotBlank() && dataBase64.isNotBlank()) {
             "Uszkodzona kopia zapasowa: brak wymaganych pól kryptograficznych."
         }
-        val salt = Base64.decode(saltBase64, Base64.NO_WRAP)
-        val iv = Base64.decode(ivBase64, Base64.NO_WRAP)
-        val data = Base64.decode(dataBase64, Base64.NO_WRAP)
+        var salt: ByteArray? = null
+        var iv: ByteArray? = null
+        var data: ByteArray? = null
         try {
-            require(salt.size == 16) { "Nieprawidłowa długość soli (salt)." }
-            require(iv.size == 12) { "Nieprawidłowa długość wektora inicjalizującego (IV)." }
-            require(data.size in 17..(MAX_PLAIN_BYTES + 16)) { "Dane kopii mają nieprawidłowy rozmiar." }
+            val decodedSalt = Base64.decode(saltBase64, Base64.NO_WRAP)
+            salt = decodedSalt
+            val decodedIv = Base64.decode(ivBase64, Base64.NO_WRAP)
+            iv = decodedIv
+            val decodedData = Base64.decode(dataBase64, Base64.NO_WRAP)
+            data = decodedData
 
-            val key = deriveKey(password, salt)
+            require(decodedSalt.size == 16) { "Nieprawidłowa długość soli (salt)." }
+            require(decodedIv.size == 12) { "Nieprawidłowa długość wektora inicjalizującego (IV)." }
+            require(decodedData.size in 17..(MAX_PLAIN_BYTES + 16)) { "Dane kopii mają nieprawidłowy rozmiar." }
+
+            val key = deriveKey(password, decodedSalt)
             val cipher = Cipher.getInstance("AES/GCM/NoPadding")
-            cipher.init(Cipher.DECRYPT_MODE, key, GCMParameterSpec(GCM_TAG_BITS, iv))
-            val plain = cipher.doFinal(data)
+            cipher.init(Cipher.DECRYPT_MODE, key, GCMParameterSpec(GCM_TAG_BITS, decodedIv))
+            val plain = cipher.doFinal(decodedData)
             try {
                 require(plain.size <= MAX_PLAIN_BYTES) { "Dane kopii przekraczają dozwolony rozmiar." }
                 String(plain, Charsets.UTF_8)
@@ -99,9 +106,9 @@ object BackupCrypto {
                 plain.fill(0)
             }
         } finally {
-            salt.fill(0)
-            iv.fill(0)
-            data.fill(0)
+            salt?.fill(0)
+            iv?.fill(0)
+            data?.fill(0)
         }
     }
 }
