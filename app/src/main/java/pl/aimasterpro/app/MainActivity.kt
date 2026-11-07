@@ -136,6 +136,13 @@ class MainActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         store = SecureStore(this)
+        val checkpointJournalReadable = runCatching {
+            pl.aimasterpro.app.core.TaskCheckpointStore.isJournalReadable(this)
+        }.getOrDefault(false)
+        if (!checkpointJournalReadable) android.util.Log.e(
+            "AIMasterRecovery",
+            "Dziennik checkpointów jest niedostępny lub uszkodzony. Automatyczne odzyskiwanie zadań może być niepełne; zachowano oryginalne dane."
+        )
         val recoveredTasks = runCatching {
             pl.aimasterpro.app.core.TaskCheckpointStore.recoverStaleRunning(this, onAmbiguousRequest = { event ->
                 if (event.status !in setOf("REQUESTING", "USAGE_PENDING", "INTERRUPTED_USAGE_PENDING", "TIMED_OUT", "CANCELLED")) true
