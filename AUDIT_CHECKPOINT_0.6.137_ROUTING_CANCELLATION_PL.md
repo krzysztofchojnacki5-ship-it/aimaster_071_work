@@ -2009,3 +2009,9 @@ Doprecyzowanie projektu SQLite:
 - Dodano test ambiguousArchiveCommitQuarantinesRecoveryReadsAndWrites dla ChatResponseArchive: commit zwraca false po symulowanym apply; wymagane jest oznaczenie archiwum jako uncertain, blokada odczytów i kolejnych zapisów.
 - Commit: e08735883591841b645202f33e72d307f809f1b5.
 - ADDED / NOT RUN. CI 42411603439 nadal in_progress dla SHA 30e0f496...; nowy test nie jest jeszcze zweryfikowany.
+
+### Checkpoint 0.6.139 — kwarantanna archiwów blokuje replay
+
+- Rozszerzono testy awarii commit archiwum odpowiedzi MASTER i raportów agentów o bezpośrednie wywołanie metod restore; wymagane jest zgłoszenie błędu, gdy archiwum jest niepewne.
+- Commity: `5eb52b62daf2fa1ae1cff91bcfac2abcbad53769`, `5fbfa1269fba52deb88ff8d1938339998bec2129`.
+- ADDED / NOT RUN; CI 42411603439 nadal in_progress dla wcześniejszego SHA `30e0f496...`.
