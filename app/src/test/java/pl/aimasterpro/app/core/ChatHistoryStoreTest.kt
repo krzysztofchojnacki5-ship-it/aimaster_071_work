@@ -17,6 +17,7 @@ class ChatHistoryStoreTest {
 
     @Before fun reset() {
         prefs.edit().clear().commit()
+        SharedPreferencesWriteHealth.resetForTests("chat_state")
     }
 
     @Test fun missingHistoryIsAValidEmptyStoreAndCanBeCommitted() {
@@ -141,5 +142,15 @@ class ChatHistoryStoreTest {
             .put("messages", JSONArray().put(JSONObject().put("role", 7).put("text", "bad")))))
         assertFalse(ChatHistoryStore.writeRoot(context, root))
         assertNull(prefs.getString("chats_v2", null))
+    }
+
+    @Test fun ambiguousHistoryCommitQuarantinesReadsAndFutureWrites() {
+        val chatId = "ambiguous-history"
+        val root = JSONObject().put("currentId", chatId)
+            .put("chats", JSONObject().put(chatId, JSONObject().put("messages", JSONArray())))
+        val failing = AmbiguousCommitContext(context, "chat_state")
+        assertFalse(ChatHistoryStore.writeRoot(failing, root))
+        assertNull(ChatHistoryStore.readRoot(context))
+        assertFalse(ChatHistoryStore.writeRoot(context, JSONObject()))
     }
 }
