@@ -11,6 +11,12 @@ object TaskCheckpointStore {
     private const val MAX_EVENTS = 800
     private val TERMINAL_STATUSES = setOf("COMPLETED", "FAILED", "BLOCKED", "TIMED_OUT", "CANCELLED", "INTERRUPTED")
     private val processId = java.util.UUID.randomUUID().toString()
+
+    private fun hasArchivedResult(context: Context, taskId: String): Boolean =
+        runCatching {
+            TaskResultArchive.get(context, taskId) != null ||
+                ChatResponseArchive.get(context, taskId) != null
+        }.getOrDefault(false)
     /** An ambiguous commit can leave the process-local preference map ahead of durable storage. */
     fun isStorageUncertain(): Boolean = SharedPreferencesWriteHealth.isUncertain(PREFS)
 
@@ -61,7 +67,7 @@ object TaskCheckpointStore {
             // Permit only archive-backed reconciliation for that exact task; never trust a late
             // callback alone to rewrite a terminal checkpoint.
             val archivedResultExists = runCatching {
-                TaskResultArchive.get(context, event.taskId) != null
+                hasArchivedResult(context, event.taskId)
             }.getOrDefault(false)
             val mergedUsageMetadata = event.copy(
                 providerId = event.providerId.ifBlank { current.providerId },
@@ -182,13 +188,14 @@ object TaskCheckpointStore {
         // Recovery must not downgrade a possibly archived report to INTERRUPTED when the
         // archive itself cannot be read. Preserve every checkpoint until archive evidence is
         // available; the next process start can retry the complete reconciliation safely.
-        if (!TaskResultArchive.isArchiveReadable(context)) {
-            android.util.Log.e("AIMasterRecovery", "Odzyskiwanie checkpointów wstrzymane: archiwum raportów jest niedostępne lub uszkodzone.")
+        if (!TaskResultArchive.isArchiveReadable(context) ||
+            !ChatResponseArchive.isArchiveReadable(context)) {
+            android.util.Log.e("AIMasterRecovery", "Odzyskiwanie checkpointów wstrzymane: archiwum raportów lub odpowiedzi czatu jest niedostępne albo uszkodzone.")
             return 0
         }
         val stale = latest(context).filter { event ->
             val archivedResultExists = runCatching {
-                TaskResultArchive.get(context, event.taskId) != null
+                hasArchivedResult(context, event.taskId)
             }.getOrDefault(false)
             val terminalRequestNeedsReconciliation =
                 event.status in setOf("TIMED_OUT", "CANCELLED") &&
@@ -200,7 +207,7 @@ object TaskCheckpointStore {
         var recovered = 0
         stale.forEach { event ->
             val archivedResultExists = runCatching {
-                TaskResultArchive.get(context, event.taskId) != null
+                hasArchivedResult(context, event.taskId)
             }.getOrDefault(false)
             val needsUsageRecovery = event.status in setOf(
                 "REQUESTING", "USAGE_PENDING", "INTERRUPTED_USAGE_PENDING", "TIMED_OUT", "CANCELLED"
@@ -213,7 +220,7 @@ object TaskCheckpointStore {
             // accounting is pending. Always reconcile the archive independently of the last
             // lifecycle status so a crash in that narrow window cannot hide a durable report.
             val resultRecovered = runCatching {
-                TaskResultArchive.get(context, event.taskId) != null
+                hasArchivedResult(context, event.taskId)
             }.getOrDefault(false)
             val nextStatus = when {
                 needsUsageRecovery && !usageRecovered -> "INTERRUPTED_USAGE_PENDING"

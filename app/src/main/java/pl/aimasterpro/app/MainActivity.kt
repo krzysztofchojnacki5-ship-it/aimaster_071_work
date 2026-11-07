@@ -201,6 +201,15 @@ class MainActivity : Activity() {
             "AIMasterRecovery",
             "Przywrócono $restoredReports archiwalnych raportów do historii właściwych rozmów."
         )
+        val restoredChatResponses = runCatching {
+            pl.aimasterpro.app.core.ChatResponseArchive.restoreArchivedResponses(this)
+        }.onFailure {
+            android.util.Log.e("AIMasterRecovery", "Nie udało się przywrócić archiwalnych odpowiedzi czatu; zachowano archiwum do ponowienia.", it)
+        }.getOrDefault(0)
+        if (restoredChatResponses > 0) android.util.Log.w(
+            "AIMasterRecovery",
+            "Przywrócono $restoredChatResponses odpowiedzi czatu po przerwaniu procesu."
+        )
         seedDefaultProviders()
         selectedProviderId = runCatching { chatPrefs.getString("selected_provider", "gemini") }.getOrNull() ?: ""
         restoreMessages()
@@ -2444,6 +2453,21 @@ class MainActivity : Activity() {
                     actualModel = resp.model.ifBlank { safeConfig.model }
                     resp.text
                 }
+            }
+            // Commit a successful answer to a task-keyed archive before crossing onto
+            // the UI thread. A process death in the UI handoff window can then replay it.
+            val responseToArchive = result.getOrNull()
+            if (!responseToArchive.isNullOrBlank()) {
+                val responseArchived = runCatching {
+                    pl.aimasterpro.app.core.ChatResponseArchive.put(
+                        this, requestTaskId, chatId, chosenRole.name, responseToArchive,
+                        actualProviderId, actualModel
+                    )
+                }.getOrDefault(false)
+                if (!responseArchived) android.util.Log.e(
+                    "AIMasterRecovery",
+                    "Odpowiedź $requestTaskId nie została potwierdzona w archiwum przed finalizacją UI."
+                )
             }
             runOnUiThread {
                 if (gen != requestGen) {
