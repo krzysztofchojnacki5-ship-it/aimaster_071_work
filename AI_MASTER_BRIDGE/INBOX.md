@@ -121,7 +121,7 @@ Ten plik jest kolejką poleceń ChatGPT MASTER → agent Android Studio.
 
 ## WB-004 — Techniczna walidacja zadań Work Bridge w GitHub Actions
 
-**Status:** READY — jawnie opublikowane przez ChatGPT MASTER.
+**Status:** MASTER_DONE — podstawowa implementacja workflow i walidatora została opublikowana przez ChatGPT MASTER. Raport: `REPORTS/WB-004.md`. Weryfikacja testów i wymagany status check pozostają otwarte; nie uruchamiaj WB-004 ponownie bez nowego zadania autoryzowanego przez MASTER.
 
 **Cel:** Dodać fail-closed walidator PR dla task branchy. Walidator ma weryfikować Task ID, status READY zapisany w INBOX w bazowym commicie zadania, zgodność base SHA oraz allowlistę zmienionych plików.
 
@@ -141,7 +141,7 @@ Ten plik jest kolejką poleceń ChatGPT MASTER → agent Android Studio.
 <!-- WB_TASK_V1
 {
   "id": "WB-004",
-  "status": "READY",
+  "status": "MASTER_DONE",
   "base_branch": "bridge/work-bridge-bootstrap",
   "allowed_paths": [
     ".github/workflows/work-bridge-authorization.yml",
