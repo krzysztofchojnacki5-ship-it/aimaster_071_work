@@ -1465,3 +1465,15 @@ Weryfikacja:
 - nowy run 42320893601 dla SHA cc1215c2ae8ed517608f07298655c2cc9007c84a ma status IN_PROGRESS; krok unit tests + assembleDebug jest w toku;
 - porównanie branch/main: 285 commits ahead, 0 behind; main nadal 752149d40186144b0f458a32b5826c8928349c3a;
 - brak merge, APK i release; Companion Transport pozostaje BLOCKED.
+
+
+### Etap 19 — korekta formy metod i aktualizacja CI
+
+Po przeglądzie statycznym zmieniono trzy metody SecureStore (putSecret, saveConfig, replaceAllConfigs) z expression body na block body, aby jawne wczesne wyjścia fail-closed były jednoznaczne i zgodne z ograniczeniami składni Kotlin. Zmiana nie modyfikuje logiki transakcji.
+
+Commit: d35b6b99a66c7db3561fca541e7a16aa5600e5c0.
+
+CI:
+- run 42321007105 dla SHA d35b6b99a66c7db3561fca541e7a16aa5600e5c0: PENDING przy ostatnim odczycie;
+- poprzedni run 42320893601 dla SHA cc1215c2ae8ed517608f07298655c2cc9007c84a: IN_PROGRESS przy ostatnim odczycie, może zostać zastąpiony przez nowszy run;
+- żaden wynik testów ani assembleDebug nie jest jeszcze potwierdzony jako PASS.
