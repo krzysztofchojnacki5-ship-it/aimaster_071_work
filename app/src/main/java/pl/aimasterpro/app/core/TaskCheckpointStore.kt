@@ -11,6 +11,24 @@ object TaskCheckpointStore {
     private const val MAX_EVENTS = 800
     private val TERMINAL_STATUSES = setOf("COMPLETED", "FAILED", "BLOCKED", "TIMED_OUT", "CANCELLED", "INTERRUPTED")
     private val processId = java.util.UUID.randomUUID().toString()
+    @Volatile private var storageUncertain = false
+
+    /** An ambiguous commit can leave the process-local preference map ahead of durable storage. */
+    fun isStorageUncertain(): Boolean = storageUncertain
+
+    internal fun resetStorageHealthForTests() {
+        storageUncertain = false
+    }
+
+    private fun commitOrMarkUncertain(write: () -> Boolean): Boolean {
+        if (storageUncertain) return false
+        return try {
+            write().also { if (!it) storageUncertain = true }
+        } catch (_: Exception) {
+            storageUncertain = true
+            false
+        }
+    }
 
     data class Event(
         val taskId: String,
@@ -34,6 +52,7 @@ object TaskCheckpointStore {
      */
     @Synchronized
     fun record(context: Context, event: Event): Boolean {
+        if (storageUncertain) return false
         if (event.taskId.isBlank() || event.agentId.isBlank() || event.status.isBlank() ||
             event.timestamp < 0L || event.attempts < 0 ||
             event.estimatedInputTokens < 0L || event.estimatedOutputTokens < 0L) return false
@@ -98,17 +117,19 @@ object TaskCheckpointStore {
     }
 
     @Synchronized
-    fun load(context: Context): List<Event> = readEvents(context) ?: emptyList()
+    fun load(context: Context): List<Event> = if (storageUncertain) emptyList() else readEvents(context) ?: emptyList()
 
     /** Distinguishes an empty journal from unreadable persisted recovery data. */
     @Synchronized
-    fun isJournalReadable(context: Context): Boolean = readEvents(context) != null
+    fun isJournalReadable(context: Context): Boolean = !storageUncertain && readEvents(context) != null
 
     /**
      * A corrupt journal is distinct from an empty journal. Callers that append must not
      * replace unreadable persisted data with a new empty history.
      */
-    private fun readEvents(context: Context): List<Event>? = runCatching {
+    private fun readEvents(context: Context): List<Event>? {
+        if (storageUncertain) return null
+        return runCatching {
         val a = JSONArray(
             context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString(KEY, "[]") ?: "[]"
         )
@@ -158,6 +179,7 @@ object TaskCheckpointStore {
             )
         }
     }.getOrNull()
+    }
 
     /** At process startup, queued/running work from another process cannot be resumed safely. */
     @Synchronized
@@ -166,6 +188,7 @@ object TaskCheckpointStore {
         now: Long = System.currentTimeMillis(),
         onAmbiguousRequest: (Event) -> Boolean = { true }
     ): Int {
+        if (storageUncertain) return 0
         val stale = latest(context).filter { event ->
             val archivedResultExists = runCatching {
                 TaskResultArchive.get(context, event.taskId) != null
@@ -251,11 +274,15 @@ object TaskCheckpointStore {
         return load(context).filter { seen.add(it.taskId) }
     }
 
-    fun clear(context: Context): Boolean = runCatching {
-        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().remove(KEY).commit()
-    }.getOrDefault(false)
+    @Synchronized
+    fun clear(context: Context): Boolean {
+        if (storageUncertain) return false
+        return commitOrMarkUncertain {
+            context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().remove(KEY).commit()
+        }
+    }
 
-    private fun save(context: Context, rows: List<Event>): Boolean = runCatching {
+    private fun save(context: Context, rows: List<Event>): Boolean = commitOrMarkUncertain {
         val a = JSONArray()
         rows.forEach { e ->
             a.put(
@@ -278,5 +305,5 @@ object TaskCheckpointStore {
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
             .putString(KEY, a.toString())
             .commit()
-    }.getOrDefault(false)
+    }
 }

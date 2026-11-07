@@ -14,6 +14,7 @@ class TaskCheckpointStoreTest {
     @Before fun reset() {
         context.getSharedPreferences("task_checkpoints_v1", Context.MODE_PRIVATE).edit().clear().commit()
         context.getSharedPreferences("task_result_archive_v1", Context.MODE_PRIVATE).edit().clear().commit()
+        TaskCheckpointStore.resetStorageHealthForTests()
     }
 
     @Test fun checkpointReaderRejectsCoercedNumericStringsWithoutRewritingJournal() {
@@ -29,6 +30,66 @@ class TaskCheckpointStoreTest {
         )))
         assertEquals("Corrupt recovery evidence must remain intact for diagnosis",
             corrupt, prefs.getString("events", null))
+    }
+
+    @Test fun ambiguousCheckpointCommitQuarantinesJournalUntilProcessRecovery() {
+        val prefs = context.getSharedPreferences("task_checkpoints_v1", Context.MODE_PRIVATE)
+        val failingPrefs = java.lang.reflect.Proxy.newProxyInstance(
+            android.content.SharedPreferences::class.java.classLoader,
+            arrayOf(android.content.SharedPreferences::class.java)
+        ) { proxy, method, args ->
+            when (method.name) {
+                "edit" -> {
+                    val realEditor = prefs.edit()
+                    lateinit var editorProxy: android.content.SharedPreferences.Editor
+                    editorProxy = java.lang.reflect.Proxy.newProxyInstance(
+                        android.content.SharedPreferences.Editor::class.java.classLoader,
+                        arrayOf(android.content.SharedPreferences.Editor::class.java)
+                    ) { _, editorMethod, editorArgs ->
+                        when (editorMethod.name) {
+                            "putString" -> {
+                                realEditor.putString(editorArgs!![0] as String, editorArgs[1] as String)
+                                editorProxy
+                            }
+                            "commit" -> {
+                                realEditor.apply()
+                                false
+                            }
+                            "apply" -> { realEditor.apply(); null }
+                            "toString" -> "AmbiguousCheckpointEditor"
+                            else -> editorMethod.invoke(realEditor, *(editorArgs ?: emptyArray()))
+                        }
+                    } as android.content.SharedPreferences.Editor
+                    editorProxy
+                }
+                "getString" -> prefs.getString(args!![0] as String, args[1] as String?)
+                "contains" -> prefs.contains(args!![0] as String)
+                "getAll" -> prefs.all
+                "toString" -> "AmbiguousCheckpointPreferences"
+                "hashCode" -> System.identityHashCode(proxy)
+                "equals" -> proxy === args?.get(0)
+                else -> method.invoke(prefs, *(args ?: emptyArray()))
+            }
+        } as android.content.SharedPreferences
+        val failingContext = object : android.content.ContextWrapper(context) {
+            override fun getSharedPreferences(name: String, mode: Int): android.content.SharedPreferences =
+                if (name == "task_checkpoints_v1") failingPrefs else super.getSharedPreferences(name, mode)
+        }
+
+        assertFalse(TaskCheckpointStore.record(
+            failingContext,
+            TaskCheckpointStore.Event("ambiguous-write", "MASTER", "RUNNING", "", 100L, "", "", 0)
+        ))
+        assertTrue(TaskCheckpointStore.isStorageUncertain())
+        assertFalse(TaskCheckpointStore.isJournalReadable(context))
+        assertTrue(TaskCheckpointStore.load(context).isEmpty())
+        assertEquals(0, TaskCheckpointStore.recoverStaleRunning(context, 200L))
+        assertFalse(TaskCheckpointStore.record(
+            context,
+            TaskCheckpointStore.Event("must-not-append", "MASTER", "RUNNING", "", 300L, "", "", 0)
+        ))
+        assertFalse(TaskCheckpointStore.clear(context))
+        assertTrue(prefs.getString("events", null)?.contains("ambiguous-write") == true)
     }
 
     @Test fun safeCheckpointBaseUrlPreservesExplicitPortAndExcludesSensitiveUrlParts() {
