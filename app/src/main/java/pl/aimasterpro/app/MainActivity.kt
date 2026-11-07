@@ -3241,6 +3241,13 @@ class MainActivity : Activity() {
     }
 
     private fun showProviders() {
+        if (store.isStorageUncertain()) {
+            card(
+                "⚠ MAGAZYN KONFIGURACJI WYMAGA PONOWNEGO URUCHOMIENIA",
+                "Wykryto nieudany zapis ustawień. Android mógł zmienić dane w pamięci procesu, mimo że zapis na dysku się nie powiódł. Dla ochrony profili i kluczy API wszystkie dalsze odczyty i zapisy magazynu zostały zablokowane. Zamknij całkowicie AI MASTER PRO i uruchom aplikację ponownie. Nie wykonuj teraz importu ani ponownego zapisywania profili."
+            )
+            return
+        }
         val allSaved = store.allConfigs().mapNotNull { j -> runCatching { loadProvider(j.optString("id")) }.getOrNull() }
         val baseProfiles = allSaved.filter { it.parentProviderId.isBlank() }
         val unavailableSecretIds = store.unavailableSecretProviderIds()

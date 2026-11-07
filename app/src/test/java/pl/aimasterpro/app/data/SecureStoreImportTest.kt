@@ -21,6 +21,30 @@ class SecureStoreImportTest {
             .commit()
     }
 
+    @Test fun uncertainStorageStateBlocksReadsAndWritesAcrossStoreInstances() {
+        val context = org.robolectric.RuntimeEnvironment.getApplication()
+        seedExistingConfig(context)
+        val first = SecureStore(context)
+        val second = SecureStore(context)
+        try {
+            SecureStoreHealth.markUncertain()
+            assertTrue(first.isStorageUncertain())
+            assertTrue(second.isStorageUncertain())
+            assertTrue(second.allConfigs().isEmpty())
+            assertEquals(null, first.readConfig("existing"))
+            assertEquals(null, first.getSecret("key_existing"))
+            assertFalse(second.saveConfig(validConfig("blocked")))
+            assertFalse(second.putSecret("key_blocked", "must-not-be-written"))
+            assertFalse(second.replaceAllConfigs(listOf(validConfig("blocked"))))
+            assertFalse(second.canReplaceUnreadableSecrets())
+            assertTrue(second.unavailableSecretProviderIds().isEmpty())
+            val prefs = context.getSharedPreferences("secure_provider_store", Context.MODE_PRIVATE)
+            assertEquals("unchanged-encrypted-value", prefs.getString("key_existing", null))
+            assertFalse(prefs.contains("config_blocked"))
+            assertFalse(prefs.contains("key_blocked"))
+        } finally { SecureStoreHealth.resetForTests() }
+    }
+
     @Test fun emptyReplacementIsRejectedWithoutChangingExistingConfig() {
         val context = org.robolectric.RuntimeEnvironment.getApplication()
         seedExistingConfig(context)

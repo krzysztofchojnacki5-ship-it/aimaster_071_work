@@ -11,6 +11,20 @@ import javax.crypto.KeyGenerator
 import javax.crypto.SecretKey
 import javax.crypto.spec.GCMParameterSpec
 
+/**
+ * Process-wide latch: SharedPreferences may update its in-memory map before a failed disk commit.
+ * Once a commit fails, this process must not read or mutate that potentially divergent state.
+ * A process restart reloads the durable preferences state and clears this in-memory latch.
+ */
+internal object SecureStoreHealth {
+    private val sharedLock = Any()
+    @Volatile private var uncertain = false
+    fun isUncertain(): Boolean = uncertain
+    fun markUncertain() { uncertain = true }
+    internal fun resetForTests() { uncertain = false }
+    internal fun lock(): Any = sharedLock
+}
+
 /** Stores provider secrets with Android Keystore AES-GCM and fails closed if an existing key disappears. */
 internal fun shouldCreateFreshSecureStoreKey(aliasExists: Boolean, hasPersistedCiphertexts: Boolean): Boolean =
     !aliasExists && !hasPersistedCiphertexts
@@ -24,6 +38,20 @@ internal fun canReplaceUnreadableSecret(aliasExists: Boolean, keyIsSecretKey: Bo
 class SecureStore(context: Context) {
     private val prefs = context.getSharedPreferences("secure_provider_store", Context.MODE_PRIVATE)
     private val alias = "ai_master_provider_key_v1"
+
+    /** True after a failed preferences commit; only a process restart may clear this state. */
+    fun isStorageUncertain(): Boolean = SecureStoreHealth.isUncertain()
+
+    private fun commitOrMarkUncertain(editor: android.content.SharedPreferences.Editor): Boolean {
+        return try {
+            val committed = editor.commit()
+            if (!committed) SecureStoreHealth.markUncertain()
+            committed
+        } catch (_: Exception) {
+            SecureStoreHealth.markUncertain()
+            false
+        }
+    }
 
     private fun hasStoredCiphertext(name: String): Boolean = runCatching {
         !prefs.getString(name, null).isNullOrBlank()
@@ -79,23 +107,24 @@ class SecureStore(context: Context) {
     }
 
     /** Returns false when the secret could not be stored; nothing is written in that case. */
-    @Synchronized fun putSecret(name: String, value: String): Boolean {
-        return try {
+    fun putSecret(name: String, value: String): Boolean = synchronized(SecureStoreHealth.lock()) {
+        if (SecureStoreHealth.isUncertain()) return@synchronized false
+        try {
             val editor = prefs.edit()
             if (value.isBlank()) {
-                if (hasStoredCiphertext(name) && getSecret(name) == null) return false
+                if (hasStoredCiphertext(name) && getSecret(name) == null) return@synchronized false
                 editor.remove(name)
             } else {
-                val encrypted = encryptSecret(value) ?: return false
+                val encrypted = encryptSecret(value) ?: return@synchronized false
                 editor.putString(name, encrypted)
             }
-            editor.commit()
-        } catch (_: Exception) {
-            false
-        }
+            commitOrMarkUncertain(editor)
+        } catch (_: Exception) { false }
     }
 
-    @Synchronized fun getSecret(name: String): String? = runCatching {
+    fun getSecret(name: String): String? = synchronized(SecureStoreHealth.lock()) {
+        if (SecureStoreHealth.isUncertain()) return@synchronized null
+        runCatching {
         val packed = Base64.decode(prefs.getString(name, null), Base64.NO_WRAP)
         try {
             require(packed.size >= 28) { "Zaszyfrowany klucz jest niekompletny." }
@@ -117,11 +146,13 @@ class SecureStore(context: Context) {
         } finally {
             packed.fill(0)
         }
-    }.getOrNull()
+        }.getOrNull()
+    }
 
     /** Stores the encrypted key and its metadata in one preferences transaction. */
-    @Synchronized fun saveConfig(config: JSONObject): Boolean {
-        return try {
+    fun saveConfig(config: JSONObject): Boolean = synchronized(SecureStoreHealth.lock()) {
+        if (SecureStoreHealth.isUncertain()) return@synchronized false
+        try {
             validateImportedConfig(config)
             val id = config.getString("id")
             val incomingSecret = config.optString("apiKey")
@@ -135,15 +166,14 @@ class SecureStore(context: Context) {
             ids.add(id)
             val editor = prefs.edit().putString("config_$id", safe.toString()).putStringSet("provider_ids", ids)
             if (encrypted == null) editor.remove("key_$id") else editor.putString("key_$id", encrypted)
-            editor.commit()
-        } catch (_: Exception) {
-            false
-        }
+            commitOrMarkUncertain(editor)
+        } catch (_: Exception) { false }
     }
 
-    @Synchronized fun allConfigs(): List<JSONObject> {
+    fun allConfigs(): List<JSONObject> = synchronized(SecureStoreHealth.lock()) {
+        if (SecureStoreHealth.isUncertain()) return@synchronized emptyList()
         val ids = (prefs.getStringSet("provider_ids", emptySet()) ?: emptySet()).toList().sorted()
-        return ids.mapNotNull { readConfig(it) }
+        ids.mapNotNull { readConfig(it) }
     }
 
     private fun validateImportedConfig(config: JSONObject) {
@@ -180,9 +210,10 @@ class SecureStore(context: Context) {
      * including provider IDs, metadata and encrypted API keys, is committed with one Editor commit.
      * A preparation failure therefore leaves the previous configuration untouched.
      */
-    @Synchronized fun replaceAllConfigs(configs: List<JSONObject>): Boolean {
-        return try {
-            if (configs.isEmpty()) return false
+    fun replaceAllConfigs(configs: List<JSONObject>): Boolean = synchronized(SecureStoreHealth.lock()) {
+        if (SecureStoreHealth.isUncertain()) return@synchronized false
+        try {
+            if (configs.isEmpty()) return@synchronized false
             val copied = configs.map { JSONObject(it.toString()) }
             val newIds = copied.map { it.optString("id", "default") }
             require(newIds.all { it.isNotBlank() }) { "Id dostawcy nie może być pusty." }
@@ -222,13 +253,14 @@ class SecureStore(context: Context) {
                 editor.putString("config_$id", safe.toString())
                 if (encrypted == null) editor.remove("key_$id") else editor.putString("key_$id", encrypted)
             }
-            editor.putStringSet("provider_ids", newIds.toSet()).commit()
-        } catch (_: Exception) {
-            false
-        }
+            editor.putStringSet("provider_ids", newIds.toSet())
+            commitOrMarkUncertain(editor)
+        } catch (_: Exception) { false }
     }
 
-    fun readConfig(id: String): JSONObject? = runCatching {
+    fun readConfig(id: String): JSONObject? = synchronized(SecureStoreHealth.lock()) {
+        if (SecureStoreHealth.isUncertain()) return@synchronized null
+        runCatching {
         JSONObject(prefs.getString("config_$id", null) ?: return null).apply {
             val secretKey = "key_$id"
             if (hasStoredCiphertext(secretKey)) {
@@ -245,20 +277,26 @@ class SecureStore(context: Context) {
                 put("_secretUnavailable", false)
             }
         }
-    }.getOrNull()
+        }.getOrNull()
+    }
 
     /** True only when the current Android Keystore alias is present and contains an AES SecretKey. */
-    @Synchronized fun canReplaceUnreadableSecrets(): Boolean = runCatching {
+    fun canReplaceUnreadableSecrets(): Boolean = synchronized(SecureStoreHealth.lock()) {
+        if (SecureStoreHealth.isUncertain()) return@synchronized false
+        runCatching {
         val store = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
         canReplaceUnreadableSecret(
             aliasExists = store.containsAlias(alias),
             keyIsSecretKey = store.containsAlias(alias) && store.getKey(alias, null) is SecretKey
         )
-    }.getOrDefault(false)
+        }.getOrDefault(false)
+    }
 
     /** IDs whose encrypted API keys exist but cannot currently be decrypted. */
-    @Synchronized fun unavailableSecretProviderIds(): List<String> =
+    fun unavailableSecretProviderIds(): List<String> = synchronized(SecureStoreHealth.lock()) {
+        if (SecureStoreHealth.isUncertain()) return@synchronized emptyList()
         (prefs.getStringSet("provider_ids", emptySet()) ?: emptySet()).filter { id ->
             hasStoredCiphertext("key_$id") && getSecret("key_$id") == null
         }.sorted()
+    }
 }
