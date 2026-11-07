@@ -137,6 +137,14 @@ object TaskCheckpointStore {
         return recovered
     }
 
+    /** Only complete request metadata can authorize automatic UNAVAILABLE reconciliation. */
+    fun hasRecoverableUsageMetadata(event: Event): Boolean =
+        event.providerId.isNotBlank() &&
+            event.model.isNotBlank() &&
+            event.estimatedInputTokens > 0L &&
+            event.estimatedOutputTokens > 0L &&
+            event.idempotencyKey.isNotBlank()
+
     /** The journal is newest-first; first occurrence is authoritative regardless of wall-clock changes. */
     @Synchronized
     fun latest(context: Context): List<Event> {
