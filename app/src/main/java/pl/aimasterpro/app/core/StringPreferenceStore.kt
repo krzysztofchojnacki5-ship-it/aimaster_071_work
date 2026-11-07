@@ -15,33 +15,27 @@ internal class AndroidStringPreferenceStore(
 ) : StringPreferenceStore {
     private fun preferences() = context.getSharedPreferences(preferencesName, Context.MODE_PRIVATE)
 
-    override fun read(key: String): String? = preferences().getString(key, null)
-
-    /**
-     * SharedPreferences.commit() can update the process-local map before reporting a disk failure.
-     * On false, restore the prior value in memory and attempt a compensating durable commit.
-     * The original operation still reports failure even if compensation succeeds.
-     */
-    override fun write(key: String, value: String): Boolean {
-        val prefs = preferences()
-        val previous = prefs.getString(key, null)
-        val committed = runCatching { prefs.edit().putString(key, value).commit() }.getOrDefault(false)
-        if (committed) return true
-        runCatching {
-            val editor = prefs.edit()
-            if (previous == null) editor.remove(key) else editor.putString(key, previous)
-            editor.commit()
+    override fun read(key: String): String? {
+        check(!SharedPreferencesWriteHealth.isUncertain(preferencesName)) {
+            "Preference storage '$preferencesName' is unavailable after an ambiguous durable write."
         }
-        return false
+        return preferences().getString(key, null)
     }
 
-    /** Compensates an ambiguous failed removal so a false result is never reported as success. */
+    /**
+     * A false/throwing commit is ambiguous: SharedPreferences may already expose the new
+     * process-local value even though durable persistence failed. Do not attempt a compensating
+     * write; quarantine the entire preference file until process restart.
+     */
+    override fun write(key: String, value: String): Boolean {
+        if (SharedPreferencesWriteHealth.isUncertain(preferencesName)) return false
+        val editor = preferences().edit().putString(key, value)
+        return SharedPreferencesWriteHealth.commit(preferencesName, editor)
+    }
+
     override fun remove(key: String): Boolean {
-        val prefs = preferences()
-        val previous = prefs.getString(key, null)
-        val committed = runCatching { prefs.edit().remove(key).commit() }.getOrDefault(false)
-        if (committed) return true
-        if (previous != null) runCatching { prefs.edit().putString(key, previous).commit() }
-        return false
+        if (SharedPreferencesWriteHealth.isUncertain(preferencesName)) return false
+        val editor = preferences().edit().remove(key)
+        return SharedPreferencesWriteHealth.commit(preferencesName, editor)
     }
 }
