@@ -985,3 +985,13 @@ Audyt ujawnił, że limity 25 odpowiedzi MASTER i 80 raportów agentów były re
 - Nie zmieniono formatu wpisów ani markerów idempotencji. Nie utworzono APK; Companion pozostaje nieaktywny.
 
 Następny krok: przejrzeć konsekwencje backpressure dla ścieżek wywołujących `put()` — czy odmowa zapisu archiwum jest raportowana/obsługiwana bez cichego porzucenia wyniku, oraz czy istnieje bezpieczny retry po zwolnieniu pojemności. Dopiero potem rozszerzać audyt na kolejne punkty historii.
+
+### 0.6.139 — natychmiastowe potwierdzanie archiwów po normalnym zapisie (2026-11-07)
+
+Dalszy audyt przepływu danych pokazał, że samo potwierdzanie wpisów podczas startowego replayu pozostawiało pełne archiwum przez całą sesję, nawet jeśli odpowiedź lub raport był już poprawnie zapisany do `chats_v2`. Dodano osobne, niezmieniające historii metody `acknowledgePersisted()` w obu archiwach. Sprawdzają one trwały kanoniczny zapis (assistant task ID / TASK_REPORT_ID albo jednoznaczny legacy wpis) i usuwają wyłącznie potwierdzone rekordy.
+
+- `MainActivity.persistMessages()` zwalnia odpowiedzi po udanym zapisie wiadomości; `persistAgentActivity()` i zapis aktywności do poprzedniego czatu zwalniają raporty po udanym zapisie timeline.
+- Testy ADDED / NOT RUN. Commity: `5fde56a9...`, `7751de2c...`, `3be051c2...`, `53f04a12...`, `dfb5c508...`.
+- Work HEAD `dfb5c5083311f5194b52c8310f12be5e187e0504`. CI `42415438103` pozostaje aktywny na starszym SHA `c650c560...` i nie obejmuje zmian. APK NOT BUILT; Companion NOT ACTIVATED.
+
+Następny krok: statycznie prześledzić każdą ścieżkę wyniku MASTER/agent od odebrania odpowiedzi przez `put()`, zapis UI i potwierdzenie archiwum; potwierdzić, że błąd archiwizacji jest widoczny, a normalny commit historii rzeczywiście zwalnia slot. Potem przejść do odporności historii na nieudany zapis i ponowny odczyt po restarcie.
