@@ -1566,3 +1566,29 @@ Weryfikacja kodu:
 - nie dodano walidacji składni URL, ponieważ puste i niestandardowe endpointy są prawidłowymi stanami edytowalnego profilu;
 - pełna walidacja testami nadal oczekuje na CI.
 
+
+
+## Etap 23 — czyszczenie sekretów SecureStore i ścieżki wyjątków (2026-11-07)
+
+Kontynuacja przeglądu kryptografii wykazała, że SecureStore tworzył tymczasowe tablice bajtów zawierające klucz API i odszyfrowany sekret, ale nie zerował ich po użyciu. Dodatkowo odczyt sekretu dopuszczał bufor z IV i ciphertextem krótszy niż pełny tag GCM.
+
+Zmiany:
+- encryptSecret() zeruje tablicę plaintextu w finally;
+- zerowane są tymczasowe połączone IV+ciphertext oraz tablica ciphertext po kodowaniu Base64;
+- getSecret() wymaga co najmniej 28 bajtów (12 bajtów IV + minimum 16 bajtów tagu GCM);
+- getSecret() zeruje tablice packed, IV, ciphertext i odszyfrowany plaintext również przy wyjątku;
+- BackupCrypto.encrypt() zeruje plaintext bytes także wtedy, gdy doFinal() rzuci wyjątek;
+- BackupCrypto.encrypt() zeruje ciphertext po zakodowaniu;
+- BackupCrypto.decrypt() zeruje plaintext również wtedy, gdy walidacja po odszyfrowaniu lub utworzenie String zakończy się błędem;
+- dodano test odrzucania zbyt krótkiego sekretu GCM oraz test niedozwolonych znaków identyfikatora profilu.
+
+Commity:
+- 0a28a85 — higiena buforów SecureStore i minimalna długość tagu GCM;
+- 6cac03c — czyszczenie buforów BackupCrypto na ścieżkach wyjątków;
+- ae93673 — testy regresyjne.
+
+Uwagi:
+- API klucze i hasła są nadal reprezentowane przez String w warstwie modelu/UI, więc nie można wyzerować ich oryginalnych obiektów String; zmiany ograniczają czas życia dodatkowych mutowalnych kopii bajtowych.
+- Android Keystore nie udostępnia aplikacji możliwości ręcznego wyzerowania klucza sprzętowego; materiał klucza pozostaje zarządzany przez system.
+- Nie usuwano ani nie regenerowano istniejącego aliasu Keystore przy błędzie odczytu, aby nie zniszczyć dostępu do już zapisanych sekretów.
+
