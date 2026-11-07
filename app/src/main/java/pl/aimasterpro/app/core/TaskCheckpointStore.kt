@@ -112,28 +112,42 @@ object TaskCheckpointStore {
         )
         (0 until a.length()).map { i ->
             val o = a.getJSONObject(i)
-            val id = o.optString("task")
+            fun exactString(key: String, default: String = ""): String {
+                if (!o.has(key)) return default
+                val value = o.opt(key)
+                require(value is String) { "Checkpoint field '$key' is not a string." }
+                return value
+            }
+            fun exactLong(key: String, default: Long = 0L): Long {
+                if (!o.has(key)) return default
+                val value = o.opt(key)
+                require(value is Int || value is Long) { "Checkpoint field '$key' is not an exact integer." }
+                return (value as Number).toLong()
+            }
+            val id = exactString("task")
             require(id.isNotBlank()) { "Checkpoint row has no task id." }
-            val estimatedInput = o.optLong("estimatedInputTokens")
-            val estimatedOutput = o.optLong("estimatedOutputTokens")
-            val attempts = o.optInt("attempts")
-            require(estimatedInput >= 0L && estimatedOutput >= 0L && attempts >= 0) {
-                "Checkpoint row has invalid token estimates or attempt count."
+            val estimatedInput = exactLong("estimatedInputTokens")
+            val estimatedOutput = exactLong("estimatedOutputTokens")
+            val attemptsLong = exactLong("attempts")
+            val timestamp = exactLong("ts")
+            require(estimatedInput >= 0L && estimatedOutput >= 0L &&
+                attemptsLong in 0L..Int.MAX_VALUE.toLong() && timestamp >= 0L) {
+                "Checkpoint row has invalid token estimates, timestamp or attempt count."
             }
             Event(
                 id,
-                o.optString("agent"),
-                o.optString("status"),
-                o.optString("detail"),
-                o.optLong("ts"),
-                o.optString("provider"),
-                o.optString("model"),
-                attempts,
-                o.optString("processId"),
+                exactString("agent"),
+                exactString("status"),
+                exactString("detail"),
+                timestamp,
+                exactString("provider"),
+                exactString("model"),
+                attemptsLong.toInt(),
+                exactString("processId"),
                 estimatedInput,
                 estimatedOutput,
-                o.optString("idempotencyKey"),
-                o.optString("baseUrl")
+                exactString("idempotencyKey"),
+                exactString("baseUrl")
             )
         }
     }.getOrNull()
