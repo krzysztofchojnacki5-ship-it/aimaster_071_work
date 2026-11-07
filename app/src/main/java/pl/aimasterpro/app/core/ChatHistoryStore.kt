@@ -84,29 +84,55 @@ object ChatHistoryStore {
      * root only inside this callback; returning false means no persistence is needed.
      */
     @Synchronized
-    fun updateRoot(context: Context, update: (JSONObject) -> Boolean): Boolean = runCatching {
+    fun updateRoot(context: Context, update: (JSONObject) -> Boolean): Boolean =
+        updateRootInternal(context, null, update)
+
+    /** Atomically commits the canonical history and its user-chat navigation mirror. */
+    @Synchronized
+    fun updateRootAndLastUserChatId(
+        context: Context,
+        lastUserChatId: String,
+        update: (JSONObject) -> Boolean
+    ): Boolean {
+        if (lastUserChatId.isBlank() || lastUserChatId.length > 200) return false
+        return updateRootInternal(context, lastUserChatId, update)
+    }
+
+    private fun updateRootInternal(
+        context: Context,
+        lastUserChatId: String?,
+        update: (JSONObject) -> Boolean
+    ): Boolean = runCatching {
         // Hold the shared preference-file lock across the complete read-modify-write cycle,
         // not merely around the final commit. This also serializes with other healthy store users.
         SharedPreferencesWriteHealth.withHealthyAccess(PREFS) {
             val root = readRoot(context) ?: return@withHealthyAccess false
             val changed = runCatching { update(root) }.getOrElse { return@withHealthyAccess false }
-            !changed || writeRoot(context, root)
+            !changed || writeRootInternal(context, root, lastUserChatId)
         }
     }.getOrDefault(false)
 
     @Synchronized
-    fun writeRoot(context: Context, root: JSONObject): Boolean = runCatching {
+    fun writeRoot(context: Context, root: JSONObject): Boolean =
+        writeRootInternal(context, root, null)
+
+    private fun writeRootInternal(
+        context: Context,
+        root: JSONObject,
+        lastUserChatId: String?
+    ): Boolean = runCatching {
         // Keep validation, existing-document check, and commit in the same file-wide critical
-        // section. updateRoot already owns this reentrant monitor; direct callers now get the
-        // same exclusion guarantee instead of a read/commit race.
+        // section. updateRoot already owns this reentrant monitor; direct callers get the same
+        // exclusion guarantee. Navigation metadata joins the canonical document in one commit.
         SharedPreferencesWriteHealth.withHealthyAccess(PREFS) {
             val serialized = root.toString()
-            // Never allow a caller to replace an unreadable existing history with a fresh document.
             if (readRoot(context) == null) return@withHealthyAccess false
             val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
             val candidate = JSONObject(serialized)
             validate(candidate)
-            SharedPreferencesWriteHealth.commit(PREFS, prefs.edit().putString(KEY, serialized))
+            val editor = prefs.edit().putString(KEY, serialized)
+            if (lastUserChatId != null) editor.putString("last_user_chat_id", lastUserChatId)
+            SharedPreferencesWriteHealth.commit(PREFS, editor)
         }
     }.getOrDefault(false)
 
