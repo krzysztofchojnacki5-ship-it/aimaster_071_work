@@ -30,7 +30,7 @@ def make_report(base_sha=SHA):
 class WorkBridgeTests(unittest.TestCase):
     def check(self, **overrides):
         args = {
-            "inbox": make_inbox(), "report": make_report(),
+            "inbox": make_inbox(), "current_base_inbox": make_inbox(), "report": make_report(),
             "task_id": TASK, "head_branch": BRANCH,
             "base_branch": "bridge/work-bridge-bootstrap",
             "declared_base_sha": SHA, "merge_base": SHA,
@@ -51,6 +51,10 @@ class WorkBridgeTests(unittest.TestCase):
 
     def test_missing_task_manifest_rejected(self):
         self.assertTrue(any("found 0" in e for e in self.check(inbox="# no manifest")))
+
+    def test_revoked_task_in_current_base_is_rejected(self):
+        errors = self.check(current_base_inbox=make_inbox("MASTER_DONE"))
+        self.assertTrue(any("changed or was revoked" in e for e in errors))
 
     def test_duplicate_task_manifest_rejected(self):
         self.assertTrue(any("found 2" in e for e in self.check(inbox=make_inbox()+make_inbox())))
@@ -73,7 +77,7 @@ class WorkBridgeTests(unittest.TestCase):
             "base_branch": "bridge/work-bridge-bootstrap",
             "allowed_paths": [{"unexpected": "object"}],
         }
-        bad_inbox = "<!-- WB_TASK_V1\\n" + json.dumps(data) + "\\n-->\\n"
+        bad_inbox = "<!-- WB_TASK_V1\n" + json.dumps(data) + "\n-->\n"
         errors = self.check(inbox=bad_inbox)
         self.assertTrue(any("must be a string" in e for e in errors))
 
