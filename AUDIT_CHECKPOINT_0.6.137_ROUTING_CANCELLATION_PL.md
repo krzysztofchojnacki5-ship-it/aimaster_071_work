@@ -1180,3 +1180,30 @@ Weryfikacja:
 - testy pozostają NOT VERIFIED do czasu zakończenia CI;
 - najnowszy workflow run 42315490004 dla SHA 47484ab862994fc77b44f5586646c522a75a9e45 ma status in_progress; wcześniejsze uruchomienia pośrednich commitów zostały anulowane przez concurrency;
 - brak merge, APK, release i zmian main; Companion Transport pozostaje BLOCKED.
+
+
+## Etap 13 — kontrola identity wewnątrz autoryzowanego rollbacku (2026-11-07)
+
+Dodatkowa kontrola ścieżki rollbacku wykazała, że autoryzowana metoda sprawdzała dokładne identyfikatory receipt i flagę rollbackRequested, ale polegała wyłącznie na kontroli identity wykonywanej przez jej obecnych wywołujących. Warstwa magazynu powinna egzekwować tę granicę samodzielnie, aby przyszły nowy caller nie mógł przypadkowo nadpisać workspace o trzeciej identity.
+
+Zmiana:
+- restoreSnapshotForPatchRollback() wymaga teraz, aby aktualna workspace identity nadal była dokładnie równa workspaceIdentity zatwierdzonego patcha;
+- przy identity bazowej lub trzeciej transakcji metoda odmawia działania; przypadek już wykonanego restore obsługuje recoverRequestedPatchRollback() osobną gałęzią;
+- nie polegamy wyłącznie na kontroli wykonanej w MainActivity.
+
+Test:
+- authorizedRollbackRefusesAThirdWorkspaceIdentity;
+- zapisuje żądanie rollbacku, zmienia manifest na trzecią identity i sprawdza, że rollback zostaje odrzucony, treść bieżącego katalogu nie jest nadpisana, a receipt pozostaje do diagnostyki.
+
+Pliki:
+- app/src/main/java/pl/aimasterpro/app/core/ProjectWorkspaceStore.kt
+- app/src/test/java/pl/aimasterpro/app/core/ProjectWorkspaceStoreApplyTest.kt
+
+Commity:
+- kontrola identity: 17169d9b763a956f8a5aa39b9c49c5e2364554f5
+- test regresyjny: ab282f310b7a4bb44f3a23407c44fa7eea965925
+
+Weryfikacja:
+- kod i test zapisane na branchu; test nie został jeszcze wykonany;
+- najnowszy CI po zmianach Etapu 12 może zostać anulowany przez push kolejnego kodu; oczekujemy na run obejmujący Etap 13;
+- brak merge, APK, release i zmian main; Companion Transport pozostaje BLOCKED.
