@@ -2077,3 +2077,11 @@ Doprecyzowanie projektu SQLite:
 - Widok wiadomości i załączników jest czyszczony dopiero po potwierdzonym zapisie. Przy błędzie currentChatId wraca do poprzedniej rozmowy, a przejście zostaje przerwane.
 - Dodano test failedCurrentChatNavigationCommitKeepsPreviousMirrorAndQuarantinesStore dla awarii commit() przed zastosowaniem zmian; istniejący test pokrywa niejednoznaczny commit po apply().
 - Statyczny diff sprawdzony; testy JUnit/Gradle/Android debug oczekują na CI. APK nie utworzono; Companion nieaktywny.
+
+## 0.6.143 — atomowe usuwanie aktywnej rozmowy (2026-11-07)
+
+- Usunięcie bieżącej rozmowy nie wykonuje już osobnego, ignorowanego saveCurrentId() po usunięciu rekordu.
+- Dla zwykłej rozmowy usunięcie rekordu, ustawienie nowego chats_v2.currentId i last_user_chat_id następują w jednym commicie przez updateRootAndLastUserChatId().
+- Dla aktywnego czatu Asystenta zachowywany jest istniejący last_user_chat_id; jeśli brak celu użytkownika, nowy identyfikator jest tworzony i zapisywany atomowo.
+- Jeśli odczyt nawigacji Asystenta lub commit usunięcia zawiedzie, operacja kończy się bez potwierdzenia usunięcia. Przy niepowodzeniu commit() przed apply() stary rekord i mirror pozostają bez zmian.
+- Dodano testy sukcesu oraz awarii przed apply(). Statyczny diff sprawdzony; CI/JUnit/Android debug NOT RUN do potwierdzenia. APK nie utworzono; Companion nieaktywny.

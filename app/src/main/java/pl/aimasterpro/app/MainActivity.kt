@@ -2724,28 +2724,58 @@ class MainActivity : Activity() {
             .setNegativeButton("Anuluj", null)
             .setPositiveButton("Usuń") { _, _ ->
                 val deleted = synchronized(this) {
-                    if (id == currentChatId && !invalidateActiveEvidenceScopeForChatSwitch()) {
+                    val isCurrent = id == currentChatId
+                    if (isCurrent && !invalidateActiveEvidenceScopeForChatSwitch()) {
                         false
                     } else {
+                        // If the active chat is the dedicated assistant chat, retain the existing
+                        // user-chat navigation target. If none exists, create a replacement user ID.
+                        val existingLastUserId = if (isCurrent && isAssistantChatId(id)) {
+                            try {
+                                pl.aimasterpro.app.core.SharedPreferencesWriteHealth.withHealthyAccess("chat_state") {
+                                    chatPrefs.getString("last_user_chat_id", "") ?: ""
+                                }
+                            } catch (error: Exception) {
+                                toast("Nie można bezpiecznie odczytać bieżącej nawigacji. Rozmowa nie została usunięta.")
+                                return@setPositiveButton
+                            }
+                        } else ""
+                        val replacementId = if (isCurrent) {
+                            existingLastUserId.takeIf { it.isNotBlank() } ?: UUID.randomUUID().toString()
+                        } else null
+                        val updateLastUserId = isCurrent && (
+                            !isAssistantChatId(id) || existingLastUserId.isBlank()
+                        )
                         var found = false
-                        val saved = pl.aimasterpro.app.core.ChatHistoryStore.updateRoot(this) { root ->
-                            val chats = root.optJSONObject("chats") ?: return@updateRoot false
-                            if (!chats.has(id)) return@updateRoot false
-                            chats.remove(id)
-                            found = true
-                            true
+                        val removeFromRoot: (JSONObject) -> Boolean = { root ->
+                            val chats = root.optJSONObject("chats")
+                            if (chats == null || !chats.has(id)) {
+                                false
+                            } else {
+                                chats.remove(id)
+                                if (replacementId != null) root.put("currentId", replacementId)
+                                found = true
+                                true
+                            }
+                        }
+                        val saved = if (replacementId != null && updateLastUserId) {
+                            pl.aimasterpro.app.core.ChatHistoryStore.updateRootAndLastUserChatId(
+                                this, replacementId, removeFromRoot
+                            )
+                        } else {
+                            pl.aimasterpro.app.core.ChatHistoryStore.updateRoot(this, removeFromRoot)
                         }
                         if (!found || !saved) {
-                            toast("Nie udało się trwale usunąć rozmowy.")
+                            toast("Nie udało się trwale usunąć rozmowy. Stan historii pozostawiono bez zmian.")
                             return@setPositiveButton
                         }
                         chatTitles.remove(id)
                         val pins = pinnedIds(); if (pins.remove(id)) chatPrefs.edit().putStringSet("pinned_chats", pins).apply()
-                        if (id == currentChatId) {
-                            currentChatId = UUID.randomUUID().toString()
+                        if (replacementId != null) {
+                            currentChatId = replacementId
                             messages.clear()
                             assistantTaskIds.clear()
-                            saveCurrentId()
+                            agentActivity.clear()
                             navigate("Czat")
                         } else populateDrawerList()
                         true

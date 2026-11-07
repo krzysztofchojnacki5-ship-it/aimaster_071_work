@@ -341,6 +341,49 @@ class ChatHistoryStoreTest {
     }
 
 
+    @Test fun deletingCurrentChatAndSelectingReplacementCommitsTogether() {
+        val oldId = "chat-to-delete"
+        assertTrue(ChatHistoryStore.updateRootAndLastUserChatId(context, oldId) { root ->
+            root.put("currentId", oldId)
+            root.put("chats", JSONObject().put(oldId, JSONObject().put("messages", JSONArray())))
+            true
+        })
+
+        assertTrue(ChatHistoryStore.updateRootAndLastUserChatId(context, "replacement-chat") { root ->
+            val chats = root.getJSONObject("chats")
+            assertNotNull(chats.remove(oldId))
+            root.put("currentId", "replacement-chat")
+            true
+        })
+
+        val root = ChatHistoryStore.readRoot(context)!!
+        assertFalse(root.getJSONObject("chats").has(oldId))
+        assertEquals("replacement-chat", root.getString("currentId"))
+        assertEquals("replacement-chat", prefs.getString("last_user_chat_id", null))
+    }
+
+    @Test fun failedCurrentChatDeletionCommitKeepsChatAndNavigationMirror() {
+        val oldId = "chat-to-delete"
+        assertTrue(ChatHistoryStore.updateRootAndLastUserChatId(context, oldId) { root ->
+            root.put("currentId", oldId)
+            root.put("chats", JSONObject().put(oldId, JSONObject().put("messages", JSONArray())))
+            true
+        })
+
+        val failing = AmbiguousCommitContext(context, "chat_state", applyBeforeFailure = false)
+        assertFalse(ChatHistoryStore.updateRootAndLastUserChatId(failing, "replacement-chat") { root ->
+            root.getJSONObject("chats").remove(oldId)
+            root.put("currentId", "replacement-chat")
+            true
+        })
+
+        assertTrue(SharedPreferencesWriteHealth.isUncertain("chat_state"))
+        val root = JSONObject(prefs.getString("chats_v2", null)!!)
+        assertTrue(root.getJSONObject("chats").has(oldId))
+        assertEquals(oldId, root.getString("currentId"))
+        assertEquals(oldId, prefs.getString("last_user_chat_id", null))
+    }
+
     @Test fun currentChatAndLastUserNavigationMirrorCommitTogether() {
         assertTrue(ChatHistoryStore.updateRootAndLastUserChatId(context, "user-chat-atomic") { root ->
             root.put("currentId", "user-chat-atomic")
