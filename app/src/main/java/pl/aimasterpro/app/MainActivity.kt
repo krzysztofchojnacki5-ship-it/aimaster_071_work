@@ -58,6 +58,7 @@ import pl.aimasterpro.app.network.ProviderClient
 import pl.aimasterpro.app.network.ProviderException
 import pl.aimasterpro.app.network.ProviderModelInfo
 import java.io.File
+import java.io.InputStreamReader
 import java.util.UUID
 import java.util.concurrent.Executors
 
@@ -3654,6 +3655,24 @@ class MainActivity : Activity() {
             }.show()
     }
 
+    private fun readBackupText(uri: Uri): String {
+        val maxChars = 6 * 1024 * 1024
+        val stream = contentResolver.openInputStream(uri) ?: error("Nie można otworzyć pliku kopii.")
+        return stream.use { input ->
+            InputStreamReader(input, Charsets.UTF_8).use { reader ->
+                val output = StringBuilder()
+                val buffer = CharArray(8192)
+                while (true) {
+                    val count = reader.read(buffer)
+                    if (count < 0) break
+                    require(output.length + count <= maxChars) { "Plik kopii przekracza limit 6 MiB." }
+                    output.append(buffer, 0, count)
+                }
+                output.toString()
+            }
+        }
+    }
+
     private fun saveProvider(config: ProviderConfig) {
         val json = JSONObject().put("id", config.id).put("name", config.name).put("kind", config.kind.name)
             .put("baseUrl", config.baseUrl).put("model", config.model).put("apiKey", config.apiKey).put("enabled", config.enabled).put("parentProviderId", config.parentProviderId)
@@ -5560,22 +5579,33 @@ onRequestStarting = { task, actualProvider, estimatedInput, estimatedOutput, ide
         box.addView(input)
         AlertDialog.Builder(this).setTitle(if (export) "Eksport zaszyfrowanej bazy" else "Odszyfruj bazę")
             .setView(box).setNegativeButton("Anuluj", null).setPositiveButton(if (export) "Dalej" else "Wczytaj") { _, _ ->
-                val password = input.text.toString()
-                if (password.length < 8) { toast("Hasło musi mieć co najmniej 8 znaków."); return@setPositiveButton }
+                if (input.text.length < 8) { toast("Hasło musi mieć co najmniej 8 znaków."); return@setPositiveButton }
+                val passwordChars = CharArray(input.text.length)
+                input.text.getChars(0, input.text.length, passwordChars, 0)
                 if (export) {
                     val configs = JSONArray()
                     store.allConfigs().forEach { configs.put(it) }
                     if (configs.length() == 0) { toast("Brak zapisanych konfiguracji do eksportu."); return@setPositiveButton }
                     val payload = JSONObject().put("app", "AI_MASTER_PRO_ANDROID").put("schemaVersion", 1).put("providers", configs).toString()
-                    pendingBackup = BackupCrypto.encrypt(payload, password.toCharArray())
+                    try {
+                        pendingBackup = BackupCrypto.encrypt(payload, passwordChars)
+                    } finally {
+                        passwordChars.fill(0.toChar())
+                        input.text.clear()
+                    }
                     val create = Intent(Intent.ACTION_CREATE_DOCUMENT).apply {
                         addCategory(Intent.CATEGORY_OPENABLE); type = "application/json"; putExtra(Intent.EXTRA_TITLE, "ai-master-pro-baza-zaszyfrowana.json")
                     }
                     startActivityForResult(create, CREATE_BACKUP)
                 } else {
-                    val raw = source ?: runCatching { contentResolver.openInputStream(uri!!)?.bufferedReader()?.use { it.readText() } }.getOrNull()
+                    val raw = runCatching { source?.also { require(it.length <= 6 * 1024 * 1024) { "Plik kopii przekracza limit 6 MiB." } } ?: readBackupText(uri!!) }.getOrNull()
                     if (raw.isNullOrBlank()) { toast("Nie udało się odczytać pliku kopii."); return@setPositiveButton }
-                    val result = runCatching { BackupCrypto.decrypt(raw, password.toCharArray()) }
+                    val result = try {
+                        runCatching { BackupCrypto.decrypt(raw, passwordChars) }
+                    } finally {
+                        passwordChars.fill(0.toChar())
+                        input.text.clear()
+                    }
                     if (result.isFailure) { toast("Nie można odszyfrować bazy. Sprawdź hasło i plik."); return@setPositiveButton }
                     runCatching {
                         val data = JSONObject(result.getOrThrow())
