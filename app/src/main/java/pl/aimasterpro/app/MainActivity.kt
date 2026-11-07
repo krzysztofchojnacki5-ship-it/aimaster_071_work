@@ -3536,6 +3536,7 @@ class MainActivity : Activity() {
                 if (store.isStorageUncertain()) return@forEach
                 val result = if (store.isStorageUncertain()) Result.failure(IllegalStateException("SecureStore uncertain"))
                     else runCatching { client.discoverModelDetails(provider) }
+                if (store.isStorageUncertain()) return@forEach
                 if (result.isSuccess) {
                     val discovered = result.getOrDefault(emptyList())
                     if (discovered.isNotEmpty()) {
