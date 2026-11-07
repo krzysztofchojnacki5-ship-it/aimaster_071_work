@@ -2326,10 +2326,7 @@ class MainActivity : Activity() {
         configs.forEach { p ->
             val sub = p.model + if (p.apiKey.isBlank() && !p.id.equals("ollama", true)) " • brak klucza API" else if (p.id.equals("ollama", true)) " • lokalny / bez klucza" else ""
             box.addView(pickerRow(p.name, sub, p.id == selectedProviderId) {
-                selectedProviderId = p.id
-                agentProviders[AgentRole.MASTER.name] = p.id
-                chatPrefs.edit().putString("selected_provider", p.id)
-                    .putString("agent_provider_${AgentRole.MASTER.name}", p.id).apply()
+                if (!persistAgentProviderAssignment(AgentRole.MASTER, p.id)) return@pickerRow
                 dialog.dismiss(); navigate("Czat")
             })
         }
@@ -3479,10 +3476,7 @@ class MainActivity : Activity() {
                 row.addView(TextView(this).apply { text = (if (selected) "✓ AKTYWNY • " else "") + profile.name; setTextColor(if (selected) orange else white); textSize = 13f; typeface = Typeface.DEFAULT_BOLD })
                 row.addView(TextView(this).apply { text = profile.model; setTextColor(muted); textSize = 11f; setPadding(0, dp(2), 0, dp(4)); setTextIsSelectable(true) })
                 action("Ustaw jako model czatu", row) {
-                    selectedProviderId = profile.id
-                    agentProviders[AgentRole.MASTER.name] = profile.id
-                    chatPrefs.edit().putString("selected_provider", profile.id)
-                        .putString("agent_provider_${AgentRole.MASTER.name}", profile.id).apply()
+                    if (!persistAgentProviderAssignment(AgentRole.MASTER, profile.id)) return@action
                     showShell("Modele"); showProviders(); toast("Aktywny model czatu: ${profile.model}")
                 }
                 action("Kopiuj ID modelu", row) { copyText(profile.model) }
@@ -3769,10 +3763,7 @@ class MainActivity : Activity() {
                 if (!saveProvider(cfg)) return@setPositiveButton
                 modelCatalogPrefs.edit().putLong("last_attempt", 0L).apply()
                 if (cfg.model.isNotBlank()) {
-                    selectedProviderId = cfg.id
-                    agentProviders[AgentRole.MASTER.name] = cfg.id
-                    chatPrefs.edit().putString("selected_provider", cfg.id)
-                        .putString("agent_provider_${AgentRole.MASTER.name}", cfg.id).apply()
+                    if (!persistAgentProviderAssignment(AgentRole.MASTER, cfg.id)) return@setPositiveButton
                 }
                 showShell("Modele"); showProviders()
             }.show()
