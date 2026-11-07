@@ -459,3 +459,12 @@ Rejestr rozróżnia paczkę źródłową od wersji aplikacji/APK. Numer paczki n
 - Testy: pełne archiwum odrzuca nadmiar bez utraty starych wpisów; udany replay zwalnia pojemność; testy podstawowego replayu wymagają potwierdzenia usunięcia wpisu. Testy ADDED / NOT RUN.
 - Commity produkcyjne: ChatResponseArchive `2b689a7cd54cd11c600764df4f91bf110073a229`; TaskResultArchive `270281ab07942d4274034a25b3ab899d5ae1440a`. Testy: ChatResponseArchive `f3d1e5e40776276133de5c231947c7483911c895`; TaskResultArchive `589480a34f41579905a6bbcf9fcd69ea71c89f57`.
 - Work branch HEAD: `589480a34f41579905a6bbcf9fcd69ea71c89f57`. Aktywny CI `42415438103` nadal sprawdza wyłącznie starszy SHA `c650c560...`; nie obejmuje powyższych zmian. Nie ma wyniku testów/builda dla tego bloku. APK NOT BUILT; Companion NOT ACTIVATED.
+
+### 0.6.139 — zwalnianie archiwum natychmiast po normalnym zapisie historii (2026-11-07)
+
+- Dalszy audyt call-site'ów wykazał, że archiwa były potwierdzane dopiero przy starcie aplikacji. Odpowiedzi i raporty zapisane poprawnie w `chats_v2` mogły więc zajmować limit przez całą sesję.
+- Dodano `ChatResponseArchive.acknowledgePersisted()` i `TaskResultArchive.acknowledgePersisted()`: odczytują kanoniczną historię i usuwają wyłącznie wpisy z potwierdzonym markerem/task ID lub jednoznacznym legacy odpowiednikiem. Metody nie wykonują replayu ani nie modyfikują historii.
+- `MainActivity.persistMessages()` wywołuje potwierdzenie archiwum odpowiedzi po udanym zapisie kanonicznym. `persistAgentActivity()` oraz ścieżka dopisania aktywności do nieaktywnego czatu potwierdzają archiwum raportów dopiero po udanym `updateRoot()`.
+- Testy dodane: `acknowledgePersistedFreesResponseCapacityWithoutReplaying` i `acknowledgePersistedFreesReportCapacityWithoutReplaying`. ADDED / NOT RUN.
+- Commity: ChatResponseArchive `5fde56a9c24700d2893b344010535b9b68aca992`; TaskResultArchive `7751de2ca6eb3d7da1fb410d5b91afd5be1e7a72`; MainActivity `3be051c2d2c06cec5040061c4656fa1a5a307df4`; testy `53f04a1231f33bc713291e1ee0e20cb93588b7db` i `dfb5c5083311f5194b52c8310f12be5e187e0504`.
+- Work HEAD: `dfb5c5083311f5194b52c8310f12be5e187e0504`. CI `42415438103` nadal `in_progress` na wcześniejszym SHA `c650c560...`; ten blok nie jest jeszcze zweryfikowany.
