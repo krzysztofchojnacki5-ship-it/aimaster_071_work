@@ -1797,3 +1797,15 @@ Doprecyzowanie projektu SQLite:
 - Jeśli SecureStore.saveConfig() zwróci false (walidacja, Keystore, szyfrowanie lub commit), agent może otrzymać przypisanie do profilu, którego nowa konfiguracja nie została potwierdzona jako zapisana. Komunikat sukcesu jest fałszywy.
 - Naprawa: warunek if (!saveProvider(finalConfig)) { return } przed jakąkolwiek mutacją agentProviders/chatPrefs i przed komunikatem sukcesu. Zachować istniejące przypisanie agenta bez zmian po niepowodzeniu. Dodać test/wyodrębnioną politykę, jeśli ścieżka UI jest testowalna.
 - To znalezisko wzmacnia potrzebę wspólnego kontraktu zapisu SecureStore: każdy caller musi sprawdzać wynik, a żadna wtórna preferencja nie może być zapisana przed potwierdzeniem zapisu profilu.
+
+
+## Naprawy wdrożone na gałęzi audytowej — 2026-11-07
+
+- `BackupCrypto.decrypt()`: dekodowanie pól Base64 (`salt`, `iv`, `data`) przeniesiono do bloku `try/finally`. Każda tablica jest przypisywana do zmiennej nullable natychmiast po alokacji i czyszczona w finally, także gdy dekodowanie kolejnego pola rzuci wyjątek.
+- `BackupCryptoTest.kt`: dodano dwa testy regresyjne, w których poprawnie zakodowane wcześniejsze pola poprzedzają niepoprawne Base64 pola IV lub ciphertext. Testy budują kopertę przez JSONObject, aby zagwarantować, że błąd pochodzi z dekodera Base64, a nie z manipulacji tekstem JSON.
+- `MainActivity.kt`: przypisanie modelu do agenta przerywa operację, jeśli `saveProvider(finalConfig)` zwróci false. Nie zapisuje wtedy agentProviders/chatPrefs i nie pokazuje komunikatu sukcesu.
+- `MainActivity.kt`: tworzenie profilu modelu również przerywa dalsze kroki i nie pokazuje sukcesu, gdy `saveProvider(profile)` zwróci false.
+- Pozostałe wywołania seedDefaultProviders()/seedMissingDefaultProviders() nadal ignorują false, ale nie zapisują zależnych przypisań ani nie pokazują komunikatu sukcesu. Warto dodać zbiorczą diagnostykę inicjalizacji, lecz nie blokować startu aplikacji przez brak opcjonalnego profilu domyślnego.
+- Nie zmieniono jeszcze SecureStore. Polityka po false z SharedPreferences.commit() nadal wymaga wydzielenia testowalnej warstwy stanu niepewnego; nie należy wprowadzać pozornego rollbacku.
+- Zmiany kodu wymagają nowego CI. Nie uzyskano jeszcze potwierdzonego wyniku testów jednostkowych ani assembleDebug dla tych commitów. Nie oznaczać jako PASS przed odczytem końcowego workflow.
+- Najnowsze commity kodu: `e408041f` (crypto), `9658d13f` (testy Base64), `fc31a7d8` (agent assignment), `9bdbe3ed` (model profile). Pomiędzy nimi znajduje się też korekta testów `e65237d4`; ostateczna wersja testów została następnie poprawiona w `9658d13f`.
