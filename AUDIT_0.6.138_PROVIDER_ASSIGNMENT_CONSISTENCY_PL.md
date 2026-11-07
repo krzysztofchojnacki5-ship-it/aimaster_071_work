@@ -71,3 +71,47 @@ Przy starcie wartości przypisań są odczytywane z `chat_state` bez sprawdzenia
 - Ten dokument zapisuje wyniki przeglądu statycznego; nie jest potwierdzeniem wykonania nowych testów.
 - Nie zmieniono `main`, wersji aplikacji, APK ani danych użytkownika.
 - Nie wykonywano migracji SQLite.
+
+
+---
+
+## Aktualizacja 0.6.138 — pierwszy mały przyrost
+
+Aktualny commit po zmianach: `d8127b1efb25948751bf65f10ae0f275b8783e26`.
+
+### F-01 — kanoniczny resolver MASTER
+
+Wprowadzono `MasterProviderSelection` jako czysty, niezależny od Androida resolver:
+- niepuste `agentProviders["MASTER"]` jest źródłem kanonicznym;
+- `selected_provider` jest używany wyłącznie jako fallback zgodności dla starszego stanu;
+- brak obu wartości daje `null`, bez wymyślania identyfikatora.
+
+Resolver podłączono do:
+- `activeConfig()`;
+- wyboru profilu w wysyłaniu wiadomości MASTER;
+- fallbacku profilu MASTER dla zadań agentów;
+- podświetlania aktywnego profilu MASTER w ekranach modeli;
+- analizy jakości uruchamianej przez MASTER.
+
+Pola legacy nie zostały jeszcze usunięte z pamięci ani SharedPreferences — to celowe ograniczenie ryzyka migracyjnego. Ich zapis pozostaje kompatybilny, ale odczyt routingu korzysta ze wspólnego resolvera.
+
+Dodano `MasterProviderSelectionTest` z czterema przypadkami: rozbieżność wartości, fallback legacy, puste przypisanie kanoniczne oraz brak poprawnego wyboru.
+
+### Stan pozostałych znalezisk po inspekcji HEAD
+
+- F-02: ścieżka zapisu używa `SharedPreferencesWriteHealth.commit`; mapa pamięci jest aktualizowana dopiero po sukcesie. Testy awarii są obecne w `AgentProviderAssignmentStoreTest`.
+- F-03: pełny import wykonuje `replaceAllConfigs`, a następnie `reconcileAfterProviderImport`; wszystkie role i lustro MASTER są zapisywane jednym commitem. Po niepowodzeniu aplikacja blokuje routing.
+- F-04: „Testuj połączenie agenta” testuje kandydata i nie wywołuje zapisu przypisania. Jawny zapis jest osobną akcją.
+- F-05: startup wykonuje walidację i uzgodnienie ID względem katalogu; przy błędzie typu lub niepewnym magazynie routing pozostaje zablokowany.
+
+### Weryfikacja
+
+- Przegląd źródeł na HEAD: wykonany.
+- Nowy test jednostkowy: dodany, **nieuruchomiony**.
+- Android Gradle build: **nieuruchomiony**.
+- JUnit/Robolectric: **nieuruchomione**.
+- GitHub Actions dla nowego commita: brak powiązanego workflow run; combined status zwrócił pustą listę.
+- APK: nie tworzono.
+- Companion: nieaktywowany.
+
+Następny krok: uruchomić testy resolvera i istniejący zestaw `AgentProviderAssignmentStoreTest` w Android Studio/CI, a następnie wykonać testy przeplotu importu z zapisem przypisania. Nie wprowadzać kolejnych blokad, dopóki testy nie wykażą konkretnego wyścigu.
