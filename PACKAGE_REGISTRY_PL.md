@@ -439,3 +439,5 @@ Rejestr rozróżnia paczkę źródłową od wersji aplikacji/APK. Numer paczki n
 - Zintegrowano gałąź roboczą z pojedynczym nowszym commitem dokumentacyjnym z gałęzi audytowej bez utraty jego zawartości.
 - Gałąź audytowa: `audit/0.6.137-routing-hardening`; merge HEAD `c650c5604074449593d138730bd7e2e2b89da9d2`.
 - Nowy run `42415438103`, job `128532366193`, testowany SHA `c650c560...`; status `in_progress`. Na ostatnim odczycie konfiguracja Gradle trwała, testy/kompilacja oczekują.
+
+- Dodatkowo usunięto niezależne `apply()` zapisujące `last_user_chat_id` z przejść do Asystenta i tworzenia nowego czatu. Obie ścieżki korzystają teraz z `saveCurrentId()` i atomowego commitu `currentId` + `last_user_chat_id`; przy nieudanym zapisie przełączenie jest wstrzymywane. Statyczna kontrola MainActivity: pozostał wyłącznie odczyt `last_user_chat_id`, brak bezpośrednich zapisów `.apply()`. Commit `2db4679b21a5f908b150297d18e3ba23a7636d0a`; testy UI NOT RUN.
