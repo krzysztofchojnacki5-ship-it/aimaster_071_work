@@ -200,4 +200,26 @@ class ChatHistoryStoreTest {
         assertTrue((0 until activity.length()).map { activity.getString(it) }.containsAll(listOf("worker-1", "worker-2")))
     }
 
+    @Test fun updateCallbackFailureDoesNotPersistPartialMutationOrPoisonHistory() {
+        val original = JSONObject().put("currentId", "stable")
+            .put("chats", JSONObject().put("stable", JSONObject()
+                .put("messages", JSONArray()).put("title", "Original")))
+        assertTrue(ChatHistoryStore.writeRoot(context, original))
+
+        assertFalse(ChatHistoryStore.updateRoot(context) { current ->
+            current.getJSONObject("chats").getJSONObject("stable").put("title", "Partial")
+            throw IllegalStateException("injected update callback failure")
+        })
+
+        assertEquals("Original", ChatHistoryStore.readRoot(context)!!
+            .getJSONObject("chats").getJSONObject("stable").getString("title"))
+        assertFalse(SharedPreferencesWriteHealth.isUncertain("chat_state"))
+        assertTrue(ChatHistoryStore.updateRoot(context) { current ->
+            current.getJSONObject("chats").getJSONObject("stable").put("title", "Recovered")
+            true
+        })
+        assertEquals("Recovered", ChatHistoryStore.readRoot(context)!!
+            .getJSONObject("chats").getJSONObject("stable").getString("title"))
+    }
+
 }
