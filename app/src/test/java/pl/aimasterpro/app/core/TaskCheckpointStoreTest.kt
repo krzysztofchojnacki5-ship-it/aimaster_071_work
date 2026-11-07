@@ -17,6 +17,26 @@ class TaskCheckpointStoreTest {
         TaskCheckpointStore.resetStorageHealthForTests()
     }
 
+    @Test fun sharedPreferenceQuarantineAlsoBlocksCheckpointRecoveryAndMutation() {
+        val prefs = context.getSharedPreferences("task_checkpoints_v1", Context.MODE_PRIVATE)
+        val original = "[]"
+        assertTrue(prefs.edit().putString("events", original).commit())
+        val failingEditor = object : android.content.SharedPreferences.Editor by prefs.edit().putString("events", "[ambiguous]") {
+            override fun commit(): Boolean = false
+        }
+        assertFalse(SharedPreferencesWriteHealth.commit("task_checkpoints_v1", failingEditor))
+
+        assertTrue(TaskCheckpointStore.isStorageUncertain())
+        assertFalse(TaskCheckpointStore.isJournalReadable(context))
+        assertTrue(TaskCheckpointStore.load(context).isEmpty())
+        assertFalse(TaskCheckpointStore.record(context, TaskCheckpointStore.Event(
+            taskId = "blocked-task", agentId = "MASTER", status = "QUEUED", detail = "",
+            timestamp = 300L, providerId = "", model = "", attempts = 0
+        )))
+        assertFalse(TaskCheckpointStore.clear(context))
+        assertEquals(original, prefs.getString("events", null))
+    }
+
     @Test fun checkpointReaderRejectsCoercedNumericStringsWithoutRewritingJournal() {
         val prefs = context.getSharedPreferences("task_checkpoints_v1", Context.MODE_PRIVATE)
         val corrupt = """[{"task":"task-corrupt-checkpoint","agent":"RESEARCHER","status":"REQUESTING","detail":"started","ts":100,"provider":"openai","model":"gpt-4o-mini","attempts":1,"estimatedInputTokens":"450","estimatedOutputTokens":1200,"idempotencyKey":"request-key"}]"""
