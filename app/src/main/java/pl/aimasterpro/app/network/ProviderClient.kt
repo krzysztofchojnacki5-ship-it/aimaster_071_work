@@ -326,11 +326,21 @@ class ProviderClient(
             val text = (0 until content.length()).mapNotNull { content.optJSONObject(it)?.takeIf { o -> o.optString("type") == "text" }?.optString("text") }.joinToString("\n")
 
             val usageObj = result.optJSONObject("usage")
-            val input = exactNonNegativeCount(usageObj, "input_tokens")
+            // Anthropic reports uncached input separately from cache-read and cache-creation
+            // input. Fold all three into billable input tokens while retaining cached as a
+            // subset for diagnostics/pricing; otherwise token budgets silently omit cache hits.
+            val uncachedInput = exactNonNegativeCount(usageObj, "input_tokens")
             val output = exactNonNegativeCount(usageObj, "output_tokens")
-            val cached = exactNonNegativeCount(usageObj, "cache_read_input_tokens", 0L)
+            val cacheRead = exactNonNegativeCount(usageObj, "cache_read_input_tokens", 0L)
+            val cacheCreation = exactNonNegativeCount(usageObj, "cache_creation_input_tokens", 0L)
+            val cached = if (cacheRead != null && cacheCreation != null) {
+                runCatching { Math.addExact(cacheRead, cacheCreation) }.getOrNull()
+            } else null
+            val input = if (uncachedInput != null && cached != null) {
+                runCatching { Math.addExact(uncachedInput, cached) }.getOrNull()
+            } else null
             val reasoning = 0L
-            val realUsage = validUsageBreakdown(input, output, null, 0L, reasoning)
+            val realUsage = validUsageBreakdown(input, output, null, cached, reasoning)
             val finalInput = if (realUsage) input!! else (systemPrompt.length + userText.length) / 4.toLong()
             val finalOutput = if (realUsage) output!! else text.length / 4.toLong()
             val finalTotal = if (realUsage) Math.addExact(finalInput, finalOutput) else finalInput + finalOutput
