@@ -37,7 +37,7 @@ Wspólna, audytowalna kolejka pracy między ChatGPT MASTER, agentem Android Stud
 ### Przykłady decyzji
 
 - `WB-000 — DRAFT` → **BLOCKED**. Nie wolno wykonywać nawet „niewielkiej” części zadania.
-- `WB-002 — READY` → można rozpocząć wyłącznie zakres WB-002, na jego dedykowanym branchu i od wskazanego SHA.
+- `WB-002 — MASTER_DONE` → **BLOCKED dla agenta**; zakres został wykonany przez MASTER-a.
 - `WB-002 — MASTER_DONE` → **BLOCKED dla agenta**. Cel został wykonany bezpośrednio przez MASTER-a; nie wolno powtarzać zadania.
 - Brak Task ID w aktualnym INBOX → **BLOCKED**.
 
@@ -48,6 +48,24 @@ Wspólna, audytowalna kolejka pracy między ChatGPT MASTER, agentem Android Stud
 - `BLOCKED`: wstrzymane, nie wykonywać.
 - `DONE`: wykonane i zweryfikowane zgodnie z kryteriami; nie wykonywać ponownie.
 - `MASTER_DONE`: wykonane bezpośrednio przez ChatGPT MASTER; nie wykonywać przez agenta.
+
+
+## Techniczna walidacja task PR (WB-004)
+
+Repozytorium zawiera workflow `.github/workflows/work-bridge-authorization.yml` oraz walidator `tools/work_bridge/validate.py`.
+
+- Workflow uruchamia kontrolę dla PR kierowanych do `bridge/work-bridge-bootstrap`.
+- Kod walidatora jest pobierany z bazowego SHA PR, a nie z gałęzi PR. Workflow ma tylko `contents: read` i nie utrwala poświadczeń Git.
+- Zadanie musi zawierać dokładnie jeden maszynowy blok `WB_TASK_V1` w `AI_MASTER_BRIDGE/INBOX.md` bazowego commita. Blok określa ID, status READY, branch bazowy i dokładną allowlistę plików.
+- Nazwa brancha musi odpowiadać `bridge/task-WB-NNN-<slug>`; raport `AI_MASTER_BRIDGE/REPORTS/WB-NNN.md` musi podawać dokładny Task ID i pełny Base SHA.
+- Walidator porównuje deklarowany Base SHA z rzeczywistym merge-base PR, sprawdza status READY zarówno w INBOX merge-base, jak i w aktualnym INBOX gałęzi docelowej. Zmiana statusu lub zakresu po rozpoczęciu zadania unieważnia autoryzację.
+- Zmiany plików spoza allowlisty, fork PR, brak/duplikat/błędny manifest, brak raportu oraz operacje delete/rename/type-change są odrzucane.
+
+### Ważne ograniczenie egzekwowania
+
+Workflow jest kontrolą CI, ale **nie jest automatycznie wymaganym checkiem GitHub**. W chwili audytu rulesets zwracały pustą listę, gałąź bootstrap była oznaczona jako niechroniona, a dostępny connector nie pozwolił odczytać szczegółów endpointu branch protection (HTTP 403). Dopóki właściciel repozytorium nie włączy ochrony gałęzi i nie ustawi checka `validate-task` jako required, CI może zgłosić FAIL, ale GitHub nie musi blokować merge.
+
+Po pierwszym rzeczywistym uruchomieniu PR należy potwierdzić dokładną nazwę checka w zakładce Checks i ustawić ją jako required dla `bridge/work-bridge-bootstrap`. Wymagaj PR zamiast bezpośredniego push, jeśli celem jest egzekwowanie polityki dla wszystkich zmian.
 
 ## Status możliwości
 
