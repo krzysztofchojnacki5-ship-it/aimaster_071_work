@@ -351,3 +351,11 @@ Rejestr rozróżnia paczkę źródłową od wersji aplikacji/APK. Numer paczki n
 - Commity testowe: 9700c65beb50f7cbe7e02e50cca9937192613b48, a2966d67b70e8b80c4f6f4ffd7ac02ba85074e1e, 401f40d3e95a3cb166916a681e52b84258176735, 36a907e73df06c3f2b58a21703eb5106bcab58df.
 - Statyczny przegląd call sites w MainActivity.kt: mutujące ścieżki persistMessages, persistAgentActivity, saveCurrentId, appendToStoredChat i appendAgentActivityForChat są synchronizowane na instancji Activity; usuwanie i zmiana nazwy także obejmują sekcję synchronized(this). Nie potwierdzono na tym etapie rzeczywistego równoległego call site wymagającego zmiany produkcyjnego API.
 - Wszystkie cztery nowe/rozszerzone testy: ADDED / NOT RUN. CI 42411603439 nadal dotyczy wcześniejszego SHA 30e0f496...; brak walidacji nowych commitów. APK NOT BUILT; Companion NOT ACTIVATED.
+
+### Dodatkowy blok 0.6.139 — migracja legacy mirror historii (2026-11-07)
+
+- Audyt ścieżki startowej potwierdził konkretny scenariusz: po usunięciu ostatniej rozmowy lub utworzeniu nowego czatu dokument `chats_v2` może istnieć z pustym obiektem `chats`, podczas gdy stary mirror `chat_messages` nadal zawiera poprzednią rozmowę. Bez rozróżnienia „brak dokumentu” od „istniejący pusty dokument” restoreMessages() mógłby zaimportować stare wiadomości jako nową rozmowę.
+- `ChatHistoryStore.shouldImportLegacyMirror()` zwraca true wyłącznie, gdy kanoniczny dokument `chats_v2` jeszcze nie istnieje; obecny, nawet pusty dokument blokuje migrację. Błąd odczytu lub kwarantanna zwraca null, a restoreMessages() zatrzymuje odtwarzanie fail-closed.
+- Commity produkcyjne: `4f5cc77994fa05ac9e7747e5f469182d9ddb977a` (bramka migracji w ChatHistoryStore), `42bf4479e77ff3b73cf93a025fd0c055406e55de` (restoreMessages).
+- Testy: `e7d1ae88f6c160f8c7743f3e754efe23241baa57` i `4baec9da3c72bcdf89a68431470cfec5749799e7`; obejmują brak/istnienie kanonicznego dokumentu oraz błąd odczytu i kwarantannę. ADDED / NOT RUN.
+- CI nadal dotyczy wyłącznie SHA `30e0f496...`; nowy kod nie ma jeszcze wyniku build/test. APK NOT BUILT; Companion NOT ACTIVATED.
