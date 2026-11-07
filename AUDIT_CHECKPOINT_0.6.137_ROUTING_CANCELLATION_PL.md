@@ -1952,3 +1952,6 @@ Doprecyzowanie projektu SQLite:
 - CI dla `ba6c6dca` i `5779f298` uruchamia się osobno po kolejnych pushach; status końcowy musi być potwierdzony na najnowszym SHA. Nie traktować anulowanych runów jako PASS/FAIL.
 
 - Uzupełniono testy o awarię odczytu zaszyfrowanego pola `key_<id>`: sekret pozostaje w oryginalnym SharedPreferences, latch blokuje dalsze operacje, a próba wyczyszczenia pustą wartością nie może go usunąć. Commit: `61e23cf7`.
+
+- Doprecyzowano komentarz `SecureStoreHealth`: latch dotyczy zarówno nieudanego commitu, jak i wyjątku uniemożliwiającego wiarygodny odczyt; jedynym sposobem wyczyszczenia produkcyjnego latcha pozostaje restart procesu. Commit: `c787f228`.
+- Aktualny kod do CI: `c787f22841be0a5de451b3fdbdf4a4fe8463e2e9`, run `42331335074` w statusie `pending` przy aktualizacji checkpointu. Starszy run `42331107485` dotyczy wcześniejszego SHA `115657d8` i nie waliduje najnowszych testów.
