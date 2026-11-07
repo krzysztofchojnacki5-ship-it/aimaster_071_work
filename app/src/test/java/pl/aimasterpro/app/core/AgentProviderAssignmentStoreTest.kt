@@ -252,7 +252,7 @@ class AgentProviderAssignmentStoreTest {
         SharedPreferencesWriteHealth.resetForTests("chat_state")
         SecureStoreHealth.resetForTests()
         val recoveredCatalog = SecureStore(base).allConfigs().map { it.optString("id") }.toSet()
-        assertEquals(setOf("new-master", "new-coder"), recoveredCatalog)
+        assertEquals(setOf("new-master", "new-coder", "gemini", "groq"), recoveredCatalog)
 
         val recovered = AgentProviderAssignmentStore.reconcileExistingAssignments(
             base,
@@ -288,7 +288,9 @@ class AgentProviderAssignmentStoreTest {
             .put("parentProviderId", "")
             .put("apiKey", "")
 
-        assertTrue(SecureStore(base).replaceAllConfigs(listOf(provider("new-master"), provider("new-coder"))))
+        assertTrue(SecureStore(base).replaceAllConfigs(listOf(
+            provider("new-master"), provider("new-coder"), provider("gemini"), provider("groq")
+        )))
         prefs.edit()
             .putString("agent_provider_MASTER", "old-master")
             .putString("selected_provider", "old-master")
@@ -320,10 +322,10 @@ class AgentProviderAssignmentStoreTest {
 
         assertNotNull(recovered)
         assertTrue(recovered!!.values.all { it in recoveredCatalog })
-        assertEquals("new-coder", recovered["MASTER"]) // deterministic first valid ID; intended import preference was not durable
-        assertEquals("new-coder", recovered["CODER"])
-        assertEquals("new-coder", recovered["RESEARCHER"])
-        assertEquals("new-coder", prefs.getString("selected_provider", null))
+        assertEquals("gemini", recovered["MASTER"]) // startup-seeded default; intended import preference was not durable
+        assertEquals("groq", recovered["CODER"])
+        assertEquals("groq", recovered["RESEARCHER"])
+        assertEquals("gemini", prefs.getString("selected_provider", null))
     }
 
 }
