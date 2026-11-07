@@ -1216,3 +1216,13 @@ Weryfikacja:
 - JDK 17, Android SDK, API 36 i Gradle 8.13: SUCCESS.
 - Krok testów jednostkowych i kompilacji debug: IN_PROGRESS; raportów i logów końcowych jeszcze nie udostępniono.
 - Późniejszy commit dokumentacji checkpointu nie zmienia kodu i jest ignorowany przez paths-ignore.
+
+
+### Korekta testu Etapu 13 i kolejka CI
+
+Test authorizedRollbackRefusesAThirdWorkspaceIdentity został doprecyzowany: zamiast niepoprawnego manifestu używa teraz manifestu poprawnego, wygenerowanego przez drugi ProjectWorkspaceStore. Dzięki temu sprawdza rzeczywistą, trzecią identity, a nie tylko stan uszkodzonego manifestu.
+
+- Commit testu: 5dd1c7abac833a81916f2c322a1b85f9a5e49349.
+- Workflow run dla tego SHA: 42316019301 — PENDING przy ostatnim odczycie.
+- Run 42315729083 dla poprzedniej wersji testu nadal był IN_PROGRESS; nowszy run powinien go zastąpić przez concurrency.
+- Test i kompilacja pozostają NOT VERIFIED.
