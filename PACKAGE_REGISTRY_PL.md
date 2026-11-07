@@ -432,3 +432,10 @@ Rejestr rozróżnia paczkę źródłową od wersji aplikacji/APK. Numer paczki n
 - Dodano `ChatHistoryStore.updateRootAndLastUserChatId()`: oba klucze trafiają do jednego `SharedPreferences.Editor` i jednego commitu pod wspólną blokadą. `MainActivity.saveCurrentId()` korzysta teraz z tej ścieżki dla zwykłych rozmów; czatów MASTER/ASSISTANT to nie dotyczy.
 - Testy: `currentChatAndLastUserNavigationMirrorCommitTogether`, `ambiguousCurrentChatCommitNeverSplitsCanonicalIdFromNavigationMirror`.
 - Commity: storage `c85a4a5288746e3b964376297020a6199bb9dc57`, MainActivity `e49f3d94fb17ca9f39972ddf9f7aba631edd2b33`, testy `a2c955b0eeff9b41c428f69c197db8aec230d112`. Testy ADDED / NOT RUN.
+
+### Walidacja CI — ponowne uruchomienie na scalonym audycie (2026-11-07)
+
+- Poprzedni run `42411603439` zakończył się `cancelled`, nie `failure`; jego SHA `30e0f496...` nie obejmował bieżących zmian 0.6.139.
+- Zintegrowano gałąź roboczą z pojedynczym nowszym commitem dokumentacyjnym z gałęzi audytowej bez utraty jego zawartości.
+- Gałąź audytowa: `audit/0.6.137-routing-hardening`; merge HEAD `c650c5604074449593d138730bd7e2e2b89da9d2`.
+- Nowy run `42415438103`, job `128532366193`, testowany SHA `c650c560...`; status `in_progress`. Na ostatnim odczycie konfiguracja Gradle trwała, testy/kompilacja oczekują.
