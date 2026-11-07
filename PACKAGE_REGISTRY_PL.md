@@ -382,3 +382,9 @@ Rejestr rozróżnia paczkę źródłową od wersji aplikacji/APK. Numer paczki n
 - Testy sprawdzają, że wpis pozostaje w swoim archiwum, po symulowanym restarcie brakujący zapis zostaje odtworzony, zapis już widoczny nie jest dublowany, a kolejne replaye są idempotentne.
 - Commity testowe: `4ef5bc95e44c57ba7b12635fe67c13365b1dc5e8` (ChatResponseArchive), `d2fc3f5518fc60956bbda42403884289793d6a7d` (TaskResultArchive), `c08164e06135fb0d0815db4145591a544a254e61` (fixture).
 - Testy ADDED / NOT RUN. CI 42411603439 pozostaje in_progress na SHA 30e0f496... i nie obejmuje tych zmian.
+
+### 0.6.139 — awaria commit archiwum odpowiedzi MASTER (2026-11-07)
+
+- Dodano test ambiguousArchiveCommitQuarantinesRecoveryReadsAndWrites dla ChatResponseArchive.put(): symulowany commit niejednoznaczny (apply przed false) musi zwrócić false, oznaczyć archiwum jako niepewne, zablokować odczyt wpisu i kolejne zapisy.
+- Commit testu: e08735883591841b645202f33e72d307f809f1b5.
+- Test ADDED / NOT RUN. CI 42411603439 nadal in_progress na SHA 30e0f496...; nie obejmuje tego commita. APK NOT BUILT; Companion NOT ACTIVATED.
