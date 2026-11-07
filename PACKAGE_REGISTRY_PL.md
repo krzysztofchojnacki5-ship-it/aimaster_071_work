@@ -327,3 +327,16 @@ Rejestr rozróżnia paczkę źródłową od wersji aplikacji/APK. Numer paczki n
 - Brak nieatomowego fallbacku; directory fsync best-effort; AISW v1/v2, receipt format, commit point i lock scope bez zmian.
 - Android preflight BLOCKED: brak wrapper JAR, Gradle i Android SDK; Android/JUnit/Robolectric/APK/device/process-death NOT RUN.
 - Companion Transport: BLOCKED. Staged import nie jest wdrożony; ZIP import pozostaje pod global workspace lock.
+
+
+## Aktualizacja audytu 0.6.139 — ochrona sekretu przy pustym apiKey (2026-11-07)
+
+- Baza kodu: `30e0f496a4383d935563a35e7b61b1742f853c71` (gałąź audytowa).
+- Robocza gałąź: `work/0.6.139-saveconfig-secret-preservation`.
+- Commit `d3fd3060b797c2ca127bb2d97395a19f253aab6c`: `SecureStore.saveConfig()` odczytuje istniejący ciphertext i, gdy wejściowy `apiKey` jest pusty, zachowuje dokładnie istniejący ciphertext po potwierdzeniu, że sekret daje się odczytać. Brak możliwości odczytu blokuje aktualizację. Zmiana nie zapisuje plaintextu w JSON profilu.
+- Commit `7ee0908d8f7fbefe603493b48f154e5752e3f951`: cztery testy regresyjne obejmują zachowanie ciphertextu, brak plaintextu, awarię commit przed apply, awarię po apply oraz odrzucenie aktualizacji z nieczytelnym sekretem.
+- Test seam deszyfrowania jest ograniczony do konstruktora `internal`; domyślna ścieżka produkcyjna nadal korzysta z AndroidKeyStore AES-GCM.
+- CI run `42411603439` testuje wyłącznie SHA `30e0f496...`; nadal `in_progress`, krok `testDebugUnitTest :app:assembleDebug` bez końcowego wyniku. Job ma limit 45 minut. Nowa gałąź nie ma jeszcze runu CI.
+- Testy 0.6.139: ADDED / NOT RUN. Android build dla nowych commitów: NOT RUN. APK: NOT BUILT. Companion: NOT ACTIVATED.
+- Nie scalono jeszcze roboczej gałęzi z `audit/0.6.137-routing-hardening`; nie zmieniono `main`.
+- Następny krok: po rozstrzygnięciu aktywnego runu CI przenieść zmianę na gałąź audytową, uruchomić pełne testy i debug compilation, przeanalizować raporty, a następnie kontynuować odporność historii rozmów.
