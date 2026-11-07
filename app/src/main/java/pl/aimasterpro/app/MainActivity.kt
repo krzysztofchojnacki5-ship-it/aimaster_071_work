@@ -3906,7 +3906,10 @@ class MainActivity : Activity() {
                 .setNegativeButton("Anuluj", null).show()
             return
         }
-        saveProvider(finalConfig)
+        if (!saveProvider(finalConfig)) {
+            // Do not persist an agent assignment unless its provider profile was saved.
+            return
+        }
         agentProviders[role.name] = finalConfig.id
         chatPrefs.edit().putString("agent_provider_${role.name}", finalConfig.id).apply()
         if (role == AgentRole.MASTER) {
