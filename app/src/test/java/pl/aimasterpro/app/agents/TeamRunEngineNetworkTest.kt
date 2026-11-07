@@ -533,4 +533,35 @@ class TeamRunEngineNetworkTest {
         }
     }
 
+
+    @Test
+    fun usageAndTaskResultUseCanonicalModelReturnedByProvider() {
+        ProviderQuotaScheduler.resetForTests()
+        val server = TestHttpServer { _, _ ->
+            200 to """{"model":"gateway/canonical-model-v2","choices":[{"message":{"content":"canonical-model-report"}}],"usage":{"prompt_tokens":4,"completion_tokens":3,"total_tokens":7}}"""
+        }
+        try {
+            val configured = ProviderConfig(
+                "canonical-provider", "Canonical provider", ProviderKind.OPENAI_COMPATIBLE,
+                "http://127.0.0.1:${server.address.port}/v1", "requested-alias", ""
+            )
+            val billedModel = AtomicReference("")
+            val result = TeamRunEngine(ProviderClient()).runBatch(
+                tasks = listOf(TeamTask("canonical-model-task", "qa-architect", "Model identity", "Return report")),
+                provider = configured,
+                agentProvidersMap = mapOf("qa-architect" to configured),
+                isFreeProvider = { true },
+                mode = WorkMode.PLANNING,
+                onUsage = { _, _, actualProvider, _ -> billedModel.set(actualProvider.model) }
+            ).single()
+            assertEquals(TeamTaskResult.Status.COMPLETED, result.status)
+            assertEquals("gateway/canonical-model-v2", billedModel.get())
+            assertEquals("gateway/canonical-model-v2", result.model)
+            assertEquals(configured.id, result.providerId)
+            assertEquals(1, server.requestCount.get())
+        } finally {
+            ProviderQuotaScheduler.resetForTests()
+            server.stop(0)
+        }
+    }
 }
