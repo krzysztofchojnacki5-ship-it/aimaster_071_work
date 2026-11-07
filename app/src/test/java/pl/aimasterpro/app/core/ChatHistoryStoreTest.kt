@@ -20,6 +20,25 @@ class ChatHistoryStoreTest {
         SharedPreferencesWriteHealth.resetForTests("chat_state")
     }
 
+    @Test fun legacyMirrorImportIsAllowedOnlyWhenCanonicalDocumentIsMissing() {
+        assertEquals(true, ChatHistoryStore.shouldImportLegacyMirror(context))
+        assertTrue(ChatHistoryStore.writeRoot(context, JSONObject().put("chats", JSONObject())))
+        assertEquals(false, ChatHistoryStore.shouldImportLegacyMirror(context))
+    }
+
+    @Test fun legacyMirrorImportFailsClosedWhenPreferenceReadFailsOrStoreIsQuarantined() {
+        val failingContext = object : android.content.ContextWrapper(context) {
+            override fun getSharedPreferences(name: String, mode: Int): android.content.SharedPreferences {
+                throw IllegalStateException("controlled preferences read failure")
+            }
+        }
+        assertNull(ChatHistoryStore.shouldImportLegacyMirror(failingContext))
+        SharedPreferencesWriteHealth.resetForTests("chat_state")
+        SharedPreferencesWriteHealth.commit("chat_state", prefs.edit().putString("marker", "value"))
+        assertTrue(SharedPreferencesWriteHealth.isUncertain("chat_state"))
+        assertNull(ChatHistoryStore.shouldImportLegacyMirror(context))
+    }
+
     @Test fun missingHistoryIsAValidEmptyStoreAndCanBeCommitted() {
         val root = ChatHistoryStore.readRoot(context)!!
         val chats = JSONObject().put("chat-1", JSONObject()
