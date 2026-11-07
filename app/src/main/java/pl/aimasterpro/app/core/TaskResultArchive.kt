@@ -71,6 +71,10 @@ object TaskResultArchive {
         return null
     }
 
+    /** Distinguishes an empty readable archive from corrupt or inaccessible recovery data. */
+    @Synchronized
+    fun isArchiveReadable(context: Context): Boolean = read(context) != null
+
     @Synchronized
     fun latest(context: Context, limit: Int = MAX_ENTRIES): List<Entry> {
         if (limit <= 0) return emptyList()
