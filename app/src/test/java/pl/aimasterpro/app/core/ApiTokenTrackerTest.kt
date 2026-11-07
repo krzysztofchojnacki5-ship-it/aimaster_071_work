@@ -339,6 +339,36 @@ class ApiTokenTrackerTest {
             0L, ApiTokenTracker.activeReservationStats().tokens)
     }
 
+    @Test fun requestedBatchReleaseKeepsRunningWorkerBudgetUntilUsageIsRecordedAndWorkerExits() {
+        val plan = ApiTokenTracker.planBatch(
+            context,
+            listOf(BudgetRequest("late-worker", "MASTER", "ollama",
+                "http://127.0.0.1:11434/v1", "llama3", 20L, 20L))
+        )
+        assertTrue(plan.allowedTaskIds.contains("late-worker"))
+        assertEquals(40L, ApiTokenTracker.activeReservationStats().tokens)
+
+        // The coordinator may finish after Future.cancel(true), while an interrupt-ignoring
+        // callable is still running. Its reservation must remain until that callable exits.
+        ApiTokenTracker.requestBatchReservationRelease(plan.reservationId)
+        assertEquals("A release request must not free a live worker's budget",
+            40L, ApiTokenTracker.activeReservationStats().tokens)
+
+        ApiTokenTracker.recordQuery(
+            context, "ollama", "llama3", "MASTER", "late-worker",
+            inputTokens = 10L, outputTokens = 5L, status = "REAL",
+            baseUrl = "http://127.0.0.1:11434/v1", reservationId = plan.reservationId,
+            idempotencyKey = "late-worker-real-usage"
+        )
+        assertEquals("Recorded usage should replace the corresponding part of the live estimate",
+            25L, ApiTokenTracker.activeReservationStats().tokens)
+
+        ApiTokenTracker.completeReservationTask(plan.reservationId, "late-worker")
+        assertEquals("The reservation is retired only after the worker exits",
+            0L, ApiTokenTracker.activeReservationStats().tokens)
+        assertEquals(15L, ApiTokenTracker.budgetUsageSnapshot(context).recordedTodayTokens)
+    }
+
     @Test fun concurrentUsageSnapshotsAreSerializedWithSessionRecordWrites() {
         val failure = AtomicReference<Throwable?>(null)
         val writerDone = CountDownLatch(1)
