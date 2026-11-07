@@ -35,7 +35,7 @@ internal fun hasUnreadableExistingSecrets(existingSecretIds: Set<String>, readab
 internal fun canReplaceUnreadableSecret(aliasExists: Boolean, keyIsSecretKey: Boolean): Boolean =
     aliasExists && keyIsSecretKey
 
-class SecureStore(
+class SecureStore internal constructor(
     context: Context,
     private val commitEditor: (android.content.SharedPreferences.Editor) -> Boolean = { it.commit() }
 ) {
@@ -128,27 +128,27 @@ class SecureStore(
     fun getSecret(name: String): String? = synchronized(SecureStoreHealth.lock()) {
         if (SecureStoreHealth.isUncertain()) return@synchronized null
         runCatching {
-        val packed = Base64.decode(prefs.getString(name, null), Base64.NO_WRAP)
-        try {
-            require(packed.size >= 28) { "Zaszyfrowany klucz jest niekompletny." }
-            val iv = packed.copyOfRange(0, 12)
-            val ciphertext = packed.copyOfRange(12, packed.size)
+            val packed = Base64.decode(prefs.getString(name, null), Base64.NO_WRAP)
             try {
-                val cipher = Cipher.getInstance("AES/GCM/NoPadding")
-                cipher.init(Cipher.DECRYPT_MODE, key(), GCMParameterSpec(128, iv))
-                val plainBytes = cipher.doFinal(ciphertext)
+                require(packed.size >= 28) { "Zaszyfrowany klucz jest niekompletny." }
+                val iv = packed.copyOfRange(0, 12)
+                val ciphertext = packed.copyOfRange(12, packed.size)
                 try {
-                    String(plainBytes, Charsets.UTF_8)
+                    val cipher = Cipher.getInstance("AES/GCM/NoPadding")
+                    cipher.init(Cipher.DECRYPT_MODE, key(), GCMParameterSpec(128, iv))
+                    val plainBytes = cipher.doFinal(ciphertext)
+                    try {
+                        String(plainBytes, Charsets.UTF_8)
+                    } finally {
+                        plainBytes.fill(0)
+                    }
                 } finally {
-                    plainBytes.fill(0)
+                    iv.fill(0)
+                    ciphertext.fill(0)
                 }
             } finally {
-                iv.fill(0)
-                ciphertext.fill(0)
+                packed.fill(0)
             }
-        } finally {
-            packed.fill(0)
-        }
         }.getOrNull()
     }
 
@@ -264,22 +264,23 @@ class SecureStore(
     fun readConfig(id: String): JSONObject? = synchronized(SecureStoreHealth.lock()) {
         if (SecureStoreHealth.isUncertain()) return@synchronized null
         runCatching {
-        JSONObject(prefs.getString("config_$id", null) ?: return null).apply {
-            val secretKey = "key_$id"
-            if (hasStoredCiphertext(secretKey)) {
-                val decrypted = getSecret(secretKey)
-                if (decrypted == null) {
-                    put("apiKey", "")
-                    put("_secretUnavailable", true)
+            val stored = prefs.getString("config_$id", null) ?: return@synchronized null
+            JSONObject(stored).apply {
+                val secretKey = "key_$id"
+                if (hasStoredCiphertext(secretKey)) {
+                    val decrypted = getSecret(secretKey)
+                    if (decrypted == null) {
+                        put("apiKey", "")
+                        put("_secretUnavailable", true)
+                    } else {
+                        put("apiKey", decrypted)
+                        put("_secretUnavailable", false)
+                    }
                 } else {
-                    put("apiKey", decrypted)
+                    put("apiKey", "")
                     put("_secretUnavailable", false)
                 }
-            } else {
-                put("apiKey", "")
-                put("_secretUnavailable", false)
             }
-        }
         }.getOrNull()
     }
 
