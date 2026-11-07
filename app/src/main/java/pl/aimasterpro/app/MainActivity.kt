@@ -482,6 +482,11 @@ class MainActivity : Activity() {
         importedConfigs: List<JSONObject>,
         preferredMasterId: String
     ): Boolean {
+        // Provider replacement has already happened at the call sites. Invalidate old
+        // in-memory routing before attempting the durable all-role reconciliation.
+        agentAssignmentsHealthy = false
+        agentProviders.clear()
+        selectedProviderId = ""
         val defaults = AgentRole.values().associate { role ->
             role.name to if (role == AgentRole.MASTER) preferredMasterId else "groq"
         }
