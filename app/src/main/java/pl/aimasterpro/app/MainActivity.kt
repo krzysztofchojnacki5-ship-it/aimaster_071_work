@@ -300,8 +300,9 @@ class MainActivity : Activity() {
             }
             "Asystent" -> {
                 val assistantId = assistantChatId()
-                if (!isAssistantChatId(currentChatId) && currentChatId.isNotBlank()) {
-                    chatPrefs.edit().putString("last_user_chat_id", currentChatId).apply()
+                if (!isAssistantChatId(currentChatId) && currentChatId.isNotBlank() && !saveCurrentId()) {
+                    toast("Nie udało się trwale zapisać bieżącej rozmowy. Przejście do Asystenta zostało wstrzymane.")
+                    return
                 }
                 selectedAgent = AgentRole.ASSISTANT
                 currentChatId = assistantId

@@ -2061,3 +2061,11 @@ Doprecyzowanie projektu SQLite:
 - Dodano LegacyChatHistoryImporter i testy: pusty/brakujący mirror, zachowanie kolejności, niepoprawny JSON, nieprawidłowe wiersze i typy pól.
 - Zakres nie obejmuje testu rzeczywistej śmierci procesu ani gwarancji power-loss. Testy JUnit/Robolectric i Android debug compilation: ADDED / NOT RUN do potwierdzenia przez CI.
 - Companion pozostaje nieaktywny; APK nie został zbudowany.
+
+## 0.6.141 — atomowość przejścia do Asystenta (2026-11-07)
+
+- Usunięto bezpośredni SharedPreferences.apply() dla last_user_chat_id w navigate("Asystent").
+- Przed przełączeniem roli wywoływany jest saveCurrentId(), który dla zwykłego czatu zapisuje chats_v2.currentId oraz last_user_chat_id jednym commitem przez updateRootAndLastUserChatId().
+- Jeśli zapis nie powiedzie się, nawigacja zostaje przerwana przed zmianą selectedAgent i currentChatId; użytkownik otrzymuje komunikat.
+- Regresja opiera się na istniejących testach currentChatAndLastUserNavigationMirrorCommitTogether i ambiguousCurrentChatCommitNeverSplitsCanonicalIdFromNavigationMirror; nie dodano duplikatu testu tego samego kontraktu.
+- Statyczny diff sprawdzony; JUnit/Gradle/Android debug CI oczekuje na wykonanie. APK nie utworzono; Companion nieaktywny.
