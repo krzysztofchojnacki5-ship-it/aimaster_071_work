@@ -102,7 +102,12 @@ class SecureStore(context: Context) {
         return try {
             validateImportedConfig(config)
             val id = config.getString("id")
-            val encrypted = encryptSecret(config.optString("apiKey"))
+            val incomingSecret = config.optString("apiKey")
+            val existingSecretPresent = prefs.contains("key_$id")
+            if (existingSecretPresent && incomingSecret.isBlank() && getSecret("key_$id") == null) {
+                throw IllegalStateException("Istniejący klucz API jest niedostępny. Nie nadpisano go pustą wartością.")
+            }
+            val encrypted = encryptSecret(incomingSecret)
             val safe = JSONObject(config.toString()).apply { remove("apiKey") }
             val ids = (prefs.getStringSet("provider_ids", emptySet()) ?: emptySet()).toMutableSet()
             ids.add(id)
@@ -196,7 +201,26 @@ class SecureStore(context: Context) {
 
     fun readConfig(id: String): JSONObject? = runCatching {
         JSONObject(prefs.getString("config_$id", null) ?: return null).apply {
-            put("apiKey", getSecret("key_$id") ?: "")
+            val secretKey = "key_$id"
+            if (prefs.contains(secretKey)) {
+                val decrypted = getSecret(secretKey)
+                if (decrypted == null) {
+                    put("apiKey", "")
+                    put("_secretUnavailable", true)
+                } else {
+                    put("apiKey", decrypted)
+                    put("_secretUnavailable", false)
+                }
+            } else {
+                put("apiKey", "")
+                put("_secretUnavailable", false)
+            }
         }
     }.getOrNull()
+
+    /** IDs whose encrypted API keys exist but cannot currently be decrypted. */
+    @Synchronized fun unavailableSecretProviderIds(): List<String> =
+        (prefs.getStringSet("provider_ids", emptySet()) ?: emptySet()).filter { id ->
+            prefs.contains("key_$id") && getSecret("key_$id") == null
+        }.sorted()
 }
