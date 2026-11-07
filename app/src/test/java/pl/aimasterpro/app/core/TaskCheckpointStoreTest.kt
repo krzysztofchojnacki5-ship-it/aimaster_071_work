@@ -177,6 +177,21 @@ class TaskCheckpointStoreTest {
         assertEquals("TIMED_OUT", TaskCheckpointStore.latest(context).single().status)
     }
 
+    @Test fun preferenceAccessFailureDoesNotCrashOrAllowCheckpointOverwrite() {
+        val failingContext = object : android.content.ContextWrapper(context) {
+            override fun getSharedPreferences(name: String, mode: Int): android.content.SharedPreferences {
+                throw IllegalStateException("controlled checkpoint preferences failure")
+            }
+        }
+        assertFalse(TaskCheckpointStore.record(
+            failingContext,
+            TaskCheckpointStore.Event("task-unreadable", "tester", "RUNNING", "", 100L, "", "", 0)
+        ))
+        assertTrue(TaskCheckpointStore.load(failingContext).isEmpty())
+        assertEquals(0, TaskCheckpointStore.recoverStaleRunning(failingContext))
+        assertFalse(TaskCheckpointStore.clear(failingContext))
+    }
+
     @Test fun corruptJournalIsNotSilentlyReplacedByAnEmptyHistory() {
         val prefs = context.getSharedPreferences("task_checkpoints_v1", Context.MODE_PRIVATE)
         val corrupt = """{"events":[broken"""
