@@ -75,6 +75,12 @@ class ApiTokenTrackerTest {
         )
         assertEquals(455L, duplicateActual.totalTokens)
         assertEquals(1, ApiTokenTracker.loadAllRecordsFromStorage(context).count { it.queryId == key })
+
+        ApiTokenTracker.resetInMemoryStateForTests()
+        val afterProcessRestart = ApiTokenTracker.loadAllRecordsFromStorage(context)
+        assertEquals(1, afterProcessRestart.count { it.queryId == key })
+        assertEquals("REAL", afterProcessRestart.single { it.queryId == key }.status)
+        assertEquals(455L, afterProcessRestart.single { it.queryId == key }.totalTokens)
     }
 
     @Test fun idempotencyKeyCannotBeReusedForAnotherTaskIdentity() {
