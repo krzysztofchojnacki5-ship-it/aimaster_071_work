@@ -120,6 +120,26 @@ class TaskCheckpointStoreTest {
         assertEquals("team:$taskId:openai", reconciled.idempotencyKey)
     }
 
+    @Test fun timedOutTaskCanRecordUsagePendingWithoutArchivedReportWhenMetadataIsComplete() {
+        val taskId = "task-timeout-usage-no-report"
+        assertTrue(TaskCheckpointStore.record(context, TaskCheckpointStore.Event(
+            taskId = taskId, agentId = "RESEARCHER", status = "TIMED_OUT",
+            detail = "coordinator deadline elapsed", timestamp = 100L,
+            providerId = "openai", model = "gpt-4o-mini", attempts = 1,
+            processId = "previous-process", estimatedInputTokens = 200L,
+            estimatedOutputTokens = 500L, idempotencyKey = "team:$taskId:openai"
+        )))
+        assertTrue(TaskCheckpointStore.record(context, TaskCheckpointStore.Event(
+            taskId = taskId, agentId = "RESEARCHER", status = "USAGE_PENDING",
+            detail = "usage persistence failed", timestamp = 200L
+        )))
+        val pending = TaskCheckpointStore.latest(context).single()
+        assertEquals("USAGE_PENDING", pending.status)
+        assertEquals("team:$taskId:openai", pending.idempotencyKey)
+        assertEquals(200L, pending.estimatedInputTokens)
+        assertEquals(500L, pending.estimatedOutputTokens)
+    }
+
     @Test fun timedOutTaskMayRemainUsagePendingWhenArchivedReportExists() {
         val taskId = "task-timeout-usage-race"
         assertTrue(TaskCheckpointStore.record(context, TaskCheckpointStore.Event(
