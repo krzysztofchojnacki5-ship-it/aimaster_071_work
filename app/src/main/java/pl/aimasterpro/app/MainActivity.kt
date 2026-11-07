@@ -3513,10 +3513,19 @@ class MainActivity : Activity() {
         }
         status.text = "Pobieranie katalogów modeli…"
         executor.execute {
+            if (store.isStorageUncertain()) {
+                runOnUiThread {
+                    status.text = "Magazyn konfiguracji wymaga ponownego uruchomienia"
+                    if (showToast) toast("Pobieranie katalogów przerwane. Uruchom ponownie AI MASTER PRO.")
+                }
+                return@execute
+            }
             var success = 0
             val failures = mutableListOf<String>()
             providers.forEach { provider ->
-                val result = runCatching { client.discoverModelDetails(provider) }
+                if (store.isStorageUncertain()) return@forEach
+                val result = if (store.isStorageUncertain()) Result.failure(IllegalStateException("SecureStore uncertain"))
+                    else runCatching { client.discoverModelDetails(provider) }
                 if (result.isSuccess) {
                     val discovered = result.getOrDefault(emptyList())
                     if (discovered.isNotEmpty()) {
@@ -3524,6 +3533,13 @@ class MainActivity : Activity() {
                         success++
                     } else failures.add("${provider.name}: API zwróciło pustą listę; zachowano poprzedni katalog")
                 } else failures.add("${provider.name}: ${result.exceptionOrNull()?.message ?: "błąd"}")
+            }
+            if (store.isStorageUncertain()) {
+                runOnUiThread {
+                    status.text = "Synchronizacja przerwana: magazyn konfiguracji wymaga ponownego uruchomienia"
+                    if (showToast) toast("Nie zapisano wyników synchronizacji.")
+                }
+                return@execute
             }
             runOnUiThread {
                 val now = System.currentTimeMillis()
@@ -3644,7 +3660,11 @@ class MainActivity : Activity() {
             ))
         }
         return try {
-            val result = runCatching { client.chat(config, systemPrompt, userPrompt, scope = scope) }
+            val result = if (store.isStorageUncertain()) {
+                Result.failure(IllegalStateException("Magazyn konfiguracji wymaga ponownego uruchomienia. Test API nie został wysłany."))
+            } else {
+                runCatching { client.chat(config, systemPrompt, userPrompt, scope = scope) }
+            }
             recordModelTestUsage(config, result.getOrNull(), testLabel, taskId, plan.reservationId,
                 estimatedInput, 256L, result.exceptionOrNull())
             result
@@ -3787,8 +3807,20 @@ class MainActivity : Activity() {
         }
         status.text = "Pobieranie modeli: ${base.name}…"
         executor.execute {
-            val result = runCatching { client.discoverModelDetails(base) }
+            if (store.isStorageUncertain()) {
+                runOnUiThread {
+                    status.text = "Pobieranie modeli przerwane: magazyn wymaga ponownego uruchomienia"
+                    toast("Nie wysłano żądania do dostawcy.")
+                }
+                return@execute
+            }
+            val result = if (store.isStorageUncertain()) Result.failure(IllegalStateException("SecureStore uncertain"))
+                else runCatching { client.discoverModelDetails(base) }
             val discovered = result.getOrDefault(emptyList())
+            if (store.isStorageUncertain()) {
+                runOnUiThread { status.text = "Wynik odrzucony: magazyn konfiguracji wymaga ponownego uruchomienia" }
+                return@execute
+            }
             if (result.isSuccess && discovered.isNotEmpty()) {
                 saveModelCatalogForProvider(base, discovered)
                 val now = System.currentTimeMillis()
