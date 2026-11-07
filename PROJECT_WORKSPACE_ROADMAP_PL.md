@@ -932,3 +932,7 @@ Wszystkie siedem mutujących ścieżek MainActivity zostało przeniesionych na C
 ### 0.6.139 — awarie replayu archiwów odpowiedzi i raportów
 
 Dodano scenariusze commit failure przed i po apply dla replayu ChatResponseArchive i TaskResultArchive. Testy sprawdzają zachowanie archiwum jako źródła odzyskiwania, idempotencję po restarcie i brak duplikacji, gdy apply zmienił już widoczny snapshot. Cztery testy + fixture dodane, NOT RUN.
+
+### 0.6.139 — odporność zapisu archiwum odpowiedzi MASTER
+
+Dodano test awarii niejednoznacznego commit w ChatResponseArchive: po apply + zwróceniu false magazyn musi wejść w kwarantannę, nie udawać czytelności i blokować następne zapisy. Commit testowy e08735883591841b645202f33e72d307f809f1b5; ADDED / NOT RUN. CI nadal waliduje starszy SHA 30e0f496...
