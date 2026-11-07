@@ -21,6 +21,31 @@ class SecureStoreImportTest {
             .commit()
     }
 
+    @Test fun failedPreferencesCommitPoisonsAllStoreInstances() {
+        val context = org.robolectric.RuntimeEnvironment.getApplication()
+        val failingStore = SecureStore(context) { editor ->
+            // SharedPreferences.apply() mutates the in-memory map immediately; report the
+            // simulated disk failure to exercise the same fail-closed policy as commit() == false.
+            editor.apply()
+            false
+        }
+        val otherStore = SecureStore(context)
+        try {
+            assertFalse(failingStore.saveConfig(validConfig("commit_failure")))
+
+            assertTrue(failingStore.isStorageUncertain())
+            assertTrue(otherStore.isStorageUncertain())
+            assertTrue(otherStore.allConfigs().isEmpty())
+            assertEquals(null, otherStore.readConfig("commit_failure"))
+            assertFalse(otherStore.saveConfig(validConfig("must_stay_blocked")))
+            val prefs = context.getSharedPreferences("secure_provider_store", Context.MODE_PRIVATE)
+            assertTrue(prefs.contains("config_commit_failure"))
+            assertFalse(prefs.contains("config_must_stay_blocked"))
+        } finally {
+            SecureStoreHealth.resetForTests()
+        }
+    }
+
     @Test fun uncertainStorageStateBlocksReadsAndWritesAcrossStoreInstances() {
         val context = org.robolectric.RuntimeEnvironment.getApplication()
         seedExistingConfig(context)

@@ -35,7 +35,10 @@ internal fun hasUnreadableExistingSecrets(existingSecretIds: Set<String>, readab
 internal fun canReplaceUnreadableSecret(aliasExists: Boolean, keyIsSecretKey: Boolean): Boolean =
     aliasExists && keyIsSecretKey
 
-class SecureStore(context: Context) {
+class SecureStore(
+    context: Context,
+    private val commitEditor: (android.content.SharedPreferences.Editor) -> Boolean = { it.commit() }
+) {
     private val prefs = context.getSharedPreferences("secure_provider_store", Context.MODE_PRIVATE)
     private val alias = "ai_master_provider_key_v1"
 
@@ -44,7 +47,7 @@ class SecureStore(context: Context) {
 
     private fun commitOrMarkUncertain(editor: android.content.SharedPreferences.Editor): Boolean {
         return try {
-            val committed = editor.commit()
+            val committed = commitEditor(editor)
             if (!committed) SecureStoreHealth.markUncertain()
             committed
         } catch (_: Exception) {
