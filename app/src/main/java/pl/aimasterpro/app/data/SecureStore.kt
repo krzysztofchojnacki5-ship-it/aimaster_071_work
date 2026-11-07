@@ -25,6 +25,10 @@ class SecureStore(context: Context) {
     private val prefs = context.getSharedPreferences("secure_provider_store", Context.MODE_PRIVATE)
     private val alias = "ai_master_provider_key_v1"
 
+    private fun hasStoredCiphertext(name: String): Boolean = runCatching {
+        !prefs.getString(name, null).isNullOrBlank()
+    }.getOrElse { prefs.contains(name) }
+
     /**
      * Returns the AES key, creating it only when no entry exists. An existing entry is never deleted
      * here: a transient Keystore failure must not destroy the key that protects saved provider keys.
@@ -33,7 +37,7 @@ class SecureStore(context: Context) {
         val store = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
         if (!store.containsAlias(alias)) {
             val persistedCiphertexts = prefs.all.keys.any { key ->
-                key.startsWith("key_") && !prefs.getString(key, null).isNullOrBlank()
+                key.startsWith("key_") && hasStoredCiphertext(key)
             }
             check(shouldCreateFreshSecureStoreKey(aliasExists = false, hasPersistedCiphertexts = persistedCiphertexts)) {
                 "Brak klucza Android Keystore dla istniejących sekretów. Nie utworzono nowego klucza, aby nie nadpisać możliwości odzyskania danych."
@@ -79,7 +83,7 @@ class SecureStore(context: Context) {
         return try {
             val editor = prefs.edit()
             if (value.isBlank()) {
-                if (prefs.contains(name) && getSecret(name) == null) return false
+                if (hasStoredCiphertext(name) && getSecret(name) == null) return false
                 editor.remove(name)
             } else {
                 val encrypted = encryptSecret(value) ?: return false
@@ -121,7 +125,7 @@ class SecureStore(context: Context) {
             validateImportedConfig(config)
             val id = config.getString("id")
             val incomingSecret = config.optString("apiKey")
-            val existingSecretPresent = prefs.contains("key_$id")
+            val existingSecretPresent = hasStoredCiphertext("key_$id")
             if (existingSecretPresent && incomingSecret.isBlank() && getSecret("key_$id") == null) {
                 throw IllegalStateException("Istniejący klucz API jest niedostępny. Nie nadpisano go pustą wartością.")
             }
@@ -185,7 +189,7 @@ class SecureStore(context: Context) {
             require(newIds.size == newIds.toSet().size) { "Kopia zawiera powtórzone identyfikatory dostawców." }
             copied.forEach(::validateImportedConfig)
             val existingSecretIds = prefs.all.keys.filter { key ->
-                key.startsWith("key_") && !prefs.getString(key, null).isNullOrBlank()
+                key.startsWith("key_") && hasStoredCiphertext(key)
             }.toSet()
             val readableSecretIds = existingSecretIds.filter { getSecret(it) != null }.toSet()
             require(!hasUnreadableExistingSecrets(existingSecretIds, readableSecretIds)) {
@@ -227,7 +231,7 @@ class SecureStore(context: Context) {
     fun readConfig(id: String): JSONObject? = runCatching {
         JSONObject(prefs.getString("config_$id", null) ?: return null).apply {
             val secretKey = "key_$id"
-            if (prefs.contains(secretKey)) {
+            if (hasStoredCiphertext(secretKey)) {
                 val decrypted = getSecret(secretKey)
                 if (decrypted == null) {
                     put("apiKey", "")
@@ -255,6 +259,6 @@ class SecureStore(context: Context) {
     /** IDs whose encrypted API keys exist but cannot currently be decrypted. */
     @Synchronized fun unavailableSecretProviderIds(): List<String> =
         (prefs.getStringSet("provider_ids", emptySet()) ?: emptySet()).filter { id ->
-            prefs.contains("key_$id") && getSecret("key_$id") == null
+            hasStoredCiphertext("key_$id") && getSecret("key_$id") == null
         }.sorted()
 }
