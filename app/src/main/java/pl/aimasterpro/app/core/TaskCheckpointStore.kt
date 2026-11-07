@@ -117,14 +117,20 @@ object TaskCheckpointStore {
         stale.forEach { event ->
             val needsUsageRecovery = event.status in setOf("REQUESTING", "USAGE_PENDING", "INTERRUPTED_USAGE_PENDING")
             val usageRecovered = !needsUsageRecovery || runCatching { onAmbiguousRequest(event) }.getOrDefault(false)
+            // A crash can occur after the report archive commits but before COMPLETED is journaled.
+            // Reconcile that durable report without repeating the provider request or billing usage.
+            val resultRecovered = event.status == "RESULT_PERSIST_PENDING" &&
+                runCatching { TaskResultArchive.get(context, event.taskId) != null }.getOrDefault(false)
             val nextStatus = when {
                 needsUsageRecovery && !usageRecovered -> "INTERRUPTED_USAGE_PENDING"
+                resultRecovered -> "COMPLETED"
                 else -> "INTERRUPTED"
             }
             val detail = when {
                 needsUsageRecovery && usageRecovered -> "Proces zakończył się po rozpoczęciu żądania; nieznane zużycie API zabezpieczono jako UNAVAILABLE."
                 needsUsageRecovery -> "Proces zakończył się po rozpoczęciu żądania; księgowanie UNAVAILABLE oczekuje na ponowienie."
-                event.status == "RESULT_PERSIST_PENDING" -> "Proces zakończył się po odebraniu raportu; trwały zapis wyniku nie został potwierdzony."
+                resultRecovered -> "Raport odzyskano z trwałego archiwum; nie ponawiano żądania API."
+                event.status == "RESULT_PERSIST_PENDING" -> "Proces zakończył się po odebraniu raportu; nie znaleziono potwierdzonego zapisu w archiwum wyników."
                 else -> "Proces aplikacji zakończył się przed zapisaniem wyniku."
             }
             val saved = record(context, event.copy(
