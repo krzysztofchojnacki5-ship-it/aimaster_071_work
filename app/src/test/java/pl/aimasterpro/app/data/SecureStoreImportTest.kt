@@ -134,4 +134,38 @@ class SecureStoreImportTest {
         assertFalse(prefs.contains("config_bad/id"))
     }
 
+    @Test fun unreadableExistingSecretIsMarkedAndNeverReturnedAsAnEmptyHealthySecret() {
+        val context = org.robolectric.RuntimeEnvironment.getApplication()
+        val prefs = context.getSharedPreferences("secure_provider_store", Context.MODE_PRIVATE)
+        prefs.edit()
+            .putStringSet("provider_ids", setOf("provider_one"))
+            .putString("config_provider_one", validConfig().apply { remove("apiKey") }.toString())
+            .putString("key_provider_one", "!")
+            .commit()
+
+        val config = SecureStore(context).readConfig("provider_one")
+
+        assertEquals(true, config?.optBoolean("_secretUnavailable", false))
+        assertEquals("", config?.optString("apiKey"))
+        assertEquals(listOf("provider_one"), SecureStore(context).unavailableSecretProviderIds())
+    }
+
+    @Test fun blankSaveCannotEraseExistingSecretThatCannotBeDecrypted() {
+        val context = org.robolectric.RuntimeEnvironment.getApplication()
+        val prefs = context.getSharedPreferences("secure_provider_store", Context.MODE_PRIVATE)
+        prefs.edit()
+            .putStringSet("provider_ids", setOf("provider_one"))
+            .putString("config_provider_one", validConfig().apply { remove("apiKey") }.toString())
+            .putString("key_provider_one", "!")
+            .commit()
+        val beforeConfig = prefs.getString("config_provider_one", null)
+
+        val result = SecureStore(context).saveConfig(validConfig())
+
+        assertFalse(result)
+        assertEquals(setOf("provider_one"), prefs.getStringSet("provider_ids", emptySet()))
+        assertEquals("!", prefs.getString("key_provider_one", null))
+        assertEquals(beforeConfig, prefs.getString("config_provider_one", null))
+    }
+
 }
