@@ -1989,3 +1989,10 @@ Doprecyzowanie projektu SQLite:
 - Przeniesiono 7 mutujących ścieżek MainActivity do updateRoot(): rename, delete, persistMessages, persistAgentActivity, saveCurrentId, appendToStoredChat i appendAgentActivityForChat. Bezpośrednie ChatHistoryStore.writeRoot() w MainActivity: brak po zmianie.
 - Produkcja: `49da9dcb2a9de7296301476b90c65301c000fc0e`, `84c495ec0028394b6a1dab14b1599c31211c2f0e`; test współbieżności: `b4193751f496aa6d53846852deee1b77a969ad5f`.
 - Test ADDED / NOT RUN. Nie ma jeszcze build/test wyniku dla tych commitów; CI 42411603439 nadal in_progress dla SHA 30e0f496...; branch audytowy bez zmian.
+
+### Checkpoint 0.6.139 — zapis historii wspólnym atomowym API
+
+- Wszystkie mutujące call sites MainActivity korzystają obecnie z `ChatHistoryStore.updateRoot()`: renameChat, deleteChat, persistMessages, persistAgentActivity, saveCurrentId, appendToStoredChat, appendAgentActivityForChat.
+- Statyczna kontrola najnowszego MainActivity: 7 × updateRoot, 0 × writeRoot. Archiwa odpowiedzi i raportów już używały updateRoot, więc wszystkie te ścieżki są serializowane wspólnym mechanizmem.
+- Commit refaktoryzacji: `49da9dcb2a9de7296301476b90c65301c000fc0e`; korekta no-op dla nieistniejącego czatu: `84c495ec0028394b6a1dab14b1599c31211c2f0e`; test współbieżności: `b4193751f496aa6d53846852deee1b77a969ad5f`.
+- Branch roboczy HEAD po checkpointach: `f614a5f5c2369824a75f99b7f780826e793b44c0`. CI 42411603439 nadal dotyczy SHA 30e0f496...; brak potwierdzonego wyniku test/build dla aktualnego work branch.
