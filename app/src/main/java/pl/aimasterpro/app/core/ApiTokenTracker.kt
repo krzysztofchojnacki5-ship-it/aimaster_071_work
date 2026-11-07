@@ -683,8 +683,10 @@ object ApiTokenTracker {
             // caching can turn part of this prompt into cache writes with a premium rate.
             val conservativeInputRate = maxOf(
                 pricing.inputPer1MUsd,
-                pricing.cachedInputPer1MUsd ?: pricing.inputPer1MUsd,
-                pricing.cacheWriteInputPer1MUsd ?: pricing.inputPer1MUsd
+                maxOf(
+                    pricing.cachedInputPer1MUsd ?: pricing.inputPer1MUsd,
+                    pricing.cacheWriteInputPer1MUsd ?: pricing.inputPer1MUsd
+                )
             )
             val usd = (request.estimatedInputTokens.coerceAtLeast(0L) * conservativeInputRate +
                 request.estimatedOutputTokens.coerceAtLeast(0L) * pricing.outputPer1MUsd) / 1_000_000.0
