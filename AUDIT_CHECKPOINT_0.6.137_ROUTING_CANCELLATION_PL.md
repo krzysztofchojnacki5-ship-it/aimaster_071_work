@@ -1882,3 +1882,15 @@ Doprecyzowanie projektu SQLite:
 - Dokument `SECURESTORE_SQLITE_MIGRATION_DESIGN_PL.md` znajduje się na gałęzi audytowej; commit branch: `c77f7386`.
 - Korekta operacyjna: pierwsze wywołanie utworzenia tego pliku pominęło parametr gałęzi i skierowało commit `41bf664c` na domyślne `main`. Natychmiast przywrócono wskaźnik `main` do dokładnego poprzedniego SHA `752149d40186144b0f458a32b5826c8928349c3a` z kontrolą oczekiwanego SHA `41bf664c`. Weryfikacja po korekcie: `main` ponownie wskazuje `752149d`; porównanie audytowej gałęzi z `main` pokazuje 360 ahead / 0 behind. Nie pozostała zmiana zawartości na `main`.
 - Dalsze operacje plikowe muszą jawnie przekazywać `branch: audit/0.6.137-routing-hardening`.
+
+
+### Pełne odcięcie testów i discovery modeli po awarii SecureStore
+
+- Dalszy audyt wszystkich wejść sieciowych wykazał, że poza czatem istniały osobne ścieżki: ręczny test modelu/dostawcy, discovery pojedynczego providera i odświeżanie wszystkich katalogów. Mogły korzystać z obiektu profilu utworzonego przed awarią magazynu.
+- Dodano guardy:
+  - `runBudgetedModelTest()` zwraca błąd przed rezerwacją budżetu i przed HTTP;
+  - `discover()` i `refreshAllModelCatalogs()` blokują pobieranie katalogów;
+  - `showAgents()` kieruje do ekranu MODELE zamiast prezentować pustą listę jako prawidłowy stan.
+- Statyczna weryfikacja potwierdziła obecność czterech guardów. Commit: `e0400ed2`.
+- CI dla wcześniejszego SHA `fedc346d` nie waliduje tego commita; oczekujemy nowego runu. Nie przypisujemy PASS bez zakończonego joba.
+- Dokument projektu SQLite znajduje się na tej gałęzi w `SECURESTORE_SQLITE_MIGRATION_DESIGN_PL.md` (commit `c77f7386`). `main` zweryfikowany na SHA `752149d`, porównanie: 360 ahead / 0 behind przed najnowszym commitem kodu.
