@@ -4129,7 +4129,7 @@ class MainActivity : Activity() {
                                     check(store.markPatchReceiptRollbackRequested(changeSetId, applied!!.transactionId)) {
                                         "Nie udało się trwale zapisać zamiaru rollbacku patcha."
                                     }
-                                    store.restoreSnapshot(applied!!.snapshot.id)
+                                    store.restoreSnapshotForPatchRollback(applied!!.snapshot.id, changeSetId, applied!!.transactionId)
                                     check(store.markPatchReceiptRolledBack(changeSetId, applied!!.transactionId)) {
                                         "Workspace przywrócono, ale nie udało się trwale potwierdzić rollbacku."
                                     }
