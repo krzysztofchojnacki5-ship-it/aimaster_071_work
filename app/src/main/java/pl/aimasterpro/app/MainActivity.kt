@@ -2267,15 +2267,19 @@ class MainActivity : Activity() {
                             )
                         )
                     }
-                    pl.aimasterpro.app.core.MasterWorkJournalStore.updateActive(this, requestTaskId) { current ->
-                        current.copy(
-                            status = "ACTIVE",
-                            currentStep = "Synteza MASTER-a: scalanie raportów i recenzji.",
-                            completedSteps = (current.completedSteps + "Analiza specjalistów zakończona" +
-                                if (peerReviewResults.isNotEmpty()) "Peer Review zakończony" else "Peer Review pominięty lub niedostępny").distinct().take(40),
-                            nextSteps = listOf("Zapis końcowej odpowiedzi w historii czatu."),
-                            updatedAt = System.currentTimeMillis()
-                        )
+                    val synthesisJournalAdvanced =
+                        pl.aimasterpro.app.core.MasterWorkJournalStore.updateActive(this, requestTaskId) { current ->
+                            current.copy(
+                                status = "ACTIVE",
+                                currentStep = "Synteza MASTER-a: scalanie raportów i recenzji.",
+                                completedSteps = (current.completedSteps + "Analiza specjalistów zakończona" +
+                                    if (peerReviewResults.isNotEmpty()) "Peer Review zakończony" else "Peer Review pominięty lub niedostępny").distinct().take(40),
+                                nextSteps = listOf("Zapis końcowej odpowiedzi w historii czatu."),
+                                updatedAt = System.currentTimeMillis()
+                            )
+                        } != null
+                    check(synthesisJournalAdvanced && gen == requestGen && !Thread.currentThread().isInterrupted) {
+                        "Zadanie MASTER zostało przerwane albo dziennik nie potwierdził przejścia do syntezy."
                     }
                     val synthesisResults = results + peerReviewResults
                     runOnUiThread {
@@ -2336,6 +2340,11 @@ class MainActivity : Activity() {
                         "[MASTER SYNTHESIS REQUEST]\n--- SYSTEM ---\n$masterSynthesisSystem\n--- USER ---\n$autonomousSynthesisPrompt\nAttachment MIME: ${sendMime.ifBlank { "brak" }}\nAttachment payload: ${if (sendBase64.isBlank()) "brak" else "dołączony; treść binarna pominięta w dzienniku"}",
                         "REQUEST"
                     )
+                    // Stop may race with local prompt construction; do not reserve a new budget
+                    // after the coordinator generation has already been cancelled.
+                    check(gen == requestGen && !Thread.currentThread().isInterrupted) {
+                        "Zadanie MASTER zostało przerwane przed rezerwacją budżetu syntezy."
+                    }
                     // Reserve the final MASTER call independently after specialist and review
                     // usage has been recorded. Earlier stage reservations are intentionally released
                     // when those stages finish, so they cannot protect this later synthesis request.
@@ -2358,6 +2367,9 @@ class MainActivity : Activity() {
                     }
                     logAgentForChat(chatId, "🧠 Smart Budget: zarezerwowano osobny limit dla końcowej syntezy MASTER-a.")
                     val resp = try {
+                        check(gen == requestGen && !Thread.currentThread().isInterrupted) {
+                            "Zadanie MASTER zostało przerwane przed wysłaniem syntezy."
+                        }
                         chatWithFallback(
                             safeConfig,
                             masterSynthesisSystem,
