@@ -16,6 +16,8 @@ class ChangeSetStoreTest {
     @Before fun reset() {
         context.getSharedPreferences("ai_change_set_ledger_v1", Context.MODE_PRIVATE).edit().clear().commit()
         context.getSharedPreferences("ai_host_active_change_set_v1", Context.MODE_PRIVATE).edit().clear().commit()
+        SharedPreferencesWriteHealth.resetForTests("ai_change_set_ledger_v1")
+        SharedPreferencesWriteHealth.resetForTests("ai_host_active_change_set_v1")
     }
 
     @Test fun enforcesApprovalTestAndRollbackStateMachine() {
@@ -504,4 +506,30 @@ class ChangeSetStoreTest {
         assertNotNull(storage.value)
     }
 
+
+    @Test fun ambiguousLedgerCommitQuarantinesReadsAndPreventsOverwrite() {
+        val failing = AmbiguousCommitContext(context, "ai_change_set_ledger_v1")
+        assertThrows(IllegalStateException::class.java) {
+            ChangeSetStore.propose(
+                failing, "task-ambiguous-ledger", "Ambiguous ledger write",
+                listOf("app/src/A.kt"), ChangeSafetyGuard.validate(listOf("app/src/A.kt"))
+            )
+        }
+        assertEquals(ChangeSetStore.LedgerStatus.CORRUPT, ChangeSetStore.readResult(context).status)
+        assertThrows(IllegalStateException::class.java) {
+            ChangeSetStore.propose(
+                context, "task-after-ambiguous-ledger", "Must not overwrite",
+                listOf("app/src/B.kt"), ChangeSafetyGuard.validate(listOf("app/src/B.kt"))
+            )
+        }
+    }
+
+    @Test fun ambiguousHostPointerCommitIsUnavailableUntilProcessRestart() {
+        val item = appliedForHostScope()
+        val failing = AmbiguousCommitContext(context, "ai_host_active_change_set_v1")
+        assertFalse(HostActiveChangeSetStore.setActive(failing, "chat-active", "workspace-sha", item.id))
+        assertEquals(HostActiveChangeSetStore.ReadStatus.INVALID,
+            HostActiveChangeSetStore.readActive(context, "chat-active", "workspace-sha").status)
+        assertFalse(HostActiveChangeSetStore.invalidate(context, item.id))
+    }
 }
