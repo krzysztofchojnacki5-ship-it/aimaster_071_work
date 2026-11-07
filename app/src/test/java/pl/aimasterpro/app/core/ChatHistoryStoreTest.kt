@@ -134,6 +134,10 @@ class ChatHistoryStoreTest {
         val replacement = JSONObject().put("currentId", "after")
             .put("chats", JSONObject().put("after", JSONObject().put("messages", JSONArray())))
         assertFalse(ChatHistoryStore.writeRoot(failingContext, replacement))
+        // A failed durable commit quarantines reads even when the old snapshot remains visible.
+        assertNull(ChatHistoryStore.readRoot(context))
+        assertEquals("before", JSONObject(prefs.getString("chats_v2", null)!!).getString("currentId"))
+        SharedPreferencesWriteHealth.resetForTests("chat_state")
         assertEquals("before", ChatHistoryStore.readRoot(context)?.optString("currentId"))
     }
 
