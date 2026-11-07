@@ -424,6 +424,24 @@ class MainActivity : Activity() {
         return true
     }
 
+    /** Reconcile all persisted role IDs after a provider-set replacement/import. */
+    private fun reconcileAgentAssignmentsAfterImport(
+        importedConfigs: List<JSONObject>,
+        preferredMasterId: String
+    ): Boolean {
+        val defaults = AgentRole.values().associate { role ->
+            role.name to if (role == AgentRole.MASTER) preferredMasterId else "groq"
+        }
+        val validIds = importedConfigs.map { it.optString("id") }.filter { it.isNotBlank() }.toSet()
+        val resolved = pl.aimasterpro.app.core.AgentProviderAssignmentStore.reconcileAfterProviderImport(
+            this, defaults, validIds, preferredMasterId
+        ) ?: return false
+        agentProviders.clear()
+        agentProviders.putAll(resolved)
+        selectedProviderId = resolved[AgentRole.MASTER.name] ?: preferredMasterId
+        return true
+    }
+
     private fun providerReady(config: ProviderConfig?): Boolean {
         if (config == null || config.model.isBlank() || config.baseUrl.isBlank()) return false
         val localNoAuth = config.id.equals("ollama", true) ||
@@ -5781,7 +5799,10 @@ class MainActivity : Activity() {
                         require(configs.isNotEmpty()) { "Kopia nie zawiera konfiguracji." }
                         require(data.optInt("schemaVersion", -1) == 1) { "Nieobsługiwana wersja schematu kopii konfiguracji." }
                         require(store.replaceAllConfigs(configs)) { "Import nie został zatwierdzony. Dotychczasowe konfiguracje pozostały bez zmian." }
-                        selectedProviderId = configs.first().optString("id", "gemini")
+                        val preferredMasterId = configs.first().optString("id", "gemini")
+                        require(reconcileAgentAssignmentsAfterImport(configs, preferredMasterId)) {
+                            "Konfiguracje zaimportowano, ale nie udało się trwale uzgodnić przypisań agentów. Nie uruchamiaj zadań; zamknij i uruchom ponownie aplikację."
+                        }
                         showShell("Modele"); showProviders()
                         toast("Wczytano ${configs.size} konfiguracji modeli wraz z kluczami API.")
                     }.onFailure {
@@ -5957,7 +5978,11 @@ class MainActivity : Activity() {
                 }
                 modelCatalogPrefs.edit().remove("models_json").remove("last_sync").putLong("last_attempt", 0L).apply()
                 seedMissingDefaultProviders()
-                selectedProviderId = migrated.firstOrNull { it.optString("id") == "gemini" }?.optString("id") ?: migrated.first().optString("id")
+                val preferredMasterId = migrated.firstOrNull { it.optString("id") == "gemini" }?.optString("id") ?: migrated.first().optString("id")
+                if (!reconcileAgentAssignmentsAfterImport(migrated, preferredMasterId)) {
+                    toast("Konfiguracje zaimportowano, ale nie udało się trwale uzgodnić przypisań agentów. Zamknij i uruchom ponownie aplikację.")
+                    return@setPositiveButton
+                }
                 showShell("Modele"); showProviders()
                 toast("Zaimportowano ${migrated.size} profili. Sprawdź pola kluczy API przed użyciem.")
             }.show()
