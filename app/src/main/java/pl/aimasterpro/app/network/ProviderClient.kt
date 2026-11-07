@@ -504,7 +504,9 @@ class ProviderClient(
                         val explicitFree = id.equals("openrouter/free", true) || id.endsWith(":free", true)
                         val free = if (isOpenRouter) {
                             when {
-                                hasPricing && prompt == 0.0 && completion == 0.0 -> true
+                                hasPricing && prompt == 0.0 && completion == 0.0 &&
+                                    (cachedRead == null || cachedRead == 0.0) &&
+                                    (cachedWrite == null || cachedWrite == 0.0) -> true
                                 hasPricing -> false
                                 explicitFree -> true
                                 else -> null
