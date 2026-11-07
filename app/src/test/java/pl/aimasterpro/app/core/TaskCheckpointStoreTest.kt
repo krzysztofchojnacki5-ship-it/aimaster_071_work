@@ -120,6 +120,41 @@ class TaskCheckpointStoreTest {
         assertEquals("team:$taskId:openai", reconciled.idempotencyKey)
     }
 
+    @Test fun archivedReportBehindTerminalTimeoutRetriesUsageAccountingAfterRestart() {
+        val taskId = "task-timeout-restart-archive"
+        val timedOut = TaskCheckpointStore.Event(
+            taskId = taskId, agentId = "RESEARCHER", status = "TIMED_OUT",
+            detail = "coordinator deadline elapsed", timestamp = 100L,
+            providerId = "openai", model = "gpt-4o-mini", attempts = 1,
+            processId = "previous-process", estimatedInputTokens = 240L,
+            estimatedOutputTokens = 640L, idempotencyKey = "team:$taskId:openai",
+            baseUrl = "https://api.openai.com"
+        )
+        assertTrue(TaskCheckpointStore.record(context, timedOut))
+        assertTrue(TaskResultArchive.put(
+            context, taskId, "RESEARCHER", "Report committed before process death.",
+            "openai", "gpt-4o-mini", 150L, "chat-timeout-restart"
+        ))
+
+        var firstRecovery: TaskCheckpointStore.Event? = null
+        assertEquals(1, TaskCheckpointStore.recoverStaleRunning(context, 200L) {
+            firstRecovery = it
+            false
+        })
+        assertEquals("TIMED_OUT", firstRecovery?.status)
+        assertEquals("INTERRUPTED_USAGE_PENDING", TaskCheckpointStore.latest(context).single().status)
+        assertEquals("team:$taskId:openai", TaskCheckpointStore.latest(context).single().idempotencyKey)
+
+        var retryRecovery: TaskCheckpointStore.Event? = null
+        assertEquals(1, TaskCheckpointStore.recoverStaleRunning(context, 300L) {
+            retryRecovery = it
+            true
+        })
+        assertEquals("INTERRUPTED_USAGE_PENDING", retryRecovery?.status)
+        assertEquals("COMPLETED", TaskCheckpointStore.latest(context).single().status)
+        assertEquals("Report committed before process death.", TaskResultArchive.get(context, taskId)?.report)
+    }
+
     @Test fun timedOutTaskCanRecordUsagePendingWithoutArchivedReportWhenMetadataIsComplete() {
         val taskId = "task-timeout-usage-no-report"
         assertTrue(TaskCheckpointStore.record(context, TaskCheckpointStore.Event(
