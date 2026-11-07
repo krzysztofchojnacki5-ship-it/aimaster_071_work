@@ -51,4 +51,36 @@ class SecureStoreImportTest {
         assertFalse(prefs.contains("config_duplicate"))
         assertFalse(prefs.contains("key_duplicate"))
     }
+    private fun validConfig(id: String = "provider_one") = JSONObject()
+        .put("id", id).put("name", "Provider").put("kind", "OPENAI_COMPATIBLE")
+        .put("baseUrl", "").put("model", "").put("apiKey", "")
+        .put("enabled", false).put("parentProviderId", "")
+
+    @Test fun malformedProviderSchemaIsRejectedWithoutChangingExistingConfig() {
+        val context = org.robolectric.RuntimeEnvironment.getApplication()
+        seedExistingConfig(context)
+        val malformed = validConfig().put("enabled", "yes")
+
+        val result = SecureStore(context).replaceAllConfigs(listOf(malformed))
+
+        assertFalse(result)
+        val prefs = context.getSharedPreferences("secure_provider_store", Context.MODE_PRIVATE)
+        assertEquals(setOf("existing"), prefs.getStringSet("provider_ids", emptySet()))
+        assertEquals("unchanged-encrypted-value", prefs.getString("key_existing", null))
+        assertFalse(prefs.contains("config_provider_one"))
+    }
+
+    @Test fun providerWithMissingParentIsRejectedBeforeMutation() {
+        val context = org.robolectric.RuntimeEnvironment.getApplication()
+        seedExistingConfig(context)
+        val child = validConfig().put("parentProviderId", "missing_parent")
+
+        val result = SecureStore(context).replaceAllConfigs(listOf(child))
+
+        assertFalse(result)
+        val prefs = context.getSharedPreferences("secure_provider_store", Context.MODE_PRIVATE)
+        assertEquals(setOf("existing"), prefs.getStringSet("provider_ids", emptySet()))
+        assertEquals("unchanged-encrypted-value", prefs.getString("key_existing", null))
+    }
+
 }
