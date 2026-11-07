@@ -11,7 +11,7 @@ import javax.crypto.KeyGenerator
 import javax.crypto.SecretKey
 import javax.crypto.spec.GCMParameterSpec
 
-/** Stores provider secrets encrypted with an Android Keystore AES-GCM key with auto-recovery on key invalidation. */
+/** Stores provider secrets with Android Keystore AES-GCM and fails closed if an existing key disappears. */
 class SecureStore(context: Context) {
     private val prefs = context.getSharedPreferences("secure_provider_store", Context.MODE_PRIVATE)
     private val alias = "ai_master_provider_key_v1"
@@ -22,7 +22,15 @@ class SecureStore(context: Context) {
      */
     @Synchronized private fun key(): SecretKey {
         val store = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
-        if (!store.containsAlias(alias)) return generateNewKey()
+        if (!store.containsAlias(alias)) {
+            val persistedCiphertexts = prefs.all.keys.any { key ->
+                key.startsWith("key_") && !prefs.getString(key, null).isNullOrBlank()
+            }
+            check(!persistedCiphertexts) {
+                "Brak klucza Android Keystore dla istniejących sekretów. Nie utworzono nowego klucza, aby nie nadpisać możliwości odzyskania danych."
+            }
+            return generateNewKey()
+        }
         return store.getKey(alias, null) as? SecretKey
             ?: throw IllegalStateException("Klucz SecureStore ma nieprawidłowy typ.")
     }
