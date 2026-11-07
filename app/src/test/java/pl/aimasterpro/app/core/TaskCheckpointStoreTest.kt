@@ -319,6 +319,62 @@ class TaskCheckpointStoreTest {
         assertTrue(saved)
         assertEquals("RUNNING", TaskCheckpointStore.latest(context).single().status)
     }
+    @Test fun requestingTaskCannotBeFinalizedBeforeUsageCheckpointIsDurable() {
+        val requesting = TaskCheckpointStore.Event(
+            taskId = "task-unresolved-request", agentId = "RESEARCHER", status = "REQUESTING",
+            detail = "provider POST may have been processed", timestamp = 100L,
+            providerId = "openai", model = "gpt-4o-mini", attempts = 1,
+            processId = "previous-process", estimatedInputTokens = 200L,
+            estimatedOutputTokens = 500L, idempotencyKey = "team:task-unresolved-request:openai"
+        )
+        assertTrue(TaskCheckpointStore.record(context, requesting))
+
+        // A later UI/worker callback must not mask a failed usage checkpoint write.
+        assertTrue(TaskCheckpointStore.record(context, requesting.copy(status = "COMPLETED", processId = "")))
+        assertTrue(TaskCheckpointStore.record(context, requesting.copy(status = "FAILED", processId = "")))
+        assertEquals("REQUESTING", TaskCheckpointStore.latest(context).single().status)
+
+        // Startup is allowed to close the request only after idempotent usage reconciliation.
+        assertEquals(1, TaskCheckpointStore.recoverStaleRunning(context, 200L) { true })
+        assertEquals("INTERRUPTED", TaskCheckpointStore.latest(context).single().status)
+    }
+
+    @Test fun durableUsageCheckpointAllowsTaskFinalization() {
+        val requesting = TaskCheckpointStore.Event(
+            taskId = "task-usage-confirmed", agentId = "RESEARCHER", status = "REQUESTING",
+            detail = "provider POST", timestamp = 100L, providerId = "openai",
+            model = "gpt-4o-mini", attempts = 1, processId = "previous-process",
+            estimatedInputTokens = 200L, estimatedOutputTokens = 500L,
+            idempotencyKey = "team:task-usage-confirmed:openai"
+        )
+        assertTrue(TaskCheckpointStore.record(context, requesting))
+        assertTrue(TaskCheckpointStore.record(context, requesting.copy(
+            status = "USAGE_RECORDED", detail = "usage committed"
+        )))
+        assertTrue(TaskCheckpointStore.record(context, requesting.copy(
+            status = "COMPLETED", detail = "result committed", processId = ""
+        )))
+        assertEquals("COMPLETED", TaskCheckpointStore.latest(context).single().status)
+    }
+
+    @Test fun startupMayCompleteRequestingTaskWhenItsReportIsArchived() {
+        val taskId = "task-requesting-archived-report"
+        assertTrue(TaskCheckpointStore.record(context, TaskCheckpointStore.Event(
+            taskId = taskId, agentId = "RESEARCHER", status = "REQUESTING",
+            detail = "provider POST", timestamp = 100L, providerId = "openai",
+            model = "gpt-4o-mini", attempts = 1, processId = "previous-process",
+            estimatedInputTokens = 200L, estimatedOutputTokens = 500L,
+            idempotencyKey = "team:$taskId:openai"
+        )))
+        assertTrue(TaskResultArchive.put(
+            context, taskId, "RESEARCHER", "Durable report.", "openai",
+            "gpt-4o-mini", 150L, "chat-recovery"
+        ))
+
+        assertEquals(1, TaskCheckpointStore.recoverStaleRunning(context, 200L) { true })
+        assertEquals("COMPLETED", TaskCheckpointStore.latest(context).single().status)
+    }
+
     @Test fun lateWorkerCancellationDoesNotOverwriteCoordinatorTimeout() {
         assertTrue(TaskCheckpointStore.record(
             context,
