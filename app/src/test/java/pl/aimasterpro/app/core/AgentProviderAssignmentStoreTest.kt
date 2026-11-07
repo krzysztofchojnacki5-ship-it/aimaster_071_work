@@ -5,6 +5,9 @@ import org.junit.Assert.*
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
+import org.json.JSONObject
+import pl.aimasterpro.app.data.SecureStore
+import pl.aimasterpro.app.data.SecureStoreHealth
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
 
@@ -197,6 +200,68 @@ class AgentProviderAssignmentStoreTest {
         assertEquals("old-master", prefs.getString("agent_provider_MASTER", null))
         assertEquals("old-master", prefs.getString("selected_provider", null))
         assertEquals("old-coder", prefs.getString("agent_provider_CODER", null))
+    }
+
+
+    @Test fun startupRecoveryRepairsAssignmentsAfterImportReconciliationCommitFailure() {
+        val base = context
+        val providerPrefs = base.getSharedPreferences("secure_provider_store", Context.MODE_PRIVATE)
+        providerPrefs.edit().clear().commit()
+        SecureStoreHealth.resetForTests()
+
+        fun provider(id: String) = JSONObject()
+            .put("id", id)
+            .put("name", id)
+            .put("kind", "OPENAI_COMPATIBLE")
+            .put("baseUrl", "https://example.invalid/v1")
+            .put("model", "test-model")
+            .put("enabled", true)
+            .put("parentProviderId", "")
+            .put("apiKey", "")
+
+        // First durable boundary: the complete provider replacement succeeds.
+        assertTrue(SecureStore(base).replaceAllConfigs(listOf(provider("new-master"), provider("new-coder"))))
+        assertEquals(setOf("new-master", "new-coder"), providerPrefs.getStringSet("provider_ids", emptySet()))
+
+        // Simulate process death after the second boundary has an ambiguous commit outcome.
+        prefs.edit()
+            .putString("agent_provider_MASTER", "old-master")
+            .putString("selected_provider", "old-master")
+            .putString("agent_provider_CODER", "old-coder")
+            .putString("agent_provider_RESEARCHER", "old-researcher")
+            .commit()
+        val failingContext = AmbiguousCommitContext(base, "chat_state")
+        assertNull(
+            AgentProviderAssignmentStore.reconcileAfterProviderImport(
+                failingContext,
+                defaults,
+                setOf("new-master", "new-coder"),
+                "new-master"
+            )
+        )
+
+        // A process restart clears only in-memory uncertainty latches. Durable preferences may
+        // contain either the old or new assignment snapshot; startup must reconcile either one.
+        SharedPreferencesWriteHealth.resetForTests("chat_state")
+        SecureStoreHealth.resetForTests()
+        val recoveredCatalog = SecureStore(base).allConfigs().map { it.optString("id") }.toSet()
+        assertEquals(setOf("new-master", "new-coder"), recoveredCatalog)
+
+        val recovered = AgentProviderAssignmentStore.reconcileExistingAssignments(
+            base,
+            defaults,
+            recoveredCatalog,
+            "old-master"
+        )
+
+        assertNotNull(recovered)
+        assertEquals("new-master", recovered!!["MASTER"])
+        assertEquals("new-master", recovered["CODER"])
+        assertEquals("new-master", recovered["RESEARCHER"])
+        assertEquals("new-master", prefs.getString("agent_provider_MASTER", null))
+        assertEquals("new-master", prefs.getString("selected_provider", null))
+        assertEquals("new-master", prefs.getString("agent_provider_CODER", null))
+        assertEquals("new-master", prefs.getString("agent_provider_RESEARCHER", null))
     }
 
 }
