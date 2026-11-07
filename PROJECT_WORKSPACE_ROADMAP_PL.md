@@ -924,3 +924,7 @@ W trakcie przeglądu startowego restoreMessages() wykryto i naprawiono ryzyko od
 ### 0.6.139 — atomowe zapisy historii rozmów
 
 Audyt wykazał, że MainActivity używała sekwencji osobnych read/write, podczas gdy archiwa odpowiedzi i raportów agentów wykonywały atomowe updateRoot. Przeniesiono siedem mutujących ścieżek MainActivity do ChatHistoryStore.updateRoot, aby wszystkie zapisy historii współdzieliły ten sam lock read-modify-write. Dodano test współbieżności wiadomość-versus-aktywność. Produkcja: 49da9dcb..., 84c495ec...; test: b4193751...; ADDED / NOT RUN. CI 42411603439 nadal nie obejmuje nowych commitów.
+
+### 0.6.139 — wspólny lock dla zapisów historii i replayów archiwów
+
+Wszystkie siedem mutujących ścieżek MainActivity zostało przeniesionych na ChatHistoryStore.updateRoot(), wspólny z replayem archiwów odpowiedzi i raportów. Statyczny przegląd potwierdził 0 bezpośrednich wywołań writeRoot w MainActivity. Dodano test równoległego dopisania wiadomości i agentActivity. Test ADDED / NOT RUN; walidacja CI dla nowych zmian oczekuje na zwolnienie aktywnego runu.
