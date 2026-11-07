@@ -273,6 +273,9 @@ class ProviderClient(
         }
     }
 
+    private fun responseModel(result: JSONObject, configuredModel: String, field: String = "model"): String =
+        result.optString(field).trim().takeIf { it.isNotEmpty() } ?: configuredModel
+
     private fun chatInternal(config: ProviderConfig, systemPrompt: String, userText: String, attachmentMime: String, attachmentBase64: String): ChatResponse = when (config.kind) {
         ProviderKind.ANTHROPIC -> {
             val root = config.baseUrl.trimEnd('/').ifBlank { "https://api.anthropic.com/v1" }
@@ -302,7 +305,7 @@ class ProviderClient(
             val finalTotal = if (input >= 0 && output >= 0) input + output else finalInput + finalOutput
             val status = if (input >= 0 && output >= 0) "REAL" else "ESTIMATED"
 
-            ChatResponse(text, TokenUsageResult(finalInput, finalOutput, finalTotal, reasoning, cached, status))
+            ChatResponse(text, TokenUsageResult(finalInput, finalOutput, finalTotal, reasoning, cached, status), providerId = config.id, model = responseModel(result, config.model))
         }
         ProviderKind.OPENAI_COMPATIBLE -> {
             val root = config.baseUrl.trimEnd('/')
@@ -337,7 +340,7 @@ class ProviderClient(
             val finalTotal = if (total >= 0) total else finalInput + finalOutput
             val status = if (input >= 0 && output >= 0) "REAL" else "ESTIMATED"
 
-            ChatResponse(text, TokenUsageResult(finalInput, finalOutput, finalTotal, reasoning, cached, status))
+            ChatResponse(text, TokenUsageResult(finalInput, finalOutput, finalTotal, reasoning, cached, status), providerId = config.id, model = responseModel(result, config.model, "modelVersion"))
         }
         ProviderKind.GEMINI -> {
             val root = config.baseUrl.trimEnd('/')
@@ -363,7 +366,7 @@ class ProviderClient(
                 // Negative totals are clamped out of budget accounting and would undercount usage.
                 val finalTotal = if (reportedTotal >= 0L) reportedTotal else finalInput + finalOutput
                 val status = if (input >= 0L && output >= 0L) "REAL" else "ESTIMATED"
-                ChatResponse(text, TokenUsageResult(finalInput, finalOutput, finalTotal, 0L, 0L, status))
+                ChatResponse(text, TokenUsageResult(finalInput, finalOutput, finalTotal, 0L, 0L, status), providerId = config.id, model = responseModel(result, config.model))
             } else {
                 // Native Gemini REST API
                 val encodedKey = java.net.URLEncoder.encode(config.apiKey, "UTF-8")
