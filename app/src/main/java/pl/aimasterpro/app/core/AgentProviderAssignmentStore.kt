@@ -1,7 +1,6 @@
 package pl.aimasterpro.app.core
 
 import android.content.Context
-import android.content.SharedPreferences
 
 /**
  * Durable, validated persistence for agent -> provider assignments.
@@ -18,7 +17,9 @@ object AgentProviderAssignmentStore {
     ): Map<String, String> {
         val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
         return roleDefaults.mapValues { (role, defaultId) ->
-            runCatching { prefs.getString(key(role), null) }.getOrNull()?.takeIf { it.isNotBlank() } ?: defaultId
+            // Missing/blank is a legitimate first-run state; a type mismatch is corruption.
+            // Let it propagate so callers cannot silently route to a different provider.
+            prefs.getString(key(role), null)?.takeIf { it.isNotBlank() } ?: defaultId
         }
     }
 

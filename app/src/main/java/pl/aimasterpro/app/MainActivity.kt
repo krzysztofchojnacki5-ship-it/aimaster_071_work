@@ -97,6 +97,8 @@ class MainActivity : Activity() {
     private var collaborationChatId: String = ""
     private val collaborationRenderedEntries = mutableListOf<String>()
     private val agentProviders = mutableMapOf<String, String>()
+    /** False until every persisted role assignment has been reconciled successfully. */
+    private var agentAssignmentsHealthy = true
     private val agentConnection = mutableMapOf<String, String>()
     private val chatPrefs by lazy { getSharedPreferences("chat_state", Context.MODE_PRIVATE) }
     private var attachedText = ""
@@ -176,12 +178,6 @@ class MainActivity : Activity() {
         )
         val restoredReports = runCatching {
             pl.aimasterpro.app.core.TaskResultArchive.restoreArchivedReports(this)
-        }.onFailure { error ->
-            android.util.Log.e(
-                "AIMasterRecovery",
-                "Nie udało się przywrócić raportów z archiwum; dane źródłowe pozostawiono bez zmian.",
-                error
-            )
         }.getOrDefault(0)
         if (restoredReports > 0) android.util.Log.w(
             "AIMasterRecovery",
@@ -205,16 +201,19 @@ class MainActivity : Activity() {
         } else null
         if (recoveredAssignments != null) {
             agentProviders.putAll(recoveredAssignments)
+            agentAssignmentsHealthy = true
         } else {
-            agentProviders.putAll(
-                pl.aimasterpro.app.core.AgentProviderAssignmentStore.read(this, assignmentDefaults)
-            )
-            android.util.Log.w(
+            // Never substitute defaults when persisted routing state cannot be reconciled.
+            // A wrong provider is more dangerous than temporarily refusing to send.
+            agentProviders.clear()
+            selectedProviderId = ""
+            agentAssignmentsHealthy = false
+            android.util.Log.e(
                 "AIMasterAssignments",
-                "Nie uzgodniono przypisań przy starcie: katalog dostawców jest pusty, magazyn niepewny lub zapis nie powiódł się."
+                "Przypisania agentów są nieuzgodnione. Wysyłanie zadań pozostaje zablokowane do pełnego, trwałego uzgodnienia konfiguracji."
             )
         }
-        selectedProviderId = agentProviders[AgentRole.MASTER.name] ?: selectedProviderId
+        if (agentAssignmentsHealthy) selectedProviderId = agentProviders[AgentRole.MASTER.name] ?: ""
         AgentRole.values().forEach { role -> agentConnection[role.name] = "unknown" }
         window.statusBarColor = bg
         window.navigationBarColor = bg
@@ -449,10 +448,15 @@ class MainActivity : Activity() {
     }
 
     private fun activeConfig(): ProviderConfig? =
-        loadProvider(agentProviders[selectedAgent.name] ?: selectedProviderId)
+        if (!agentAssignmentsHealthy) null
+        else loadProvider(agentProviders[selectedAgent.name] ?: selectedProviderId)
 
     /** Persist first; only then publish the assignment to in-memory UI/runtime state. */
     private fun persistAgentProviderAssignment(role: AgentRole, providerId: String): Boolean {
+        if (!agentAssignmentsHealthy) {
+            toast("Przypisania agentów nie są uzgodnione. Wykonaj pełny import/uzgodnienie konfiguracji przed zmianą pojedynczej roli.")
+            return false
+        }
         if (store.isStorageUncertain()) {
             toast("Magazyn konfiguracji ma niepewny stan. Przypisanie nie zostało zmienione.")
             return false
@@ -487,6 +491,7 @@ class MainActivity : Activity() {
         agentProviders.clear()
         agentProviders.putAll(resolved)
         selectedProviderId = resolved[AgentRole.MASTER.name] ?: preferredMasterId
+        agentAssignmentsHealthy = true
         return true
     }
 
@@ -1596,6 +1601,10 @@ class MainActivity : Activity() {
     }
 
     private fun sendChatMessage(input: EditText) {
+        if (!agentAssignmentsHealthy) {
+            toast("Wysyłanie zablokowane: przypisania agentów nie zostały bezpiecznie uzgodnione. Otwórz MODELE i wykonaj pełny import/uzgodnienie konfiguracji.")
+            return
+        }
         if (isThinking) { toast("Poczekaj na zakończenie poprzedniej odpowiedzi."); return }
         var prompt = input.text.toString().trim()
         if (attachedText.isNotBlank()) prompt += "\n\n[Załączony plik tekstowy: $attachedName]\n$attachedText"

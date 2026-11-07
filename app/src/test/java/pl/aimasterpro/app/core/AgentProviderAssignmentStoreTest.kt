@@ -33,6 +33,16 @@ class AgentProviderAssignmentStoreTest {
         assertEquals("groq", values["RESEARCHER"])
     }
 
+    @Test fun readRejectsWrongStoredTypeInsteadOfSilentlyUsingDefault() {
+        prefs.edit().putInt("agent_provider_CODER", 42).commit()
+        try {
+            AgentProviderAssignmentStore.read(context, defaults)
+            fail("Expected a type mismatch to be surfaced")
+        } catch (_: ClassCastException) {
+            assertEquals(42, prefs.getInt("agent_provider_CODER", -1))
+        }
+    }
+
     @Test fun importReconciliationPreservesValidAssignmentsAndRepairsMissingIds() {
         prefs.edit().putString("agent_provider_MASTER", "old-provider")
             .putString("selected_provider", "old-provider")
