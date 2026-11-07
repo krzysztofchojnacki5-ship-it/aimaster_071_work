@@ -408,6 +408,9 @@ class ProjectWorkspaceStore(private val root: File) {
             receipt.snapshotId == snapshotId && receipt.rollbackRequested && !receipt.rolledBack) {
             "Żądanie rollbacku nie odpowiada dokładnie oczekującej transakcji patcha."
         }
+        require(currentIdentity() == receipt.workspaceIdentity) {
+            "Workspace ma inną identity niż zatwierdzony patch; rollback zablokowano, aby nie nadpisać późniejszego projektu."
+        }
         return restoreSnapshotInternal(snapshotId, now)
     }
 
