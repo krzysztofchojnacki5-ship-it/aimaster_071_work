@@ -41,7 +41,9 @@ data class ProviderModelInfo(
     /** USD per million tokens for cached input reads, when explicitly published by the provider. */
     val cachedPromptPricePerMillion: Double? = null,
     /** USD per million tokens for cache writes, when explicitly published by the provider. */
-    val cachedPromptWritePricePerMillion: Double? = null
+    val cachedPromptWritePricePerMillion: Double? = null,
+    /** USD per million tokens for reasoning tokens when the provider prices them separately. */
+    val internalReasoningPricePerMillion: Double? = null
 )
 
 /** Only classify an OpenRouter model as free when every published token path is free. */
@@ -51,13 +53,15 @@ internal fun resolveOpenRouterFreePricing(
     promptPrice: Double?,
     completionPrice: Double?,
     cachedReadPrice: Double?,
-    cacheWritePrice: Double?
+    cacheWritePrice: Double?,
+    internalReasoningPrice: Double? = null
 ): Boolean? {
     if (!isOpenRouter) return null
     val hasPricing = promptPrice != null && completionPrice != null
     val explicitlyFree = modelId.equals("openrouter/free", true) || modelId.endsWith(":free", true)
     val hasPaidCacheRate = (cachedReadPrice != null && cachedReadPrice > 0.0) ||
-        (cacheWritePrice != null && cacheWritePrice > 0.0)
+        (cacheWritePrice != null && cacheWritePrice > 0.0) ||
+        (internalReasoningPrice != null && internalReasoningPrice > 0.0)
     return when {
         hasPaidCacheRate -> false
         hasPricing && promptPrice == 0.0 && completionPrice == 0.0 -> true
@@ -515,6 +519,7 @@ class ProviderClient(
                         val completionRaw = pricing?.optString("completion")
                         val cachedReadRaw = pricing?.optString("input_cache_read")
                         val cachedWriteRaw = pricing?.optString("input_cache_write")
+                        val reasoningRaw = pricing?.optString("internal_reasoning")
                         val prompt = promptRaw?.toDoubleOrNull()?.times(1_000_000.0)
                             ?.takeIf { it.isFinite() && it >= 0.0 }
                         val completion = completionRaw?.toDoubleOrNull()?.times(1_000_000.0)
@@ -523,8 +528,10 @@ class ProviderClient(
                             ?.takeIf { it.isFinite() && it >= 0.0 }
                         val cachedWrite = cachedWriteRaw?.toDoubleOrNull()?.times(1_000_000.0)
                             ?.takeIf { it.isFinite() && it >= 0.0 }
+                        val reasoning = reasoningRaw?.toDoubleOrNull()?.times(1_000_000.0)
+                            ?.takeIf { it.isFinite() && it >= 0.0 }
                         val free = resolveOpenRouterFreePricing(
-                            id, isOpenRouter, prompt, completion, cachedRead, cachedWrite
+                            id, isOpenRouter, prompt, completion, cachedRead, cachedWrite, reasoning
                         )
                         ProviderModelInfo(
                             id = id,
@@ -535,7 +542,8 @@ class ProviderClient(
                             freeByPricing = free,
                             description = o.optString("description", ""),
                             cachedPromptPricePerMillion = cachedRead,
-                            cachedPromptWritePricePerMillion = cachedWrite
+                            cachedPromptWritePricePerMillion = cachedWrite,
+                            internalReasoningPricePerMillion = reasoning
                         )
                     }.sortedBy { it.id }
                 }
