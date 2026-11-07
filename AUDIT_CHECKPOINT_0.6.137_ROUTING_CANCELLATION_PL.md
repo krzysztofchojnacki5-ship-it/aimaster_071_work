@@ -1967,3 +1967,11 @@ Doprecyzowanie projektu SQLite:
 - Brak workflow run dla gałęzi roboczej; workflow push jest skonfigurowany dla gałęzi audytowej, a pull_request tylko dla `main`.
 - Następny ruch: poczekać na wynik runu; następnie przenieść 0.6.139 do gałęzi audytowej, uruchomić CI na nowym SHA, pobrać raporty i rozstrzygnąć każdy błąd. Nie oznaczać testów jako PASS wcześniej.
 - APK NOT BUILT; Companion NOT ACTIVATED; `main` untouched.
+
+
+## Uzupełnienie checkpointu — historia rozmów
+
+- Cztery testowe zmiany zapisano na work/0.6.139-saveconfig-secret-preservation: 9700c65, a2966d6, 401f40d, 36a907e.
+- Pokrycie: commit false przed apply (stary snapshot i kwarantanna), apply przed błędem (nowy snapshot i restart recovery), wyjątek callbacka update bez zapisu, niejednoznaczny commit updateRoot i odtworzenie.
+- Testy ADDED / NOT RUN. Aktywny CI 42411603439 nadal jest na SHA 30e0f496... i nie waliduje tych zmian ani 0.6.139.
+- Statyczny audyt call sites: mutacje historii w MainActivity są synchronizowane; na razie brak dowodu na rzeczywisty równoległy zapis wymagający zmiany produkcyjnej.
