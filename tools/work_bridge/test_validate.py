@@ -81,6 +81,26 @@ class WorkBridgeTests(unittest.TestCase):
         errors = self.check(inbox=bad_inbox)
         self.assertTrue(any("must be a string" in e for e in errors))
 
+    def test_wildcard_allowlist_is_rejected(self):
+        data = {
+            "id": TASK,
+            "status": "READY",
+            "base_branch": "bridge/work-bridge-bootstrap",
+            "allowed_paths": ["tools/work_bridge/**"],
+        }
+        wildcard_inbox = "<!-- WB_TASK_V1\n" + json.dumps(data) + "\n-->\n"
+        errors = self.check(inbox=wildcard_inbox)
+        self.assertTrue(any("Unsafe allowed_paths" in e for e in errors))
+
+    def test_duplicate_json_manifest_key_is_rejected(self):
+        duplicate = (
+            '<!-- WB_TASK_V1 {"id":"WB-004","id":"WB-003","status":"READY",'
+            '"base_branch":"bridge/work-bridge-bootstrap","allowed_paths":["'
+            + REPORT_PATH + '"]} -->'
+        )
+        errors = self.check(inbox=duplicate)
+        self.assertTrue(any("Duplicate JSON key" in e for e in errors))
+
     def test_wrong_branch_task_id_rejected(self):
         errors = self.check(head_branch="bridge/task-WB-099-wrong")
         self.assertTrue(any("does not match" in e for e in errors))
