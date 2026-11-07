@@ -68,6 +68,13 @@ class ApiTokenTrackerTest {
         assertEquals(1, all.count { it.queryId == key })
         assertEquals("REAL", all.single().status)
         assertEquals(455L, all.single().totalTokens)
+
+        val duplicateActual = ApiTokenTracker.recordQuery(
+            context, "openai", "gpt-4o-mini", "RESEARCHER", "task-late-real",
+            999L, 999L, status = "REAL", idempotencyKey = key
+        )
+        assertEquals(455L, duplicateActual.totalTokens)
+        assertEquals(1, ApiTokenTracker.loadAllRecordsFromStorage(context).count { it.queryId == key })
     }
 
     @Test fun idempotencyKeyCannotBeReusedForAnotherTaskIdentity() {
