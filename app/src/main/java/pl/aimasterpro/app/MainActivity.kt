@@ -1825,6 +1825,10 @@ class MainActivity : Activity() {
                                 }
                             },
                             onRequestStarting = { task, actualProvider, estimatedInput, estimatedOutput, idempotencyKey ->
+                                if (store.isStorageUncertain()) {
+                                    logAgentForChat(chatId, "⛔ Magazyn konfiguracji ma niepewny stan. Żądanie do dostawcy nie zostało wysłane; uruchom ponownie aplikację.")
+                                    false
+                                } else {
                                 val safeBaseUrl = runCatching {
                                     java.net.URL(actualProvider.baseUrl).let { url ->
                                         "${url.protocol}://${url.host}" + if (url.port >= 0) ":${url.port}" else ""
@@ -1841,6 +1845,7 @@ class MainActivity : Activity() {
                                         idempotencyKey = idempotencyKey, baseUrl = safeBaseUrl
                                     )
                                 )
+                                }
                             },
                             requestScope = requestScope,
                             onTaskFinished = { taskId -> pl.aimasterpro.app.core.ApiTokenTracker.completeReservationTask(budgetPlan.reservationId, taskId) }
@@ -1983,6 +1988,10 @@ class MainActivity : Activity() {
                                         archived
                                     },
                                     onRequestStarting = { task, actualProvider, estimatedInput, estimatedOutput, idempotencyKey ->
+                                        if (store.isStorageUncertain()) {
+                                            logAgentForChat(chatId, "⛔ Magazyn konfiguracji ma niepewny stan. Żądanie do dostawcy nie zostało wysłane; uruchom ponownie aplikację.")
+                                            false
+                                        } else {
                                         val safeBaseUrl = runCatching {
                                             java.net.URL(actualProvider.baseUrl).let { url ->
                                                 "\${url.protocol}://\${url.host}" + if (url.port >= 0) ":\${url.port}" else ""
@@ -1999,6 +2008,7 @@ class MainActivity : Activity() {
                                                 idempotencyKey = idempotencyKey, baseUrl = safeBaseUrl
                                             )
                                         )
+                                        }
                                     },
                                     requestScope = requestScope,
                                     onTaskFinished = { taskId -> pl.aimasterpro.app.core.ApiTokenTracker.completeReservationTask(reviewBudget.reservationId, taskId) }
@@ -4563,6 +4573,10 @@ class MainActivity : Activity() {
                             archived
                         },
 onRequestStarting = { task, actualProvider, estimatedInput, estimatedOutput, idempotencyKey ->
+    if (store.isStorageUncertain()) {
+        logAgentForChat(chatId, "⛔ Magazyn konfiguracji ma niepewny stan. Żądanie do dostawcy nie zostało wysłane; uruchom ponownie aplikację.")
+        false
+    } else {
                         val safeBaseUrl = runCatching {
                             java.net.URL(actualProvider.baseUrl).let { url ->
                                 "${url.protocol}://${url.host}" + if (url.port >= 0) ":${url.port}" else ""
@@ -4579,6 +4593,7 @@ onRequestStarting = { task, actualProvider, estimatedInput, estimatedOutput, ide
                                 idempotencyKey = idempotencyKey, baseUrl = safeBaseUrl
                             )
                         )
+    }
                         },
                                                 requestScope = client.beginRequestScope(),
                         onTaskFinished = { taskId -> pl.aimasterpro.app.core.ApiTokenTracker.completeReservationTask(reviewBudget.reservationId, taskId) }
