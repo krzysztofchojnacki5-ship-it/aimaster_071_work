@@ -2093,3 +2093,5 @@ Doprecyzowanie projektu SQLite:
 - MainActivity nie wykonuje już bezpośredniego apply() dla pinned_chats. Menu pokazuje błąd zapisu; usuwanie rozmowy raportuje osobno nieudaną synchronizację przypięcia po udanym usunięciu rozmowy.
 - Dodano 4 testy: toggle, idempotentne remove, awaria commitu przed apply oraz fail-closed odczyt po quarantine.
 - Statyczny diff sprawdzony; JUnit/Gradle/Android debug oczekują na CI. APK nie utworzono; Companion nieaktywny.
+
+- Aktualizacja walidacji 0.6.144: CI run `42419546568` (`beafd2f...`) jest IN PROGRESS; konfiguracja JDK/SDK/Gradle zakończona, wynik testów i kompilacji jeszcze nieznany.
