@@ -88,6 +88,28 @@ object ChatResponseArchive {
         }
     }
 
+    /** Acknowledges entries already durably present in chats_v2 without replaying or mutating history. */
+    @Synchronized
+    fun acknowledgePersisted(context: Context): Int {
+        val entries = latest(context)
+        if (entries.isEmpty()) return 0
+        val root = ChatHistoryStore.readRoot(context) ?: return 0
+        val chats = root.optJSONObject("chats") ?: return 0
+        val acknowledged = entries.filter { entry ->
+            val chat = chats.optJSONObject(entry.chatId) ?: return@filter false
+            val messages = chat.optJSONArray("messages") ?: JSONArray()
+            val storedIds = chat.optJSONArray("assistantTaskIds") ?: JSONArray()
+            val assistantCount = (0 until messages.length()).count {
+                messages.optJSONObject(it)?.optString("role") == "assistant"
+            }
+            entry.taskId in AssistantTaskIdAlignment.align(
+                (0 until storedIds.length()).map { storedIds.optString(it) }, assistantCount
+            )
+        }.map { it.taskId }.toSet()
+        if (acknowledged.isEmpty()) return 0
+        return if (acknowledge(context, acknowledged)) acknowledged.size else 0
+    }
+
     /**
      * Replays successful assistant messages into their original chats. assistantTaskIds is the
      * idempotency ledger, so an answer already committed by the normal UI path is never duplicated.
