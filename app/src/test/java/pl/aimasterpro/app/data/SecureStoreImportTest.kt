@@ -9,6 +9,9 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.lang.reflect.Proxy
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicReference
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
@@ -22,6 +25,53 @@ class SecureStoreImportTest {
             .putString("config_existing", JSONObject().put("id", "existing").put("name", "Existing").toString())
             .putString("key_existing", "unchanged-encrypted-value")
             .commit()
+    }
+
+    @Test fun fullImportAndConcurrentSaveAreSerializedAcrossStoreInstances() {
+        SecureStoreHealth.resetForTests()
+        val context = org.robolectric.RuntimeEnvironment.getApplication()
+        val commitEntered = CountDownLatch(1)
+        val releaseCommit = CountDownLatch(1)
+        val importResult = AtomicReference<Boolean>()
+        val saveResult = AtomicReference<Boolean>()
+        val saveStarted = CountDownLatch(1)
+        val saveFinished = CountDownLatch(1)
+        val importingStore = SecureStore(context) { editor ->
+            commitEntered.countDown()
+            check(releaseCommit.await(5, TimeUnit.SECONDS)) { "Timed out waiting to release import commit." }
+            editor.commit()
+        }
+        val writerStore = SecureStore(context)
+        val importThread = Thread {
+            importResult.set(importingStore.replaceAllConfigs(listOf(validConfig("imported"))))
+        }
+        val saveThread = Thread {
+            saveStarted.countDown()
+            saveResult.set(writerStore.saveConfig(validConfig("concurrent")))
+            saveFinished.countDown()
+        }
+        try {
+            importThread.start()
+            assertTrue("Import did not reach its commit boundary.", commitEntered.await(5, TimeUnit.SECONDS))
+            saveThread.start()
+            assertTrue("Concurrent save thread did not start.", saveStarted.await(5, TimeUnit.SECONDS))
+            assertFalse(
+                "A second SecureStore instance entered a write while full replacement held the store lock.",
+                saveFinished.await(150, TimeUnit.MILLISECONDS)
+            )
+        } finally {
+            releaseCommit.countDown()
+        }
+        assertTrue("Concurrent save did not finish after import released the lock.", saveFinished.await(5, TimeUnit.SECONDS))
+        importThread.join(5000)
+        saveThread.join(5000)
+        assertFalse("Import worker did not terminate.", importThread.isAlive)
+        assertFalse("Save worker did not terminate.", saveThread.isAlive)
+        assertEquals(true, importResult.get())
+        assertEquals(true, saveResult.get())
+        val prefs = context.getSharedPreferences("secure_provider_store", Context.MODE_PRIVATE)
+        assertEquals(setOf("imported", "concurrent"), prefs.getStringSet("provider_ids", emptySet()))
+        SecureStoreHealth.resetForTests()
     }
 
     @Test fun failedPreferencesCommitPoisonsAllStoreInstances() {
