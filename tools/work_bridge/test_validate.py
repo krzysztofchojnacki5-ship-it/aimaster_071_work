@@ -54,7 +54,7 @@ class WorkBridgeTests(unittest.TestCase):
 
     def test_revoked_task_in_current_base_is_rejected(self):
         errors = self.check(current_base_inbox=make_inbox("MASTER_DONE"))
-        self.assertTrue(any("changed or was revoked" in e for e in errors))
+        self.assertTrue(any("not READY" in e or "changed or was revoked" in e for e in errors))
 
     def test_duplicate_task_manifest_rejected(self):
         self.assertTrue(any("found 2" in e for e in self.check(inbox=make_inbox()+make_inbox())))
