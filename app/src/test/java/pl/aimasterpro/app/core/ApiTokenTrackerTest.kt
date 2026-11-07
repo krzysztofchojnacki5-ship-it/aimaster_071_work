@@ -113,6 +113,29 @@ class ApiTokenTrackerTest {
         assertEquals(Double.MAX_VALUE, summary.costPln, 0.0)
     }
 
+    @Test fun activeReservationCostAggregatesSaturateInsteadOfBecomingInfinite() {
+        ApiTokenTracker.setLimits(context, daily = 10_000L, monthly = 0.0, perAgent = 10_000L)
+        val first = ApiTokenTracker.planBatch(
+            context, emptyList(), globalReserveCostPln = Double.MAX_VALUE
+        )
+        val second = ApiTokenTracker.planBatch(
+            context, emptyList(), globalReserveCostPln = Double.MAX_VALUE
+        )
+
+        assertTrue(first.reservationId.isNotBlank())
+        assertTrue(second.reservationId.isNotBlank())
+        val stats = ApiTokenTracker.activeReservationStats()
+        assertEquals(Double.MAX_VALUE, stats.costPln, 0.0)
+        assertTrue("Reservation cost diagnostics must never expose Infinity", stats.costPln.isFinite())
+
+        val snapshot = ApiTokenTracker.budgetUsageSnapshot(context)
+        assertEquals(Double.MAX_VALUE, snapshot.activeReservedCostPln, 0.0)
+        assertTrue("Budget snapshot cost must remain finite", snapshot.activeReservedCostPln.isFinite())
+
+        ApiTokenTracker.releaseBatchReservation(first.reservationId)
+        ApiTokenTracker.releaseBatchReservation(second.reservationId)
+    }
+
     @Test fun successfulUsageIsPersistedAndVisibleInMonitorPeriods() {
         ApiTokenTracker.recordQuery(context, "ollama", "llama3", "MASTER", "chat-1", 120, 30, status = "REAL", baseUrl = "http://127.0.0.1:11434/v1")
         val all = ApiTokenTracker.loadAllRecordsFromStorage(context)
