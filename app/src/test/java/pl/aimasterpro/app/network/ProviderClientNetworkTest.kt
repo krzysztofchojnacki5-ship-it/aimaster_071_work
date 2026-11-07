@@ -431,4 +431,20 @@ class ProviderClientNetworkTest {
             assertEquals("vendor/canonical-model-v2", result.model)
         } finally { server.stop(0) }
     }
+
+    @Test
+    fun nativeGeminiPreservesReturnedModelVersion() {
+        val (server, _) = server { _, _ ->
+            200 to """{"modelVersion":"gemini-2.5-flash-actual","candidates":[{"content":{"parts":[{"text":"OK"}]}}],"usageMetadata":{"promptTokenCount":3,"candidatesTokenCount":2,"totalTokenCount":5}}"""
+        }
+        try {
+            val configured = ProviderConfig(
+                "gemini-native-test", "Gemini native test", ProviderKind.GEMINI,
+                "http://127.0.0.1:${server.address.port}/v1beta", "gemini-flash-alias", ""
+            )
+            val result = ProviderClient().chat(configured, "system", "test")
+            assertEquals(configured.id, result.providerId)
+            assertEquals("gemini-2.5-flash-actual", result.model)
+        } finally { server.stop(0) }
+    }
 }
