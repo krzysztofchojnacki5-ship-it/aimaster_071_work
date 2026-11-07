@@ -57,6 +57,7 @@ object AiMemoryStore {
         val arr = JSONArray()
         list.take(100).forEach { arr.put(it) }
         context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit()
+            .putString("memories", arr.toString())
             .let { SharedPreferencesWriteHealth.commit(PREFS_NAME, it) }
     }.getOrDefault(false)
 
