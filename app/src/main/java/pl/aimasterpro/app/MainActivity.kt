@@ -1025,6 +1025,21 @@ class MainActivity : Activity() {
         content.addView(composer, LinearLayout.LayoutParams(-1, -2))
     }
 
+    /** Records cancellation even if Stop wins the race before the MASTER journal is created. */
+    private fun pauseMasterTaskForLifecycle(taskId: String, reason: String) {
+        val paused = pl.aimasterpro.app.core.MasterWorkJournalStore.pauseActiveTask(this, taskId)
+        if (paused == null) android.util.Log.w("AIMasterRecovery", "$reason: dziennik MASTER-a $taskId nie istnieje lub nie jest aktywny.")
+        val checkpointSaved = pl.aimasterpro.app.core.TaskCheckpointStore.record(
+            this,
+            pl.aimasterpro.app.core.TaskCheckpointStore.Event(
+                taskId = taskId, agentId = "MASTER", status = "CANCELLED",
+                detail = "$reason: zadanie przerwane przed potwierdzeniem finalizacji.",
+                timestamp = System.currentTimeMillis(), providerId = "", model = "", attempts = 0
+            )
+        )
+        if (!checkpointSaved) android.util.Log.e("AIMasterRecovery", "$reason: nie udało się trwale zapisać checkpointu anulowania dla $taskId.")
+    }
+
     private fun stopGeneration() {
         // Persist the targeted MASTER task before callbacks can observe cancellation.
         // The same lock guards journal creation, so Stop cannot race ahead of a late ACTIVE save.
@@ -1033,8 +1048,7 @@ class MainActivity : Activity() {
             requestGen++
             val taskId = activeMasterWorkTaskId
             if (taskId.isNotBlank()) {
-                val paused = pl.aimasterpro.app.core.MasterWorkJournalStore.pauseActiveTask(this, taskId)
-                if (paused == null) android.util.Log.w("AIMasterRecovery", "Stop: dziennik MASTER-a $taskId nie istnieje lub nie jest dostępny.")
+                pauseMasterTaskForLifecycle(taskId, "Stop")
                 activeMasterWorkTaskId = ""
             }
         }
@@ -6247,8 +6261,7 @@ class MainActivity : Activity() {
             requestGen++
             val taskId = activeMasterWorkTaskId
             if (taskId.isNotBlank()) {
-                val paused = pl.aimasterpro.app.core.MasterWorkJournalStore.pauseActiveTask(this, taskId)
-                if (paused == null) android.util.Log.w("AIMasterRecovery", "onDestroy: nie udało się potwierdzić PAUSED dla $taskId.")
+                pauseMasterTaskForLifecycle(taskId, "onDestroy")
                 activeMasterWorkTaskId = ""
             }
         }
