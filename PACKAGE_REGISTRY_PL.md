@@ -409,3 +409,5 @@ Rejestr rozróżnia paczkę źródłową od wersji aplikacji/APK. Numer paczki n
 - Testy pokrywające ten przypadek istnieją dla obu archiwów; test blokady read-modify-write dodano również dla ChatResponseArchive.
 - Commity produkcyjne: `d8223a7b90d9a27c117ca98a1943002160186577`, `9692a908422a227f1078133837ea5aa0e03277ab`. Testy: `bccb390d38f4ecb42ffb64fcf60fe128a4ddb8bd`.
 - Status testów: ADDED / NOT RUN; brak potwierdzenia kompilacji.
+
+- Wzmocniono testy blokady obu archiwów: zamiast polegać wyłącznie na opóźnieniu, test czeka na stan wątku `BLOCKED` na monitorze wspólnej blokady. Commity: `b14f6ff8d48ff125b8c1bcc274889ecf15f1896b`, `808555f1fabbd45e51cd9f757b812a0601adc72e`. Nadal ADDED / NOT RUN.
