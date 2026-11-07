@@ -1328,3 +1328,44 @@ Sprawdzono dokładniej wcześniejszy trop dotyczący możliwego wyścigu zapisu 
 - appendToStoredChat() jest @Synchronized.
 
 Ponieważ te ścieżki używają tego samego monitora MainActivity, nie potwierdzono zgłoszonego wyścigu dla tych operacji. Nie wprowadzono zbędnej zmiany. Dodatkowo potwierdzono, że TeamRunEngine sprawdza boolean z onRequestStarting i nie wysyła POST, jeśli trwały checkpoint REQUESTING nie został zapisany.
+
+
+## Etap 17 — niezależne archiwum raportów agentów i recovery po awarii zapisu (2026-11-07)
+
+Przegląd trwałości wyników ujawnił, że dotychczasowy TaskResultCache pełni wyłącznie funkcję cache'u ponownego użycia (TTL 72 h, maksymalnie 60 wpisów), a dziennik aktywności rozmowy ogranicza się do 150 wpisów. Wynik z providera fallback był celowo wykluczany z cache'u, aby nie przypisać go błędnie do skonfigurowanego modelu. Oznaczało to, że nie istniał osobny, niezależny od cache'u rejestr pełnych raportów.
+
+Zmiana:
+- dodano TaskResultArchive jako osobny, trwały magazyn raportów po taskId; przechowuje agentId, pełny raport po sanitizacji, rzeczywisty providerId/model i czas zapisu;
+- archiwum ma limit 80 najnowszych raportów i odrzuca pusty lub zbyt duży raport zamiast po cichu go obcinać;
+- walidacja archiwum jest fail-closed: uszkodzony JSON, nieprawidłowe typy, duplikaty taskId lub niepoprawne pola blokują zapis zamiast zastąpić dane pustą listą;
+- wszystkie trzy ścieżki TeamRunEngine w MainActivity (główny zespół, peer review i recenzja patcha) zapisują wynik do archiwum przed potwierdzeniem onTaskResult;
+- w głównej ścieżce raport fallback jest dodatkowo cache'owany wyłącznie pod fingerprintem rzeczywistej konfiguracji fallbacku, nigdy pod tożsamością przypisanego modelu;
+- awaria cache nie oznacza już utraty raportu, jeśli archiwum potwierdziło commit; awaria archiwum zwraca false, pozostawia RESULT_PERSIST_PENDING i jest logowana;
+- startup recovery sprawdza archiwum dla RESULT_PERSIST_PENDING: jeśli raport istnieje, checkpoint jest uzgadniany do COMPLETED bez ponownego żądania API i bez ponownego księgowania usage; jeśli raportu nie ma, stan pozostaje INTERRUPTED z diagnostycznym opisem.
+
+Testy:
+- TaskResultArchiveTest: trwały zapis/odczyt, upsert po taskId, redakcja sekretów, fail-closed przy uszkodzonym archiwum, odrzucanie pustych i zbyt dużych raportów;
+- TaskCheckpointStoreTest.resultPersistPendingTaskIsCompletedWhenDurableArchiveAlreadyContainsReport: symuluje śmierć procesu po commit archiwum, ale przed terminalnym checkpointem; potwierdza recovery do COMPLETED bez callbacku rozliczania usage;
+- istniejący test bez wpisu w archiwum nadal potwierdza, że RESULT_PERSIST_PENDING zostaje INTERRUPTED.
+
+Pliki:
+- app/src/main/java/pl/aimasterpro/app/core/TaskResultArchive.kt
+- app/src/test/java/pl/aimasterpro/app/core/TaskResultArchiveTest.kt
+- app/src/main/java/pl/aimasterpro/app/MainActivity.kt
+- app/src/main/java/pl/aimasterpro/app/core/TaskCheckpointStore.kt
+- app/src/test/java/pl/aimasterpro/app/core/TaskCheckpointStoreTest.kt
+
+Commity:
+- archiwum: f0e5807dc91e09161e47af18a8c0570b2bf295c2
+- testy archiwum: 835d077cc4b2e977c064fc0ac8fef033a1a38364
+- integracja trzech ścieżek TeamRunEngine i rozdzielenie cache/archiwum: 1993587d395882b4fcd6bee56ed85aae92d8a4bc
+- recovery checkpointu z archiwum: 5dadd0909815377448b689efdc3d6a3dfd36a08c
+- test recovery: ad8a0d47fe73f51637f32ef01e8c708a43f26cad
+- ścisła walidacja typów w archiwum: 93b99e1f6b6fed54695bb28e3c7368abd572a3d5
+
+Weryfikacja:
+- pliki źródłowe i testy ponownie odczytane z brancha; potwierdzono trzy callbacki onTaskResult dla trzech ścieżek runBatch;
+- brak lokalnego wykonania Gradle w tym środowisku; wynik testów i kompilacji pozostaje NOT VERIFIED do zakończenia CI;
+- najnowszy workflow run 42317859599 obejmuje SHA 93b99e1f6b6fed54695bb28e3c7368abd572a3d5 i ma status PENDING przy ostatnim odczycie;
+- branch roboczy: 268 commits ahead, 0 behind; main nadal 752149d40186144b0f458a32b5826c8928349c3a;
+- brak merge, APK, release i zmian main; Companion Transport pozostaje BLOCKED.
