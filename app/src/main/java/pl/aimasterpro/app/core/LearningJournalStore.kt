@@ -54,8 +54,11 @@ object LearningJournalStore {
                 .put("inputTokens", e.inputTokens).put("outputTokens", e.outputTokens))
         }
         val saved = runCatching {
-            context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
-                .putString(KEY, json.toString()).commit()
+            if (SharedPreferencesWriteHealth.isUncertain(PREFS)) return@runCatching false
+            SharedPreferencesWriteHealth.commit(
+                PREFS, context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
+                    .putString(KEY, json.toString())
+            )
         }.getOrDefault(false)
         if (!saved) android.util.Log.e("AIMasterLearning", "Nie udało się trwale zapisać dziennika operacyjnego.")
     }
@@ -65,6 +68,9 @@ object LearningJournalStore {
 
     /** Corrupt rows are not dropped: writers must preserve the original journal for recovery. */
     private fun readStrict(context: Context): List<Event>? = runCatching {
+        check(!SharedPreferencesWriteHealth.isUncertain(PREFS)) {
+            "Learning journal is unavailable after an ambiguous durable write."
+        }
         val raw = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
             .getString(KEY, null) ?: return@runCatching emptyList()
         runCatching {
@@ -127,6 +133,9 @@ object LearningJournalStore {
     }
 
     fun clear(context: Context): Boolean = runCatching {
-        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().remove(KEY).commit()
+        if (SharedPreferencesWriteHealth.isUncertain(PREFS)) return@runCatching false
+        SharedPreferencesWriteHealth.commit(
+            PREFS, context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().remove(KEY)
+        )
     }.getOrDefault(false)
 }
