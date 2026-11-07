@@ -2078,3 +2078,12 @@ Korekta implementacji legacy mirror: `writeLegacyMirror()` wykonuje best-effort 
 - Produkcja: `2b689a7cd54cd11c600764df4f91bf110073a229`, `270281ab07942d4274034a25b3ab899d5ae1440a`. Testy: `f3d1e5e40776276133de5c231947c7483911c895`, `589480a34f41579905a6bbcf9fcd69ea71c89f57`.
 - Work branch HEAD: `589480a34f41579905a6bbcf9fcd69ea71c89f57`. CI `42415438103` wciąż uruchomiony na starszym SHA `c650c5604074449593d138730bd7e2e2b89da9d2`; nie obejmuje tego checkpointu. Testy NOT RUN, APK NOT BUILT, Companion NOT ACTIVATED.
 
+### Checkpoint 0.6.139 — natychmiastowe acknowledgement po kanonicznym zapisie
+
+- Wykryto, że potwierdzenie wpisów dopiero podczas startup restore utrzymywało archiwum pełne przez całą sesję. Wpisy już zapisane do `chats_v2` nie zwalniały miejsca.
+- Dodano `acknowledgePersisted()` do obu archiwów. Metody czytają kanoniczną historię, nie wykonują replayu, nie zmieniają `chats_v2` i usuwają tylko wpisy z potwierdzonym task ID/markerem albo jednoznacznym legacy odpowiednikiem.
+- `MainActivity.persistMessages()` wywołuje ack odpowiedzi po udanym zapisie. `persistAgentActivity()` i zapis aktywności do innego czatu wywołują ack raportów dopiero po sukcesie `updateRoot()`.
+- Testy `acknowledgePersistedFreesResponseCapacityWithoutReplaying` oraz `acknowledgePersistedFreesReportCapacityWithoutReplaying` dodane, ADDED / NOT RUN.
+- Commity: `5fde56a9c24700d2893b344010535b9b68aca992`, `7751de2ca6eb3d7da1fb410d5b91afd5be1e7a72`, `3be051c2d2c06cec5040061c4656fa1a5a307df4`, `53f04a1231f33bc713291e1ee0e20cb93588b7db`, `dfb5c5083311f5194b52c8310f12be5e187e0504`.
+- Work HEAD `dfb5c5083311f5194b52c8310f12be5e187e0504`; CI `42415438103` nadal testuje `c650c5604074449593d138730bd7e2e2b89da9d2`, status `in_progress`. Testy bieżącego bloku nie zostały uruchomione. APK NOT BUILT; Companion NOT ACTIVATED.
+
