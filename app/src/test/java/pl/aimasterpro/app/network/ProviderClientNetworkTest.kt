@@ -579,7 +579,7 @@ class ProviderClientNetworkTest {
     @Test
     fun openRouterModelCatalogParsesSeparateCacheReadAndWriteRates() {
         val (server, _) = server { _, _ ->
-            200 to """{"data":[{"id":"vendor/cache-model","name":"Cache Model","pricing":{"prompt":"0.00000023","completion":"0.00000091","input_cache_read":"0.00000005","input_cache_write":"0.00000030","internal_reasoning":"0.00000090"}}]}"""
+            200 to """{"data":[{"id":"vendor/cache-model","name":"Cache Model","pricing":{"prompt":"0.00000023","completion":"0.00000091","input_cache_read":"0.00000005","input_cache_write":"0.00000030","input_cache_write_1h":"0.00000050","internal_reasoning":"0.00000090"}}]}"""
         }
         try {
             val config = config("http://127.0.0.1:${server.address.port}/v1").copy(
@@ -591,6 +591,7 @@ class ProviderClientNetworkTest {
             assertEquals(0.91, model.completionPricePerMillion!!, 0.000001)
             assertEquals(0.05, model.cachedPromptPricePerMillion!!, 0.000001)
             assertEquals(0.30, model.cachedPromptWritePricePerMillion!!, 0.000001)
+            assertEquals(0.50, model.cachedPromptWrite1hPricePerMillion!!, 0.000001)
             assertEquals(0.90, model.internalReasoningPricePerMillion!!, 0.000001)
         } finally { server.stop(0) }
     }
@@ -619,6 +620,12 @@ class ProviderClientNetworkTest {
             false,
             resolveOpenRouterFreePricing(
                 "vendor/paid-reasoning", true, 0.0, 0.0, 0.0, 0.0, 0.0000001
+            )
+        )
+        assertEquals(
+            false,
+            resolveOpenRouterFreePricing(
+                "openrouter/free", true, null, null, null, 0.0, null, 0.0000001
             )
         )
         assertEquals(
