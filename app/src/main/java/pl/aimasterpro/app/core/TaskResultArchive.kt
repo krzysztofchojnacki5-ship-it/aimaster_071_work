@@ -17,7 +17,8 @@ object TaskResultArchive {
         val report: String,
         val providerId: String,
         val model: String,
-        val createdAt: Long
+        val createdAt: Long,
+        val chatId: String = ""
     )
 
     private const val PREFS = "task_result_archive_v1"
@@ -33,7 +34,8 @@ object TaskResultArchive {
         report: String,
         providerId: String,
         model: String,
-        createdAt: Long = System.currentTimeMillis()
+        createdAt: Long = System.currentTimeMillis(),
+        chatId: String = ""
     ): Boolean {
         if (taskId.isBlank() || agentId.isBlank() || providerId.isBlank() || model.isBlank()) return false
         val safeReport = CommunicationLogSanitizer.sanitize(report)
@@ -43,7 +45,7 @@ object TaskResultArchive {
             return false
         }
         val next = JSONArray()
-        next.put(encode(Entry(taskId, agentId, safeReport, providerId, model, createdAt)))
+        next.put(encode(Entry(taskId, agentId, safeReport, providerId, model, createdAt, chatId)))
         for (i in 0 until old.length()) {
             val row = old.getJSONObject(i)
             if (row.optString("taskId") != taskId) next.put(row)
@@ -77,6 +79,33 @@ object TaskResultArchive {
         }
     }
 
+    /**
+     * Replays archived specialist reports into their owning chat activity timeline after a
+     * process restart. A task marker makes the operation idempotent; no model/API request runs.
+     * Legacy archive rows without a chat ID remain safely addressable but cannot be replayed.
+     */
+    @Synchronized
+    fun restoreArchivedReports(context: Context): Int = runCatching {
+        val entries = latest(context).filter { it.chatId.isNotBlank() }
+        if (entries.isEmpty()) return@runCatching 0
+        val root = ChatHistoryStore.readRoot(context) ?: return@runCatching 0
+        val chats = root.optJSONObject("chats") ?: return@runCatching 0
+        var restored = 0
+        entries.forEach { entry ->
+            val chat = chats.optJSONObject(entry.chatId) ?: return@forEach
+            val rows = chat.optJSONArray("agentActivity") ?: JSONArray()
+            val marker = "[TASK_REPORT_ID:${entry.taskId}]"
+            if ((0 until rows.length()).any { rows.optString(it).contains(marker) }) return@forEach
+            rows.put("📦 Odzyskany raport agenta ${entry.agentId} (${entry.providerId}/${entry.model}) $marker\n${entry.report}")
+            while (rows.length() > 150) rows.remove(0)
+            chat.put("agentActivity", rows).put("updatedAt", maxOf(chat.optLong("updatedAt"), entry.createdAt))
+            restored++
+        }
+        if (restored > 0 && !ChatHistoryStore.writeRoot(context, root)) {
+            error("Nie udało się trwale przywrócić raportów z archiwum do historii czatu.")
+        }
+        restored
+    }.getOrDefault(0)
     private fun encode(entry: Entry): JSONObject = JSONObject()
         .put("taskId", entry.taskId)
         .put("agentId", entry.agentId)
@@ -84,6 +113,7 @@ object TaskResultArchive {
         .put("providerId", entry.providerId)
         .put("model", entry.model)
         .put("createdAt", entry.createdAt)
+        .put("chatId", entry.chatId)
 
     private fun decode(row: JSONObject): Entry = Entry(
         row.getString("taskId"),
@@ -91,7 +121,8 @@ object TaskResultArchive {
         row.getString("report"),
         row.getString("providerId"),
         row.getString("model"),
-        row.getLong("createdAt")
+        row.getLong("createdAt"),
+        row.optString("chatId")
     )
 
     /** Corrupt rows are never silently dropped or overwritten with a fresh empty archive. */
@@ -107,6 +138,7 @@ object TaskResultArchive {
                 require(row.opt("taskId") is String && row.opt("agentId") is String &&
                     row.opt("report") is String && row.opt("providerId") is String &&
                     row.opt("model") is String &&
+                    (!row.has("chatId") || row.opt("chatId") is String) &&
                     (createdAtValue is Int || createdAtValue is Long))
                 val taskId = row.getString("taskId")
                 val agentId = row.getString("agentId")
