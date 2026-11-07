@@ -20,6 +20,7 @@ class ChatResponseArchiveTest {
         context.getSharedPreferences("chat_state", Context.MODE_PRIVATE).edit().clear().commit()
         context.getSharedPreferences("task_checkpoints_v1", Context.MODE_PRIVATE).edit().clear().commit()
         context.getSharedPreferences("task_result_archive_v1", Context.MODE_PRIVATE).edit().clear().commit()
+        SharedPreferencesWriteHealth.resetForTests("task_result_archive_v1")
         SharedPreferencesWriteHealth.resetForTests("chat_response_archive_v1")
         SharedPreferencesWriteHealth.resetForTests("chat_state")
         TaskCheckpointStore.resetStorageHealthForTests()
@@ -164,6 +165,48 @@ class ChatResponseArchiveTest {
         assertNotNull(ChatResponseArchive.get(context, "history-corrupt-task"))
         assertEquals(corrupt, context.getSharedPreferences("chat_state", Context.MODE_PRIVATE)
             .getString("chats_v2", null))
+    }
+
+    @Test fun concurrentArchiveWritesDoNotLoseEntries() {
+        val ready = java.util.concurrent.CountDownLatch(12)
+        val start = java.util.concurrent.CountDownLatch(1)
+        val failures = java.util.Collections.synchronizedList(mutableListOf<String>())
+        val workers = (1..12).map { index ->
+            Thread {
+                ready.countDown()
+                try {
+                    start.await()
+                    if (!ChatResponseArchive.put(
+                        context, "parallel-task-$index", "parallel-chat", "MASTER",
+                        "Answer $index", "provider-a", "model-a", 20_000L + index
+                    )) failures += "parallel-task-$index"
+                } catch (error: Throwable) {
+                    failures += "parallel-task-$index: ${error.javaClass.simpleName}"
+                }
+            }.apply { start() }
+        }
+        assertTrue("Archive writers did not become ready", ready.await(3, java.util.concurrent.TimeUnit.SECONDS))
+        start.countDown()
+        workers.forEach { it.join(5_000L) }
+        assertTrue("Archive writers did not finish", workers.none { it.isAlive })
+        assertTrue("Archive writes failed: $failures", failures.isEmpty())
+        val entries = ChatResponseArchive.latest(context)
+        assertEquals(12, entries.size)
+        assertEquals(12, entries.map { it.taskId }.toSet().size)
+    }
+
+    @Test fun archiveCapacityIsBoundedAndNewestEntriesAreRetained() {
+        repeat(30) { index ->
+            assertTrue(ChatResponseArchive.put(
+                context, "bounded-task-$index", "bounded-chat", "MASTER",
+                "Answer $index", "provider-a", "model-a", 30_000L + index
+            ))
+        }
+        val entries = ChatResponseArchive.latest(context)
+        assertEquals(25, entries.size)
+        assertEquals("bounded-task-29", entries.first().taskId)
+        assertEquals("bounded-task-5", entries.last().taskId)
+        assertNull(ChatResponseArchive.get(context, "bounded-task-4"))
     }
 
 }
