@@ -39,7 +39,9 @@ data class ProviderModelInfo(
     val freeByPricing: Boolean? = null,
     val description: String = "",
     /** USD per million tokens for cached input reads, when explicitly published by the provider. */
-    val cachedPromptPricePerMillion: Double? = null
+    val cachedPromptPricePerMillion: Double? = null,
+    /** USD per million tokens for cache writes, when explicitly published by the provider. */
+    val cachedPromptWritePricePerMillion: Double? = null
 )
 
 class ProviderClient(
@@ -300,10 +302,12 @@ class ProviderClient(
 
     private fun validUsageBreakdown(
         input: Long?, output: Long?, reportedTotal: Long?, cached: Long?, reasoning: Long?,
-        reportedTotalFieldValid: Boolean = true
+        reportedTotalFieldValid: Boolean = true,
+        cacheWrite: Long? = 0L
     ): Boolean {
-        if (!reportedTotalFieldValid || input == null || output == null || cached == null || reasoning == null) return false
-        if (cached > input || reasoning > output) return false
+        if (!reportedTotalFieldValid || input == null || output == null || cached == null || reasoning == null || cacheWrite == null) return false
+        val cachedAndWritten = try { Math.addExact(cached, cacheWrite) } catch (_: ArithmeticException) { return false }
+        if (cachedAndWritten > input || reasoning > output) return false
         val sum = try { Math.addExact(input, output) } catch (_: ArithmeticException) { return false }
         return reportedTotal == null || reportedTotal == sum
     }
@@ -335,21 +339,21 @@ class ProviderClient(
             val output = exactNonNegativeCount(usageObj, "output_tokens")
             val cacheRead = exactNonNegativeCount(usageObj, "cache_read_input_tokens", 0L)
             val cacheCreation = exactNonNegativeCount(usageObj, "cache_creation_input_tokens", 0L)
-            val cached = if (cacheRead != null && cacheCreation != null) {
-                runCatching { Math.addExact(cacheRead, cacheCreation) }.getOrNull()
-            } else null
-            val input = if (uncachedInput != null && cached != null) {
-                runCatching { Math.addExact(uncachedInput, cached) }.getOrNull()
+            val cached = cacheRead
+            val cacheWrite = cacheCreation
+            val input = if (uncachedInput != null && cached != null && cacheWrite != null) {
+                runCatching { Math.addExact(Math.addExact(uncachedInput, cached), cacheWrite) }.getOrNull()
             } else null
             val reasoning = 0L
-            val realUsage = validUsageBreakdown(input, output, null, cached, reasoning)
+            val realUsage = validUsageBreakdown(input, output, null, cached, reasoning, cacheWrite = cacheWrite)
             val finalInput = if (realUsage) input!! else (systemPrompt.length + userText.length) / 4.toLong()
             val finalOutput = if (realUsage) output!! else text.length / 4.toLong()
             val finalTotal = if (realUsage) Math.addExact(finalInput, finalOutput) else finalInput + finalOutput
             val finalCached = if (realUsage) cached!! else 0L
+            val finalCacheWrite = if (realUsage) cacheWrite!! else 0L
             val status = if (realUsage) "REAL" else "ESTIMATED"
 
-            ChatResponse(text, TokenUsageResult(finalInput, finalOutput, finalTotal, reasoning, finalCached, status), providerId = config.id, model = responseModel(result, config.model))
+            ChatResponse(text, TokenUsageResult(finalInput, finalOutput, finalTotal, reasoning, finalCached, status, finalCacheWrite), providerId = config.id, model = responseModel(result, config.model))
         }
         ProviderKind.OPENAI_COMPATIBLE -> {
             val root = config.baseUrl.trimEnd('/')
@@ -374,18 +378,21 @@ class ProviderClient(
             val output = preferredUsageCount(usageObj, "completion_tokens", result, "eval_count")
             val reportedTotal = exactNonNegativeCount(usageObj, "total_tokens")
             val reportedTotalFieldValid = usageObj == null || !usageObj.has("total_tokens") || reportedTotal != null
-            val cached = exactNonNegativeCount(usageObj?.optJSONObject("prompt_tokens_details"), "cached_tokens", 0L)
+            val promptDetails = usageObj?.optJSONObject("prompt_tokens_details")
+            val cached = exactNonNegativeCount(promptDetails, "cached_tokens", 0L)
+            val cacheWrite = exactNonNegativeCount(promptDetails, "cache_write_tokens", 0L)
             val reasoning = exactNonNegativeCount(usageObj?.optJSONObject("completion_tokens_details"), "reasoning_tokens", 0L)
-            val realUsage = validUsageBreakdown(input, output, reportedTotal, cached, reasoning, reportedTotalFieldValid)
+            val realUsage = validUsageBreakdown(input, output, reportedTotal, cached, reasoning, reportedTotalFieldValid, cacheWrite)
 
             val finalInput = if (realUsage) input!! else (systemPrompt.length + userText.length) / 4.toLong()
             val finalOutput = if (realUsage) output!! else text.length / 4.toLong()
             val finalTotal = if (realUsage) Math.addExact(finalInput, finalOutput) else finalInput + finalOutput
             val finalCached = if (realUsage) cached!! else 0L
+            val finalCacheWrite = if (realUsage) cacheWrite!! else 0L
             val finalReasoning = if (realUsage) reasoning!! else 0L
             val status = if (realUsage) "REAL" else "ESTIMATED"
 
-            ChatResponse(text, TokenUsageResult(finalInput, finalOutput, finalTotal, finalReasoning, finalCached, status), providerId = config.id, model = responseModel(result, config.model))
+            ChatResponse(text, TokenUsageResult(finalInput, finalOutput, finalTotal, finalReasoning, finalCached, status, finalCacheWrite), providerId = config.id, model = responseModel(result, config.model))
         }
         ProviderKind.GEMINI -> {
             val root = config.baseUrl.trimEnd('/')
@@ -480,11 +487,14 @@ class ProviderClient(
                         val promptRaw = pricing?.optString("prompt")
                         val completionRaw = pricing?.optString("completion")
                         val cachedReadRaw = pricing?.optString("input_cache_read")
+                        val cachedWriteRaw = pricing?.optString("input_cache_write")
                         val prompt = promptRaw?.toDoubleOrNull()?.times(1_000_000.0)
                             ?.takeIf { it.isFinite() && it >= 0.0 }
                         val completion = completionRaw?.toDoubleOrNull()?.times(1_000_000.0)
                             ?.takeIf { it.isFinite() && it >= 0.0 }
                         val cachedRead = cachedReadRaw?.toDoubleOrNull()?.times(1_000_000.0)
+                            ?.takeIf { it.isFinite() && it >= 0.0 }
+                        val cachedWrite = cachedWriteRaw?.toDoubleOrNull()?.times(1_000_000.0)
                             ?.takeIf { it.isFinite() && it >= 0.0 }
                         val hasPricing = prompt != null && completion != null
                         val explicitFree = id.equals("openrouter/free", true) || id.endsWith(":free", true)
@@ -504,7 +514,8 @@ class ProviderClient(
                             completionPricePerMillion = completion,
                             freeByPricing = free,
                             description = o.optString("description", ""),
-                            cachedPromptPricePerMillion = cachedRead
+                            cachedPromptPricePerMillion = cachedRead,
+                            cachedPromptWritePricePerMillion = cachedWrite
                         )
                     }.sortedBy { it.id }
                 }
