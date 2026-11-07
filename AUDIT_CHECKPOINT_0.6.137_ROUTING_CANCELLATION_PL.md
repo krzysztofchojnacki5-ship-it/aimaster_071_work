@@ -1496,3 +1496,33 @@ CI:
 - run 42321164179 dla SHA cd12622b4bc551c4362cf81d20f6aaa668d23c78: PENDING przy ostatnim odczycie;
 - run 42321007105 dla SHA d35b6b99a66c7db3561fca541e7a16aa5600e5c0: IN_PROGRESS przy ostatnim odczycie; wcześniejsze runy dla poprzednich SHA są anulowane przez nowsze commity;
 - brak potwierdzonego PASS testów i assembleDebug.
+
+
+## Etap 21 — limity rozmiaru kopii i higiena materiału kryptograficznego (2026-11-07)
+
+Audyt BackupCrypto.kt wykazał brak limitu rozmiaru wejściowego. Zaszyfrowana kopia mogła zostać sparsowana i poddana kosztownym operacjom bez wcześniejszego ograniczenia wielkości.
+
+Zmiany:
+- limit plaintextu przed szyfrowaniem: 4 MiB;
+- limit koperty JSON przed parsowaniem: 6 MiB;
+- limit długości ciphertextu weryfikowany przed KDF;
+- walidacja długości hasła co najmniej 8 znaków również przy odszyfrowywaniu;
+- wspólna funkcja deriveKey() czyści PBEKeySpec w bloku finally;
+- bufor bajtowy klucza po utworzeniu SecretKeySpec jest zerowany;
+- bufor odszyfrowanego plaintextu jest zerowany po utworzeniu String;
+- testy limitów payload/envelope i zbyt krótkiego hasła.
+
+Pliki:
+- app/src/main/java/pl/aimasterpro/app/data/BackupCrypto.kt
+- app/src/test/java/pl/aimasterpro/app/BackupCryptoTest.kt
+
+Commity:
+- 4e8a5a02e2f5cfb7760b63a3b27c6efa790b0218 — limity rozmiaru i higiena buforów kryptograficznych;
+- b6df3f4a5492ae87aa8f3ed8f853f35b55725ca9 — testy regresyjne limitów.
+
+CI:
+- run 42321312810 dla SHA b6df3f4a5492ae87aa8f3ed8f853f35b55725ca9: PENDING przy ostatnim odczycie;
+- run 42321164179 dla SHA cd12622b4bc551c4362cf81d20f6aaa668d23c78: IN_PROGRESS; wcześniejszy run dla 4e8a5a02 został anulowany przez nowszy commit;
+- nie ma jeszcze potwierdzonego PASS dla testów ani assembleDebug.
+
+Porównanie branch/main: 292 commits ahead, 0 behind. Main nadal 752149d40186144b0f458a32b5826c8928349c3a. Bez merge, APK i release. Companion Transport nadal BLOCKED.
