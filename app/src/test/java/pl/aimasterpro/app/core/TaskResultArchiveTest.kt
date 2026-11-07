@@ -143,6 +143,35 @@ class TaskResultArchiveTest {
         assertTrue(activity.optString(149).contains("[TASK_REPORT_ID:task-newer]"))
     }
 
+    @Test fun identicalReportTextFromDifferentTasksIsRestoredForBothTaskIds() {
+        val chatId = "chat-identical-reports"
+        val root = JSONObject()
+            .put("currentId", chatId)
+            .put("chats", JSONObject().put(chatId, JSONObject()
+                .put("title", "Identical reports")
+                .put("messages", JSONArray())
+                .put("agentActivity", JSONArray())))
+        assertTrue(ChatHistoryStore.writeRoot(context, root))
+
+        val sameReport = "Analiza zakończona: brak dodatkowych ustaleń."
+        assertTrue(TaskResultArchive.put(
+            context, "task-identical-a", "RESEARCHER", sameReport,
+            "provider-a", "model-a", 1_000L, chatId
+        ))
+        assertTrue(TaskResultArchive.put(
+            context, "task-identical-b", "REVIEWER", sameReport,
+            "provider-b", "model-b", 2_000L, chatId
+        ))
+
+        assertEquals(2, TaskResultArchive.restoreArchivedReports(context))
+        val activity = ChatHistoryStore.readRoot(context)!!
+            .getJSONObject("chats").getJSONObject(chatId).getJSONArray("agentActivity")
+        assertEquals(2, activity.length())
+        assertTrue(activity.optString(0).contains("[TASK_REPORT_ID:task-identical-a]"))
+        assertTrue(activity.optString(1).contains("[TASK_REPORT_ID:task-identical-b]"))
+        assertEquals(0, TaskResultArchive.restoreArchivedReports(context))
+    }
+
     @Test fun legacyArchiveWithoutChatIdIsNotAttachedToAnUnrelatedConversation() {
         val chatId = "chat-unrelated"
         val root = JSONObject()
