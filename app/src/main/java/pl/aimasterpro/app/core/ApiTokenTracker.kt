@@ -455,10 +455,6 @@ object ApiTokenTracker {
 
     @Synchronized
     fun getPricing(context: Context, modelName: String, providerId: String = "", baseUrl: String = ""): ModelPricing {
-        // A verified free/local model must never inherit the generic paid fallback price.
-        if (FreeModelsCatalog.isFreeModel(providerId, modelName, baseUrl)) {
-            return ModelPricing(modelName, 0.0, 0.0)
-        }
         val raw = context.getSharedPreferences(PRICING_PREFS, Context.MODE_PRIVATE)
             .getString("catalog_model_prices", "[]") ?: "[]"
         val catalog = runCatching { JSONArray(raw) }.getOrNull()
@@ -470,7 +466,9 @@ object ApiTokenTracker {
                 val row = catalog.optJSONObject(i) ?: continue
                 if (row.optString("modelName") != modelName ||
                     row.optString("baseUrl").trimEnd('/').lowercase(Locale.ROOT) != normalizedBase) continue
-                if (row.optString("providerId") == providerId) exact = row else baseMatch = row
+                val rowProvider = row.optString("providerId")
+                if (rowProvider == providerId) exact = row
+                else if (normalizedBase.isNotBlank()) baseMatch = row
             }
             val row = exact ?: baseMatch
             if (row != null) {
@@ -480,7 +478,14 @@ object ApiTokenTracker {
                 if (input != null && output != null && input.isFinite() && output.isFinite() && input >= 0.0 && output >= 0.0) {
                     return ModelPricing(modelName, input, output)
                 }
+                // An explicit PAID catalog result must not be overridden by a stale
+                // local/free allowlist entry merely because this model ID was reused.
+                if (row.opt("explicitlyFree") == false) return defaultPricing.last().copy()
             }
+        }
+        // A verified free/local model must never inherit the generic paid fallback price.
+        if (FreeModelsCatalog.isFreeModel(providerId, modelName, baseUrl)) {
+            return ModelPricing(modelName, 0.0, 0.0)
         }
         val lower = modelName.lowercase(Locale.ROOT)
         for (p in defaultPricing) {
