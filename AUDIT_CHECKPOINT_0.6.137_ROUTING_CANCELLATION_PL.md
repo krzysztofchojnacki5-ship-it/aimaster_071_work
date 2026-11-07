@@ -1250,3 +1250,32 @@ Weryfikacja:
 - pliki zapisane na branchu; test oczekuje na CI;
 - workflow run 42316275613 dla SHA d2e7fb50f16249fa139d331efa2f19b2f6755c45 był PENDING przy ostatnim odczycie;
 - brak merge, APK, release i zmian main; Companion Transport pozostaje BLOCKED.
+
+
+## Etap 15 — zachowanie metadanych REQUESTING w kolejnych checkpointach (2026-11-07)
+
+Przegląd odzyskiwania TeamRunEngine potwierdził lukę: callback onRequestStarting zapisuje pełne metadane REQUESTING, ale późniejsze onTaskState(task, "USAGE_PENDING", ...) tworzy nowy Event z domyślnymi zerowymi estymacjami, pustym idempotencyKey i pustym baseUrl. TaskCheckpointStore.record() wcześniej zastępował najnowszy rekord bez zachowania tych pól. Startup recovery w MainActivity mogło więc zaksięgować UNAVAILABLE z zerowymi estymacjami i bez pierwotnego klucza idempotencji.
+
+Zmiana:
+- TaskCheckpointStore.record() zachowuje request-only metadata z poprzedniego zdarzenia dla tego samego taskId, gdy późniejszy stan nie dostarcza tych pól;
+- zachowywane są providerId/model, estymacje input/output, idempotencyKey i bezpieczny baseUrl;
+- nowe niepuste wartości z bieżącego zdarzenia nadal mają pierwszeństwo;
+- journal order, terminal-state guard i processId pozostają bez zmian.
+
+Test:
+- usagePendingStatePreservesRequestMetadataForRestartReconciliation;
+- zapisuje REQUESTING z pełnymi danymi, potem USAGE_PENDING bez pól request-only;
+- sprawdza zachowanie danych w latest() i przekazanie ich do callbacku recoverStaleRunning() po symulacji poprzedniego procesu.
+
+Pliki:
+- app/src/main/java/pl/aimasterpro/app/core/TaskCheckpointStore.kt
+- app/src/test/java/pl/aimasterpro/app/core/TaskCheckpointStoreTest.kt
+
+Commity:
+- zachowanie metadanych: f63f5204a1f20ff876fc2d6d94163f27babdc0e2
+- test regresyjny: 55f5b1bc8939e56a9537e27b6dbb319b670d2cdd
+
+Weryfikacja:
+- kod i test zapisane; nie wykonano jeszcze testów lokalnych;
+- workflow run 42316466914 dla SHA 55f5b1bc8939e56a9537e27b6dbb319b670d2cdd ma status PENDING przy ostatnim odczycie;
+- brak merge, APK, release i zmian main; Companion Transport pozostaje BLOCKED.
