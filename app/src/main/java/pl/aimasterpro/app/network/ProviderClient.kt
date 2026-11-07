@@ -321,7 +321,7 @@ class ProviderClient(
             val output = exactNonNegativeCount(usageObj, "output_tokens")
             val cached = exactNonNegativeCount(usageObj, "cache_read_input_tokens", 0L)
             val reasoning = 0L
-            val realUsage = validUsageBreakdown(input, output, null, cached, reasoning)
+            val realUsage = validUsageBreakdown(input, output, null, 0L, reasoning)
             val finalInput = if (realUsage) input!! else (systemPrompt.length + userText.length) / 4.toLong()
             val finalOutput = if (realUsage) output!! else text.length / 4.toLong()
             val finalTotal = if (realUsage) Math.addExact(finalInput, finalOutput) else finalInput + finalOutput
@@ -349,9 +349,6 @@ class ProviderClient(
             val text = choices.optJSONObject(0)?.optJSONObject("message")?.optString("content").orEmpty()
 
             val usageObj = result.optJSONObject("usage")
-            val promptEval = result.optLong("prompt_eval_count", -1L)
-            val evalCount = result.optLong("eval_count", -1L)
-
             val input = exactNonNegativeCount(usageObj, "prompt_tokens")
                 ?: exactNonNegativeCount(result, "prompt_eval_count")
             val output = exactNonNegativeCount(usageObj, "completion_tokens")
