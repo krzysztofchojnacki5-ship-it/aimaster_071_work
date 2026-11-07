@@ -1788,3 +1788,12 @@ Doprecyzowanie projektu SQLite:
 - przy pierwszym uruchomieniu: jeżeli DB nie zawiera znacznika migracji, odczytać stare prefs, wykonać BEGIN/TRANSACTION, skopiować wszystkie provider_ids/config_*/key_* (ciphertext bez odszyfrowywania), zweryfikować liczbę i kompletność rekordów, zapisać schema_version + migration_complete w tej samej transakcji i dopiero commit;
 - stare prefs pozostają nietknięte jako kopia odzyskiwania. Jeżeli DB ma ukończoną migrację, DB jest źródłem prawdy; jeżeli DB jest niekompletna/uszkodzona, nie nadpisywać jej automatycznie ze starych prefs i nie udawać pustej bazy — blokada z diagnostyką.
 - Zachować alias ai_master_provider_key_v1 i format ciphertextów; migracja bazy nie wymaga odszyfrowywania ani ponownego szyfrowania kluczy API.
+
+
+## Dodatkowe znalezisko UI — przypisanie modelu agentowi
+
+- W MainActivity.kt, w ścieżce przypisywania modelu z katalogu darmowych modeli (funkcja obsługująca wybór modelSpec dla roli), wywołanie saveProvider(finalConfig) ignoruje zwróconą wartość Boolean.
+- Niezależnie od wyniku zapisu kod natychmiast aktualizuje agentProviders i chatPrefs, przełącza widok i wyświetla „MODEL ZOSTAŁ PRZYPISANY” oraz „Konfiguracja została trwale zapisana”.
+- Jeśli SecureStore.saveConfig() zwróci false (walidacja, Keystore, szyfrowanie lub commit), agent może otrzymać przypisanie do profilu, którego nowa konfiguracja nie została potwierdzona jako zapisana. Komunikat sukcesu jest fałszywy.
+- Naprawa: warunek if (!saveProvider(finalConfig)) { return } przed jakąkolwiek mutacją agentProviders/chatPrefs i przed komunikatem sukcesu. Zachować istniejące przypisanie agenta bez zmian po niepowodzeniu. Dodać test/wyodrębnioną politykę, jeśli ścieżka UI jest testowalna.
+- To znalezisko wzmacnia potrzebę wspólnego kontraktu zapisu SecureStore: każdy caller musi sprawdzać wynik, a żadna wtórna preferencja nie może być zapisana przed potwierdzeniem zapisu profilu.
