@@ -113,6 +113,36 @@ class TaskResultArchiveTest {
         assertEquals(1, savedActivity.length())
     }
 
+    @Test fun multipleArchivedReportsRestoreChronologicallyAndKeepNewestAtActivityLimit() {
+        val chatId = "chat-recovery-order"
+        val existingActivity = JSONArray()
+        repeat(150) { existingActivity.put("existing-$it") }
+        val root = JSONObject()
+            .put("currentId", chatId)
+            .put("chats", JSONObject().put(chatId, JSONObject()
+                .put("title", "Recovery order")
+                .put("messages", JSONArray())
+                .put("agentActivity", existingActivity)))
+        assertTrue(ChatHistoryStore.writeRoot(context, root))
+
+        assertTrue(TaskResultArchive.put(
+            context, "task-older", "RESEARCHER", "Older archived report",
+            "provider-a", "model-a", 1_000L, chatId
+        ))
+        assertTrue(TaskResultArchive.put(
+            context, "task-newer", "DEVELOPER", "Newer archived report",
+            "provider-b", "model-b", 2_000L, chatId
+        ))
+
+        assertEquals(2, TaskResultArchive.restoreArchivedReports(context))
+        val activity = ChatHistoryStore.readRoot(context)!!
+            .getJSONObject("chats").getJSONObject(chatId).getJSONArray("agentActivity")
+        assertEquals(150, activity.length())
+        assertEquals("existing-2", activity.optString(0))
+        assertTrue(activity.optString(148).contains("[TASK_REPORT_ID:task-older]"))
+        assertTrue(activity.optString(149).contains("[TASK_REPORT_ID:task-newer]"))
+    }
+
     @Test fun legacyArchiveWithoutChatIdIsNotAttachedToAnUnrelatedConversation() {
         val chatId = "chat-unrelated"
         val root = JSONObject()
