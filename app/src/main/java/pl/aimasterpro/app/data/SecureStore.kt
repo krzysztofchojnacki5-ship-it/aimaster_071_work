@@ -37,22 +37,32 @@ class SecureStore(context: Context) {
         return generator.generateKey()
     }
 
-    /** Returns false when the secret could not be stored; nothing is written in that case. */
-    fun putSecret(name: String, value: String): Boolean {
-        if (value.isBlank()) return prefs.edit().remove(name).commit()
-        return try {
-            val cipher = Cipher.getInstance("AES/GCM/NoPadding")
-            cipher.init(Cipher.ENCRYPT_MODE, key())
-            val encrypted = cipher.doFinal(value.toByteArray(Charsets.UTF_8))
-            val packed = cipher.iv + encrypted
-            prefs.edit().putString(name, Base64.encodeToString(packed, Base64.NO_WRAP)).commit()
-        } catch (_: Exception) {
-            false
-        }
+    /** Encrypts without changing preferences, allowing a complete import to be prepared before commit. */
+    private fun encryptSecret(value: String): String? {
+        if (value.isBlank()) return null
+        val cipher = Cipher.getInstance("AES/GCM/NoPadding")
+        cipher.init(Cipher.ENCRYPT_MODE, key())
+        val encrypted = cipher.doFinal(value.toByteArray(Charsets.UTF_8))
+        return Base64.encodeToString(cipher.iv + encrypted, Base64.NO_WRAP)
     }
 
-    fun getSecret(name: String): String? = runCatching {
+    /** Returns false when the secret could not be stored; nothing is written in that case. */
+    @Synchronized fun putSecret(name: String, value: String): Boolean = try {
+        val editor = prefs.edit()
+        if (value.isBlank()) {
+            editor.remove(name)
+        } else {
+            val encrypted = encryptSecret(value) ?: return false
+            editor.putString(name, encrypted)
+        }
+        editor.commit()
+    } catch (_: Exception) {
+        false
+    }
+
+    @Synchronized fun getSecret(name: String): String? = runCatching {
         val packed = Base64.decode(prefs.getString(name, null), Base64.NO_WRAP)
+        require(packed.size > 12) { "Zaszyfrowany klucz jest niekompletny." }
         val iv = packed.copyOfRange(0, 12)
         val ciphertext = packed.copyOfRange(12, packed.size)
         val cipher = Cipher.getInstance("AES/GCM/NoPadding")
@@ -60,37 +70,56 @@ class SecureStore(context: Context) {
         String(cipher.doFinal(ciphertext), Charsets.UTF_8)
     }.getOrNull()
 
-    /** Returns false when the API key could not be stored; the configuration is then not saved. */
-    fun saveConfig(config: JSONObject): Boolean {
+    /** Stores the encrypted key and its metadata in one preferences transaction. */
+    @Synchronized fun saveConfig(config: JSONObject): Boolean = try {
         val id = config.optString("id", "default")
-        if (!putSecret("key_$id", config.optString("apiKey"))) return false
-        val safe = JSONObject(config.toString())
-        safe.remove("apiKey")
+        if (id.isBlank()) return false
+        val encrypted = encryptSecret(config.optString("apiKey")) 
+        val safe = JSONObject(config.toString()).apply { remove("apiKey") }
         val ids = (prefs.getStringSet("provider_ids", emptySet()) ?: emptySet()).toMutableSet()
         ids.add(id)
-        return prefs.edit().putString("config_$id", safe.toString()).putStringSet("provider_ids", ids).commit()
+        val editor = prefs.edit().putString("config_$id", safe.toString()).putStringSet("provider_ids", ids)
+        if (encrypted == null) editor.remove("key_$id") else editor.putString("key_$id", encrypted)
+        editor.commit()
+    } catch (_: Exception) {
+        false
     }
 
-    fun allConfigs(): List<JSONObject> {
+    @Synchronized fun allConfigs(): List<JSONObject> {
         val ids = (prefs.getStringSet("provider_ids", emptySet()) ?: emptySet()).toList().sorted()
         return ids.mapNotNull { readConfig(it) }
     }
 
     /**
-     * Saves all [configs] first and removes previous entries only after every save succeeded, so a
-     * failed import never destroys the existing configuration. Returns false on any failure; in that
-     * case the previous entries that were not overwritten remain in place.
+     * Pre-encrypts and validates every entry before changing preferences. The final replacement,
+     * including provider IDs, metadata and encrypted API keys, is committed with one Editor commit.
+     * A preparation failure therefore leaves the previous configuration untouched.
      */
-    fun replaceAllConfigs(configs: List<JSONObject>): Boolean {
-        val oldIds = (prefs.getStringSet("provider_ids", emptySet()) ?: emptySet()).toSet()
-        val newIds = configs.map { it.optString("id", "default") }.toSet()
-        val allSaved = configs.all { saveConfig(JSONObject(it.toString())) }
-        if (!allSaved) return false
-        oldIds.filterNot { it in newIds }.forEach { id ->
-            prefs.edit().remove("config_$id").commit()
-            putSecret("key_$id", "")
+    @Synchronized fun replaceAllConfigs(configs: List<JSONObject>): Boolean = try {
+        if (configs.isEmpty()) return false
+        val prepared = configs.map { source ->
+            val config = JSONObject(source.toString())
+            val id = config.optString("id", "default")
+            require(id.isNotBlank()) { "Id dostawcy nie może być pusty." }
+            val encrypted = encryptSecret(config.optString("apiKey"))
+            val safe = JSONObject(config.toString()).apply { remove("apiKey") }
+            Triple(id, safe, encrypted)
         }
-        return prefs.edit().putStringSet("provider_ids", newIds).commit()
+        val newIds = prepared.map { it.first }
+        require(newIds.size == newIds.toSet().size) { "Kopia zawiera powtórzone identyfikatory dostawców." }
+
+        val oldIds = (prefs.getStringSet("provider_ids", emptySet()) ?: emptySet()).toSet()
+        val editor = prefs.edit()
+        oldIds.filterNot { it in newIds }.forEach { id ->
+            editor.remove("config_$id").remove("key_$id")
+        }
+        prepared.forEach { (id, safe, encrypted) ->
+            editor.putString("config_$id", safe.toString())
+            if (encrypted == null) editor.remove("key_$id") else editor.putString("key_$id", encrypted)
+        }
+        editor.putStringSet("provider_ids", newIds.toSet()).commit()
+    } catch (_: Exception) {
+        false
     }
 
     fun readConfig(id: String): JSONObject? = runCatching {
