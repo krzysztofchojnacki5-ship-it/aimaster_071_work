@@ -1633,3 +1633,17 @@ CI:
 - najnowszy kodowy commit b72c3d76d49a81c955ed22dc81bfd6e266dfd37a;
 - testy jednostkowe i assembleDebug oczekują na CI; wcześniejszy run 42322341151 nie obejmuje tych commitów i został anulowany przez kolejne zmiany.
 
+
+
+Dodatkowe zabezpieczenie Etapu 24 — brakujący alias Android Keystore:
+- wykryto, że key() generował nowy alias, gdy stary alias nie był widoczny, nawet jeśli w SharedPreferences nadal znajdowały się ciphertexty kluczy API;
+- to zachowanie mogło utrwalić sytuację, w której stare sekrety są nieczytelne dla nowego klucza;
+- generowanie nowego aliasu jest teraz dozwolone wyłącznie wtedy, gdy nie istnieją zapisane zaszyfrowane sekrety;
+- przy braku aliasu i istniejących ciphertextach SecureStore przerywa operację, zachowuje dane i zgłasza stan niedostępnego sekretu;
+- dodano testy czystej polityki tworzenia klucza.
+
+Commits:
+- 557c470 — brak automatycznej regeneracji aliasu przy istniejących ciphertextach;
+- 79da584 — jawna, testowalna polityka generowania klucza;
+- 6012537 — testy polityki odzyskiwania.
+
