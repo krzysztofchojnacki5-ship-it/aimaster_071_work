@@ -103,15 +103,17 @@ object TaskResultArchive {
             val seen = hashSetOf<String>()
             for (i in 0 until source.length()) {
                 val row = source.getJSONObject(i)
+                val createdAtValue = row.opt("createdAt")
                 require(row.opt("taskId") is String && row.opt("agentId") is String &&
                     row.opt("report") is String && row.opt("providerId") is String &&
-                    row.opt("model") is String && row.opt("createdAt") is Number)
+                    row.opt("model") is String &&
+                    (createdAtValue is Int || createdAtValue is Long))
                 val taskId = row.getString("taskId")
                 val agentId = row.getString("agentId")
                 val report = row.getString("report")
                 val providerId = row.getString("providerId")
                 val model = row.getString("model")
-                val createdAt = row.getLong("createdAt")
+                val createdAt = (createdAtValue as Number).toLong()
                 require(taskId.isNotBlank() && seen.add(taskId))
                 require(agentId.isNotBlank() && providerId.isNotBlank() && model.isNotBlank())
                 require(report.isNotBlank() && report.length <= MAX_REPORT_CHARS)
