@@ -1601,3 +1601,35 @@ Dodatkowa kontrola Etapu 23:
 Commits:
 - 1266eac — walidacja profilu przy pojedynczym zapisie;
 - d835e41 — test regresyjny.
+
+
+## Etap 24 — fail-closed przy niedostępnych sekretach Android Keystore (2026-11-07)
+
+Odkrycie:
+- getSecret() zwracał null przy każdym błędzie odszyfrowania;
+- readConfig() zamieniał taki wynik na pusty apiKey, nie odróżniając braku zapisanego klucza od istniejącego, ale nieczytelnego ciphertextu;
+- zapis profilu z pustym kluczem mógł następnie usunąć istniejący ciphertext, mimo że aplikacja nie była w stanie go odszyfrować.
+
+Zmiany:
+- readConfig() rozróżnia brak klucza API od sytuacji, gdy zaszyfrowany wpis istnieje, ale odszyfrowanie się nie powiodło; w drugim przypadku zwraca jawny marker _secretUnavailable=true;
+- unavailableSecretProviderIds() pozwala wykryć profile z niedostępnymi sekretami;
+- MainActivity blokuje użycie profilu z niedostępnym sekretem oraz profilu zależnego od takiego rodzica;
+- ekran MODELE pokazuje ostrzeżenie z ID profili, których sekretów nie można odszyfrować;
+- saveConfig() odrzuca pusty zapis, jeżeli istniejący sekret nie daje się odszyfrować;
+- putSecret() analogicznie blokuje usunięcie nieczytelnego ciphertextu pustą wartością;
+- dodano testy markera niedostępnego sekretu, ochrony istniejącego ciphertextu przy saveConfig() i putSecret().
+
+Commity:
+- 27fb325 — fail-closed readConfig i diagnostyka niedostępnych sekretów;
+- b0f894f — blokada użycia i ostrzeżenie UI;
+- f790c03 — testy odczytu i zachowania sekretu;
+- 23d34a6 — ochrona putSecret;
+- b72c3d7 — test putSecret.
+
+Ograniczenie:
+- nie ma automatycznej regeneracji aliasu Android Keystore. Jeśli klucz jest trwale utracony, istniejący ciphertext może być nieodzyskiwalny; aplikacja nie niszczy go automatycznie ani nie deklaruje, że sekret odzyskano. Ponowne zapisanie wymaga świadomego dostarczenia nowego klucza i działającego Keystore.
+
+CI:
+- najnowszy kodowy commit b72c3d76d49a81c955ed22dc81bfd6e266dfd37a;
+- testy jednostkowe i assembleDebug oczekują na CI; wcześniejszy run 42322341151 nie obejmuje tych commitów i został anulowany przez kolejne zmiany.
+
