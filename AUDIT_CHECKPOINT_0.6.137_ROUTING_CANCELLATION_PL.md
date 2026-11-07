@@ -1309,3 +1309,11 @@ Weryfikacja:
 - test i kod zapisane na branchu; brak potwierdzonego wykonania;
 - workflow run 42316584880 dla SHA 34a85b2ae984df0553281418a9a1839b1ba044d1 ma status PENDING przy ostatnim odczycie;
 - brak merge, APK, release i zmian main; Companion Transport pozostaje BLOCKED.
+
+
+### Aktualizacja CI — Etap 16
+
+- Run 42316584880 dla kodu/testu SHA 34a85b2ae984df0553281418a9a1839b1ba044d1 przeszedł konfigurację JDK 17, Android SDK API 36 i Gradle 8.13.
+- Krok :app:testDebugUnitTest :app:assembleDebug: IN_PROGRESS.
+- Run obejmuje Etap 15 i Etap 16; późniejszy commit checkpointu jest wyłącznie dokumentacyjny.
+- Nie ma jeszcze potwierdzonego wyniku PASS.
