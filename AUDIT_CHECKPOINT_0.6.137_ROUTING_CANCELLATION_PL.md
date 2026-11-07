@@ -1668,3 +1668,26 @@ Dodatkowe commity Etapu 24:
 Ważne ograniczenie naprawy:
 - jeżeli stary alias Keystore nadal działa, ale pojedynczy ciphertext jest uszkodzony, ręczne wprowadzenie nowego klucza może zastąpić wyłącznie ten profil;
 - jeżeli alias Keystore zniknął, aplikacja nie wygeneruje nowego klucza automatycznie, ponieważ zrobiłoby to pozostałe ciphertexty nieczytelnymi. W takim przypadku ręczna naprawa pojedynczego profilu zostanie bezpiecznie odrzucona; potrzebny jest osobny, jawnie zatwierdzany proces rotacji/resetu magazynu z pełnym ostrzeżeniem o utracie starych sekretów.
+
+
+## Etap 25 — pełne czyszczenie buforów kopii zapasowej (2026-11-07)
+
+Dalszy przegląd BackupCrypto wykazał ścieżki wyjątków, na których tablice tymczasowe nie były zerowane:
+- encrypt() tworzył plaintext bytes, a limit rozmiaru sprawdzał przed wejściem do finally;
+- błąd KDF lub inicjalizacji Cipher mógł wystąpić przed dotychczasowym czyszczeniem plaintextu;
+- decrypt() nie czyścił salt, IV i ciphertextu, gdy walidacja długości, KDF lub GCM rzucały wyjątek;
+- encoded key bytes były czyszczone dopiero po poprawnym utworzeniu SecretKeySpec.
+
+Zmiany:
+- cały przebieg encrypt() po utworzeniu plaintext bytes jest objęty finally;
+- plaintext jest zerowany także po odrzuceniu limitu 4 MiB i błędzie KDF/Cipher;
+- ciphertext jest zerowany niezależnie od powodzenia serializacji JSON;
+- salt i IV są zerowane po zakodowaniu koperty;
+- decrypt() zeruje salt, IV i ciphertext również przy błędzie walidacji, KDF i GCM;
+- deriveKey() zeruje encoded bytes także wtedy, gdy konstruktor SecretKeySpec zakończy się wyjątkiem;
+- PBEKeySpec nadal jest czyszczony w finally.
+
+Commit:
+- 3881ba1b0cb77a077c112909ccfdb9eed87b87a9 — pełne czyszczenie buforów BackupCrypto.
+
+Testy istniejące obejmują round-trip, błędne hasło, tampering, zgodność formatu v1, limity payload/envelope oraz minimalną długość hasła. Nowe zmiany wymagają ponownego wyniku CI; nie oznaczono ich jako PASS.
