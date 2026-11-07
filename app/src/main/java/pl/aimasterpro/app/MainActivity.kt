@@ -3500,6 +3500,11 @@ class MainActivity : Activity() {
     }
 
     private fun refreshAllModelCatalogs(showToast: Boolean) {
+        if (store.isStorageUncertain()) {
+            toast("Odświeżanie katalogów modeli zablokowane do ponownego uruchomienia aplikacji.")
+            navigate("Modele")
+            return
+        }
         val providers = store.allConfigs().mapNotNull { j -> runCatching { loadProvider(j.optString("id")) }.getOrNull() }
             .filter { it.parentProviderId.isBlank() && providerCredentialsReady(it) }
         if (providers.isEmpty()) {
@@ -3609,6 +3614,11 @@ class MainActivity : Activity() {
         userPrompt: String,
         scope: ProviderClient.RequestScope
     ): Result<ChatResponse> {
+        if (store.isStorageUncertain()) {
+            return Result.failure(IllegalStateException(
+                "Magazyn konfiguracji ma niepewny stan. Uruchom ponownie AI MASTER PRO przed testem dostawcy lub modelu."
+            ))
+        }
         val taskId = "test-$testLabel-${UUID.randomUUID()}"
         val estimatedInput = (systemPrompt.length.toLong() + userPrompt.length.toLong() + 2L) / 3L
         val planResult = runCatching {
@@ -3764,6 +3774,11 @@ class MainActivity : Activity() {
     }
 
     private fun discover(p: ProviderConfig) {
+        if (store.isStorageUncertain()) {
+            toast("Pobieranie modeli zablokowane do ponownego uruchomienia aplikacji.")
+            navigate("Modele")
+            return
+        }
         val baseId = p.parentProviderId.ifBlank { p.id }
         val base = loadProvider(baseId) ?: p
         if (!providerCredentialsReady(base)) {
@@ -3791,6 +3806,11 @@ class MainActivity : Activity() {
     }
 
     private fun showAgents() {
+        if (store.isStorageUncertain()) {
+            toast("Magazyn konfiguracji wymaga ponownego uruchomienia. Szczegóły znajdziesz w MODELE.")
+            navigate("Modele")
+            return
+        }
         loadAgentActivity()
         card("Zespół agentów", "Tutaj przydzielasz gotowe profile modeli do ról, ustawiasz tryb pracy i testujesz połączenie. Katalog modeli oraz klucze API są zarządzane wyłącznie w zakładce MODELE.")
 
