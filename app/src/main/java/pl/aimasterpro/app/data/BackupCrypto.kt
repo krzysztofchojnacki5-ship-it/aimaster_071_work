@@ -21,7 +21,11 @@ object BackupCrypto {
         val spec = PBEKeySpec(password, salt, ITERATIONS, KEY_BITS)
         return try {
             val encoded = SecretKeyFactory.getInstance("PBKDF2WithHmacSHA256").generateSecret(spec).encoded
-            SecretKeySpec(encoded, "AES").also { encoded.fill(0) }
+            try {
+                SecretKeySpec(encoded, "AES")
+            } finally {
+                encoded.fill(0)
+            }
         } finally {
             spec.clearPassword()
         }
@@ -31,23 +35,30 @@ object BackupCrypto {
         require(password.size >= 8) { "Hasło musi mieć co najmniej 8 znaków." }
         require(plain.isNotBlank()) { "Tekst do zaszyfrowania nie może być pusty." }
         val plainBytes = plain.toByteArray(Charsets.UTF_8)
-        require(plainBytes.size <= MAX_PLAIN_BYTES) { "Kopia jest zbyt duża (limit 4 MiB)." }
-        val salt = ByteArray(16).also { SecureRandom().nextBytes(it) }
-        val iv = ByteArray(12).also { SecureRandom().nextBytes(it) }
-        val key = deriveKey(password, salt)
-        val cipher = Cipher.getInstance("AES/GCM/NoPadding")
-        cipher.init(Cipher.ENCRYPT_MODE, key, GCMParameterSpec(128, iv))
-        val ciphertext = try {
-            cipher.doFinal(plainBytes)
+        try {
+            require(plainBytes.size <= MAX_PLAIN_BYTES) { "Kopia jest zbyt duża (limit 4 MiB)." }
+            val salt = ByteArray(16).also { SecureRandom().nextBytes(it) }
+            val iv = ByteArray(12).also { SecureRandom().nextBytes(it) }
+            try {
+                val key = deriveKey(password, salt)
+                val cipher = Cipher.getInstance("AES/GCM/NoPadding")
+                cipher.init(Cipher.ENCRYPT_MODE, key, GCMParameterSpec(GCM_TAG_BITS, iv))
+                val ciphertext = cipher.doFinal(plainBytes)
+                try {
+                    JSONObject().put("format", "AIMASTER_BACKUP").put("version", 1)
+                        .put("iterations", ITERATIONS).put("salt", Base64.encodeToString(salt, Base64.NO_WRAP))
+                        .put("iv", Base64.encodeToString(iv, Base64.NO_WRAP))
+                        .put("data", Base64.encodeToString(ciphertext, Base64.NO_WRAP)).toString(2)
+                } finally {
+                    ciphertext.fill(0)
+                }
+            } finally {
+                salt.fill(0)
+                iv.fill(0)
+            }
         } finally {
             plainBytes.fill(0)
         }
-        return JSONObject().put("format", "AIMASTER_BACKUP").put("version", 1)
-            .put("iterations", ITERATIONS).put("salt", Base64.encodeToString(salt, Base64.NO_WRAP))
-            .put("iv", Base64.encodeToString(iv, Base64.NO_WRAP))
-            .put("data", Base64.encodeToString(ciphertext, Base64.NO_WRAP)).toString(2).also {
-                ciphertext.fill(0)
-            }
     }
 
     fun decrypt(encoded: String, password: CharArray): String {
@@ -72,19 +83,25 @@ object BackupCrypto {
         val salt = Base64.decode(saltBase64, Base64.NO_WRAP)
         val iv = Base64.decode(ivBase64, Base64.NO_WRAP)
         val data = Base64.decode(dataBase64, Base64.NO_WRAP)
-        require(salt.size == 16) { "Nieprawidłowa długość soli (salt)." }
-        require(iv.size == 12) { "Nieprawidłowa długość wektora inicjalizującego (IV)." }
-        require(data.size in 17..(MAX_PLAIN_BYTES + 16)) { "Dane kopii mają nieprawidłowy rozmiar." }
+        try {
+            require(salt.size == 16) { "Nieprawidłowa długość soli (salt)." }
+            require(iv.size == 12) { "Nieprawidłowa długość wektora inicjalizującego (IV)." }
+            require(data.size in 17..(MAX_PLAIN_BYTES + 16)) { "Dane kopii mają nieprawidłowy rozmiar." }
 
-        val key = deriveKey(password, salt)
-        val cipher = Cipher.getInstance("AES/GCM/NoPadding")
-        cipher.init(Cipher.DECRYPT_MODE, key, GCMParameterSpec(GCM_TAG_BITS, iv))
-        val plain = cipher.doFinal(data)
-        return try {
-            require(plain.size <= MAX_PLAIN_BYTES) { "Dane kopii przekraczają dozwolony rozmiar." }
-            String(plain, Charsets.UTF_8)
+            val key = deriveKey(password, salt)
+            val cipher = Cipher.getInstance("AES/GCM/NoPadding")
+            cipher.init(Cipher.DECRYPT_MODE, key, GCMParameterSpec(GCM_TAG_BITS, iv))
+            val plain = cipher.doFinal(data)
+            try {
+                require(plain.size <= MAX_PLAIN_BYTES) { "Dane kopii przekraczają dozwolony rozmiar." }
+                String(plain, Charsets.UTF_8)
+            } finally {
+                plain.fill(0)
+            }
         } finally {
-            plain.fill(0)
+            salt.fill(0)
+            iv.fill(0)
+            data.fill(0)
         }
     }
 }
