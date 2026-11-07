@@ -920,3 +920,7 @@ Priorytetem jest domknięcie niezawodności magazynu profili przed powrotem do h
 ### 0.6.139 — potwierdzony błąd migracji starego mirror historii
 
 W trakcie przeglądu startowego restoreMessages() wykryto i naprawiono ryzyko odtworzenia nieaktualnej rozmowy z `chat_messages`, gdy kanoniczne `chats_v2` istnieje, ale celowo zawiera pustą listę rozmów (np. po usunięciu ostatniej rozmowy). Migracja legacy jest teraz dozwolona wyłącznie przy braku kanonicznego dokumentu; niepewny odczyt blokuje restore. Dwa testy dodane, ADDED / NOT RUN. CI 42411603439 nadal waliduje starszy SHA 30e0f496..., więc poprawka nie jest jeszcze zweryfikowana.
+
+### 0.6.139 — atomowe zapisy historii rozmów
+
+Audyt wykazał, że MainActivity używała sekwencji osobnych read/write, podczas gdy archiwa odpowiedzi i raportów agentów wykonywały atomowe updateRoot. Przeniesiono siedem mutujących ścieżek MainActivity do ChatHistoryStore.updateRoot, aby wszystkie zapisy historii współdzieliły ten sam lock read-modify-write. Dodano test współbieżności wiadomość-versus-aktywność. Produkcja: 49da9dcb..., 84c495ec...; test: b4193751...; ADDED / NOT RUN. CI 42411603439 nadal nie obejmuje nowych commitów.
