@@ -60,6 +60,26 @@ class ChatResponseArchiveTest {
             .getJSONObject("chats").getJSONObject(chatId).getJSONArray("messages").length())
     }
 
+    @Test fun acknowledgePersistedFreesResponseCapacityWithoutReplaying() {
+        val chatId = "chat-response-ack"
+        createChat(chatId)
+        assertTrue(ChatResponseArchive.put(
+            context, "ack-response-task", chatId, "MASTER", "Already committed",
+            "provider-a", "model-a", 2_500L
+        ))
+        assertTrue(ChatHistoryStore.updateRoot(context) { root ->
+            val chat = root.getJSONObject("chats").getJSONObject(chatId)
+            chat.getJSONArray("messages").put(JSONObject().put("role", "assistant").put("text", "Already committed"))
+            chat.getJSONArray("assistantTaskIds").put("ack-response-task")
+            true
+        })
+
+        assertEquals(1, ChatResponseArchive.acknowledgePersisted(context))
+        assertNull(ChatResponseArchive.get(context, "ack-response-task"))
+        assertEquals(0, ChatResponseArchive.acknowledgePersisted(context))
+    }
+
+
     @Test fun existingAssistantTaskMarkerPreventsDuplicateReplay() {
         val chatId = "chat-response-existing"
         val messages = JSONArray()
