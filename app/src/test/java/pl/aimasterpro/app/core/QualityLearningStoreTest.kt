@@ -59,6 +59,43 @@ class QualityLearningStoreTest {
         assertTrue(AgentOperationalMemoryStore.all(context).any { "task-recovery" in it.sourceTaskIds })
     }
 
+    @Test fun reconciliationRemovesRevokedMemoriesAfterInterruptedRejection() {
+        val proposal = QualityLearningStore.addProposal(
+            context, "Reguła cofnięta po przerwaniu procesu", 8, "wysoka",
+            listOf("task-revoked"), listOf("coder"), emptyList()
+        )
+        assertTrue(QualityLearningStore.setProposalStatus(context, proposal.id, "APPROVED"))
+        val memoryEntry = "[UCZENIE ZATWIERDZONE ${proposal.id.take(8)}; dowody=${proposal.evidenceCount}; pewność=${proposal.confidence}] ${proposal.text}".take(1000)
+        assertTrue(AiMemoryStore.getMemories(context).contains(memoryEntry))
+        assertTrue(AgentOperationalMemoryStore.all(context).any { "proposal:${proposal.id}" in it.sourceTaskIds })
+
+        // Simulate process death after the REJECTED ledger commit but before memory cleanup.
+        val prefs = context.getSharedPreferences("ai_quality_learning_v1", Context.MODE_PRIVATE)
+        val persisted = prefs.getString("proposals", null)!!
+        assertTrue(prefs.edit().putString("proposals", persisted.replace("\"status\":\"APPROVED\"", "\"status\":\"REJECTED\"")).commit())
+
+        QualityLearningStore.syncApprovedAgentMemories(context)
+        assertFalse(AiMemoryStore.getMemories(context).contains(memoryEntry))
+        assertFalse(AgentOperationalMemoryStore.all(context).any { "proposal:${proposal.id}" in it.sourceTaskIds })
+    }
+
+    @Test fun corruptProposalLedgerDoesNotCauseReconciliationToDeleteExistingMemories() {
+        val proposal = QualityLearningStore.addProposal(
+            context, "Nie usuwaj przy nieczytelnym rejestrze", 6, "wstępna",
+            listOf("task-corrupt"), listOf("coder"), emptyList()
+        )
+        assertTrue(QualityLearningStore.setProposalStatus(context, proposal.id, "APPROVED"))
+        val memoryEntry = "[UCZENIE ZATWIERDZONE ${proposal.id.take(8)}; dowody=${proposal.evidenceCount}; pewność=${proposal.confidence}] ${proposal.text}".take(1000)
+        val prefs = context.getSharedPreferences("ai_quality_learning_v1", Context.MODE_PRIVATE)
+        val corrupt = """[{"id":"broken","text":"missing required fields"}]"""
+        assertTrue(prefs.edit().putString("proposals", corrupt).commit())
+
+        assertEquals(0, QualityLearningStore.syncApprovedAgentMemories(context))
+        assertTrue(AiMemoryStore.getMemories(context).contains(memoryEntry))
+        assertTrue(AgentOperationalMemoryStore.all(context).any { "proposal:${proposal.id}" in it.sourceTaskIds })
+        assertEquals(corrupt, prefs.getString("proposals", null))
+    }
+
     @Test fun proposalCannotRemainApprovedWhenDurableSharedMemoryWriteFails() {
         val proposal = QualityLearningStore.addProposal(
             context, "Reguła wymagająca trwałego zapisu", 7, "wstępna", emptyList(), emptyList(), emptyList()
