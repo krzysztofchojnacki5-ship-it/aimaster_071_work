@@ -426,10 +426,25 @@ class ProviderClient(
             val promptDetails = usageObj?.optJSONObject("prompt_tokens_details")
             val cached = exactNonNegativeCount(promptDetails, "cached_tokens", 0L)
             val cacheWriteRaw = exactNonNegativeCount(promptDetails, "cache_write_tokens", 0L)
-            val cacheWrite1h = exactNonNegativeCount(promptDetails, "cache_write_1h_tokens", 0L)
-            val cacheWrite = if (cacheWrite1h != null && promptDetails?.has("cache_write_1h_tokens") == true) {
-                exactNonNegativeCount(promptDetails, "cache_write_tokens", 0L)
-            } else cacheWriteRaw
+            val hasTtlBreakdown = promptDetails?.has("cache_write_5m_tokens") == true ||
+                promptDetails?.has("cache_write_1h_tokens") == true ||
+                usageObj?.has("claude_cache_creation_5_m_tokens") == true ||
+                usageObj?.has("claude_cache_creation_1_h_tokens") == true
+            val cacheWrite = when {
+                promptDetails?.has("cache_write_5m_tokens") == true ->
+                    exactNonNegativeCount(promptDetails, "cache_write_5m_tokens", 0L)
+                usageObj?.has("claude_cache_creation_5_m_tokens") == true ->
+                    exactNonNegativeCount(usageObj, "claude_cache_creation_5_m_tokens", 0L)
+                hasTtlBreakdown -> 0L
+                else -> cacheWriteRaw
+            }
+            val cacheWrite1h = when {
+                promptDetails?.has("cache_write_1h_tokens") == true ->
+                    exactNonNegativeCount(promptDetails, "cache_write_1h_tokens", 0L)
+                usageObj?.has("claude_cache_creation_1_h_tokens") == true ->
+                    exactNonNegativeCount(usageObj, "claude_cache_creation_1_h_tokens", 0L)
+                else -> 0L
+            }
             val reasoning = exactNonNegativeCount(usageObj?.optJSONObject("completion_tokens_details"), "reasoning_tokens", 0L)
             val realUsage = validUsageBreakdown(input, output, reportedTotal, cached, reasoning, reportedTotalFieldValid, cacheWrite, cacheWrite1h)
 
