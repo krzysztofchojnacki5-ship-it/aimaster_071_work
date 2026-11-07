@@ -28,14 +28,16 @@ data class TokenRecord(
 data class ModelPricing(
     val modelKey: String, // model name or prefix
     var inputPer1MUsd: Double,
-    var outputPer1MUsd: Double
+    var outputPer1MUsd: Double,
+    val cachedInputPer1MUsd: Double? = null
 )
 
 data class CatalogModelPrice(
     val modelName: String,
     val inputPer1MUsd: Double?,
     val outputPer1MUsd: Double?,
-    val explicitlyFree: Boolean? = null
+    val explicitlyFree: Boolean? = null,
+    val cachedInputPer1MUsd: Double? = null
 )
 
 data class BudgetRequest(
@@ -92,6 +94,16 @@ object ApiTokenTracker {
         ModelPricing("default", 0.50, 1.50)
     )
 
+    private fun calculateUsdCost(
+        inputTokens: Long, outputTokens: Long, cachedTokens: Long, pricing: ModelPricing
+    ): Double {
+        val cached = if (pricing.cachedInputPer1MUsd != null) minOf(inputTokens, cachedTokens) else 0L
+        val regularInput = inputTokens - cached
+        return (regularInput.toDouble() * pricing.inputPer1MUsd +
+            cached.toDouble() * (pricing.cachedInputPer1MUsd ?: pricing.inputPer1MUsd) +
+            outputTokens.toDouble() * pricing.outputPer1MUsd) / 1_000_000.0
+    }
+
     @Synchronized
     fun recordQuery(
         context: Context,
@@ -108,7 +120,7 @@ object ApiTokenTracker {
         reservationId: String = "",
         idempotencyKey: String = ""
     ): TokenRecord {
-        require(inputTokens >= 0L && outputTokens >= 0L && reasoningTokens >= 0L && cachedTokens >= 0L) {
+        require(inputTokens >= 0L && outputTokens >= 0L && reasoningTokens >= 0L && cachedTokens >= 0L && cachedTokens <= inputTokens) {
             "Liczby tokenów nie mogą być ujemne."
         }
         val stableQueryId = idempotencyKey.trim().ifBlank { UUID.randomUUID().toString() }
@@ -142,8 +154,7 @@ object ApiTokenTracker {
                 require(upgradeRate.isFinite() && upgradeRate > 0.0) {
                     "Nieprawidłowy kurs USD/PLN; rozliczenie API wstrzymano."
                 }
-                val upgradeUsd = (inputTokens.toDouble() * upgradePricing.inputPer1MUsd +
-                    outputTokens.toDouble() * upgradePricing.outputPer1MUsd) / 1_000_000.0
+                val upgradeUsd = calculateUsdCost(inputTokens, outputTokens, cachedTokens, upgradePricing)
                 val upgradePln = upgradeUsd * upgradeRate
                 require(upgradeUsd.isFinite() && upgradePln.isFinite() && upgradeUsd >= 0.0 && upgradePln >= 0.0) {
                     "Nieprawidłowy koszt użycia API."
@@ -182,7 +193,7 @@ object ApiTokenTracker {
             pricing.inputPer1MUsd >= 0.0 && pricing.outputPer1MUsd >= 0.0) { "Nieprawidłowy cennik modelu." }
         val exchangeRate = getExchangeRate(context)
         require(exchangeRate.isFinite() && exchangeRate > 0.0) { "Nieprawidłowy kurs USD/PLN; rozliczenie API wstrzymano." }
-        val usd = (inputTokens.toDouble() * pricing.inputPer1MUsd + outputTokens.toDouble() * pricing.outputPer1MUsd) / 1_000_000.0
+        val usd = calculateUsdCost(inputTokens, outputTokens, cachedTokens, pricing)
         val pln = usd * exchangeRate
         require(usd.isFinite() && pln.isFinite() && usd >= 0.0 && pln >= 0.0) { "Nieprawidłowy koszt użycia API." }
 
@@ -422,6 +433,7 @@ object ApiTokenTracker {
                 (it.inputPer1MUsd != null && it.outputPer1MUsd != null &&
                     it.inputPer1MUsd.isFinite() && it.outputPer1MUsd.isFinite() &&
                     it.inputPer1MUsd >= 0.0 && it.outputPer1MUsd >= 0.0)) &&
+            (it.cachedInputPer1MUsd == null || (it.cachedInputPer1MUsd.isFinite() && it.cachedInputPer1MUsd >= 0.0)) &&
             (it.explicitlyFree != true ||
                 ((it.inputPer1MUsd == null || it.inputPer1MUsd == 0.0) &&
                     (it.outputPer1MUsd == null || it.outputPer1MUsd == 0.0)))
@@ -446,6 +458,7 @@ object ApiTokenTracker {
                 .put("baseUrl", normalizedBase)
                 .put("inputPer1MUsd", model.inputPer1MUsd ?: JSONObject.NULL)
                 .put("outputPer1MUsd", model.outputPer1MUsd ?: JSONObject.NULL)
+                .put("cachedInputPer1MUsd", model.cachedInputPer1MUsd ?: JSONObject.NULL)
                 .put("explicitlyFree", model.explicitlyFree ?: JSONObject.NULL))
         }
         check(prefs.edit().putString("catalog_model_prices", kept.toString()).commit()) {
@@ -476,7 +489,9 @@ object ApiTokenTracker {
                 val input = (row.opt("inputPer1MUsd") as? Number)?.toDouble()
                 val output = (row.opt("outputPer1MUsd") as? Number)?.toDouble()
                 if (input != null && output != null && input.isFinite() && output.isFinite() && input >= 0.0 && output >= 0.0) {
-                    return ModelPricing(modelName, input, output)
+                    val cached = (row.opt("cachedInputPer1MUsd") as? Number)?.toDouble()
+                        ?.takeIf { it.isFinite() && it >= 0.0 }
+                    return ModelPricing(modelName, input, output, cached)
                 }
                 // An explicit PAID catalog result must not be overridden by a stale
                 // local/free allowlist entry merely because this model ID was reused.
