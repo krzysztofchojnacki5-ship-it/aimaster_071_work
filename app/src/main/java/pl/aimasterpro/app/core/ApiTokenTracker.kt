@@ -453,27 +453,22 @@ object ApiTokenTracker {
         val costPln: Double
     )
 
-    fun calculateSummary(records: List<TokenRecord>): SummaryStats {
-        var q = 0
-        var i = 0L
-        var o = 0L
-        var t = 0L
-        var r = 0L
-        var c = 0L
-        var usd = 0.0
-        var pln = 0.0
-        records.forEach { rec ->
-            q++
-            i += rec.inputTokens
-            o += rec.outputTokens
-            t += rec.totalTokens
-            r += rec.reasoningTokens
-            c += rec.cachedTokens
-            usd += rec.costUsd
-            pln += rec.costPln
+    private fun sumNonNegativeCosts(values: Iterable<Double>): Double =
+        values.fold(0.0) { total, value ->
+            val safe = value.takeIf { it.isFinite() && it > 0.0 } ?: 0.0
+            if (Double.MAX_VALUE - total < safe) Double.MAX_VALUE else total + safe
         }
-        return SummaryStats(q, i, o, t, r, c, usd, pln)
-    }
+
+    fun calculateSummary(records: List<TokenRecord>): SummaryStats = SummaryStats(
+        totalQueries = records.size,
+        inputTokens = sumTokenCounts(records.map { it.inputTokens }),
+        outputTokens = sumTokenCounts(records.map { it.outputTokens }),
+        totalTokens = sumTokenCounts(records.map { it.totalTokens }),
+        reasoningTokens = sumTokenCounts(records.map { it.reasoningTokens }),
+        cachedTokens = sumTokenCounts(records.map { it.cachedTokens }),
+        costUsd = sumNonNegativeCosts(records.map { it.costUsd }),
+        costPln = sumNonNegativeCosts(records.map { it.costPln })
+    )
 
     /**
      * Plans a whole batch sequentially so parallel agents cannot each assume
