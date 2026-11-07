@@ -311,4 +311,33 @@ class ChatHistoryStoreTest {
             .getJSONObject("chats").getJSONObject(chatId).getString("title"))
     }
 
+
+    @Test fun directWriteRootWaitsForSharedPreferenceLockThroughValidationAndCommit() {
+        val ready = java.util.concurrent.CountDownLatch(1)
+        val finished = java.util.concurrent.CountDownLatch(1)
+        val result = java.util.concurrent.atomic.AtomicBoolean(false)
+        val candidate = JSONObject().put("chats", JSONObject().put(
+            "chat-direct", JSONObject().put("messages", JSONArray())
+        ))
+        val worker = Thread {
+            ready.countDown()
+            result.set(ChatHistoryStore.writeRoot(context, candidate))
+            finished.countDown()
+        }
+        SharedPreferencesWriteHealth.withHealthyAccess("chat_state") {
+            worker.start()
+            assertTrue(ready.await(2, java.util.concurrent.TimeUnit.SECONDS))
+            val deadline = System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(2)
+            while (worker.state != Thread.State.BLOCKED && System.nanoTime() < deadline) {
+                Thread.yield()
+            }
+            assertEquals(Thread.State.BLOCKED, worker.state)
+            assertEquals(1L, finished.count)
+        }
+        worker.join(3_000L)
+        assertEquals(0L, finished.count)
+        assertTrue(result.get())
+        assertTrue(ChatHistoryStore.readRoot(context)!!.getJSONObject("chats").has("chat-direct"))
+    }
+
 }
