@@ -116,14 +116,14 @@ object ChatHistoryStore {
     fun writeRoot(context: Context, root: JSONObject): Boolean =
         writeRootInternal(context, root, null)
 
-    /** Best-effort compatibility mirror; still shares the file lock and ambiguity latch. */
+    /** Best-effort compatibility mirror; never replaces the canonical durable chat document. */
     @Synchronized
     fun writeLegacyMirror(context: Context, serializedMessages: String): Boolean = runCatching {
         SharedPreferencesWriteHealth.withHealthyAccess(PREFS) {
-            val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-            SharedPreferencesWriteHealth.commit(
-                PREFS, prefs.edit().putString("chat_messages", serializedMessages)
-            )
+            context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
+                .putString("chat_messages", serializedMessages)
+                .apply()
+            true
         }
     }.getOrDefault(false)
 
