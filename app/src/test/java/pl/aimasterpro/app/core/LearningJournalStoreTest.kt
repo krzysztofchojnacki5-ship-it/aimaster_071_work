@@ -66,6 +66,20 @@ class LearningJournalStoreTest {
         assertTrue(LearningJournalStore.load(context).isEmpty())
     }
 
+    @Test fun preferenceAccessFailureDoesNotCrashOrReportSuccessfulClear() {
+        val failingContext = object : android.content.ContextWrapper(context) {
+            override fun getSharedPreferences(name: String, mode: Int): android.content.SharedPreferences {
+                throw IllegalStateException("controlled learning journal preferences failure")
+            }
+        }
+        LearningJournalStore.record(
+            failingContext,
+            LearningJournalStore.Event(10L, "agent", "tester", "groq", "model", "COMPLETED", 100L, 1, "")
+        )
+        assertTrue(LearningJournalStore.load(failingContext).isEmpty())
+        assertTrue(!LearningJournalStore.clear(failingContext))
+    }
+
     @Test fun clearRemovesJournalWithoutTouchingApprovedMemory() {
         AiMemoryStore.addMemory(context, "TEST_APPROVED_MEMORY")
         LearningJournalStore.record(context, LearningJournalStore.Event(1L, "chat", "MASTER", "groq", "model-a", "COMPLETED", 10L, 1, ""))
