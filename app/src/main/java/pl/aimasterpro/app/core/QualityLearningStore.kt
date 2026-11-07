@@ -231,6 +231,7 @@ object QualityLearningStore {
 
     /** A malformed row invalidates mutation of that journal; never silently drop unknown evidence. */
     private fun readArrayStrict(c: Context, key: String): List<JSONObject>? {
+        if (SharedPreferencesWriteHealth.isUncertain(PREFS)) return null
         val raw = c.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString(key, null) ?: return emptyList()
         return runCatching {
             val array = JSONArray(raw)
@@ -289,9 +290,12 @@ object QualityLearningStore {
         }.getOrNull()
     }
 
-    private fun writeArray(c: Context, key: String, rows: List<JSONObject>): Boolean =
-        c.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
-            .putString(key, JSONArray(rows).toString()).commit()
+    private fun writeArray(c: Context, key: String, rows: List<JSONObject>): Boolean {
+        if (SharedPreferencesWriteHealth.isUncertain(PREFS)) return false
+        val editor = c.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
+            .putString(key, JSONArray(rows).toString())
+        return SharedPreferencesWriteHealth.commit(PREFS, editor)
+    }
 
     private fun saveProposals(c: Context, rows: List<Proposal>): Boolean = writeArray(c, PROPOSALS_KEY, rows.take(MAX_PROPOSALS).map {
         JSONObject().put("id", it.id).put("text", it.text).put("status", it.status).put("created", it.createdAt)
