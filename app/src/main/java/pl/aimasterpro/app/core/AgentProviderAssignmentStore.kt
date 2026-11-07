@@ -18,7 +18,7 @@ object AgentProviderAssignmentStore {
     ): Map<String, String> {
         val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
         return roleDefaults.mapValues { (role, defaultId) ->
-            prefs.getString(key(role), null)?.takeIf { it.isNotBlank() } ?: defaultId
+            runCatching { prefs.getString(key(role), null) }.getOrNull()?.takeIf { it.isNotBlank() } ?: defaultId
         }
     }
 
@@ -31,6 +31,41 @@ object AgentProviderAssignmentStore {
             if (role == MASTER) editor.putString(SELECTED_KEY, providerId)
             editor.commit()
         }.getOrDefault(false)
+    }
+
+    /**
+     * Startup recovery: keep every still-valid assignment and repair stale IDs left by
+     * process death between provider replacement and assignment reconciliation.
+     * The MASTER legacy key and all role assignments are committed atomically.
+     */
+    fun reconcileExistingAssignments(
+        context: Context,
+        roleDefaults: Map<String, String>,
+        validProviderIds: Set<String>,
+        legacyMasterId: String?
+    ): Map<String, String>? {
+        if (validProviderIds.isEmpty() || validProviderIds.any { it.isBlank() }) return null
+        return runCatching {
+            val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            val oldMaster = prefs.getString(key(MASTER), null)
+            val masterId = oldMaster?.takeIf { it in validProviderIds }
+                ?: legacyMasterId?.takeIf { it in validProviderIds }
+                ?: roleDefaults[MASTER]?.takeIf { it in validProviderIds }
+                ?: validProviderIds.sorted().first()
+            val resolved = roleDefaults.mapValues { (role, defaultId) ->
+                if (role == MASTER) masterId else {
+                    val old = prefs.getString(key(role), null)
+                    old?.takeIf { it in validProviderIds }
+                        ?: defaultId.takeIf { it in validProviderIds }
+                        ?: masterId
+                }
+            }
+            val editor = prefs.edit()
+            resolved.forEach { (role, id) -> editor.putString(key(role), id) }
+            editor.putString(SELECTED_KEY, masterId)
+            if (!editor.commit()) return null
+            resolved
+        }.getOrNull()
     }
 
     /**
