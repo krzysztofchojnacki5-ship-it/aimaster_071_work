@@ -3689,6 +3689,28 @@ class MainActivity : Activity() {
         if (scrollToEnd) collaborationScrollView?.post { collaborationScrollView?.fullScroll(View.FOCUS_DOWN) }
     }
 
+    /** Refreshes the activity panel only after a complete, validated conversation read. */
+    @Synchronized private fun loadAgentActivity() {
+        if (currentChatId.isBlank()) return
+        val root = try {
+            pl.aimasterpro.app.core.ChatHistoryStore.readRoot(this)
+        } catch (error: Exception) {
+            android.util.Log.e("AIMasterChat", "Nie można odświeżyć aktywności agentów; zachowano poprzedni stan.", error)
+            return
+        } ?: run {
+            android.util.Log.e("AIMasterChat", "Nie można odświeżyć aktywności agentów; zachowano poprzedni stan.")
+            return
+        }
+        val chat = root.optJSONObject("chats")?.optJSONObject(currentChatId)
+        val snapshot = pl.aimasterpro.app.core.ChatConversationSnapshot.parse(chat)
+            ?: run {
+                android.util.Log.e("AIMasterChat", "Nieprawidłowy snapshot aktywności agentów; zachowano poprzedni stan.")
+                return
+            }
+        agentActivity.clear()
+        agentActivity.addAll(snapshot.agentActivity)
+    }
+
     private fun chooseAttachment() = showAttachmentOptions()
 
     /** Adds ready-to-configure provider profiles once; API keys are intentionally blank. */

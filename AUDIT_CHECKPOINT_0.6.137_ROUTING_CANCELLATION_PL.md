@@ -2116,3 +2116,13 @@ Doprecyzowanie projektu SQLite:
 - Parser odrzuca kolekcje zapisane pod nieprawidłowym typem JSON; dodano test regresji.
 - CI dla 0.6.145 pozostaje osobnym, aktywnym runem; 0.6.146 ma własny branch filter. Testy/Gradle NOT RUN do potwierdzenia przez CI.
 - APK NOT BUILT; Companion NOT ACTIVATED; `main` untouched.
+
+
+## Checkpoint 0.6.147 — bezpieczne odświeżanie aktywności agentów (2026-11-07)
+
+- Baza: commit 0.6.146 `44ad2348fed7d0b5e82071f5a9aa8185a741451c`.
+- Nowa gałąź: `audit/0.6.147-agent-activity-refresh`.
+- Audyt statyczny 0.6.146 wykrył, że usunięto definicję `loadAgentActivity()`, ale cztery wywołania pozostały w kodzie. To potencjalny błąd kompilacji; CI 0.6.146 nadal in_progress w chwili wykrycia.
+- Przywrócono metodę w wersji fail-safe: nie czyści aktywności przed udanym odczytem i parsowaniem pełnego snapshotu; przy błędzie zachowuje poprzednie dane w pamięci.
+- Dodano test dla nieprawidłowego typu `agentActivity` (obiekt zamiast tablicy).
+- Testy/Gradle/Android debug NOT RUN do potwierdzenia przez CI. APK NOT BUILT; Companion NOT ACTIVATED; `main` untouched.

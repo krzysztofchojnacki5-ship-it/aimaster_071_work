@@ -456,3 +456,11 @@ Rejestr rozróżnia paczkę źródłową od wersji aplikacji/APK. Numer paczki n
 - `ChatConversationSnapshot.parse()` odrzuca również pola kolekcji o złym typie (np. obiekt zamiast tablicy), zamiast traktować je jak puste dane.
 - Dodano regresję dla nieprawidłowego typu kolekcji. Testy/kompilacja Androida ADDED / NOT RUN do potwierdzenia przez CI.
 - APK nie utworzono; Companion pozostaje nieaktywny.
+
+
+## 0.6.147 — bezpieczne odświeżanie aktywności agentów (2026-11-07)
+
+- Audyt 0.6.146 wykrył błąd kompilacji: usunięto metodę `loadAgentActivity()`, ale pozostawiono cztery wywołania w ekranach czatu/agentów.
+- Przywrócono metodę jako bezpieczne odświeżenie: najpierw odczytuje i parsuje kompletny snapshot rozmowy, a dopiero potem podmienia `agentActivity`; błąd odczytu lub parsowania zachowuje poprzedni stan pamięci.
+- Dodano test odrzucania `agentActivity` zapisanej jako obiekt zamiast tablicy.
+- Testy JUnit i kompilacja debug: ADDED / NOT RUN do potwierdzenia przez CI. APK nie utworzono; Companion pozostaje nieaktywny.
