@@ -215,4 +215,87 @@ class SecureStoreReplacementRecoveryTest {
         assertEquals("old-provider", context.getSharedPreferences("chat_state", Context.MODE_PRIVATE)
             .getString("selected_provider", null))
     }
+    @Test fun blankApiKeyUpdatePreservesReadableExistingCiphertextAndNeverPersistsPlaintext() {
+        val prefs = context.getSharedPreferences("secure_provider_store", Context.MODE_PRIVATE)
+        val originalCiphertext = "opaque-existing-ciphertext"
+        prefs.edit()
+            .putStringSet("provider_ids", setOf("old-provider"))
+            .putString("config_old-provider", provider("old-provider").toString())
+            .putString("key_old-provider", originalCiphertext)
+            .commit()
+        val store = SecureStore(context, secretDecryptorForTests = { encoded ->
+            if (encoded == originalCiphertext) "decrypted-existing-secret" else null
+        })
+        val updated = provider("old-provider")
+            .put("name", "Updated metadata")
+            .put("baseUrl", "https://updated.example/v1")
+            .put("apiKey", "")
+
+        assertTrue(store.saveConfig(updated))
+
+        assertEquals(originalCiphertext, prefs.getString("key_old-provider", null))
+        val persistedJson = prefs.getString("config_old-provider", null)!!
+        assertFalse(persistedJson.contains("decrypted-existing-secret"))
+        assertFalse(JSONObject(persistedJson).has("apiKey"))
+        assertEquals("Updated metadata", JSONObject(persistedJson).getString("name"))
+    }
+
+    @Test fun metadataUpdateCommitFailureBeforeApplyKeepsPreviousProfileAndSecret() {
+        val prefs = context.getSharedPreferences("secure_provider_store", Context.MODE_PRIVATE)
+        val originalCiphertext = "opaque-existing-ciphertext"
+        prefs.edit()
+            .putStringSet("provider_ids", setOf("old-provider"))
+            .putString("config_old-provider", provider("old-provider").toString())
+            .putString("key_old-provider", originalCiphertext)
+            .commit()
+        val store = SecureStore(context, commitEditor = { throw IllegalStateException("before apply") },
+            secretDecryptorForTests = { "readable-secret" })
+        val updated = provider("old-provider").put("name", "Changed")
+
+        assertFalse(store.saveConfig(updated))
+        assertTrue(SecureStoreHealth.isUncertain())
+        assertEquals("old-provider", JSONObject(prefs.getString("config_old-provider", null)!!).getString("name"))
+        assertEquals(originalCiphertext, prefs.getString("key_old-provider", null))
+        assertEquals(setOf("old-provider"), prefs.getStringSet("provider_ids", emptySet()))
+    }
+
+    @Test fun metadataUpdateCommitFailureAfterApplyQuarantinesStoreAndPreservesAppliedSnapshot() {
+        val prefs = context.getSharedPreferences("secure_provider_store", Context.MODE_PRIVATE)
+        val originalCiphertext = "opaque-existing-ciphertext"
+        prefs.edit()
+            .putStringSet("provider_ids", setOf("old-provider"))
+            .putString("config_old-provider", provider("old-provider").toString())
+            .putString("key_old-provider", originalCiphertext)
+            .commit()
+        val store = SecureStore(context, commitEditor = { editor ->
+            editor.apply()
+            throw IllegalStateException("after apply")
+        }, secretDecryptorForTests = { "readable-secret" })
+
+        assertFalse(store.saveConfig(provider("old-provider").put("name", "Applied")))
+        assertTrue(SecureStoreHealth.isUncertain())
+        assertTrue(store.allConfigs().isEmpty())
+        assertFalse(store.saveConfig(provider("blocked")))
+        assertEquals("Applied", JSONObject(prefs.getString("config_old-provider", null)!!).getString("name"))
+        assertEquals(originalCiphertext, prefs.getString("key_old-provider", null))
+        assertFalse(prefs.contains("config_blocked"))
+    }
+
+    @Test fun blankApiKeyUpdateRejectsUnreadableExistingCiphertextWithoutMutation() {
+        val prefs = context.getSharedPreferences("secure_provider_store", Context.MODE_PRIVATE)
+        val originalCiphertext = "unreadable-ciphertext"
+        val originalConfig = provider("old-provider").toString()
+        prefs.edit()
+            .putStringSet("provider_ids", setOf("old-provider"))
+            .putString("config_old-provider", originalConfig)
+            .putString("key_old-provider", originalCiphertext)
+            .commit()
+        val store = SecureStore(context, secretDecryptorForTests = { null })
+
+        assertFalse(store.saveConfig(provider("old-provider").put("name", "Must not apply")))
+        assertEquals(originalConfig, prefs.getString("config_old-provider", null))
+        assertEquals(originalCiphertext, prefs.getString("key_old-provider", null))
+        assertFalse(SecureStoreHealth.isUncertain())
+    }
+
 }
