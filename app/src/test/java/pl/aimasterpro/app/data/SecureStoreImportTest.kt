@@ -83,4 +83,18 @@ class SecureStoreImportTest {
         assertEquals("unchanged-encrypted-value", prefs.getString("key_existing", null))
     }
 
+    @Test fun cyclicProviderInheritanceIsRejectedWithoutChangingExistingConfig() {
+        val context = org.robolectric.RuntimeEnvironment.getApplication()
+        seedExistingConfig(context)
+        val first = validConfig("first").put("parentProviderId", "second")
+        val second = validConfig("second").put("parentProviderId", "first")
+
+        val result = SecureStore(context).replaceAllConfigs(listOf(first, second))
+
+        assertFalse(result)
+        val prefs = context.getSharedPreferences("secure_provider_store", Context.MODE_PRIVATE)
+        assertEquals(setOf("existing"), prefs.getStringSet("provider_ids", emptySet()))
+        assertEquals("unchanged-encrypted-value", prefs.getString("key_existing", null))
+    }
+
 }
