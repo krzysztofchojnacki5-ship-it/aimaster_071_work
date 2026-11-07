@@ -62,6 +62,7 @@ class SecureStore(context: Context) {
         return try {
             val editor = prefs.edit()
             if (value.isBlank()) {
+                if (prefs.contains(name) && getSecret(name) == null) return false
                 editor.remove(name)
             } else {
                 val encrypted = encryptSecret(value) ?: return false
