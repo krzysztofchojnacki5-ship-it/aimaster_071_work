@@ -31,4 +31,33 @@ class ProviderCooldownStoreTest {
         assertEquals(0L, ProviderCooldownStore.remainingMs(context, config, 3000L))
         assertEquals(0, ProviderCooldownStore.states(context).single().consecutive429)
     }
+
+    @Test fun malformedJournalFailsClosedAndIsNeverOverwritten() {
+        val prefs = context.getSharedPreferences("provider_cooldowns_v1", Context.MODE_PRIVATE)
+        val malformed = """[{"key":"api.groq.com|groq|openai/gpt-oss-20b","count":"2","until":2000000,"updated":1000000}]"""
+        assertTrue(prefs.edit().putString("states", malformed).commit())
+
+        assertEquals(900_000L, ProviderCooldownStore.remainingMs(context, config, 1_000_000L))
+        assertEquals(900_000L, ProviderCooldownStore.markRateLimited(context, config, 1_000_000L))
+        ProviderCooldownStore.markSuccess(context, config, 1_000_000L)
+
+        assertEquals(malformed, prefs.getString("states", null))
+        assertTrue(runCatching { ProviderCooldownStore.states(context) }.isFailure)
+    }
+
+    @Test fun malformedRowInvalidatesWholeJournalInsteadOfDroppingOnlyThatRow() {
+        val prefs = context.getSharedPreferences("provider_cooldowns_v1", Context.MODE_PRIVATE)
+        val mixed = """[{"key":"valid|p|m","count":1,"until":2000000,"updated":1000000},{"key":"bad|p|m","count":1.5,"until":2000000,"updated":1000000}]"""
+        assertTrue(prefs.edit().putString("states", mixed).commit())
+
+        assertEquals(900_000L, ProviderCooldownStore.remainingMs(context, config, 1_000_000L))
+        assertEquals(mixed, prefs.getString("states", null))
+    }
+
+    @Test fun duplicateCooldownIdentityIsRejected() {
+        val prefs = context.getSharedPreferences("provider_cooldowns_v1", Context.MODE_PRIVATE)
+        val duplicate = """[{"key":"same","count":1,"until":2000000,"updated":1000000},{"key":"same","count":2,"until":3000000,"updated":1000000}]"""
+        assertTrue(prefs.edit().putString("states", duplicate).commit())
+        assertEquals(900_000L, ProviderCooldownStore.remainingMs(context, config, 1_000_000L))
+    }
 }
