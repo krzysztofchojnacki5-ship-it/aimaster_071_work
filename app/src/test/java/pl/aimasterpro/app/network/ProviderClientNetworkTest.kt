@@ -593,4 +593,26 @@ class ProviderClientNetworkTest {
         } finally { server.stop(0) }
     }
 
+    @Test
+    fun openRouterPaidCacheRatePreventsFreeModelClassification() {
+        assertEquals(
+            false,
+            resolveOpenRouterFreePricing(
+                "vendor/cache-write-paid", true, 0.0, 0.0, 0.0, 0.0000001
+            )
+        )
+        assertEquals(
+            true,
+            resolveOpenRouterFreePricing(
+                "vendor/fully-free", true, 0.0, 0.0, 0.0, 0.0
+            )
+        )
+        assertEquals(
+            null,
+            resolveOpenRouterFreePricing(
+                "vendor/non-openrouter", false, 0.0, 0.0, null, null
+            )
+        )
+    }
+
 }
