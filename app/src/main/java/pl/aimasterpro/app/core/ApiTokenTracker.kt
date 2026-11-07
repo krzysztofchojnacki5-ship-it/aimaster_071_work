@@ -401,11 +401,77 @@ object ApiTokenTracker {
         return merged.sortedByDescending { it.timestamp }.take(2000)
     }
 
+    /**
+     * Persists authoritative per-model prices supplied by a provider catalog.
+     * Prices are USD per million tokens; absent prices are never converted to zero.
+     */
+    @Synchronized
+    fun setCatalogPricing(
+        context: Context, providerId: String, modelName: String, baseUrl: String,
+        inputPer1MUsd: Double?, outputPer1MUsd: Double?, explicitlyFree: Boolean? = null
+    ) {
+        require(providerId.isNotBlank() && modelName.isNotBlank()) { "Dostawca i model cennika nie mogą być puste." }
+        require((inputPer1MUsd == null && outputPer1MUsd == null) ||
+            (inputPer1MUsd != null && outputPer1MUsd != null &&
+                inputPer1MUsd.isFinite() && outputPer1MUsd.isFinite() &&
+                inputPer1MUsd >= 0.0 && outputPer1MUsd >= 0.0)) {
+            "Ceny katalogowe muszą być podane parami jako skończone wartości nieujemne."
+        }
+        if (explicitlyFree == true) {
+            require(inputPer1MUsd == null || inputPer1MUsd == 0.0)
+            require(outputPer1MUsd == null || outputPer1MUsd == 0.0)
+        }
+        val prefs = context.getSharedPreferences(PRICING_PREFS, Context.MODE_PRIVATE)
+        val arr = runCatching { JSONArray(prefs.getString("catalog_model_prices", "[]") ?: "[]") }.getOrDefault(JSONArray())
+        val normalizedBase = baseUrl.trimEnd('/').lowercase(Locale.ROOT)
+        val kept = JSONArray()
+        for (i in 0 until arr.length()) {
+            val row = arr.optJSONObject(i) ?: continue
+            val same = row.optString("providerId") == providerId &&
+                row.optString("modelName") == modelName &&
+                row.optString("baseUrl").trimEnd('/').lowercase(Locale.ROOT) == normalizedBase
+            if (!same) kept.put(row)
+        }
+        kept.put(JSONObject()
+            .put("providerId", providerId)
+            .put("modelName", modelName)
+            .put("baseUrl", normalizedBase)
+            .put("inputPer1MUsd", inputPer1MUsd ?: JSONObject.NULL)
+            .put("outputPer1MUsd", outputPer1MUsd ?: JSONObject.NULL)
+            .put("explicitlyFree", explicitlyFree ?: JSONObject.NULL))
+        check(prefs.edit().putString("catalog_model_prices", kept.toString()).commit()) {
+            "Nie udało się trwale zapisać cennika katalogowego."
+        }
+    }
+
     @Synchronized
     fun getPricing(context: Context, modelName: String, providerId: String = "", baseUrl: String = ""): ModelPricing {
         // A verified free/local model must never inherit the generic paid fallback price.
         if (FreeModelsCatalog.isFreeModel(providerId, modelName, baseUrl)) {
             return ModelPricing(modelName, 0.0, 0.0)
+        }
+        val raw = context.getSharedPreferences(PRICING_PREFS, Context.MODE_PRIVATE)
+            .getString("catalog_model_prices", "[]") ?: "[]"
+        val catalog = runCatching { JSONArray(raw) }.getOrNull()
+        if (catalog != null) {
+            val normalizedBase = baseUrl.trimEnd('/').lowercase(Locale.ROOT)
+            var exact: JSONObject? = null
+            var baseMatch: JSONObject? = null
+            for (i in 0 until catalog.length()) {
+                val row = catalog.optJSONObject(i) ?: continue
+                if (row.optString("modelName") != modelName ||
+                    row.optString("baseUrl").trimEnd('/').lowercase(Locale.ROOT) != normalizedBase) continue
+                if (row.optString("providerId") == providerId) exact = row else baseMatch = row
+            }
+            val row = exact ?: baseMatch
+            if (row != null) {
+                if (row.opt("explicitlyFree") == true) return ModelPricing(modelName, 0.0, 0.0)
+                val input = (row.opt("inputPer1MUsd") as? Number)?.toDouble()
+                val output = (row.opt("outputPer1MUsd") as? Number)?.toDouble()
+                if (input != null && output != null && input.isFinite() && output.isFinite() && input >= 0.0 && output >= 0.0) {
+                    return ModelPricing(modelName, input, output)
+                }
+            }
         }
         val lower = modelName.lowercase(Locale.ROOT)
         for (p in defaultPricing) {
