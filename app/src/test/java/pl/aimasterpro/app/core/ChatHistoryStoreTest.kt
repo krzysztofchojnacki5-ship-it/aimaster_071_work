@@ -219,6 +219,53 @@ class ChatHistoryStoreTest {
         assertTrue((0 until activity.length()).map { activity.getString(it) }.containsAll(listOf("worker-1", "worker-2")))
     }
 
+    @Test fun concurrentAtomicRootUpdatesPreserveMessageAndActivityChanges() {
+        val chatId = "concurrent-message-activity"
+        val original = JSONObject().put("currentId", chatId)
+            .put("chats", JSONObject().put(chatId, JSONObject()
+                .put("messages", JSONArray()).put("agentActivity", JSONArray())))
+        assertTrue(ChatHistoryStore.writeRoot(context, original))
+
+        val ready = java.util.concurrent.CountDownLatch(2)
+        val start = java.util.concurrent.CountDownLatch(1)
+        val failures = java.util.Collections.synchronizedList(mutableListOf<Throwable>())
+        val workers = listOf(
+            Thread {
+                ready.countDown()
+                try {
+                    start.await()
+                    check(ChatHistoryStore.updateRoot(context) { root ->
+                        root.getJSONObject("chats").getJSONObject(chatId)
+                            .getJSONArray("messages")
+                            .put(JSONObject().put("role", "assistant").put("text", "response"))
+                        true
+                    })
+                } catch (error: Throwable) { failures += error }
+            },
+            Thread {
+                ready.countDown()
+                try {
+                    start.await()
+                    check(ChatHistoryStore.updateRoot(context) { root ->
+                        root.getJSONObject("chats").getJSONObject(chatId)
+                            .getJSONArray("agentActivity").put("agent-report")
+                        true
+                    })
+                } catch (error: Throwable) { failures += error }
+            }
+        )
+        workers.forEach { it.start() }
+        assertTrue("Concurrent update workers did not become ready", ready.await(2, java.util.concurrent.TimeUnit.SECONDS))
+        start.countDown()
+        workers.forEach { it.join(5_000L) }
+        assertTrue("Concurrent update workers did not finish", workers.none { it.isAlive })
+        assertTrue("Concurrent update failed: $failures", failures.isEmpty())
+
+        val chat = ChatHistoryStore.readRoot(context)!!.getJSONObject("chats").getJSONObject(chatId)
+        assertEquals("response", chat.getJSONArray("messages").getJSONObject(0).getString("text"))
+        assertEquals("agent-report", chat.getJSONArray("agentActivity").getString(0))
+    }
+
     @Test fun updateCallbackFailureDoesNotPersistPartialMutationOrPoisonHistory() {
         val original = JSONObject().put("currentId", "stable")
             .put("chats", JSONObject().put("stable", JSONObject()
