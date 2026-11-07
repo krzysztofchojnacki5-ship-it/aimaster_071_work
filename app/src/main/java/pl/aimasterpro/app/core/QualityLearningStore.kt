@@ -232,7 +232,9 @@ object QualityLearningStore {
     /** A malformed row invalidates mutation of that journal; never silently drop unknown evidence. */
     private fun readArrayStrict(c: Context, key: String): List<JSONObject>? {
         if (SharedPreferencesWriteHealth.isUncertain(PREFS)) return null
-        val raw = c.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString(key, null) ?: return emptyList()
+        val raw = SharedPreferencesWriteHealth.withHealthyAccess(PREFS) {
+            c.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString(key, null)
+        } ?: return emptyList()
         return runCatching {
             val array = JSONArray(raw)
             val maxRows = if (key == FEEDBACK_KEY) MAX_FEEDBACK else MAX_PROPOSALS
