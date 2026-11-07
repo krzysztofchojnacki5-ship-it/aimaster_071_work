@@ -1829,22 +1829,22 @@ class MainActivity : Activity() {
                                     logAgentForChat(chatId, "⛔ Magazyn konfiguracji ma niepewny stan. Żądanie do dostawcy nie zostało wysłane; uruchom ponownie aplikację.")
                                     false
                                 } else {
-                                val safeBaseUrl = runCatching {
-                                    java.net.URL(actualProvider.baseUrl).let { url ->
-                                        "${url.protocol}://${url.host}" + if (url.port >= 0) ":${url.port}" else ""
-                                    }
-                                }.getOrDefault("")
-                                pl.aimasterpro.app.core.TaskCheckpointStore.record(
-                                    this,
-                                    pl.aimasterpro.app.core.TaskCheckpointStore.Event(
-                                        taskId = task.id, agentId = task.agentId, status = "REQUESTING",
-                                        detail = "Żądanie API rozpoczęte; wynik rozliczenia może być nieznany.",
-                                        timestamp = System.currentTimeMillis(), providerId = actualProvider.id,
-                                        model = actualProvider.model, attempts = 1,
-                                        estimatedInputTokens = estimatedInput, estimatedOutputTokens = estimatedOutput,
-                                        idempotencyKey = idempotencyKey, baseUrl = safeBaseUrl
+                                    val safeBaseUrl = runCatching {
+                                        java.net.URL(actualProvider.baseUrl).let { url ->
+                                            "${url.protocol}://${url.host}" + if (url.port >= 0) ":${url.port}" else ""
+                                        }
+                                    }.getOrDefault("")
+                                    pl.aimasterpro.app.core.TaskCheckpointStore.record(
+                                        this,
+                                        pl.aimasterpro.app.core.TaskCheckpointStore.Event(
+                                            taskId = task.id, agentId = task.agentId, status = "REQUESTING",
+                                            detail = "Żądanie API rozpoczęte; wynik rozliczenia może być nieznany.",
+                                            timestamp = System.currentTimeMillis(), providerId = actualProvider.id,
+                                            model = actualProvider.model, attempts = 1,
+                                            estimatedInputTokens = estimatedInput, estimatedOutputTokens = estimatedOutput,
+                                            idempotencyKey = idempotencyKey, baseUrl = safeBaseUrl
+                                        )
                                     )
-                                )
                                 }
                             },
                             requestScope = requestScope,
@@ -1992,22 +1992,22 @@ class MainActivity : Activity() {
                                             logAgentForChat(chatId, "⛔ Magazyn konfiguracji ma niepewny stan. Żądanie do dostawcy nie zostało wysłane; uruchom ponownie aplikację.")
                                             false
                                         } else {
-                                        val safeBaseUrl = runCatching {
-                                            java.net.URL(actualProvider.baseUrl).let { url ->
-                                                "\${url.protocol}://\${url.host}" + if (url.port >= 0) ":\${url.port}" else ""
-                                            }
-                                        }.getOrDefault("")
-                                        pl.aimasterpro.app.core.TaskCheckpointStore.record(
-                                            this,
-                                            pl.aimasterpro.app.core.TaskCheckpointStore.Event(
-                                                taskId = task.id, agentId = task.agentId, status = "REQUESTING",
-                                                detail = "Żądanie API rozpoczęte; wynik rozliczenia może być nieznany.",
-                                                timestamp = System.currentTimeMillis(), providerId = actualProvider.id,
-                                                model = actualProvider.model, attempts = 1,
-                                                estimatedInputTokens = estimatedInput, estimatedOutputTokens = estimatedOutput,
-                                                idempotencyKey = idempotencyKey, baseUrl = safeBaseUrl
+                                            val safeBaseUrl = runCatching {
+                                                java.net.URL(actualProvider.baseUrl).let { url ->
+                                                    "\${url.protocol}://\${url.host}" + if (url.port >= 0) ":\${url.port}" else ""
+                                                }
+                                            }.getOrDefault("")
+                                            pl.aimasterpro.app.core.TaskCheckpointStore.record(
+                                                this,
+                                                pl.aimasterpro.app.core.TaskCheckpointStore.Event(
+                                                    taskId = task.id, agentId = task.agentId, status = "REQUESTING",
+                                                    detail = "Żądanie API rozpoczęte; wynik rozliczenia może być nieznany.",
+                                                    timestamp = System.currentTimeMillis(), providerId = actualProvider.id,
+                                                    model = actualProvider.model, attempts = 1,
+                                                    estimatedInputTokens = estimatedInput, estimatedOutputTokens = estimatedOutput,
+                                                    idempotencyKey = idempotencyKey, baseUrl = safeBaseUrl
+                                                )
                                             )
-                                        )
                                         }
                                     },
                                     requestScope = requestScope,
@@ -4576,28 +4576,28 @@ class MainActivity : Activity() {
                         },
                         onRequestStarting = { task, actualProvider, estimatedInput, estimatedOutput, idempotencyKey ->
                             if (store.isStorageUncertain()) {
-                                                        logAgentForChat(chatId, "⛔ Magazyn konfiguracji ma niepewny stan. Żądanie do dostawcy nie zostało wysłane; uruchom ponownie aplikację.")
-                                                        false
-                                                    } else {
-                                                val safeBaseUrl = runCatching {
-                                                    java.net.URL(actualProvider.baseUrl).let { url ->
-                                                        "${url.protocol}://${url.host}" + if (url.port >= 0) ":${url.port}" else ""
-                                                    }
-                                                }.getOrDefault("")
-                                                pl.aimasterpro.app.core.TaskCheckpointStore.record(
-                                                    this,
-                                                    pl.aimasterpro.app.core.TaskCheckpointStore.Event(
-                                                        taskId = task.id, agentId = task.agentId, status = "REQUESTING",
-                                                        detail = "Żądanie API rozpoczęte; wynik rozliczenia może być nieznany.",
-                                                        timestamp = System.currentTimeMillis(), providerId = actualProvider.id,
-                                                        model = actualProvider.model, attempts = 1,
-                                                        estimatedInputTokens = estimatedInput, estimatedOutputTokens = estimatedOutput,
-                                                        idempotencyKey = idempotencyKey, baseUrl = safeBaseUrl
-                                                    )
-                                                )
+                                logAgentForChat(chatId, "⛔ Magazyn konfiguracji ma niepewny stan. Żądanie do dostawcy nie zostało wysłane; uruchom ponownie aplikację.")
+                                false
+                            } else {
+                                val safeBaseUrl = runCatching {
+                                    java.net.URL(actualProvider.baseUrl).let { url ->
+                                        "${url.protocol}://${url.host}" + if (url.port >= 0) ":${url.port}" else ""
+                                    }
+                                }.getOrDefault("")
+                                pl.aimasterpro.app.core.TaskCheckpointStore.record(
+                                    this,
+                                    pl.aimasterpro.app.core.TaskCheckpointStore.Event(
+                                        taskId = task.id, agentId = task.agentId, status = "REQUESTING",
+                                        detail = "Żądanie API rozpoczęte; wynik rozliczenia może być nieznany.",
+                                        timestamp = System.currentTimeMillis(), providerId = actualProvider.id,
+                                        model = actualProvider.model, attempts = 1,
+                                        estimatedInputTokens = estimatedInput, estimatedOutputTokens = estimatedOutput,
+                                        idempotencyKey = idempotencyKey, baseUrl = safeBaseUrl
+                                    )
+                                )
                             }
                         },
-                                                requestScope = client.beginRequestScope(),
+                        requestScope = client.beginRequestScope(),
                         onTaskFinished = { taskId -> pl.aimasterpro.app.core.ApiTokenTracker.completeReservationTask(reviewBudget.reservationId, taskId) }
                     )
                 }
