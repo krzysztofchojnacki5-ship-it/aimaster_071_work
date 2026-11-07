@@ -52,6 +52,23 @@ class BackupCryptoTest {
     }
 
     @Test
+    fun testUnsupportedKdfIterationCountIsRejectedBeforeKeyDerivation() {
+        val encrypted = BackupCrypto.encrypt("secret", "securepassword123".toCharArray())
+        val weakened = encrypted.replace("\\"iterations\\": 210000", "\\"iterations\\": 1")
+        val excessive = encrypted.replace("\\"iterations\\": 210000", "\\"iterations\\": 2147483647")
+        assertNotEquals(encrypted, weakened)
+        assertNotEquals(encrypted, excessive)
+        try {
+            BackupCrypto.decrypt(weakened, "securepassword123".toCharArray())
+            fail("A downgraded KDF work factor must be rejected.")
+        } catch (_: IllegalArgumentException) { }
+        try {
+            BackupCrypto.decrypt(excessive, "securepassword123".toCharArray())
+            fail("An excessive KDF work factor must be rejected before expensive derivation.")
+        } catch (_: IllegalArgumentException) { }
+    }
+
+    @Test
     fun testLargePayload() {
         val largeText = "x".repeat(50_000)
         val plaintext = "{\"app\":\"AI_MASTER_PRO_ANDROID\",\"data\":\"$largeText\"}"
