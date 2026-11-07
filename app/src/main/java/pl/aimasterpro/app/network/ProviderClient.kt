@@ -276,6 +276,27 @@ class ProviderClient(
     private fun responseModel(result: JSONObject, configuredModel: String, field: String = "model"): String =
         result.optString(field).trim().takeIf { it.isNotEmpty() } ?: configuredModel
 
+    /** Reads JSON token counters without JSONObject's permissive numeric/string coercion. */
+    private fun exactNonNegativeCount(obj: JSONObject?, key: String, defaultIfMissing: Long? = null): Long? {
+        if (obj == null || !obj.has(key) || obj.isNull(key)) return defaultIfMissing
+        val value = obj.opt(key)
+        val count = when (value) {
+            is Int -> value.toLong()
+            is Long -> value
+            else -> return null
+        }
+        return count.takeIf { it >= 0L }
+    }
+
+    private fun validUsageBreakdown(
+        input: Long?, output: Long?, reportedTotal: Long?, cached: Long?, reasoning: Long?
+    ): Boolean {
+        if (input == null || output == null || cached == null || reasoning == null) return false
+        if (cached > input || reasoning > output) return false
+        val sum = try { Math.addExact(input, output) } catch (_: ArithmeticException) { return false }
+        return reportedTotal == null || reportedTotal == sum
+    }
+
     private fun chatInternal(config: ProviderConfig, systemPrompt: String, userText: String, attachmentMime: String, attachmentBase64: String): ChatResponse = when (config.kind) {
         ProviderKind.ANTHROPIC -> {
             val root = config.baseUrl.trimEnd('/').ifBlank { "https://api.anthropic.com/v1" }
@@ -296,16 +317,18 @@ class ProviderClient(
             val text = (0 until content.length()).mapNotNull { content.optJSONObject(it)?.takeIf { o -> o.optString("type") == "text" }?.optString("text") }.joinToString("\n")
 
             val usageObj = result.optJSONObject("usage")
-            val input = usageObj?.optLong("input_tokens", -1L) ?: -1L
-            val output = usageObj?.optLong("output_tokens", -1L) ?: -1L
-            val cached = usageObj?.optLong("cache_read_input_tokens", 0L) ?: 0L
+            val input = exactNonNegativeCount(usageObj, "input_tokens")
+            val output = exactNonNegativeCount(usageObj, "output_tokens")
+            val cached = exactNonNegativeCount(usageObj, "cache_read_input_tokens", 0L)
             val reasoning = 0L
-            val finalInput = if (input >= 0) input else (systemPrompt.length + userText.length) / 4.toLong()
-            val finalOutput = if (output >= 0) output else text.length / 4.toLong()
-            val finalTotal = if (input >= 0 && output >= 0) input + output else finalInput + finalOutput
-            val status = if (input >= 0 && output >= 0) "REAL" else "ESTIMATED"
+            val realUsage = validUsageBreakdown(input, output, null, cached, reasoning)
+            val finalInput = if (realUsage) input!! else (systemPrompt.length + userText.length) / 4.toLong()
+            val finalOutput = if (realUsage) output!! else text.length / 4.toLong()
+            val finalTotal = if (realUsage) Math.addExact(finalInput, finalOutput) else finalInput + finalOutput
+            val finalCached = if (realUsage) cached!! else 0L
+            val status = if (realUsage) "REAL" else "ESTIMATED"
 
-            ChatResponse(text, TokenUsageResult(finalInput, finalOutput, finalTotal, reasoning, cached, status), providerId = config.id, model = responseModel(result, config.model))
+            ChatResponse(text, TokenUsageResult(finalInput, finalOutput, finalTotal, reasoning, finalCached, status), providerId = config.id, model = responseModel(result, config.model))
         }
         ProviderKind.OPENAI_COMPATIBLE -> {
             val root = config.baseUrl.trimEnd('/')
@@ -329,18 +352,23 @@ class ProviderClient(
             val promptEval = result.optLong("prompt_eval_count", -1L)
             val evalCount = result.optLong("eval_count", -1L)
 
-            val input = usageObj?.optLong("prompt_tokens", -1L)?.takeIf { it >= 0 } ?: if (promptEval >= 0) promptEval else -1L
-            val output = usageObj?.optLong("completion_tokens", -1L)?.takeIf { it >= 0 } ?: if (evalCount >= 0) evalCount else -1L
-            val total = usageObj?.optLong("total_tokens", -1L)?.takeIf { it >= 0 } ?: if (input >= 0 && output >= 0) input + output else -1L
-            val cached = usageObj?.optJSONObject("prompt_tokens_details")?.optLong("cached_tokens", 0L) ?: 0L
-            val reasoning = usageObj?.optJSONObject("completion_tokens_details")?.optLong("reasoning_tokens", 0L) ?: 0L
+            val input = exactNonNegativeCount(usageObj, "prompt_tokens")
+                ?: exactNonNegativeCount(result, "prompt_eval_count")
+            val output = exactNonNegativeCount(usageObj, "completion_tokens")
+                ?: exactNonNegativeCount(result, "eval_count")
+            val reportedTotal = exactNonNegativeCount(usageObj, "total_tokens")
+            val cached = exactNonNegativeCount(usageObj?.optJSONObject("prompt_tokens_details"), "cached_tokens", 0L)
+            val reasoning = exactNonNegativeCount(usageObj?.optJSONObject("completion_tokens_details"), "reasoning_tokens", 0L)
+            val realUsage = validUsageBreakdown(input, output, reportedTotal, cached, reasoning)
 
-            val finalInput = if (input >= 0) input else (systemPrompt.length + userText.length) / 4.toLong()
-            val finalOutput = if (output >= 0) output else text.length / 4.toLong()
-            val finalTotal = if (total >= 0) total else finalInput + finalOutput
-            val status = if (input >= 0 && output >= 0) "REAL" else "ESTIMATED"
+            val finalInput = if (realUsage) input!! else (systemPrompt.length + userText.length) / 4.toLong()
+            val finalOutput = if (realUsage) output!! else text.length / 4.toLong()
+            val finalTotal = if (realUsage) Math.addExact(finalInput, finalOutput) else finalInput + finalOutput
+            val finalCached = if (realUsage) cached!! else 0L
+            val finalReasoning = if (realUsage) reasoning!! else 0L
+            val status = if (realUsage) "REAL" else "ESTIMATED"
 
-            ChatResponse(text, TokenUsageResult(finalInput, finalOutput, finalTotal, reasoning, cached, status), providerId = config.id, model = responseModel(result, config.model))
+            ChatResponse(text, TokenUsageResult(finalInput, finalOutput, finalTotal, finalReasoning, finalCached, status), providerId = config.id, model = responseModel(result, config.model))
         }
         ProviderKind.GEMINI -> {
             val root = config.baseUrl.trimEnd('/')
@@ -357,15 +385,14 @@ class ProviderClient(
                 val text = choices.optJSONObject(0)?.optJSONObject("message")?.optString("content").orEmpty()
 
                 val usageObj = result.optJSONObject("usage")
-                val input = usageObj?.optLong("prompt_tokens", -1L) ?: -1L
-                val output = usageObj?.optLong("completion_tokens", -1L) ?: -1L
-                val reportedTotal = usageObj?.optLong("total_tokens", -1L) ?: -1L
-                val finalInput = if (input >= 0L) input else (systemPrompt.length + userText.length) / 4L
-                val finalOutput = if (output >= 0L) output else text.length / 4L
-                // Never persist a negative total when a compatible endpoint omits usage metadata.
-                // Negative totals are clamped out of budget accounting and would undercount usage.
-                val finalTotal = if (reportedTotal >= 0L) reportedTotal else finalInput + finalOutput
-                val status = if (input >= 0L && output >= 0L) "REAL" else "ESTIMATED"
+                val input = exactNonNegativeCount(usageObj, "prompt_tokens")
+                val output = exactNonNegativeCount(usageObj, "completion_tokens")
+                val reportedTotal = exactNonNegativeCount(usageObj, "total_tokens")
+                val realUsage = validUsageBreakdown(input, output, reportedTotal, 0L, 0L)
+                val finalInput = if (realUsage) input!! else (systemPrompt.length + userText.length) / 4L
+                val finalOutput = if (realUsage) output!! else text.length / 4L
+                val finalTotal = if (realUsage) Math.addExact(finalInput, finalOutput) else finalInput + finalOutput
+                val status = if (realUsage) "REAL" else "ESTIMATED"
                 ChatResponse(text, TokenUsageResult(finalInput, finalOutput, finalTotal, 0L, 0L, status), providerId = config.id, model = responseModel(result, config.model))
             } else {
                 // Native Gemini REST API
@@ -380,18 +407,20 @@ class ProviderClient(
                 val text = result.optJSONArray("candidates")?.optJSONObject(0)?.optJSONObject("content")?.optJSONArray("parts")?.optJSONObject(0)?.optString("text").orEmpty()
 
                 val meta = result.optJSONObject("usageMetadata")
-                val input = meta?.optLong("promptTokenCount", -1L) ?: -1L
-                val output = meta?.optLong("candidatesTokenCount", -1L) ?: -1L
-                val total = meta?.optLong("totalTokenCount", -1L) ?: -1L
-                val cached = meta?.optLong("cachedContentTokenCount", 0L) ?: 0L
+                val input = exactNonNegativeCount(meta, "promptTokenCount")
+                val output = exactNonNegativeCount(meta, "candidatesTokenCount")
+                val total = exactNonNegativeCount(meta, "totalTokenCount")
+                val cached = exactNonNegativeCount(meta, "cachedContentTokenCount", 0L)
                 val reasoning = 0L
+                val realUsage = validUsageBreakdown(input, output, total, cached, reasoning)
 
-                val finalInput = if (input >= 0) input else (systemPrompt.length + userText.length) / 4.toLong()
-                val finalOutput = if (output >= 0) output else text.length / 4.toLong()
-                val finalTotal = if (total >= 0) total else finalInput + finalOutput
-                val status = if (input >= 0 && output >= 0) "REAL" else "ESTIMATED"
+                val finalInput = if (realUsage) input!! else (systemPrompt.length + userText.length) / 4.toLong()
+                val finalOutput = if (realUsage) output!! else text.length / 4.toLong()
+                val finalTotal = if (realUsage) Math.addExact(finalInput, finalOutput) else finalInput + finalOutput
+                val finalCached = if (realUsage) cached!! else 0L
+                val status = if (realUsage) "REAL" else "ESTIMATED"
 
-                ChatResponse(text, TokenUsageResult(finalInput, finalOutput, finalTotal, reasoning, cached, status),
+                ChatResponse(text, TokenUsageResult(finalInput, finalOutput, finalTotal, reasoning, finalCached, status),
                     providerId = config.id, model = responseModel(result, config.model, "modelVersion"))
             }
         }
