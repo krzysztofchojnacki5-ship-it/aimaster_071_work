@@ -237,6 +237,7 @@ object QualityLearningStore {
             val maxRows = if (key == FEEDBACK_KEY) MAX_FEEDBACK else MAX_PROPOSALS
             require(array.length() <= maxRows) { "Quality journal exceeds its supported size." }
             val seenIds = hashSetOf<String>()
+            val seenFeedbackTargets = hashSetOf<List<String>>()
             fun exactLong(value: Any?): Long {
                 require(value is Int || value is Long || value is Double || value is Float) { "Quality journal counter has an invalid type." }
                 return if (value is Int || value is Long) (value as Number).toLong()
@@ -248,7 +249,12 @@ object QualityLearningStore {
                     require(listOf("id", "targetId", "targetType", "comment", "agent", "provider", "model", "category")
                         .all { row.opt(it) is String })
                     val id = row.getString("id")
-                    require(id.isNotBlank() && seenIds.add(id) && row.getString("targetId").isNotBlank() && row.getString("targetType").isNotBlank())
+                    val targetId = row.getString("targetId")
+                    val targetType = row.getString("targetType")
+                    require(id.isNotBlank() && seenIds.add(id) && targetId.isNotBlank() && targetType.isNotBlank())
+                    require(seenFeedbackTargets.add(listOf(targetType, targetId))) {
+                        "Quality journal contains more than one current rating for the same target."
+                    }
                     require(exactLong(row.opt("rating")) in setOf(-1L, 1L))
                     require(exactLong(row.opt("timestamp")) >= 0L)
                     if (row.has("history")) {

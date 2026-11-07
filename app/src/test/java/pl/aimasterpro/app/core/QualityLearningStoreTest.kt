@@ -114,6 +114,17 @@ class QualityLearningStoreTest {
         assertEquals(badHistory, prefs.getString("feedback", null))
     }
 
+    @Test fun duplicateCurrentRatingsForOneTargetInvalidateFeedbackJournal() {
+        val prefs = context.getSharedPreferences("ai_quality_learning_v1", Context.MODE_PRIVATE)
+        val first = """{"id":"r1","targetId":"same-task","targetType":"AGENT","rating":1,"comment":"","timestamp":1,"agent":"coder","provider":"groq","model":"m","category":""}"""
+        val second = first.replace("\"id\":\"r1\"", "\"id\":\"r2\"").replace("\"rating\":1", "\"rating\":-1")
+        val corrupt = "[$first,$second]"
+        assertTrue(prefs.edit().putString("feedback", corrupt).commit())
+        assertTrue(QualityLearningStore.feedback(context).isEmpty())
+        QualityLearningStore.rate(context, "other-task", "AGENT", 1, "new")
+        assertEquals(corrupt, prefs.getString("feedback", null))
+    }
+
     @Test fun fractionalProposalEvidenceCounterBlocksProposalMutation() {
         val prefs = context.getSharedPreferences("ai_quality_learning_v1", Context.MODE_PRIVATE)
         val corrupt = """[{"id":"p1","text":"proposal","status":"PROPOSAL","created":1,"updated":1,"evidence":2.5,"confidence":"low","tasks":[],"agents":[],"models":[]}]"""
