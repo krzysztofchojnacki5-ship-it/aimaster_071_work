@@ -610,6 +610,22 @@ class ApiTokenTrackerTest {
         assertEquals(4.56, record.costPln, 0.00001)
     }
 
+    @Test fun cachedInputTokensUseCatalogCacheReadRate() {
+        ApiTokenTracker.replaceCatalogPricingForProvider(
+            context, "catalog-cache-provider", "https://cache.example/v1",
+            listOf(CatalogModelPrice("vendor/cache-model", 0.23, 0.91, false, 0.05))
+        )
+        val record = ApiTokenTracker.recordQuery(
+            context, "catalog-cache-provider", "vendor/cache-model", "MASTER", "catalog-cache",
+            inputTokens = 1_000_000L, outputTokens = 0L, cachedTokens = 500_000L,
+            status = "REAL", baseUrl = "https://cache.example/v1",
+            idempotencyKey = "catalog-cache-provider:catalog-cache"
+        )
+        // Half regular input at $0.23/M and half cache-read input at $0.05/M.
+        assertEquals(0.14, record.costUsd, 0.000001)
+        assertEquals(0.56, record.costPln, 0.00001)
+    }
+
     @Test fun explicitlyFreeCatalogModelDoesNotInheritPaidFallback() {
         ApiTokenTracker.replaceCatalogPricingForProvider(
             context, "catalog-free-provider", "https://free.example/v1",
