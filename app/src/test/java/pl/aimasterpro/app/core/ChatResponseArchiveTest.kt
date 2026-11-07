@@ -129,4 +129,41 @@ class ChatResponseArchiveTest {
         assertEquals(1, ChatHistoryStore.readRoot(context)!!
             .getJSONObject("chats").getJSONObject("different-chat").getJSONArray("messages").length())
     }
+    @Test fun multipleArchivedAnswersReplayInOriginalChronologicalOrder() {
+        val chatId = "chat-response-sequence"
+        createChat(chatId)
+        assertTrue(ChatResponseArchive.put(
+            context, "sequence-task-1", chatId, "MASTER", "First answer", "provider-a", "model-a", 8_000L
+        ))
+        assertTrue(ChatResponseArchive.put(
+            context, "sequence-task-2", chatId, "MASTER", "Second answer", "provider-a", "model-a", 9_000L
+        ))
+
+        assertEquals(2, ChatResponseArchive.restoreArchivedResponses(context))
+        val chat = ChatHistoryStore.readRoot(context)!!.getJSONObject("chats").getJSONObject(chatId)
+        val messages = chat.getJSONArray("messages")
+        assertEquals(3, messages.length())
+        assertEquals("First answer", messages.getJSONObject(1).getString("text"))
+        assertEquals("Second answer", messages.getJSONObject(2).getString("text"))
+        assertEquals("sequence-task-1", chat.getJSONArray("assistantTaskIds").getString(0))
+        assertEquals("sequence-task-2", chat.getJSONArray("assistantTaskIds").getString(1))
+        assertEquals(0, ChatResponseArchive.restoreArchivedResponses(context))
+    }
+
+    @Test fun unreadableChatHistoryLeavesArchivedAnswerAvailableForRetry() {
+        val chatId = "chat-response-corrupt-history"
+        assertTrue(ChatResponseArchive.put(
+            context, "history-corrupt-task", chatId, "MASTER", "Keep this answer",
+            "provider-a", "model-a", 10_000L
+        ))
+        val corrupt = """{"chats":{"broken":"""
+        assertTrue(context.getSharedPreferences("chat_state", Context.MODE_PRIVATE)
+            .edit().putString("chats_v2", corrupt).commit())
+
+        assertTrue(runCatching { ChatResponseArchive.restoreArchivedResponses(context) }.isFailure)
+        assertNotNull(ChatResponseArchive.get(context, "history-corrupt-task"))
+        assertEquals(corrupt, context.getSharedPreferences("chat_state", Context.MODE_PRIVATE)
+            .getString("chats_v2", null))
+    }
+
 }

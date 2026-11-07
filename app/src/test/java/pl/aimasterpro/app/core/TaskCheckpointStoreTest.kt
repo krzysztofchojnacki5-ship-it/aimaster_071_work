@@ -14,6 +14,8 @@ class TaskCheckpointStoreTest {
     @Before fun reset() {
         context.getSharedPreferences("task_checkpoints_v1", Context.MODE_PRIVATE).edit().clear().commit()
         context.getSharedPreferences("task_result_archive_v1", Context.MODE_PRIVATE).edit().clear().commit()
+        context.getSharedPreferences("chat_response_archive_v1", Context.MODE_PRIVATE).edit().clear().commit()
+        SharedPreferencesWriteHealth.resetForTests("chat_response_archive_v1")
         TaskCheckpointStore.resetStorageHealthForTests()
     }
 

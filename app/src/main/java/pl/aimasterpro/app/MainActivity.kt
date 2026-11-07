@@ -163,12 +163,13 @@ class MainActivity : Activity() {
             "AIMasterRecovery",
             "Dziennik checkpointów jest niedostępny lub uszkodzony. Automatyczne odzyskiwanie zadań może być niepełne; zachowano oryginalne dane."
         )
-        val resultArchiveReadable = runCatching {
-            pl.aimasterpro.app.core.TaskResultArchive.isArchiveReadable(this)
+        val resultArchivesReadable = runCatching {
+            pl.aimasterpro.app.core.TaskResultArchive.isArchiveReadable(this) &&
+                pl.aimasterpro.app.core.ChatResponseArchive.isArchiveReadable(this)
         }.getOrDefault(false)
-        if (!resultArchiveReadable) android.util.Log.e(
+        if (!resultArchivesReadable) android.util.Log.e(
             "AIMasterRecovery",
-            "Archiwum raportów jest niedostępne lub uszkodzone. Automatyczne przywracanie raportów może być niepełne; zachowano oryginalne dane."
+            "Archiwum raportów lub odpowiedzi czatu jest niedostępne albo uszkodzone. Odzyskiwanie checkpointów i automatyczne przywracanie mogą być niepełne; zachowano oryginalne dane."
         )
         val recoveredTasks = runCatching {
             pl.aimasterpro.app.core.TaskCheckpointStore.recoverStaleRunning(this, onAmbiguousRequest = { event ->
