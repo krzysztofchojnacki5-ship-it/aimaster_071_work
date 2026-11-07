@@ -589,14 +589,16 @@ class ProviderClient(
                             ?.takeIf { it.isFinite() && it >= 0.0 }
                         val reasoning = reasoningRaw?.toDoubleOrNull()?.times(1_000_000.0)
                             ?.takeIf { it.isFinite() && it >= 0.0 }
-                        val invalidPriceMetadata = pricing != null && (
-                            (pricing.has("prompt") && prompt == null) ||
-                                (pricing.has("completion") && completion == null) ||
-                                (pricing.has("input_cache_read") && cachedRead == null) ||
-                                (pricing.has("input_cache_write") && cachedWrite == null) ||
-                                (pricing.has("input_cache_write_1h") && cachedWrite1h == null) ||
-                                (pricing.has("internal_reasoning") && reasoning == null)
-                            )
+                        val invalidPriceMetadata =
+                            (o.has("pricing") && !o.isNull("pricing") && pricing == null) ||
+                                (pricing != null && (
+                                    (pricing.has("prompt") && prompt == null) ||
+                                        (pricing.has("completion") && completion == null) ||
+                                        (pricing.has("input_cache_read") && cachedRead == null) ||
+                                        (pricing.has("input_cache_write") && cachedWrite == null) ||
+                                        (pricing.has("input_cache_write_1h") && cachedWrite1h == null) ||
+                                        (pricing.has("internal_reasoning") && reasoning == null)
+                                    ))
                         val free = resolveOpenRouterFreePricing(
                             id, isOpenRouter, prompt, completion, cachedRead, cachedWrite,
                             reasoning, cachedWrite1h, invalidPriceMetadata
