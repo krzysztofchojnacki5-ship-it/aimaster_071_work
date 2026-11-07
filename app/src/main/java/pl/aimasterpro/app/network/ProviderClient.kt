@@ -332,9 +332,8 @@ class ProviderClient(
             val text = (0 until content.length()).mapNotNull { content.optJSONObject(it)?.takeIf { o -> o.optString("type") == "text" }?.optString("text") }.joinToString("\n")
 
             val usageObj = result.optJSONObject("usage")
-            // Anthropic reports uncached input separately from cache-read and cache-creation
-            // input. Fold all three into billable input tokens while retaining cached as a
-            // subset for diagnostics/pricing; otherwise token budgets silently omit cache hits.
+            // Anthropic reports uncached input, cache reads, and cache writes separately.
+            // All three are billable input, but reads and writes can have different rates.
             val uncachedInput = exactNonNegativeCount(usageObj, "input_tokens")
             val output = exactNonNegativeCount(usageObj, "output_tokens")
             val cacheRead = exactNonNegativeCount(usageObj, "cache_read_input_tokens", 0L)
