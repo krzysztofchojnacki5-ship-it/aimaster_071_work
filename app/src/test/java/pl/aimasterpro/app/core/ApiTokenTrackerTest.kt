@@ -753,4 +753,24 @@ class ApiTokenTrackerTest {
         assertEquals("The original ledger must remain intact for recovery", corrupt, prefs.getString("records", null))
     }
 
+
+    @Test fun lateRealUsageCanRefineRequestedAliasToCanonicalProviderModel() {
+        val key = "team:task-canonical-recovery:gateway"
+        val estimate = ApiTokenTracker.recordQuery(
+            context, "gateway", "requested-alias", "RESEARCHER", "task-canonical-recovery",
+            250L, 900L, status = "UNAVAILABLE", idempotencyKey = key
+        )
+        val actual = ApiTokenTracker.recordQuery(
+            context, "gateway", "canonical-model-v2", "RESEARCHER", "task-canonical-recovery",
+            310L, 145L, reasoningTokens = 35L, cachedTokens = 20L,
+            status = "REAL", idempotencyKey = key
+        )
+        val all = ApiTokenTracker.loadAllRecordsFromStorage(context)
+        assertEquals(estimate.queryId, actual.queryId)
+        assertEquals("canonical-model-v2", actual.modelName)
+        assertEquals("REAL", actual.status)
+        assertEquals(455L, actual.totalTokens)
+        assertEquals(1, all.count { it.queryId == key })
+        assertEquals("canonical-model-v2", all.single().modelName)
+    }
 }
