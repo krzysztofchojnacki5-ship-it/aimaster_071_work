@@ -146,11 +146,12 @@ object TaskCheckpointStore {
             val archivedResultExists = runCatching {
                 TaskResultArchive.get(context, event.taskId) != null
             }.getOrDefault(false)
-            val terminalReportNeedsReconciliation =
-                event.status in setOf("TIMED_OUT", "CANCELLED") && archivedResultExists
+            val terminalRequestNeedsReconciliation =
+                event.status in setOf("TIMED_OUT", "CANCELLED") &&
+                    (archivedResultExists || hasRecoverableUsageMetadata(event))
             (event.status in setOf("QUEUED", "RUNNING", "REQUESTING", "USAGE_RECORDED", "USAGE_PENDING", "RESULT_PERSIST_PENDING") && event.processId != processId) ||
                 event.status == "INTERRUPTED_USAGE_PENDING" ||
-                terminalReportNeedsReconciliation
+                terminalRequestNeedsReconciliation
         }
         var recovered = 0
         stale.forEach { event ->
@@ -159,7 +160,8 @@ object TaskCheckpointStore {
             }.getOrDefault(false)
             val needsUsageRecovery = event.status in setOf(
                 "REQUESTING", "USAGE_PENDING", "INTERRUPTED_USAGE_PENDING", "TIMED_OUT", "CANCELLED"
-            ) && (event.status !in setOf("TIMED_OUT", "CANCELLED") || archivedResultExists)
+            ) && (event.status !in setOf("TIMED_OUT", "CANCELLED") ||
+                archivedResultExists || hasRecoverableUsageMetadata(event))
             val usageRecovered = !needsUsageRecovery || runCatching { onAmbiguousRequest(event) }.getOrDefault(false)
             // A crash can occur after the report archive commits but before COMPLETED is journaled.
             // Reconcile that durable report without repeating the provider request or billing usage.
