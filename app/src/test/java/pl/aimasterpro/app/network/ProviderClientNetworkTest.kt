@@ -600,6 +600,22 @@ class ProviderClientNetworkTest {
     }
 
     @Test
+    fun openRouterFreeAliasesWithNonObjectPricingAreNotClassifiedFree() {
+        val (server, _) = server { _, _ ->
+            200 to """{"data":[{"id":"vendor/bad-string-pricing:free","pricing":"not-an-object"},{"id":"vendor/bad-array-pricing:free","pricing":[]}]}"""
+        }
+        try {
+            val baseUrl = "http://127.0.0.1:" + server.address.port + "/openrouter.ai/v1"
+            val models = ProviderClient().discoverModelDetails(
+                config(baseUrl).copy(baseUrl = baseUrl)
+            )
+            assertEquals(2, models.size)
+            assertTrue(models.all { it.freeByPricing == false })
+            assertTrue(models.all { it.promptPricePerMillion == null && it.completionPricePerMillion == null })
+        } finally { server.stop(0) }
+    }
+
+    @Test
     fun openRouterPaidCacheRatePreventsFreeModelClassification() {
         assertEquals(
             false,
