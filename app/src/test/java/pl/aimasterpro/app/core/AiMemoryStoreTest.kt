@@ -49,6 +49,17 @@ class AiMemoryStoreTest {
         assertTrue(AiMemoryStore.getMemories(context).contains("Zatwierdzona pamięć do testu trwałego zapisu."))
     }
 
+    @Test fun preferenceAccessFailureDoesNotCrashOrPretendMemoryWasSaved() {
+        val failingContext = object : android.content.ContextWrapper(context) {
+            override fun getSharedPreferences(name: String, mode: Int): android.content.SharedPreferences {
+                throw IllegalStateException("controlled memory preferences failure")
+            }
+        }
+        assertFalse(AiMemoryStore.addMemory(failingContext, "Nowa zasada nie może zostać utracona."))
+        assertFalse(AiMemoryStore.removeMemory(failingContext, "nieistniejąca zasada"))
+        assertTrue(AiMemoryStore.getMemories(failingContext).isNotEmpty())
+    }
+
     @Test fun operationalSummaryIsOptIn() {
         val defaultContext = AiMemoryStore.contextString(context, "", maxChars = 2_000)
         assertFalse(defaultContext.contains("METRYKI OPERACYJNE"))
