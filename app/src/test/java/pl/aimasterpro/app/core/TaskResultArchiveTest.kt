@@ -98,6 +98,7 @@ class TaskResultArchiveTest {
         ))
 
         assertEquals(1, TaskResultArchive.restoreArchivedReports(context))
+        assertNull("A durably replayed report must be acknowledged", TaskResultArchive.get(context, "task-recovery-1"))
         val activity = ChatHistoryStore.readRoot(context)!!
             .getJSONObject("chats").getJSONObject(chatId).getJSONArray("agentActivity")
         assertEquals(1, activity.length())
@@ -295,6 +296,31 @@ class TaskResultArchiveTest {
         assertEquals("task-locked-archive", TaskResultArchive.latest(context).single().taskId)
     }
 
+
+@Test fun fullArchiveRejectsNewReportsWithoutEvictingPendingRecoveryAndReplayFreesCapacity() {
+        val chatId = "bounded-task-archive"
+        createChat(chatId)
+        repeat(80) { index ->
+            assertTrue(TaskResultArchive.put(
+                context, "bounded-report-$index", "RESEARCHER", "Report $index",
+                "provider-a", "model-a", 40_000L + index, chatId
+            ))
+        }
+        assertFalse(TaskResultArchive.put(
+            context, "overflow-report", "RESEARCHER", "Overflow report",
+            "provider-a", "model-a", 41_000L, chatId
+        ))
+        assertEquals(80, TaskResultArchive.latest(context).size)
+        assertNotNull(TaskResultArchive.get(context, "bounded-report-0"))
+        assertNull(TaskResultArchive.get(context, "overflow-report"))
+
+        assertEquals(80, TaskResultArchive.restoreArchivedReports(context))
+        assertTrue(TaskResultArchive.latest(context).isEmpty())
+        assertTrue(TaskResultArchive.put(
+            context, "after-replay-report", "RESEARCHER", "Capacity released",
+            "provider-a", "model-a", 42_000L, chatId
+        ))
+    }
 
 @Test fun archivedReportSurvivesHistoryCommitFailureBeforeApplyAndReplaysAfterRestart() {
         val chatId = "task-report-before-apply"
