@@ -3564,12 +3564,14 @@ class MainActivity : Activity() {
         modelCatalogPrefs.edit().putString("models_json", arr.toString()).apply()
         // Keep the budget engine's exact model prices synchronized with the same catalog
         // snapshot shown in the provider UI. Missing prices stay unknown and use fallback.
-        models.forEach { info ->
-            pl.aimasterpro.app.core.ApiTokenTracker.setCatalogPricing(
-                this, provider.id, info.id, provider.baseUrl,
-                info.promptPricePerMillion, info.completionPricePerMillion, info.freeByPricing
-            )
-        }
+        pl.aimasterpro.app.core.ApiTokenTracker.replaceCatalogPricingForProvider(
+            this, provider.id, provider.baseUrl,
+            models.map { info ->
+                pl.aimasterpro.app.core.CatalogModelPrice(
+                    info.id, info.promptPricePerMillion, info.completionPricePerMillion, info.freeByPricing
+                )
+            }
+        )
 
     }
 
