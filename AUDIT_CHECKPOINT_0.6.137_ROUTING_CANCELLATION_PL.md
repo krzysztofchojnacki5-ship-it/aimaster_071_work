@@ -2015,3 +2015,10 @@ Doprecyzowanie projektu SQLite:
 - Rozszerzono testy awarii commit archiwum odpowiedzi MASTER i raportów agentów o bezpośrednie wywołanie metod restore; wymagane jest zgłoszenie błędu, gdy archiwum jest niepewne.
 - Commity: `5eb52b62daf2fa1ae1cff91bcfac2abcbad53769`, `5fbfa1269fba52deb88ff8d1938339998bec2129`.
 - ADDED / NOT RUN; CI 42411603439 nadal in_progress dla wcześniejszego SHA `30e0f496...`.
+
+### Checkpoint 0.6.139 — ChatResponseArchive: awaria dostępu i blokada
+
+- Test `preferenceAccessFailureDoesNotPretendResponseArchiveIsEmptyOrAcceptNewAnswer` pokrywa niedostępność SharedPreferences.
+- Test `archivePutWaitsForSharedPreferenceLockAcrossReadModifyWrite` sprawdza serializację pełnej operacji zapisu.
+- Commit `bccb390d38f4ecb42ffb64fcf60fe128a4ddb8bd`; ADDED / NOT RUN.
+- CI 42411603439 nadal in_progress na wcześniejszym SHA `30e0f496...`.
