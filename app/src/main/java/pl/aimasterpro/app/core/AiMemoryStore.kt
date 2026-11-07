@@ -21,8 +21,9 @@ object AiMemoryStore {
 
     fun getMemories(context: Context): List<String> = runCatching {
         if (SharedPreferencesWriteHealth.isUncertain(PREFS_NAME)) return@runCatching defaultMemories()
-        val raw = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-            .getString("memories", null) ?: return@runCatching defaultMemories()
+        val raw = SharedPreferencesWriteHealth.withHealthyAccess(PREFS_NAME) {
+            context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).getString("memories", null)
+        } ?: return@runCatching defaultMemories()
         val arr = JSONArray(raw)
         val list = mutableListOf<String>()
         for (i in 0 until arr.length()) {
@@ -39,8 +40,9 @@ object AiMemoryStore {
      */
     private fun readStoredMemories(context: Context): List<String>? = runCatching {
         if (SharedPreferencesWriteHealth.isUncertain(PREFS_NAME)) return@runCatching null
-        val raw = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-            .getString("memories", null) ?: return@runCatching defaultMemories()
+        val raw = SharedPreferencesWriteHealth.withHealthyAccess(PREFS_NAME) {
+            context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).getString("memories", null)
+        } ?: return@runCatching defaultMemories()
         val arr = JSONArray(raw)
         (0 until arr.length()).map { index ->
             val value = arr.get(index)
@@ -64,7 +66,10 @@ object AiMemoryStore {
     fun removeMemory(context: Context, exactMemory: String): Boolean = runCatching {
         if (SharedPreferencesWriteHealth.isUncertain(PREFS_NAME)) return@runCatching false
         val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-        if (prefs.getString("memories", null) == null) return@runCatching true
+        val existing = SharedPreferencesWriteHealth.withHealthyAccess(PREFS_NAME) {
+            prefs.getString("memories", null)
+        }
+        if (existing == null) return@runCatching true
         val remaining = readStoredMemories(context)?.filterNot { it == exactMemory }
             ?: return@runCatching false
         val arr = JSONArray()
