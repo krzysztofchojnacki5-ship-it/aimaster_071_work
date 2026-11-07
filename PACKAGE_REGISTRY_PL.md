@@ -394,3 +394,10 @@ Rejestr rozróżnia paczkę źródłową od wersji aplikacji/APK. Numer paczki n
 - Rozszerzono testy niejednoznacznego commit obu archiwów: po wykryciu awarii test jawnie wywołuje restoreArchivedResponses/restoreArchivedReports i wymaga przerwania odzyskiwania wyjątkiem, zanim odczyt lub replay mógłby udawać pusty, zdrowy magazyn.
 - Commity: ChatResponseArchiveTest 5eb52b62daf2fa1ae1cff91bcfac2abcbad53769; TaskResultArchiveTest 5fbfa1269fba52deb88ff8d1938339998bec2129.
 - Testy ADDED / NOT RUN; aktywny CI 42411603439 nadal testuje SHA 30e0f496..., więc nowe asercje nie są zweryfikowane.
+
+### 0.6.139 — symetria odporności ChatResponseArchive (2026-11-07)
+
+- Dodano `preferenceAccessFailureDoesNotPretendResponseArchiveIsEmptyOrAcceptNewAnswer`: kontrolowany błąd dostępu do SharedPreferences nie może być raportowany jako zdrowe puste archiwum ani pozwalać na nowy zapis.
+- Dodano `archivePutWaitsForSharedPreferenceLockAcrossReadModifyWrite`: zapis musi czekać na blokadę pliku preferencji, aby nie wykonywać odczyt–modyfikacja–zapis równolegle z innym operatorem magazynu.
+- Commit: `bccb390d38f4ecb42ffb64fcf60fe128a4ddb8bd`.
+- Testy ADDED / NOT RUN. CI 42411603439 nadal in_progress dla starszego SHA `30e0f496...`.
