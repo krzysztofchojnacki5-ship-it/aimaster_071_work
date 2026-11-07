@@ -103,6 +103,9 @@ object TaskResultArchive {
             val seen = hashSetOf<String>()
             for (i in 0 until source.length()) {
                 val row = source.getJSONObject(i)
+                require(row.opt("taskId") is String && row.opt("agentId") is String &&
+                    row.opt("report") is String && row.opt("providerId") is String &&
+                    row.opt("model") is String && row.opt("createdAt") is Number)
                 val taskId = row.getString("taskId")
                 val agentId = row.getString("agentId")
                 val report = row.getString("report")
