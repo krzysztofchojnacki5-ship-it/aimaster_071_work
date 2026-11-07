@@ -450,3 +450,12 @@ Rejestr rozróżnia paczkę źródłową od wersji aplikacji/APK. Numer paczki n
 - Commity: store `173e1ba8faff4870732209ac983c61a88c840bf4`, MainActivity `ff41c04fb8f0dba91a216f3fc75c7f60fbf1d347`, testy `bf3556baa3d4bb491b96e08b89cd062bc403f46b`. ADDED / NOT RUN.
 
 - Korekta semantyki kopii legacy: `writeLegacyMirror()` używa teraz `apply()` pod wspólną blokadą, ponieważ kopia jest jawnie best-effort, a kanoniczne `chats_v2` zostało już trwale zapisane. Awaria dostępu do samej kopii nie może niepotrzebnie quarantinować całego `chat_state`. Test zaktualizowano do `legacyMirrorAccessFailureDoesNotQuarantineCanonicalHistoryOrReplaceOldMirror`. Commity korekty: `f8a9f87bb15e520853b1daa3e470c48198613c1c`, `a97eebbdb72c07f4668e16f91fb25c951468788f`. Testy nadal NOT RUN.
+
+### 0.6.139 — brak bezpiecznego potwierdzania replayu archiwów (2026-11-07)
+
+- Audyt pojemności wykazał, że oba archiwa usuwały najstarsze wpisy bez potwierdzenia, że zostały odtworzone do kanonicznej historii. Przy niedostępności `chat_state` dłuższa seria wyników mogła wyprzeć dane oczekujące na odzyskanie.
+- `ChatResponseArchive` i `TaskResultArchive` nie obcinają już niepotwierdzonych wpisów. Po osiągnięciu limitu (odpowiednio 25 i 80) odrzucają nowy zapis (`false`) i zachowują istniejące rekordy.
+- Po udanym zapisie historii archiwum usuwa tylko rekordy z czatów, które istnieją i których odpowiedź/raport został trwale dopisany albo był już obecny (marker task ID / zgodny legacy wpis). Brak czatu pozostawia rekord do późniejszej próby. Błąd zwolnienia miejsca jest logowany; nie cofa już potwierdzonego zapisu historii.
+- Testy: pełne archiwum odrzuca nadmiar bez utraty starych wpisów; udany replay zwalnia pojemność; testy podstawowego replayu wymagają potwierdzenia usunięcia wpisu. Testy ADDED / NOT RUN.
+- Commity produkcyjne: ChatResponseArchive `2b689a7cd54cd11c600764df4f91bf110073a229`; TaskResultArchive `270281ab07942d4274034a25b3ab899d5ae1440a`. Testy: ChatResponseArchive `f3d1e5e40776276133de5c231947c7483911c895`; TaskResultArchive `589480a34f41579905a6bbcf9fcd69ea71c89f57`.
+- Work branch HEAD: `589480a34f41579905a6bbcf9fcd69ea71c89f57`. Aktywny CI `42415438103` nadal sprawdza wyłącznie starszy SHA `c650c560...`; nie obejmuje powyższych zmian. Nie ma wyniku testów/builda dla tego bloku. APK NOT BUILT; Companion NOT ACTIVATED.
