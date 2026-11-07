@@ -3036,7 +3036,7 @@ class MainActivity : Activity() {
 
         val restoredMessages = legacyMessages?.map { it.role to it.text } ?: snapshot.messages
         val targetChatId = if (restoredChatId.isBlank() ||
-            (!currentChat?.has("messages").orFalse() && restoredMessages.isEmpty())
+            (currentChat?.has("messages") != true && restoredMessages.isEmpty())
         ) UUID.randomUUID().toString() else restoredChatId
 
         messages.clear()

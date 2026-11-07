@@ -2116,3 +2116,11 @@ Doprecyzowanie projektu SQLite:
 - Parser odrzuca kolekcje zapisane pod nieprawidłowym typem JSON; dodano test regresji.
 - CI dla 0.6.145 pozostaje osobnym, aktywnym runem; 0.6.146 ma własny branch filter. Testy/Gradle NOT RUN do potwierdzenia przez CI.
 - APK NOT BUILT; Companion NOT ACTIVATED; `main` untouched.
+
+
+## Checkpoint 0.6.147 — korekta nullability odtwarzania (2026-11-07)
+
+- Baza: `audit/0.6.146-startup-chat-snapshot`, commit `44ad2348fed7d0b5e82071f5a9aa8185a741451c`.
+- Nowa gałąź: `audit/0.6.147-startup-restore-nullability`.
+- Zastąpiono potencjalnie niezdefiniowane `orFalse()` jawnym warunkiem `currentChat?.has("messages") != true`.
+- CI 0.6.146 pozostaje oddzielnym runem; 0.6.147 ma osobny branch filter. APK NOT BUILT; Companion NOT ACTIVATED.

@@ -456,3 +456,9 @@ Rejestr rozróżnia paczkę źródłową od wersji aplikacji/APK. Numer paczki n
 - `ChatConversationSnapshot.parse()` odrzuca również pola kolekcji o złym typie (np. obiekt zamiast tablicy), zamiast traktować je jak puste dane.
 - Dodano regresję dla nieprawidłowego typu kolekcji. Testy/kompilacja Androida ADDED / NOT RUN do potwierdzenia przez CI.
 - APK nie utworzono; Companion pozostaje nieaktywny.
+
+
+## 0.6.147 — korekta warunku odtwarzania startowego (2026-11-07)
+
+- Doprecyzowano warunek rozpoznawania czatu bez kanonicznej tablicy `messages`: nullable Boolean jest porównywany jawnie z `true`, bez zależności od niepotwierdzonej funkcji rozszerzającej.
+- Zmiana usuwa ryzyko błędu kompilacji w ścieżce odtwarzania historii. Testy/kompilacja Androida oczekują na CI.
