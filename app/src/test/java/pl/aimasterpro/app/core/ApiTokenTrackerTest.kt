@@ -575,6 +575,53 @@ class ApiTokenTrackerTest {
             50.0, ApiTokenTracker.getLimits(context).monthlyCostPlnLimit, 0.0)
     }
 
+    @Test fun discoveredCatalogPricesOverrideGenericModelFallback() {
+        ApiTokenTracker.setCatalogPricing(
+            context, "catalog-provider", "vendor/unknown-model", "https://catalog.example/v1",
+            0.23, 0.91, explicitlyFree = false
+        )
+
+        val exact = ApiTokenTracker.getPricing(
+            context, "vendor/unknown-model", "catalog-provider", "https://catalog.example/v1"
+        )
+        assertEquals(0.23, exact.inputPer1MUsd, 0.0000001)
+        assertEquals(0.91, exact.outputPer1MUsd, 0.0000001)
+
+        // A model profile can have its own provider ID while sharing the parent URL/model.
+        val profile = ApiTokenTracker.getPricing(
+            context, "vendor/unknown-model", "catalog-provider-profile", "https://catalog.example/v1/"
+        )
+        assertEquals(0.23, profile.inputPer1MUsd, 0.0000001)
+        assertEquals(0.91, profile.outputPer1MUsd, 0.0000001)
+    }
+
+    @Test fun explicitlyFreeCatalogModelDoesNotInheritPaidFallback() {
+        ApiTokenTracker.setCatalogPricing(
+            context, "catalog-free-provider", "vendor/free-model", "https://free.example/v1",
+            0.0, 0.0, explicitlyFree = true
+        )
+        val pricing = ApiTokenTracker.getPricing(
+            context, "vendor/free-model", "catalog-free-provider", "https://free.example/v1"
+        )
+        assertEquals(0.0, pricing.inputPer1MUsd, 0.0)
+        assertEquals(0.0, pricing.outputPer1MUsd, 0.0)
+    }
+
+    @Test fun incompleteOrInvalidCatalogPricesAreRejected() {
+        assertTrue(runCatching {
+            ApiTokenTracker.setCatalogPricing(
+                context, "catalog-invalid-provider", "vendor/model", "https://invalid.example",
+                0.1, null
+            )
+        }.isFailure)
+        assertTrue(runCatching {
+            ApiTokenTracker.setCatalogPricing(
+                context, "catalog-invalid-provider", "vendor/model", "https://invalid.example",
+                Double.NaN, 0.2
+            )
+        }.isFailure)
+    }
+
     @Test fun mutatingReturnedPricingDoesNotChangeSharedDefaults() {
         val first = ApiTokenTracker.getPricing(context, "gpt-4o-mini")
         first.inputPer1MUsd = Double.NaN
