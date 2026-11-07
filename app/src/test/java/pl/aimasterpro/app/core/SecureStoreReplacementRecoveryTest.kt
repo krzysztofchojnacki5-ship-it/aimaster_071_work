@@ -20,9 +20,9 @@ import org.robolectric.RuntimeEnvironment
 class SecureStoreReplacementRecoveryTest {
     private val context get() = RuntimeEnvironment.getApplication()
     private val defaults = linkedMapOf(
-        "MASTER" to "old-provider",
-        "CODER" to "old-provider",
-        "RESEARCHER" to "old-provider"
+        "MASTER" to "new-master",
+        "CODER" to "new-coder",
+        "RESEARCHER" to "new-master"
     )
 
     @Before fun reset() {
