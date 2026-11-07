@@ -40,10 +40,21 @@ class SecureStore(context: Context) {
     /** Encrypts without changing preferences, allowing a complete import to be prepared before commit. */
     private fun encryptSecret(value: String): String? {
         if (value.isBlank()) return null
-        val cipher = Cipher.getInstance("AES/GCM/NoPadding")
-        cipher.init(Cipher.ENCRYPT_MODE, key())
-        val encrypted = cipher.doFinal(value.toByteArray(Charsets.UTF_8))
-        return Base64.encodeToString(cipher.iv + encrypted, Base64.NO_WRAP)
+        val plainBytes = value.toByteArray(Charsets.UTF_8)
+        return try {
+            val cipher = Cipher.getInstance("AES/GCM/NoPadding")
+            cipher.init(Cipher.ENCRYPT_MODE, key())
+            val encrypted = cipher.doFinal(plainBytes)
+            val packed = cipher.iv + encrypted
+            try {
+                Base64.encodeToString(packed, Base64.NO_WRAP)
+            } finally {
+                packed.fill(0)
+                encrypted.fill(0)
+            }
+        } finally {
+            plainBytes.fill(0)
+        }
     }
 
     /** Returns false when the secret could not be stored; nothing is written in that case. */
@@ -64,12 +75,26 @@ class SecureStore(context: Context) {
 
     @Synchronized fun getSecret(name: String): String? = runCatching {
         val packed = Base64.decode(prefs.getString(name, null), Base64.NO_WRAP)
-        require(packed.size > 12) { "Zaszyfrowany klucz jest niekompletny." }
-        val iv = packed.copyOfRange(0, 12)
-        val ciphertext = packed.copyOfRange(12, packed.size)
-        val cipher = Cipher.getInstance("AES/GCM/NoPadding")
-        cipher.init(Cipher.DECRYPT_MODE, key(), GCMParameterSpec(128, iv))
-        String(cipher.doFinal(ciphertext), Charsets.UTF_8)
+        try {
+            require(packed.size >= 28) { "Zaszyfrowany klucz jest niekompletny." }
+            val iv = packed.copyOfRange(0, 12)
+            val ciphertext = packed.copyOfRange(12, packed.size)
+            try {
+                val cipher = Cipher.getInstance("AES/GCM/NoPadding")
+                cipher.init(Cipher.DECRYPT_MODE, key(), GCMParameterSpec(128, iv))
+                val plainBytes = cipher.doFinal(ciphertext)
+                try {
+                    String(plainBytes, Charsets.UTF_8)
+                } finally {
+                    plainBytes.fill(0)
+                }
+            } finally {
+                iv.fill(0)
+                ciphertext.fill(0)
+            }
+        } finally {
+            packed.fill(0)
+        }
     }.getOrNull()
 
     /** Stores the encrypted key and its metadata in one preferences transaction. */
