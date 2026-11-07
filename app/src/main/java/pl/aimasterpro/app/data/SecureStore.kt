@@ -97,16 +97,16 @@ class SecureStore(context: Context) {
      */
     @Synchronized fun replaceAllConfigs(configs: List<JSONObject>): Boolean = try {
         if (configs.isEmpty()) return false
-        val prepared = configs.map { source ->
-            val config = JSONObject(source.toString())
+        val copied = configs.map { JSONObject(it.toString()) }
+        val newIds = copied.map { it.optString("id", "default") }
+        require(newIds.all { it.isNotBlank() }) { "Id dostawcy nie może być pusty." }
+        require(newIds.size == newIds.toSet().size) { "Kopia zawiera powtórzone identyfikatory dostawców." }
+        val prepared = copied.map { config ->
             val id = config.optString("id", "default")
-            require(id.isNotBlank()) { "Id dostawcy nie może być pusty." }
             val encrypted = encryptSecret(config.optString("apiKey"))
             val safe = JSONObject(config.toString()).apply { remove("apiKey") }
             Triple(id, safe, encrypted)
         }
-        val newIds = prepared.map { it.first }
-        require(newIds.size == newIds.toSet().size) { "Kopia zawiera powtórzone identyfikatory dostawców." }
 
         val oldIds = (prefs.getStringSet("provider_ids", emptySet()) ?: emptySet()).toSet()
         val editor = prefs.edit()
