@@ -1782,19 +1782,42 @@ class MainActivity : Activity() {
                                 if (!saved) android.util.Log.e("AIMasterRecovery", "Nie udało się trwale zapisać checkpointu zadania.")
                             },
                             onTaskResult = { taskResult ->
-                                val fingerprint = cacheFingerprints[taskResult.taskId]
-                                if (fingerprint == null) {
-                                    true
+                                val archived = pl.aimasterpro.app.core.TaskResultArchive.put(
+                                    this, taskResult.taskId, taskResult.agentId, taskResult.report,
+                                    taskResult.providerId, taskResult.model
+                                )
+                                if (!archived) {
+                                    logAgentForChat(chatId, "❌ Nie udało się trwale zarchiwizować raportu ${taskResult.agentId}; zadanie pozostaje oczekujące na odzyskanie.")
+                                    false
                                 } else {
                                     val configured = batchAgentConfigsMap[taskResult.agentId] ?: safeConfig
-                                    if (taskResult.providerId == configured.id && taskResult.model == configured.model) {
-                                        val saved = pl.aimasterpro.app.core.TaskResultCache.put(this, fingerprint, taskResult.report)
-                                        if (!saved) logAgentForChat(chatId, "⚠️ Nie udało się trwale zapisać cache raportu ${taskResult.agentId}; wynik pozostaje widoczny w dzienniku rozmowy.")
-                                        saved
-                                    } else {
-                                        logAgentForChat(chatId, "♻️ Cache pominięty dla ${taskResult.agentId}: raport pochodzi z fallbacku ${taskResult.providerId}/${taskResult.model}, a nie z przypisanego profilu ${configured.id}/${configured.model}.")
-                                        true
+                                    val actualConfig = listOf(configured, safeConfig).firstOrNull {
+                                        it.id == taskResult.providerId && it.model == taskResult.model
                                     }
+                                    val task = adaptiveTasks.firstOrNull { it.id == taskResult.taskId }
+                                    val fingerprint = when {
+                                        actualConfig == null -> null
+                                        actualConfig.id == configured.id && actualConfig.model == configured.model ->
+                                            cacheFingerprints[taskResult.taskId]
+                                        task == null -> null
+                                        else -> pl.aimasterpro.app.core.TaskResultCache.fingerprint(
+                                            task.agentId,
+                                            task.goal + "\n" + AgentCatalog.find(task.agentId)?.systemPrompt.orEmpty() +
+                                                "\n" + mode.systemInstruction,
+                                            task.prompt, projectContext, sendMime, sendBase64,
+                                            actualConfig.id, actualConfig.baseUrl, actualConfig.model
+                                        )
+                                    }
+                                    if (fingerprint != null && actualConfig != null) {
+                                        val cached = pl.aimasterpro.app.core.TaskResultCache.put(this, fingerprint, taskResult.report)
+                                        if (!cached) logAgentForChat(chatId, "⚠️ Raport ${taskResult.agentId} jest bezpiecznie w archiwum, ale cache nie potwierdził zapisu.")
+                                    } else {
+                                        logAgentForChat(chatId, "ℹ️ Raport ${taskResult.agentId} zachowano w archiwum; pominięto cache z powodu nieustalonej konfiguracji providera.")
+                                    }
+                                    if (actualConfig != null && (actualConfig.id != configured.id || actualConfig.model != configured.model)) {
+                                        logAgentForChat(chatId, "♻️ Raport fallbacku ${taskResult.providerId}/${taskResult.model} zapisano pod jego rzeczywistą tożsamością providera, bez przypisywania go do modelu skonfigurowanego.")
+                                    }
+                                    true
                                 }
                             },
                             onRequestStarting = { task, actualProvider, estimatedInput, estimatedOutput, idempotencyKey ->
@@ -1947,6 +1970,13 @@ class MainActivity : Activity() {
                                             pl.aimasterpro.app.core.TaskCheckpointStore.Event(task.id, task.agentId, state, detail,
                                                 System.currentTimeMillis(), providerId, model, attempts))
                                         if (!saved) android.util.Log.e("AIMasterRecovery", "Nie udało się trwale zapisać checkpointu zadania.")
+                                    },
+                                    onTaskResult = { result ->
+                                        val archived = pl.aimasterpro.app.core.TaskResultArchive.put(
+                                            this, result.taskId, result.agentId, result.report, result.providerId, result.model
+                                        )
+                                        if (!archived) logAgentForChat(chatId, "❌ Nie udało się trwale zarchiwizować raportu peer review ${result.agentId}.")
+                                        archived
                                     },
                                     requestScope = requestScope,
                                     onTaskFinished = { taskId -> pl.aimasterpro.app.core.ApiTokenTracker.completeReservationTask(reviewBudget.reservationId, taskId) }
@@ -4354,6 +4384,13 @@ class MainActivity : Activity() {
                                 )
                             )
                             if (!saved) android.util.Log.e("AIMasterRecovery", "Nie udało się trwale zapisać checkpointu zadania.")
+                        },
+                        onTaskResult = { result ->
+                            val archived = pl.aimasterpro.app.core.TaskResultArchive.put(
+                                this, result.taskId, result.agentId, result.report, result.providerId, result.model
+                            )
+                            if (!archived) logAgentForChat(chatId, "❌ Nie udało się trwale zarchiwizować raportu recenzji patcha ${result.agentId}.")
+                            archived
                         },
 onRequestStarting = { task, actualProvider, estimatedInput, estimatedOutput, idempotencyKey ->
                         val safeBaseUrl = runCatching {
