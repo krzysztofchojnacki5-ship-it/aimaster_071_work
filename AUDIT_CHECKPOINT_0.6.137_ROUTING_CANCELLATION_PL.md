@@ -1897,3 +1897,17 @@ Doprecyzowanie projektu SQLite:
 
 
 - Doprecyzowano projekt SQLite (commit `f2265427`): tabela zachowuje pełny `config_json` po usunięciu wyłącznie `apiKey` i wewnętrznego `_secretUnavailable`, a relację rodzica przechowuje dodatkowo w kolumnie FK. To zachowuje nieznane/rozszerzone pola JSON, które obecny importer toleruje i przechowuje; prosty schemat z samymi znanymi kolumnami mógłby je utracić.
+
+
+### Dodatkowe asynchroniczne ścieżki API — 2026-11-07
+
+- Audyt pełnego pliku `MainActivity.kt` ujawnił kolejne wejścia sieciowe, które miały guard tylko przed uruchomieniem workera lub nie miały go wcale:
+  - automatyczna synchronizacja katalogu modeli w ekranie darmowych modeli;
+  - synchronizacja wszystkich katalogów dostawców;
+  - ręczne discovery pojedynczego dostawcy;
+  - test modelu mógł przejść od rezerwacji budżetu do HTTP po zmianie stanu magazynu.
+- Dodano ponowne sprawdzenie `SecureStoreHealth` wewnątrz workerów, bezpośrednio przed HTTP oraz przed zapisem pobranych katalogów. W razie blokady wynik synchronizacji jest odrzucany, a przycisk pozostaje wyłączony.
+- `runBudgetedModelTest()` sprawdza stan ponownie po rezerwacji budżetu; w razie awarii żądanie nie jest wysyłane, a rezerwacja zostaje zwolniona przez istniejący `finally`.
+- Commity kodu: `e83c171c` (automatyczny katalog) i `9a340a40` (ponowne kontrole w workerach).
+- CI dla najnowszego SHA `9a340a40d16743df757fc2c0f8d70d575fa3e055`: run `42329774728`, status `pending` w chwili zapisu checkpointu. Poprzednie runy anulowano przez nowsze push'e; anulowanie nie oznacza ani PASS, ani FAIL.
+- Porównanie gałęzi: 367 ahead / 0 behind. `main` pozostaje nietknięty.
