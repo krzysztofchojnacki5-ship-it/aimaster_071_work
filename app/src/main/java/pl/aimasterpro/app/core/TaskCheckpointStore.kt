@@ -119,53 +119,53 @@ object TaskCheckpointStore {
         if (SharedPreferencesWriteHealth.isUncertain(PREFS)) return null
         return runCatching {
             SharedPreferencesWriteHealth.withHealthyAccess(PREFS) {
-                val a = JSONArray(
+                val array = JSONArray(
                     context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString(KEY, "[]") ?: "[]"
                 )
-        (0 until a.length()).map { i ->
-            val o = a.getJSONObject(i)
-            fun exactString(key: String, default: String = ""): String {
-                if (!o.has(key)) return default
-                val value = o.opt(key)
-                require(value is String) { "Checkpoint field '$key' is not a string." }
-                return value
-            }
-            fun exactLong(key: String, default: Long = 0L): Long {
-                if (!o.has(key)) return default
-                val value = o.opt(key)
-                require(value is Int || value is Long) { "Checkpoint field '$key' is not an exact integer." }
-                return (value as Number).toLong()
-            }
-            val id = exactString("task")
-            require(id.isNotBlank()) { "Checkpoint row has no task id." }
-            val estimatedInput = exactLong("estimatedInputTokens")
-            val estimatedOutput = exactLong("estimatedOutputTokens")
-            val attemptsLong = exactLong("attempts")
-            val timestamp = exactLong("ts")
-            require(estimatedInput >= 0L && estimatedOutput >= 0L &&
-                attemptsLong in 0L..Int.MAX_VALUE.toLong() && timestamp >= 0L) {
-                "Checkpoint row has invalid token estimates, timestamp or attempt count."
-            }
-            val agentId = exactString("agent")
-            val status = exactString("status")
-            require(agentId.isNotBlank() && status.isNotBlank()) {
-                "Checkpoint row has no agent or lifecycle status."
-            }
-            Event(
-                id,
-                agentId,
-                status,
-                exactString("detail"),
-                timestamp,
-                exactString("provider"),
-                exactString("model"),
-                attemptsLong.toInt(),
-                exactString("processId"),
-                estimatedInput,
-                estimatedOutput,
-                exactString("idempotencyKey"),
-                exactString("baseUrl")
-            )
+                (0 until array.length()).map { index ->
+                    val row = array.getJSONObject(index)
+                    fun exactString(key: String, default: String = ""): String {
+                        if (!row.has(key)) return default
+                        val value = row.opt(key)
+                        require(value is String) { "Checkpoint field '$key' is not a string." }
+                        return value
+                    }
+                    fun exactLong(key: String, default: Long = 0L): Long {
+                        if (!row.has(key)) return default
+                        val value = row.opt(key)
+                        require(value is Int || value is Long) { "Checkpoint field '$key' is not an exact integer." }
+                        return (value as Number).toLong()
+                    }
+                    val id = exactString("task")
+                    require(id.isNotBlank()) { "Checkpoint row has no task id." }
+                    val estimatedInput = exactLong("estimatedInputTokens")
+                    val estimatedOutput = exactLong("estimatedOutputTokens")
+                    val attempts = exactLong("attempts")
+                    val timestamp = exactLong("ts")
+                    require(estimatedInput >= 0L && estimatedOutput >= 0L &&
+                        attempts in 0L..Int.MAX_VALUE.toLong() && timestamp >= 0L) {
+                        "Checkpoint row has invalid token estimates, timestamp or attempt count."
+                    }
+                    val agentId = exactString("agent")
+                    val status = exactString("status")
+                    require(agentId.isNotBlank() && status.isNotBlank()) {
+                        "Checkpoint row has no agent or lifecycle status."
+                    }
+                    Event(
+                        taskId = id,
+                        agentId = agentId,
+                        status = status,
+                        detail = exactString("detail"),
+                        timestamp = timestamp,
+                        providerId = exactString("provider"),
+                        model = exactString("model"),
+                        attempts = attempts.toInt(),
+                        processId = exactString("processId"),
+                        estimatedInputTokens = estimatedInput,
+                        estimatedOutputTokens = estimatedOutput,
+                        idempotencyKey = exactString("idempotencyKey"),
+                        baseUrl = exactString("baseUrl")
+                    )
                 }
             }
         }.getOrNull()
