@@ -140,6 +140,24 @@ class SecureStoreReplacementRecoveryTest {
             SecureStore(context).allConfigs().map { it.optString("id") }.toSet())
     }
 
+    @Test fun invalidLaterImportEntryLeavesEarlierPreparedEntriesAndOldCatalogUntouched() {
+        seedOldCatalog()
+        val first = provider("would-be-imported").put("apiKey", "secret-that-must-not-be-encrypted")
+        val invalidLater = provider("invalid-later").put("enabled", "not-a-boolean")
+
+        assertFalse(SecureStore(context).replaceAllConfigs(listOf(first, invalidLater)))
+        assertFalse(SecureStoreHealth.isUncertain())
+
+        val prefs = context.getSharedPreferences("secure_provider_store", Context.MODE_PRIVATE)
+        assertEquals(setOf("old-provider"), prefs.getStringSet("provider_ids", emptySet()))
+        assertTrue(prefs.contains("config_old-provider"))
+        assertFalse(prefs.contains("key_old-provider"))
+        assertFalse(prefs.contains("config_would-be-imported"))
+        assertFalse(prefs.contains("key_would-be-imported"))
+        assertFalse(prefs.contains("config_invalid-later"))
+        assertFalse(prefs.contains("key_invalid-later"))
+    }
+
     @Test fun startupKeepsOldAssignmentsWhenFailedSecureStoreCommitDidNotPersist() {
         seedOldCatalog()
         val failedContext = AmbiguousCommitContext(
