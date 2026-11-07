@@ -39,7 +39,17 @@ object TaskCheckpointStore {
         // A late worker callback must not overwrite a terminal result already recorded by
         // the coordinator (for example TIMED_OUT followed by the worker's CANCELLED callback).
         val current = rows.firstOrNull { it.taskId == event.taskId }
-        if (current?.status?.let { it in TERMINAL_STATUSES } == true) return true
+        if (current?.status?.let { it in TERMINAL_STATUSES } == true) {
+            // A timeout/cancellation can race with a worker that has already committed its report.
+            // Permit only archive-backed reconciliation for that exact task; never trust a late
+            // callback alone to rewrite a terminal checkpoint.
+            val archivedResultExists = runCatching {
+                TaskResultArchive.get(context, event.taskId) != null
+            }.getOrDefault(false)
+            val isArchiveBackedReconciliation = archivedResultExists &&
+                event.status in setOf("COMPLETED", "USAGE_PENDING", "INTERRUPTED_USAGE_PENDING")
+            if (!isArchiveBackedReconciliation) return true
+        }
         // Later lifecycle states often omit request-only metadata. Preserve the latest
         // REQUESTING details so a USAGE_PENDING checkpoint can still be reconciled after restart.
         rows.add(
