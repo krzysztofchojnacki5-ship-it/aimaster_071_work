@@ -1418,7 +1418,8 @@ class MainActivity : Activity() {
                         pl.aimasterpro.app.core.TaskCheckpointStore.Event(
                             taskId = requestTaskId, agentId = requestAgentId, status = "REQUESTING",
                             detail = "Pojedyncze żądanie czatu wysyłane do providera.",
-                            timestamp = System.currentTimeMillis(), providerId = cfg.id, model = cfg.model,
+                            timestamp = System.currentTimeMillis(),
+                            providerId = res.providerId.ifBlank { cfg.id }, model = res.model.ifBlank { cfg.model },
                             attempts = requestAttempt, estimatedInputTokens = estimatedRequestInput,
                             estimatedOutputTokens = 4_096L, idempotencyKey = requestIdempotencyKey,
                             baseUrl = safeCheckpointBaseUrl
@@ -1445,7 +1446,7 @@ class MainActivity : Activity() {
                     }
                     val usagePersisted = runCatching {
                         pl.aimasterpro.app.core.ApiTokenTracker.recordQuery(
-                            this, cfg.id, cfg.model, requestAgentId, requestTaskId,
+                            this, res.providerId.ifBlank { cfg.id }, res.model.ifBlank { cfg.model }, requestAgentId, requestTaskId,
                             res.usage.inputTokens, res.usage.outputTokens, res.usage.reasoningTokens,
                             res.usage.cachedTokens, res.usage.status, cfg.baseUrl, effectiveBudgetReservationId,
                             requestIdempotencyKey
@@ -3685,7 +3686,7 @@ class MainActivity : Activity() {
         }
         runCatching {
             pl.aimasterpro.app.core.ApiTokenTracker.recordQuery(
-                this, config.id, config.model, "TEST", taskId,
+                this, response.providerId.ifBlank { config.id }, response.model.ifBlank { config.model }, "TEST", taskId,
                 usage.inputTokens, usage.outputTokens, usage.reasoningTokens, usage.cachedTokens,
                 usage.status, config.baseUrl, reservationId
             )
