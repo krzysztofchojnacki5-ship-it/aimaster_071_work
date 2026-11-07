@@ -14,11 +14,13 @@ class QualityLearningStoreTest {
     private lateinit var context: Context
 
     @Before fun setUp() {
+        SharedPreferencesWriteHealth.resetForTests("ai_quality_learning_v1")
         context = RuntimeEnvironment.getApplication()
         context.getSharedPreferences("ai_quality_learning_v1", Context.MODE_PRIVATE).edit().clear().commit()
         context.getSharedPreferences("ai_master_memory_store_v1", Context.MODE_PRIVATE).edit().remove("memories").commit()
     }
     @After fun tearDown() {
+        SharedPreferencesWriteHealth.resetForTests("ai_quality_learning_v1")
         context.getSharedPreferences("ai_quality_learning_v1", Context.MODE_PRIVATE).edit().clear().commit()
         context.getSharedPreferences("ai_master_memory_store_v1", Context.MODE_PRIVATE).edit().remove("memories").commit()
     }
@@ -195,4 +197,24 @@ class QualityLearningStoreTest {
         assertFalse(agentSection.contains("MASTER"))
     }
 
+    @Test fun ambiguousCommitQuarantinesBothQualityLedgers() {
+        val prefs = context.getSharedPreferences("ai_quality_learning_v1", Context.MODE_PRIVATE)
+        val originalFeedback = "[]"
+        val originalProposals = "[]"
+        assertTrue(prefs.edit().putString("feedback", originalFeedback).putString("proposals", originalProposals).commit())
+        val failingEditor = object : android.content.SharedPreferences.Editor by prefs.edit().putString("feedback", "[ambiguous]") {
+            override fun commit(): Boolean = false
+        }
+        assertFalse(SharedPreferencesWriteHealth.commit("ai_quality_learning_v1", failingEditor))
+
+        QualityLearningStore.rate(context, "task-1", "AGENT", 1, "Nie zapisuj")
+        assertTrue(QualityLearningStore.feedback(context).isEmpty())
+        assertTrue(QualityLearningStore.proposals(context).isEmpty())
+        assertFalse(QualityLearningStore.setProposalStatus(context, "missing", "APPROVED"))
+        assertTrue(runCatching {
+            QualityLearningStore.addProposal(context, "Nie zapisuj", 1, "low", emptyList(), emptyList(), emptyList())
+        }.isFailure)
+        assertEquals(originalFeedback, prefs.getString("feedback", null))
+        assertEquals(originalProposals, prefs.getString("proposals", null))
+    }
 }
