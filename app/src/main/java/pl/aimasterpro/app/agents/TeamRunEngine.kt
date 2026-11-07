@@ -72,7 +72,7 @@ class TeamRunEngine(
         onProviderSuccess: (ProviderConfig) -> Unit = { },
         onTaskState: (TeamTask, String, String, String, String, Int) -> Unit = { _, _, _, _, _, _ -> },
         onTaskResult: (TeamTaskResult) -> Boolean = { true },
-        onRequestStarting: (TeamTask, ProviderConfig, Long, Long, String, Int) -> Boolean = { _, _, _, _, _ -> true },
+        onRequestStarting: (TeamTask, ProviderConfig, Long, Long, String, Int) -> Boolean = { _, _, _, _, _, _ -> true },
         requestScope: ProviderClient.RequestScope? = null,
         onTaskFinished: (String) -> Unit = { }
     ): List<TeamTaskResult> {
