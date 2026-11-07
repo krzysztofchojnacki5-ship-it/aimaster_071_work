@@ -367,4 +367,40 @@ class ChatHistoryStoreTest {
         assertEquals("new-user-chat", ChatHistoryStore.readRoot(context)!!.getString("currentId"))
     }
 
+
+    @Test fun legacyMirrorCommitFailureQuarantinesSharedPreferenceFileWithoutReplacingOldMirror() {
+        assertTrue(prefs.edit().putString("chat_messages", "old-mirror").commit())
+        val failing = AmbiguousCommitContext(context, "chat_state", applyBeforeFailure = false)
+        assertFalse(ChatHistoryStore.writeLegacyMirror(failing, "new-mirror"))
+        assertTrue(SharedPreferencesWriteHealth.isUncertain("chat_state"))
+        assertEquals("old-mirror", prefs.getString("chat_messages", null))
+        SharedPreferencesWriteHealth.resetForTests("chat_state")
+        assertEquals("old-mirror", prefs.getString("chat_messages", null))
+    }
+
+    @Test fun legacyMirrorWriteWaitsForSharedPreferenceFileLock() {
+        val ready = java.util.concurrent.CountDownLatch(1)
+        val finished = java.util.concurrent.CountDownLatch(1)
+        val result = java.util.concurrent.atomic.AtomicBoolean(false)
+        val worker = Thread {
+            ready.countDown()
+            result.set(ChatHistoryStore.writeLegacyMirror(context, "legacy-snapshot"))
+            finished.countDown()
+        }
+        SharedPreferencesWriteHealth.withHealthyAccess("chat_state") {
+            worker.start()
+            assertTrue(ready.await(2, java.util.concurrent.TimeUnit.SECONDS))
+            val deadline = System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(2)
+            while (worker.state != Thread.State.BLOCKED && System.nanoTime() < deadline) {
+                Thread.yield()
+            }
+            assertEquals(Thread.State.BLOCKED, worker.state)
+            assertEquals(1L, finished.count)
+        }
+        worker.join(3_000L)
+        assertEquals(0L, finished.count)
+        assertTrue(result.get())
+        assertEquals("legacy-snapshot", prefs.getString("chat_messages", null))
+    }
+
 }
