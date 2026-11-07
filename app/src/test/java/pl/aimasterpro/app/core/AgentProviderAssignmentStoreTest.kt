@@ -102,6 +102,17 @@ class AgentProviderAssignmentStoreTest {
         assertEquals("keep-me", prefs.getString("selected_provider", null))
     }
 
+    @Test fun explicitImportReconciliationRepairsWrongStoredAssignmentType() {
+        prefs.edit().putInt("agent_provider_CODER", 42).putString("agent_provider_MASTER", "gemini").commit()
+        val result = AgentProviderAssignmentStore.reconcileAfterProviderImport(
+            context, defaults, setOf("gemini", "groq"), "gemini"
+        )
+        assertNotNull(result)
+        assertEquals("groq", result!!["CODER"])
+        assertEquals("groq", prefs.getString("agent_provider_CODER", null))
+        assertEquals("gemini", prefs.getString("agent_provider_MASTER", null))
+    }
+
     @Test fun invalidEmptyProviderSetDoesNotModifyPersistedAssignments() {
         prefs.edit().putString("agent_provider_MASTER", "keep-me")
             .putString("selected_provider", "keep-me").commit()

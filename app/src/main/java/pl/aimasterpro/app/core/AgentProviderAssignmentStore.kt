@@ -87,7 +87,9 @@ object AgentProviderAssignmentStore {
                 ?: roleDefaults[MASTER]?.takeIf { it in validProviderIds }
                 ?: validProviderIds.sorted().first()
             val resolved = roleDefaults.mapValues { (role, defaultId) ->
-                val old = prefs.getString(key(role), null)
+                // This path is an explicit full-import recovery operation. Unlike startup,
+                // it may repair a wrongly typed assignment by replacing it with a validated fallback.
+                val old = runCatching { prefs.getString(key(role), null) }.getOrNull()
                 when {
                     role == MASTER -> masterFallback
                     old != null && old in validProviderIds -> old
