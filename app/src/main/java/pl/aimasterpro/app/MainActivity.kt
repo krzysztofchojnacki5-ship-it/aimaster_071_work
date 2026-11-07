@@ -1449,7 +1449,8 @@ class MainActivity : Activity() {
                             this, res.providerId.ifBlank { cfg.id }, res.model.ifBlank { cfg.model }, requestAgentId, requestTaskId,
                             res.usage.inputTokens, res.usage.outputTokens, res.usage.reasoningTokens,
                             res.usage.cachedTokens, res.usage.status, cfg.baseUrl, effectiveBudgetReservationId,
-                            requestIdempotencyKey, res.usage.cacheWriteTokens, res.usage.cacheWrite1hTokens
+                            requestIdempotencyKey, res.usage.cacheWriteTokens, res.usage.cacheWrite1hTokens,
+                            res.usage.reasoningTokensKnown
                         )
                     }.onFailure { error ->
                         runCatching { logAgentForChat(requestChatId, "[USAGE_RECORD_FAILED] Odpowiedź API mogła zostać rozliczona, ale zapis tokenów nie powiódł się: ${error.message ?: error.javaClass.simpleName}") }
@@ -1851,7 +1852,7 @@ class MainActivity : Activity() {
                             onLog = { sender, recipient, msg, status -> logAgentDialogueForChat(chatId, sender, recipient, msg, status) },
                             onUsage = { agentId, taskId, actualProvider, usage ->
                                 pl.aimasterpro.app.core.ApiTokenTracker.recordQuery(this, actualProvider.id, actualProvider.model, agentId, taskId, usage.inputTokens, usage.outputTokens, usage.reasoningTokens, usage.cachedTokens, usage.status, actualProvider.baseUrl, budgetPlan.reservationId,
-                                    "team:$taskId:${actualProvider.id}", usage.cacheWriteTokens, usage.cacheWrite1hTokens)
+                                    "team:$taskId:${actualProvider.id}", usage.cacheWriteTokens, usage.cacheWrite1hTokens, usage.reasoningTokensKnown)
                             },
                             unknownOutputEstimateTokens = adaptivePlan.outputTokensPerAgent,
                             onUnknownUsage = { agentId, taskId, actualProvider, estimatedInput, estimatedOutput ->
@@ -2041,7 +2042,8 @@ class MainActivity : Activity() {
                                             this, actualProvider.id, actualProvider.model, agentId, taskId,
                                             usage.inputTokens, usage.outputTokens, usage.reasoningTokens,
                                             usage.cachedTokens, usage.status, actualProvider.baseUrl, reviewBudget.reservationId,
-                                            "team:$taskId:${actualProvider.id}", usage.cacheWriteTokens, usage.cacheWrite1hTokens
+                                            "team:$taskId:${actualProvider.id}", usage.cacheWriteTokens, usage.cacheWrite1hTokens,
+                                            usage.reasoningTokensKnown
                                         )
                                     },
                                     unknownOutputEstimateTokens = minOf(adaptivePlan.outputTokensPerAgent.coerceAtLeast(500L), 1_200L),
@@ -3725,7 +3727,8 @@ class MainActivity : Activity() {
                 this, response.providerId.ifBlank { config.id }, response.model.ifBlank { config.model }, "TEST", taskId,
                 usage.inputTokens, usage.outputTokens, usage.reasoningTokens, usage.cachedTokens,
                 usage.status, config.baseUrl, reservationId, cacheWriteTokens = usage.cacheWriteTokens,
-                cacheWrite1hTokens = usage.cacheWrite1hTokens
+                cacheWrite1hTokens = usage.cacheWrite1hTokens,
+                reasoningTokensKnown = usage.reasoningTokensKnown
             )
         }.onFailure {
             android.util.Log.e("AIMasterBudget", "Nie udało się zapisać użycia testu $testLabel.", it)
@@ -4619,7 +4622,8 @@ class MainActivity : Activity() {
                                 this, actualProvider.id, actualProvider.model, agentId, taskId,
                                 usage.inputTokens, usage.outputTokens, usage.reasoningTokens,
                                 usage.cachedTokens, usage.status, actualProvider.baseUrl, reviewBudget.reservationId,
-                                "team:$taskId:${actualProvider.id}", usage.cacheWriteTokens, usage.cacheWrite1hTokens
+                                "team:$taskId:${actualProvider.id}", usage.cacheWriteTokens, usage.cacheWrite1hTokens,
+                                usage.reasoningTokensKnown
                             )
                         },
                         unknownOutputEstimateTokens = 1_200L,
