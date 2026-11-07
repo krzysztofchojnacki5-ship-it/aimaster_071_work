@@ -369,7 +369,9 @@ object ApiTokenTracker {
         }
         // Usage may represent a billable provider response. Return the commit result so
         // recordQuery can preserve an in-memory accounting fallback and surface the failure.
-        return prefs.edit().putString("records", arr.toString()).commit()
+        return SharedPreferencesWriteHealth.commit(
+            PREFS_NAME, prefs.edit().putString("records", arr.toString())
+        )
     }
 
     /**
@@ -378,7 +380,9 @@ object ApiTokenTracker {
      * and writes can fail closed instead of undercounting or overwriting usage.
      */
     private fun readPersistedRecords(context: Context): List<TokenRecord>? = runCatching {
-        val raw = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).getString("records", null)
+        val raw = SharedPreferencesWriteHealth.withHealthyAccess(PREFS_NAME) {
+            context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).getString("records", null)
+        }
         if (raw.isNullOrBlank()) return@runCatching emptyList()
         val arr = JSONArray(raw)
         val list = mutableListOf<TokenRecord>()
@@ -934,8 +938,10 @@ object ApiTokenTracker {
     @Synchronized
     fun clearRecords(context: Context): Boolean {
         // Clearing historical usage must not free budget still owned by running workers.
-        val committed = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-            .edit().remove("records").commit()
+        val committed = runCatching {
+            val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            SharedPreferencesWriteHealth.commit(PREFS_NAME, prefs.edit().remove("records"))
+        }.getOrDefault(false)
         if (!committed) return false
         sessionRecords.clear()
         return true

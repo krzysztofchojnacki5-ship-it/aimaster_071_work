@@ -153,4 +153,43 @@ class ChatHistoryStoreTest {
         assertNull(ChatHistoryStore.readRoot(context))
         assertFalse(ChatHistoryStore.writeRoot(context, JSONObject()))
     }
+    @Test fun concurrentAtomicRootUpdatesPreserveBothActivityChanges() {
+        val chatId = "concurrent-root-update"
+        val root = JSONObject().put("currentId", chatId)
+            .put("chats", JSONObject().put(chatId, JSONObject()
+                .put("messages", JSONArray()).put("agentActivity", JSONArray())))
+        assertTrue(ChatHistoryStore.writeRoot(context, root))
+
+        val ready = java.util.concurrent.CountDownLatch(2)
+        val start = java.util.concurrent.CountDownLatch(1)
+        val failures = java.util.Collections.synchronizedList(mutableListOf<Throwable>())
+        val workers = (1..2).map { index ->
+            Thread {
+                ready.countDown()
+                try {
+                    start.await()
+                    assertTrue(ChatHistoryStore.updateRoot(context) { current ->
+                        val chat = current.getJSONObject("chats").getJSONObject(chatId)
+                        val activity = chat.optJSONArray("agentActivity") ?: JSONArray()
+                        activity.put("worker-$index")
+                        chat.put("agentActivity", activity)
+                        true
+                    })
+                } catch (error: Throwable) {
+                    failures += error
+                }
+            }.apply { start() }
+        }
+        assertTrue("Atomic update workers did not become ready", ready.await(2, java.util.concurrent.TimeUnit.SECONDS))
+        start.countDown()
+        workers.forEach { it.join(5_000L) }
+        assertTrue("Atomic update workers did not finish", workers.none { it.isAlive })
+        assertTrue("Atomic update failed: $failures", failures.isEmpty())
+
+        val activity = ChatHistoryStore.readRoot(context)!!.getJSONObject("chats")
+            .getJSONObject(chatId).getJSONArray("agentActivity")
+        assertEquals(2, activity.length())
+        assertTrue((0 until activity.length()).map { activity.getString(it) }.containsAll(listOf("worker-1", "worker-2")))
+    }
+
 }

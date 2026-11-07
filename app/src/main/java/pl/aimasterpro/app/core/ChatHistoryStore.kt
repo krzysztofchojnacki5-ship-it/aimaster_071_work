@@ -67,6 +67,21 @@ object ChatHistoryStore {
         }.getOrNull()
     }.getOrNull()
 
+    /**
+     * Performs a read-modify-write against one locked snapshot. Callers must mutate the supplied
+     * root only inside this callback; returning false means no persistence is needed.
+     */
+    @Synchronized
+    fun updateRoot(context: Context, update: (JSONObject) -> Boolean): Boolean = runCatching {
+        // Hold the shared preference-file lock across the complete read-modify-write cycle,
+        // not merely around the final commit. This also serializes with other healthy store users.
+        SharedPreferencesWriteHealth.withHealthyAccess(PREFS) {
+            val root = readRoot(context) ?: return@withHealthyAccess false
+            val changed = runCatching { update(root) }.getOrElse { return@withHealthyAccess false }
+            !changed || writeRoot(context, root)
+        }
+    }.getOrDefault(false)
+
     @Synchronized
     fun writeRoot(context: Context, root: JSONObject): Boolean {
         if (SharedPreferencesWriteHealth.isUncertain(PREFS)) return false

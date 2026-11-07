@@ -99,39 +99,40 @@ object TaskResultArchive {
         }
         val entries = latest(context).filter { it.chatId.isNotBlank() }
         if (entries.isEmpty()) return 0
-        val root = ChatHistoryStore.readRoot(context)
-            ?: throw IllegalStateException("Historia czatów jest niedostępna lub uszkodzona; odzyskiwanie przerwano.")
-        val chats = root.optJSONObject("chats") ?: return 0
         var restored = 0
-        // Archive rows are newest-first, while chat activity is an append-only timeline.
-        // Replay oldest-first so the timeline stays chronological and trimming keeps newest reports.
-        entries.asReversed().forEach { entry ->
-            val chat = chats.optJSONObject(entry.chatId) ?: return@forEach
-            val rows = chat.optJSONArray("agentActivity") ?: JSONArray()
-            val marker = "[TASK_REPORT_ID:${entry.taskId}]"
-            val alreadyMarked = (0 until rows.length()).any { index ->
-                rows.optString(index).contains(marker)
-            }
-            if (alreadyMarked) return@forEach
-
-            // Older app versions logged reports without task IDs. Use that legacy fallback only
-            // when this report text belongs to exactly one archived task in this chat. Identical
-            // reports from distinct tasks must never suppress one another.
-            val sameReportTaskCount = entries.count {
-                it.chatId == entry.chatId && it.report == entry.report
-            }
-            val hasUnmarkedLegacyCopy = sameReportTaskCount == 1 &&
-                (0 until rows.length()).any { index ->
-                    val existing = rows.optString(index)
-                    !existing.contains("[TASK_REPORT_ID:") && existing.endsWith(entry.report)
+        val updated = ChatHistoryStore.updateRoot(context) { root ->
+            val chats = root.optJSONObject("chats") ?: return@updateRoot false
+            // Archive rows are newest-first, while chat activity is an append-only timeline.
+            // Replay oldest-first so the timeline stays chronological and trimming keeps newest reports.
+            entries.asReversed().forEach { entry ->
+                val chat = chats.optJSONObject(entry.chatId) ?: return@forEach
+                val rows = chat.optJSONArray("agentActivity") ?: JSONArray()
+                val marker = "[TASK_REPORT_ID:${entry.taskId}]"
+                val alreadyMarked = (0 until rows.length()).any { index ->
+                    rows.optString(index).contains(marker)
                 }
-            if (hasUnmarkedLegacyCopy) return@forEach
-            rows.put("📦 Odzyskany raport agenta ${entry.agentId} (${entry.providerId}/${entry.model}) $marker\n${entry.report}")
-            while (rows.length() > 150) rows.remove(0)
-            chat.put("agentActivity", rows).put("updatedAt", maxOf(chat.optLong("updatedAt"), entry.createdAt))
-            restored++
+                if (alreadyMarked) return@forEach
+
+                // Older app versions logged reports without task IDs. Use that legacy fallback only
+                // when this report text belongs to exactly one archived task in this chat. Identical
+                // reports from distinct tasks must never suppress one another.
+                val sameReportTaskCount = entries.count {
+                    it.chatId == entry.chatId && it.report == entry.report
+                }
+                val hasUnmarkedLegacyCopy = sameReportTaskCount == 1 &&
+                    (0 until rows.length()).any { index ->
+                        val existing = rows.optString(index)
+                        !existing.contains("[TASK_REPORT_ID:") && existing.endsWith(entry.report)
+                    }
+                if (hasUnmarkedLegacyCopy) return@forEach
+                rows.put("📦 Odzyskany raport agenta ${entry.agentId} (${entry.providerId}/${entry.model}) $marker\n${entry.report}")
+                while (rows.length() > 150) rows.remove(0)
+                chat.put("agentActivity", rows).put("updatedAt", maxOf(chat.optLong("updatedAt"), entry.createdAt))
+                restored++
+            }
+            restored > 0
         }
-        if (restored > 0 && !ChatHistoryStore.writeRoot(context, root)) {
+        if (!updated) {
             throw IllegalStateException("Nie udało się trwale przywrócić raportów z archiwum do historii czatu.")
         }
         return restored
@@ -157,9 +158,9 @@ object TaskResultArchive {
 
     /** Corrupt rows are never silently dropped or overwritten with a fresh empty archive. */
     private fun read(context: Context): JSONArray? = runCatching {
-        if (SharedPreferencesWriteHealth.isUncertain(PREFS)) return@runCatching null
-        val raw = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-            .getString(KEY, null) ?: return@runCatching JSONArray()
+        val raw = SharedPreferencesWriteHealth.withHealthyAccess(PREFS) {
+            context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString(KEY, null)
+        } ?: return@runCatching JSONArray()
         runCatching {
             val source = JSONArray(raw)
             val seen = hashSetOf<String>()

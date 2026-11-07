@@ -20,6 +20,7 @@ class ApiTokenTrackerTest {
     @Before fun setUp() {
         context = RuntimeEnvironment.getApplication()
         ApiTokenTracker.resetInMemoryStateForTests()
+        SharedPreferencesWriteHealth.resetForTests("api_token_tracker_records_v1")
         ApiTokenTracker.clearRecords(context)
         context.getSharedPreferences("api_token_pricing_v1", Context.MODE_PRIVATE).edit().clear().commit()
         ApiTokenTracker.setLimits(context, 100_000L, 50.0, 50_000L)
@@ -27,6 +28,7 @@ class ApiTokenTrackerTest {
 
     @After fun tearDown() {
         ApiTokenTracker.resetInMemoryStateForTests()
+        SharedPreferencesWriteHealth.resetForTests("api_token_tracker_records_v1")
         ApiTokenTracker.clearRecords(context)
     }
 
@@ -1186,6 +1188,33 @@ class ApiTokenTrackerTest {
         assertEquals(0.90, record.costUsd, 0.000001)
         assertEquals(3.60, record.costPln, 0.00001)
         assertFalse(record.reasoningTokensKnown)
+    }
+
+    @Test fun ambiguousUsageLedgerCommitQuarantinesBudgetAndFurtherWrites() {
+        val failing = AmbiguousCommitContext(context, "api_token_tracker_records_v1")
+        val result = runCatching {
+            ApiTokenTracker.recordQuery(
+                failing, "provider", "model", "MASTER", "ambiguous-usage",
+                inputTokens = 40L, outputTokens = 20L, status = "REAL",
+                idempotencyKey = "ambiguous-usage-key"
+            )
+        }
+        assertTrue("An ambiguous durable usage write must be reported", result.isFailure)
+        assertFalse("Budget diagnostics must expose the quarantined ledger",
+            ApiTokenTracker.budgetUsageSnapshot(context).ledgerHealthy)
+        val plan = ApiTokenTracker.planBatch(
+            context,
+            listOf(BudgetRequest("blocked-after-ambiguous-write", "MASTER", "provider",
+                "https://provider.invalid/v1", "model", 1L, 1L))
+        )
+        assertTrue("No new work may be reserved against an uncertain usage ledger", plan.allowedTaskIds.isEmpty())
+        assertTrue(runCatching {
+            ApiTokenTracker.recordQuery(
+                context, "provider", "model", "MASTER", "second-usage",
+                inputTokens = 1L, outputTokens = 1L, status = "REAL",
+                idempotencyKey = "second-usage-key"
+            )
+        }.isFailure)
     }
 
 }

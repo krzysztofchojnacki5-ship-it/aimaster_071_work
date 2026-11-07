@@ -184,4 +184,19 @@ class AgentProviderAssignmentStoreTest {
             context, defaults, setOf("gemini", "groq"), "gemini"
         ))
     }
+    @Test fun ambiguousImportReconciliationCommitQuarantinesAllRoutingAssignments() {
+        prefs.edit().putString("agent_provider_MASTER", "old-master")
+            .putString("selected_provider", "old-master")
+            .putString("agent_provider_CODER", "old-coder").commit()
+        val failing = AmbiguousCommitContext(context, "chat_state")
+
+        assertNull(AgentProviderAssignmentStore.reconcileAfterProviderImport(
+            failing, defaults, setOf("gemini", "groq"), "gemini"
+        ))
+        assertTrue(runCatching { AgentProviderAssignmentStore.read(context, defaults) }.isFailure)
+        assertEquals("old-master", prefs.getString("agent_provider_MASTER", null))
+        assertEquals("old-master", prefs.getString("selected_provider", null))
+        assertEquals("old-coder", prefs.getString("agent_provider_CODER", null))
+    }
+
 }

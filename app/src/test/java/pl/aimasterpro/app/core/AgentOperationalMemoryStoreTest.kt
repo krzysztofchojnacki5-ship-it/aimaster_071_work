@@ -104,4 +104,33 @@ class AgentOperationalMemoryStoreTest {
         assertNull(AgentOperationalMemoryStore.addApproved(context, "tester", "Nie zapisuj po niepewnym commit."))
         assertEquals(original, prefs.getString("entries", null))
     }
+    @Test fun concurrentApprovalsMergeEverySourceTaskWithoutLostUpdates() {
+        val ready = java.util.concurrent.CountDownLatch(12)
+        val start = java.util.concurrent.CountDownLatch(1)
+        val failures = java.util.Collections.synchronizedList(mutableListOf<Throwable>())
+        val workers = (1..12).map { index ->
+            Thread {
+                ready.countDown()
+                try {
+                    start.await()
+                    assertNotNull(AgentOperationalMemoryStore.addApproved(
+                        context, "architect", "Zachowuj atomowy zapis pamięci przy równoległych zatwierdzeniach.",
+                        sourceTaskIds = listOf("source-$index")
+                    ))
+                } catch (error: Throwable) {
+                    failures += error
+                }
+            }.apply { start() }
+        }
+        assertTrue("Memory workers did not become ready", ready.await(3, java.util.concurrent.TimeUnit.SECONDS))
+        start.countDown()
+        workers.forEach { it.join(5_000L) }
+        assertTrue("Memory workers did not finish", workers.none { it.isAlive })
+        assertTrue("Memory worker failed: $failures", failures.isEmpty())
+
+        val entries = AgentOperationalMemoryStore.all(context)
+        assertEquals("Identical approved lessons must be merged into one entry", 1, entries.size)
+        assertEquals((1..12).map { "source-$it" }.toSet(), entries.single().sourceTaskIds.toSet())
+    }
+
 }
