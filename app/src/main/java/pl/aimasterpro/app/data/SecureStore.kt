@@ -294,29 +294,38 @@ class SecureStore internal constructor(
 
     fun readConfig(id: String): JSONObject? = synchronized(SecureStoreHealth.lock()) {
         if (SecureStoreHealth.isUncertain()) return@synchronized null
-        runCatching {
-            val stored = try { prefs.getString("config_$id", null) } catch (_: Exception) {
-                SecureStoreHealth.markUncertain()
-                return@synchronized null
-            } ?: return@synchronized null
-            JSONObject(stored).apply {
-                val secretKey = "key_$id"
-                if (hasStoredCiphertext(secretKey)) {
-                    if (SecureStoreHealth.isUncertain()) return@synchronized null
-                    val decrypted = getSecret(secretKey)
-                    if (decrypted == null) {
-                        put("apiKey", "")
-                        put("_secretUnavailable", true)
-                    } else {
-                        put("apiKey", decrypted)
-                        put("_secretUnavailable", false)
-                    }
-                } else {
+        val stored = try {
+            prefs.getString("config_$id", null)
+        } catch (_: Exception) {
+            SecureStoreHealth.markUncertain()
+            return@synchronized null
+        } ?: return@synchronized null
+        val config = try {
+            JSONObject(stored)
+        } catch (_: Exception) {
+            // A listed provider with malformed persisted JSON is not an absent provider.
+            // Returning null without poisoning the store would let callers mistake corruption
+            // for a partial, healthy configuration snapshot.
+            SecureStoreHealth.markUncertain()
+            return@synchronized null
+        }
+        config.apply {
+            val secretKey = "key_$id"
+            if (hasStoredCiphertext(secretKey)) {
+                if (SecureStoreHealth.isUncertain()) return@synchronized null
+                val decrypted = getSecret(secretKey)
+                if (decrypted == null) {
                     put("apiKey", "")
+                    put("_secretUnavailable", true)
+                } else {
+                    put("apiKey", decrypted)
                     put("_secretUnavailable", false)
                 }
+            } else {
+                put("apiKey", "")
+                put("_secretUnavailable", false)
             }
-        }.getOrNull()
+        }
     }
 
     /** True only when the current Android Keystore alias is present and contains an AES SecretKey. */
