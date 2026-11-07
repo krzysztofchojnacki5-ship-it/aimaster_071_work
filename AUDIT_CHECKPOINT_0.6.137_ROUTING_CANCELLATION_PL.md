@@ -1404,3 +1404,29 @@ Commity:
 - test: 05d0266cf3789bfe3bfd669266f221f028faa896
 
 Weryfikacja CI dla najnowszej poprawki jest oczekiwana. Nie oznaczono testu jako PASS przed wykonaniem workflow.
+
+
+## Etap 18 — walidacja parametrów KDF w zaszyfrowanej kopii dostawców (2026-11-07)
+
+Audyt ścieżki importu zaszyfrowanej bazy modeli ujawnił, że BackupCrypto.decrypt() przyjmował liczbę iteracji PBKDF2 bez ograniczenia. Ponieważ wartość pochodzi z pliku wejściowego, spreparowana kopia mogła wymusić bardzo kosztowne wyprowadzenie klucza (DoS przez nadmierny work factor). Dopuszczalna była też arbitralna wartość mniejsza od parametru używanego przez aplikację.
+
+Poprawka:
+- dla kopii z polem `iterations` wymagane jest dokładne dopasowanie do stałej wersji 1: 210 000 iteracji PBKDF2-HMAC-SHA256;
+- odrzucone są wartości ułamkowe, tekstowe, zaniżone i nadmiernie wysokie — zanim rozpocznie się kosztowne wyprowadzanie klucza;
+- wyprowadzenie klucza używa wyłącznie stałej `ITERATIONS`, a nie bezpośrednio wartości z pliku;
+- zachowano zgodność ze starszymi kopami v1 bez pola `iterations`: brak pola oznacza stały parametr 210 000;
+- dodano testy odrzucania wartości 1 i 2 147 483 647 oraz test kompatybilności kopii v1 bez pola.
+
+Commity:
+- implementacja: f9866fb4cfa6371434d85f156edde185ae8d48af
+- test KDF: f05b6f2dc665f0fcb4afb1295350f3b62db48133
+- korekta literałów testu: b35e974a3200f26f9462e59d82073dadb6d96ac5, 2fffe3dec394860164e7a8ce1f283db040ad1ecf
+- zachowanie zgodności wstecz: 3b6b8e38b9162a36d609f42c02365c4ffa9a3fdd
+- test zgodności v1: c813442bca00ddc16d7839f426e7f5e60beec6ff
+- korekta regex testu: bd2cf1df76b3de6a35995ab2aebbfa41bd8911f4
+
+Kontrola:
+- ponownie odczytano źródło BackupCrypto.kt i testy z brancha; testowe literały Kotlin/Regex sprawdzono po zapisie;
+- nie wykonano jeszcze CI dla najnowszego zestawu zmian; testy pozostają NOT VERIFIED;
+- poprzedni run 42318840461 nadal był IN_PROGRESS w ostatnim odczycie i może zostać anulowany przez nowszy commit;
+- main pozostaje nietknięty; brak merge, APK i release; Companion Transport nadal BLOCKED.
