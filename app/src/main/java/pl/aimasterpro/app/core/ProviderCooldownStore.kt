@@ -59,6 +59,9 @@ object ProviderCooldownStore {
      * overwrite it, and temporarily treat every provider as rate-limited.
      */
     private fun load(context: Context): List<State>? = runCatching {
+        check(!SharedPreferencesWriteHealth.isUncertain(PREFS)) {
+            "Provider cooldown storage is unavailable after an ambiguous durable write."
+        }
         val raw = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString(KEY, null)
             ?: return@runCatching emptyList()
         val array = JSONArray(raw)
@@ -95,7 +98,9 @@ object ProviderCooldownStore {
             array.put(JSONObject().put("key", state.key).put("count", state.consecutive429)
                 .put("until", state.until).put("updated", state.updatedAt))
         }
-        return context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-            .edit().putString(KEY, array.toString()).commit()
+        if (SharedPreferencesWriteHealth.isUncertain(PREFS)) return false
+        val editor = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            .edit().putString(KEY, array.toString())
+        return SharedPreferencesWriteHealth.commit(PREFS, editor)
     }
 }
