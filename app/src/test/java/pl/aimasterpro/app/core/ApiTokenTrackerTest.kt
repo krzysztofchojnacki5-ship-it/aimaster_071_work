@@ -940,4 +940,25 @@ class ApiTokenTrackerTest {
         assertTrue(ApiTokenTracker.budgetUsageSnapshot(context).ledgerHealthy)
     }
 
+    @Test fun budgetReservationUsesHighestPublishedCacheInputRate() {
+        ApiTokenTracker.setLimits(context, daily = 2_000_000L, monthly = 50.0, perAgent = 2_000_000L)
+        ApiTokenTracker.replaceCatalogPricingForProvider(
+            context, "cache-reserve-provider", "https://cache-reserve.example/v1",
+            listOf(CatalogModelPrice("vendor/cache-reserve-model", 0.23, 0.91, false, 0.05, 0.30))
+        )
+        val plan = ApiTokenTracker.planBatch(
+            context,
+            listOf(BudgetRequest(
+                "cache-reserve-task", "MASTER", "cache-reserve-provider",
+                "https://cache-reserve.example/v1", "vendor/cache-reserve-model",
+                1_000_000L, 0L
+            ))
+        )
+        assertTrue(plan.allowedTaskIds.contains("cache-reserve-task"))
+        // Reserve the whole prompt at the highest published input rate ($0.30/M), not $0.23/M.
+        assertEquals(1.20, plan.estimatedReservedCostPln, 0.00001)
+        assertEquals(1.20, ApiTokenTracker.activeReservationStats().costPln, 0.00001)
+        ApiTokenTracker.releaseBatchReservation(plan.reservationId)
+    }
+
 }
