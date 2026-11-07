@@ -37,7 +37,8 @@ object TaskResultArchive {
         createdAt: Long = System.currentTimeMillis(),
         chatId: String = ""
     ): Boolean {
-        if (taskId.isBlank() || agentId.isBlank() || providerId.isBlank() || model.isBlank()) return false
+        if (taskId.isBlank() || agentId.isBlank() || providerId.isBlank() || model.isBlank() ||
+            chatId.length > 200) return false
         val safeReport = CommunicationLogSanitizer.sanitize(report)
         if (safeReport.isBlank() || safeReport.length > MAX_REPORT_CHARS || createdAt < 0L) return false
         val old = read(context) ?: run {
@@ -95,7 +96,10 @@ object TaskResultArchive {
             val chat = chats.optJSONObject(entry.chatId) ?: return@forEach
             val rows = chat.optJSONArray("agentActivity") ?: JSONArray()
             val marker = "[TASK_REPORT_ID:${entry.taskId}]"
-            if ((0 until rows.length()).any { rows.optString(it).contains(marker) }) return@forEach
+            if ((0 until rows.length()).any { index ->
+                val existing = rows.optString(index)
+                existing.contains(marker) || existing.endsWith(entry.report)
+            }) return@forEach
             rows.put("📦 Odzyskany raport agenta ${entry.agentId} (${entry.providerId}/${entry.model}) $marker\n${entry.report}")
             while (rows.length() > 150) rows.remove(0)
             chat.put("agentActivity", rows).put("updatedAt", maxOf(chat.optLong("updatedAt"), entry.createdAt))
