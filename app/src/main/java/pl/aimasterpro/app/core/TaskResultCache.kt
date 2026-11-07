@@ -37,7 +37,7 @@ object TaskResultCache {
     }
 
     @Synchronized fun put(context: Context, fingerprint: String, report: String, now: Long = System.currentTimeMillis()): Boolean {
-        if (fingerprint.isBlank() || report.isBlank()) return false
+        if (fingerprint.isBlank() || report.isBlank() || now < 0L) return false
         val safeReport = CommunicationLogSanitizer.sanitize(report)
         if (safeReport.isBlank()) return false
         val old = read(context, now) ?: run {
@@ -63,12 +63,19 @@ object TaskResultCache {
         return runCatching {
             val source = JSONArray(raw)
             val valid = JSONArray()
+            val seenFingerprints = hashSetOf<String>()
             for (i in 0 until source.length()) {
                 val row = source.getJSONObject(i)
-                require(row.opt("fingerprint") is String && row.optString("fingerprint").isNotBlank())
-                require(row.opt("report") is String && row.optString("report").isNotBlank())
-                require(row.opt("createdAt") is Number)
-                val age = now - row.optLong("createdAt")
+                val fingerprintValue = row.opt("fingerprint")
+                val reportValue = row.opt("report")
+                val createdAtValue = row.opt("createdAt")
+                require(fingerprintValue is String && fingerprintValue.isNotBlank())
+                require(seenFingerprints.add(fingerprintValue))
+                require(reportValue is String && reportValue.isNotBlank())
+                require(createdAtValue is Int || createdAtValue is Long)
+                val createdAt = (createdAtValue as Number).toLong()
+                require(createdAt >= 0L)
+                val age = now - createdAt
                 if (age in 0..TTL_MS) valid.put(row)
             }
             valid

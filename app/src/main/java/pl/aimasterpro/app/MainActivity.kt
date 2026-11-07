@@ -3834,9 +3834,6 @@ class MainActivity : Activity() {
                 val cfg = ProviderConfig(old.id, name.text.toString().ifBlank { old.name }, kind, base, model.text.toString().trim(), apiKey, old.enabled, old.parentProviderId)
                 if (!saveProvider(cfg)) return@setPositiveButton
                 modelCatalogPrefs.edit().putLong("last_attempt", 0L).apply()
-                if (cfg.model.isNotBlank()) {
-                    if (!persistAgentProviderAssignment(AgentRole.MASTER, cfg.id)) return@setPositiveButton
-                }
                 showShell("Modele"); showProviders()
             }.show()
     }

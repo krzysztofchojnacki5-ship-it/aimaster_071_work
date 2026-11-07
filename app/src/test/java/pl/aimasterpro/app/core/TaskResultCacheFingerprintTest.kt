@@ -52,6 +52,30 @@ class TaskResultCacheFingerprintTest {
         assertEquals(corrupt, prefs.getString("entries", null))
     }
 
+    @Test fun fractionalCacheTimestampIsRejectedWithoutOverwritingJournal() {
+        val prefs = context.getSharedPreferences("task_result_cache_v1", Context.MODE_PRIVATE)
+        val corrupt = """[{"fingerprint":"fractional","report":"saved report","createdAt":1000.5}]"""
+        assertTrue(prefs.edit().putString("entries", corrupt).commit())
+
+        assertNull(TaskResultCache.get(context, "fractional", 1_500L))
+        assertFalse(TaskResultCache.put(context, "new-fingerprint", "new report", 1_500L))
+        assertEquals(corrupt, prefs.getString("entries", null))
+    }
+
+    @Test fun duplicateCacheFingerprintsAreRejectedAsAmbiguous() {
+        val prefs = context.getSharedPreferences("task_result_cache_v1", Context.MODE_PRIVATE)
+        val corrupt = """[{"fingerprint":"duplicate","report":"first","createdAt":1000},{"fingerprint":"duplicate","report":"second","createdAt":1100}]"""
+        assertTrue(prefs.edit().putString("entries", corrupt).commit())
+
+        assertNull(TaskResultCache.get(context, "duplicate", 1_500L))
+        assertFalse(TaskResultCache.put(context, "new-fingerprint", "new report", 1_500L))
+        assertEquals(corrupt, prefs.getString("entries", null))
+    }
+
+    @Test fun cacheRejectsNegativeCreationTimestamp() {
+        assertFalse(TaskResultCache.put(context, "negative-time", "report", -1L))
+    }
+
     @Test fun expiredCacheRowsAreIgnoredButDoNotBlockNewDurableResults() {
         assertTrue(TaskResultCache.put(context, "old", "Old report", 1_000L))
         assertNull(TaskResultCache.get(context, "old", 1_000L + 72L * 60L * 60L * 1000L + 1L))
