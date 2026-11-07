@@ -19,7 +19,9 @@ internal class AndroidStringPreferenceStore(
         check(!SharedPreferencesWriteHealth.isUncertain(preferencesName)) {
             "Preference storage '$preferencesName' is unavailable after an ambiguous durable write."
         }
-        return preferences().getString(key, null)
+        return SharedPreferencesWriteHealth.withHealthyAccess(preferencesName) {
+            preferences().getString(key, null)
+        }
     }
 
     /**
