@@ -2,6 +2,7 @@ package pl.aimasterpro.app.core
 
 import java.net.URL
 import java.util.Locale
+import java.util.concurrent.atomic.AtomicBoolean
 
 /**
  * Process-local, conservative scheduler for shared provider/model profiles.
@@ -19,11 +20,9 @@ object ProviderQuotaScheduler {
     data class AcquireResult(val lease: Lease?, val reason: String? = null, val waitMs: Long = 0L)
 
     class Lease internal constructor(private val key: String) : AutoCloseable {
-        @Volatile private var closed = false
+        private val closed = AtomicBoolean(false)
         override fun close() {
-            if (closed) return
-            closed = true
-            release(key)
+            if (closed.compareAndSet(false, true)) release(key)
         }
     }
 
@@ -89,6 +88,10 @@ object ProviderQuotaScheduler {
     private fun release(key: String) = synchronized(lock) {
         states[key]?.let { it.active = (it.active - 1).coerceAtLeast(0) }
         lock.notifyAll()
+    }
+
+    internal fun activeCountForTests(key: String): Int = synchronized(lock) {
+        states[key]?.active ?: 0
     }
 
     internal fun resetForTests() = synchronized(lock) { states.clear(); lock.notifyAll() }
