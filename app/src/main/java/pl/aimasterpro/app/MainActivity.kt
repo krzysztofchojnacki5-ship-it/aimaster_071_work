@@ -5583,7 +5583,8 @@ onRequestStarting = { task, actualProvider, estimatedInput, estimatedOutput, ide
                         val arr = data.getJSONArray("providers")
                         val configs = (0 until arr.length()).map { arr.getJSONObject(it) }
                         require(configs.isNotEmpty()) { "Kopia nie zawiera konfiguracji." }
-                        require(store.replaceAllConfigs(configs)) { "Nie udało się zapisać wszystkich konfiguracji. Część danych mogła zostać zaktualizowana; sprawdź listę dostawców i ponów import." }
+                        require(data.optInt("schemaVersion", -1) == 1) { "Nieobsługiwana wersja schematu kopii konfiguracji." }
+                        require(store.replaceAllConfigs(configs)) { "Import nie został zatwierdzony. Dotychczasowe konfiguracje pozostały bez zmian." }
                         selectedProviderId = configs.first().optString("id", "gemini")
                         showShell("Modele"); showProviders()
                         toast("Wczytano ${configs.size} konfiguracji modeli wraz z kluczami API.")
@@ -5743,7 +5744,7 @@ onRequestStarting = { task, actualProvider, estimatedInput, estimatedOutput, ide
             .setMessage("Znaleziono ${migrated.size} profili. Import odbywa się lokalnie. Profile z nieczytelnym, zaszyfrowanym polem klucza zostaną przeniesione bez klucza i będzie trzeba wpisać go ponownie. Zastąpić obecną konfigurację?")
             .setNegativeButton("Anuluj", null).setPositiveButton("Importuj") { _, _ ->
                 if (!store.replaceAllConfigs(migrated)) {
-                    toast("Nie udało się zapisać wszystkich konfiguracji. Część danych mogła zostać zaktualizowana; sprawdź listę dostawców i ponów import.")
+                    toast("Import nie został zatwierdzony. Dotychczasowe konfiguracje pozostały bez zmian.")
                     return@setPositiveButton
                 }
                 modelCatalogPrefs.edit().remove("models_json").remove("last_sync").putLong("last_attempt", 0L).apply()
