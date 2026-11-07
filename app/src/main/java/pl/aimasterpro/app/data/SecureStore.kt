@@ -100,8 +100,8 @@ class SecureStore(context: Context) {
     /** Stores the encrypted key and its metadata in one preferences transaction. */
     @Synchronized fun saveConfig(config: JSONObject): Boolean {
         return try {
-            val id = config.optString("id", "default")
-            if (id.isBlank()) return false
+            validateImportedConfig(config)
+            val id = config.getString("id")
             val encrypted = encryptSecret(config.optString("apiKey"))
             val safe = JSONObject(config.toString()).apply { remove("apiKey") }
             val ids = (prefs.getStringSet("provider_ids", emptySet()) ?: emptySet()).toMutableSet()
