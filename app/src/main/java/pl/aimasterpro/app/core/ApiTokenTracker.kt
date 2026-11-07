@@ -109,9 +109,16 @@ object ApiTokenTracker {
             ?: throw IllegalStateException("Rejestr użycia API jest uszkodzony; księgowanie idempotentne zostało wstrzymane.")
         val existing = (persistedBefore + sessionRecords).firstOrNull { it.queryId == stableQueryId }
         if (existing != null) {
-            require(existing.providerId == providerId && existing.modelName == modelName &&
+            require(existing.providerId == providerId &&
                 existing.agentId == agentId && existing.taskId == taskId) {
                 "Klucz idempotencji użycia API został ponownie użyty dla innego żądania."
+            }
+            // An UNAVAILABLE checkpoint knows the requested alias, not necessarily the
+            // canonical model selected by a gateway. Permit that one identity refinement
+            // only when the same request is upgraded by authoritative REAL usage.
+            require(existing.modelName == modelName ||
+                (existing.status == "UNAVAILABLE" && status == "REAL")) {
+                "Klucz idempotencji użycia API został ponownie użyty dla innego modelu."
             }
             // A late authoritative response may resolve an earlier UNAVAILABLE estimate for
             // the same POST. Upgrade that one row in place; never append a second charge and
@@ -140,6 +147,7 @@ object ApiTokenTracker {
                     totalTokens = upgradedTotal,
                     reasoningTokens = reasoningTokens,
                     cachedTokens = cachedTokens,
+                    modelName = modelName,
                     status = "REAL",
                     costUsd = upgradeUsd,
                     costPln = upgradePln
