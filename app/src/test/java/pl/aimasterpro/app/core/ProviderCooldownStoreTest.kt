@@ -12,7 +12,7 @@ import org.robolectric.RuntimeEnvironment
 class ProviderCooldownStoreTest {
     private val context get() = RuntimeEnvironment.getApplication()
     private val config = ProviderConfig("groq", "Groq", ProviderKind.OPENAI_COMPATIBLE, "https://api.groq.com/openai/v1", "openai/gpt-oss-20b")
-    @Before fun reset() { context.getSharedPreferences("provider_cooldowns_v1", Context.MODE_PRIVATE).edit().clear().commit() }
+    @Before fun reset() { SharedPreferencesWriteHealth.resetForTests("provider_cooldowns_v1"); context.getSharedPreferences("provider_cooldowns_v1", Context.MODE_PRIVATE).edit().clear().commit() }
 
     @Test fun cooldownPersistsAndUsesExponentialBackoff() {
         val now = 1_000_000L
@@ -59,5 +59,20 @@ class ProviderCooldownStoreTest {
         val duplicate = """[{"key":"same","count":1,"until":2000000,"updated":1000000},{"key":"same","count":2,"until":3000000,"updated":1000000}]"""
         assertTrue(prefs.edit().putString("states", duplicate).commit())
         assertEquals(900_000L, ProviderCooldownStore.remainingMs(context, config, 1_000_000L))
+    }
+    @Test fun ambiguousCommitTreatsEveryProviderAsCoolingDownAndBlocksWrites() {
+        val prefs = context.getSharedPreferences("provider_cooldowns_v1", Context.MODE_PRIVATE)
+        val original = "[]"
+        assertTrue(prefs.edit().putString("states", original).commit())
+        val failingEditor = object : android.content.SharedPreferences.Editor by prefs.edit().putString("states", "[ambiguous]") {
+            override fun commit(): Boolean = false
+        }
+        assertFalse(SharedPreferencesWriteHealth.commit("provider_cooldowns_v1", failingEditor))
+
+        assertEquals(900_000L, ProviderCooldownStore.remainingMs(context, config, 1_000_000L))
+        assertEquals(900_000L, ProviderCooldownStore.markRateLimited(context, config, 1_000_000L))
+        ProviderCooldownStore.markSuccess(context, config, 1_000_000L)
+        assertTrue(runCatching { ProviderCooldownStore.states(context) }.isFailure)
+        assertEquals(original, prefs.getString("states", null))
     }
 }
