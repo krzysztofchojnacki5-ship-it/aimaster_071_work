@@ -515,13 +515,19 @@ class ChangeSetStoreTest {
                 listOf("app/src/A.kt"), ChangeSafetyGuard.validate(listOf("app/src/A.kt"))
             )
         }
-        assertEquals(ChangeSetStore.LedgerStatus.CORRUPT, ChangeSetStore.readResult(context).status)
+        val read = ChangeSetStore.readResult(context)
+        assertEquals(ChangeSetStore.LedgerStatus.CORRUPT, read.status)
+        assertEquals("LEDGER_STORAGE_UNCERTAIN", read.error)
+        val bypassStorage = FaultingPreferenceStore(value = "[]")
+        assertEquals("LEDGER_STORAGE_UNCERTAIN", ChangeSetStore.readResult(context, bypassStorage).error)
         assertThrows(IllegalStateException::class.java) {
             ChangeSetStore.propose(
                 context, "task-after-ambiguous-ledger", "Must not overwrite",
-                listOf("app/src/B.kt"), ChangeSafetyGuard.validate(listOf("app/src/B.kt"))
+                listOf("app/src/B.kt"), ChangeSafetyGuard.validate(listOf("app/src/B.kt")),
+                storage = bypassStorage
             )
         }
+        assertEquals(0, bypassStorage.writeCalls)
     }
 
     @Test fun ambiguousHostPointerCommitIsUnavailableUntilProcessRestart() {
