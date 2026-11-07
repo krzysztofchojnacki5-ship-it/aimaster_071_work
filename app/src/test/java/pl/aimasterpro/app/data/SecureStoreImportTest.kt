@@ -216,6 +216,24 @@ class SecureStoreImportTest {
         assertFalse(prefs.contains("config_z_missing"))
     }
 
+    @Test fun persistedConfigIdMismatchPoisonsStoreAndDiscardsPartialConfigList() {
+        val context = org.robolectric.RuntimeEnvironment.getApplication()
+        val prefs = context.getSharedPreferences("secure_provider_store", Context.MODE_PRIVATE)
+        prefs.edit()
+            .putStringSet("provider_ids", setOf("a_valid", "z_mismatched"))
+            .putString("config_a_valid", validConfig("a_valid").toString())
+            .putString("config_z_mismatched", validConfig("different_provider").toString())
+            .commit()
+        val store = SecureStore(context)
+
+        assertTrue(store.allConfigs().isEmpty())
+        assertTrue(store.isStorageUncertain())
+        assertEquals(null, store.readConfig("a_valid"))
+        assertFalse(store.saveConfig(validConfig("must_remain_blocked")))
+        assertFalse(prefs.contains("config_must_remain_blocked"))
+        assertEquals("different_provider", JSONObject(prefs.getString("config_z_mismatched", "{}")!!).getString("id"))
+    }
+
     @Test fun emptyReplacementIsRejectedWithoutChangingExistingConfig() {
         val context = org.robolectric.RuntimeEnvironment.getApplication()
         seedExistingConfig(context)
