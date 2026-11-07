@@ -1721,3 +1721,28 @@ Kontrola zgodności z formatem istniejącej instalacji:
 - dotychczasowe profile i zaszyfrowane sekrety nie wymagają migracji nazwy magazynu ani aliasu;
 - stare puste wpisy key_<id> są traktowane jak brak sekretu; niepuste, ale nieczytelne wpisy są chronione i nie są automatycznie usuwane;
 - migracja kopii legacy pozostaje osobną ścieżką importLegacyBackup(), a replaceAllConfigs() teraz odrzuca import, jeśli zastąpiłby magazyn zawierający choć jeden nieczytelny sekret.
+
+
+## Audyt uzupełniający po Etapie 25 — dekodowanie koperty i semantyka commit()
+
+Kontrola kodu na branchu audit/0.6.137-routing-hardening:
+- W BackupCrypto.decrypt() dekodowanie Base64 pól salt, iv i data nadal odbywa się przed chronionym try/finally. Jeżeli dekodowanie późniejszego pola rzuci wyjątek, wcześniej utworzone tablice nie zostaną wyzerowane.
+- Plan korekty: zadeklarować nullable bufory przed try, dekodować wewnątrz try i wyzerować każdą utworzoną tablicę w finally. Dodać regresje dla błędnego Base64 w kolejnych polach; testy muszą potwierdzić odrzucenie koperty, a nie jedynie sam wyjątek z dekodera.
+
+Nowe ustalenie dotyczące trwałości SecureStore:
+- Android AOSP SharedPreferencesImpl.commit() najpierw wykonuje commitToMemory(), który modyfikuje mapę procesu, a dopiero potem synchronizuje zapis na dysk i zwraca wynik.
+- W konsekwencji commit() == false nie oznacza rollbacku mapy w pamięci. saveConfig()/replaceAllConfigs() mogą zgłosić błąd zapisu, podczas gdy bieżący proces nadal widzi zmienioną mapę; po restarcie stan na dysku może być inny.
+- Źródło: AOSP SharedPreferencesImpl, commitToMemory() i commit(): https://android.googlesource.com/platform/frameworks/base/%2B/master/core/java/android/app/SharedPreferencesImpl.java
+- Dotychczasowe sformułowanie o atomowości importu należy rozumieć wyłącznie jako przygotowanie danych przed pojedynczym Editor.commit(); nie gwarantuje ono rollbacku pamięci ani transakcji obejmującej awarię dysku.
+- Nie dodano jeszcze obejścia. Do rozważenia: trwały magazyn transakcyjny (Room/SQLite) lub jawny dziennik/wersjonowanie z procedurą recovery. Samo ponowne zapisanie starej mapy po false nie daje gwarancji, jeśli dysk nadal odrzuca zapis.
+- Do czasu wdrożenia magazynu transakcyjnego należy traktować false z commit() jako stan niepewny: zablokować dalsze mutacje SecureStore w bieżącej sesji, pokazać komunikat wymagający ponownego uruchomienia/diagnostyki i nie raportować sukcesu.
+
+Kontrola ścieżki naprawy profilu:
+- providerDialog(recoverSecret=true) wymaga niepustego nowego klucza; saveProvider() zwraca wynik saveConfig(), a dalsze przypisanie profilu następuje dopiero po sukcesie.
+- Dla profilu zależnego należy osobno przetestować semantykę parentProviderId: loadProvider() pobiera klucz i ustawienia dostawcy nadrzędnego, dlatego naprawa sekretu profilu potomnego nie może być przedstawiana jako naprawa sekretu rodzica.
+- Testy integracyjne UI/Store powinny objąć naprawę profilu bazowego, potomnego oraz sytuację błędu commit().
+
+Stan weryfikacji:
+- CI run 42323653129, SHA 0af24234d852f1bf502879387823e1c06549b385, ostatni odczyt: in_progress; zasadniczy krok testów i assembleDebug nie zakończył się.
+- Nie oznaczać testów ani kompilacji jako PASS.
+- Niniejszy wpis jest dokumentacją audytu; workflow android-audit ignoruje zmiany *.md, więc ten checkpoint nie powinien uruchomić ani anulować testów.
