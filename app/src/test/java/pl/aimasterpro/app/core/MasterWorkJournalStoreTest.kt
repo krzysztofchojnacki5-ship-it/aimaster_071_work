@@ -85,9 +85,11 @@ class MasterWorkJournalStoreTest {
         listOf("PAUSED", "BLOCKED", "COMPLETED").forEach { status ->
             val id = "sticky-$status"
             assertTrue(MasterWorkJournalStore.save(context, record(id).copy(status = status)))
-            val unchanged = MasterWorkJournalStore.updateActive(context, id) {
+            val rejected = MasterWorkJournalStore.updateActive(context, id) {
                 it.copy(status = "ACTIVE", currentStep = "opóźniony callback")
             }
+            assertNull(rejected)
+            val unchanged = MasterWorkJournalStore.get(context, id)
             assertEquals(status, unchanged?.status)
             assertTrue(unchanged?.currentStep != "opóźniony callback")
         }
