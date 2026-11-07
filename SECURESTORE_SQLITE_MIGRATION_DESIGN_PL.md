@@ -20,13 +20,12 @@ Plik: `secure_provider_store.db`; implementacja na `SQLiteOpenHelper` (bez nowej
 
 Tabela `provider_configs`:
 - `id TEXT PRIMARY KEY NOT NULL`
-- `name TEXT NOT NULL`
-- `kind TEXT NOT NULL`
-- `base_url TEXT NOT NULL`
-- `model TEXT NOT NULL`
-- `enabled INTEGER NOT NULL CHECK(enabled IN (0,1))`
-- `parent_provider_id TEXT NULL REFERENCES provider_configs(id) DEFERRABLE INITIALLY DEFERRED`
+- `config_json TEXT NOT NULL` — pełny bezpieczny JSON metadanych profilu, z zachowaniem nieznanych/rozszerzonych pól; przed zapisem usunięte wyłącznie `apiKey` i wewnętrzne `_secretUnavailable`.
+- `parent_provider_id TEXT NULL REFERENCES provider_configs(id) DEFERRABLE INITIALLY DEFERRED` — kopia relacji do walidacji i indeksowania.
 - `secret_ciphertext TEXT NULL` — istniejący format Base64(IV || AES-GCM ciphertext), nigdy plaintext.
+- indeks na `parent_provider_id` (nie jest wymagany do integralności, ale przyspiesza wyszukiwanie potomków).
+
+Nie rozbijać pozostałych pól JSON na kolumny w migracji v1. Obecny importer zachowuje dodatkowe pola JSON; schemat znormalizowany tylko do znanych kolumn utraciłby rozszerzenia i mógłby złamać kompatybilność. W przyszłości można dodać kolumny indeksujące przez osobną migrację, pozostawiając `config_json` jako dokument źródłowy.
 
 Tabela `store_metadata`:
 - `key TEXT PRIMARY KEY NOT NULL`
