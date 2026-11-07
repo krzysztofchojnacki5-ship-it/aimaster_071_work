@@ -1430,3 +1430,38 @@ Kontrola:
 - nie wykonano jeszcze CI dla najnowszego zestawu zmian; testy pozostają NOT VERIFIED;
 - poprzedni run 42318840461 nadal był IN_PROGRESS w ostatnim odczycie i może zostać anulowany przez nowszy commit;
 - main pozostaje nietknięty; brak merge, APK i release; Companion Transport nadal BLOCKED.
+
+
+## Etap 19 — atomowy import konfiguracji dostawców (2026-11-07)
+
+Audyt SecureStore wykazał, że replaceAllConfigs() zapisywał każdy profil przez osobne saveConfig(). Jeśli zapis klucza API lub metadanych jednego z kolejnych profili nie powiódł się, wcześniejsze wpisy mogły już zostać nadpisane, mimo że cały import zwracał false. Podobny problem dotyczył saveConfig(): sekret i metadane były zatwierdzane w dwóch oddzielnych operacjach SharedPreferences.
+
+Zmiana:
+- dodano encryptSecret(), które przygotowuje zaszyfrowaną wartość bez mutowania SharedPreferences;
+- saveConfig() szyfruje sekret przed zmianą stanu, a metadane, klucz i provider_ids zapisuje jednym Editor.commit();
+- replaceAllConfigs() odrzuca pustą listę, puste ID i powtórzone ID przed szyfrowaniem lub mutacją;
+- wszystkie sekrety i metadane są przygotowywane przed rozpoczęciem zapisu;
+- zastąpienie konfiguracji, usunięcie starych wpisów oraz aktualizacja provider_ids odbywają się w jednym Editor.commit();
+- błąd podczas przygotowania dowolnego wpisu pozostawia poprzednie preferencje bez zmian;
+- usunięcie starych kluczy API jest częścią tej samej transakcji preferencji, a nie osobnymi operacjami.
+
+Testy:
+- SecureStoreImportTest.emptyReplacementIsRejectedWithoutChangingExistingConfig;
+- SecureStoreImportTest.duplicateProviderIdsAreRejectedBeforeAnyMutation;
+- testy sprawdzają, że odrzucony import nie zmienia istniejącego provider_ids, metadanych ani przechowywanej wartości klucza.
+
+Pliki:
+- app/src/main/java/pl/aimasterpro/app/data/SecureStore.kt
+- app/src/test/java/pl/aimasterpro/app/data/SecureStoreImportTest.kt
+
+Commity:
+- a61c60a5c62da094d7b3211ed1622b76c0119f60 — atomowy zapis saveConfig i replaceAllConfigs;
+- d7683eba52bf684c38d8b806ce5f33ebe03aa9cb — walidacja ID przed przygotowaniem sekretów;
+- cc1215c2ae8ed517608f07298655c2cc9007c84a — testy regresyjne.
+
+Weryfikacja:
+- źródło i testy ponownie odczytane z brancha;
+- CI run 42319363908 zakończył się jako CANCELLED po pojawieniu się nowszych commitów; nie jest to wynik testów;
+- nowy run 42320893601 dla SHA cc1215c2ae8ed517608f07298655c2cc9007c84a ma status IN_PROGRESS; krok unit tests + assembleDebug jest w toku;
+- porównanie branch/main: 285 commits ahead, 0 behind; main nadal 752149d40186144b0f458a32b5826c8928349c3a;
+- brak merge, APK i release; Companion Transport pozostaje BLOCKED.
