@@ -3903,10 +3903,10 @@ class MainActivity : Activity() {
             val box = card(role.label, role.purpose)
             val state = agentConnection[role.name] ?: "unknown"
             val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL; setPadding(0, 8, 0, 6) }
-            val color = when (state) { "connected" -> Color.rgb(45, 210, 90); "testing" -> orange; "error" -> Color.RED; else -> muted }
+            val color = when (state) { "connected", "tested" -> Color.rgb(45, 210, 90); "testing" -> orange; "error" -> Color.RED; else -> muted }
             row.addView(TextView(this).apply { text = "●"; textSize = 22f; setTextColor(color) })
             row.addView(TextView(this).apply {
-                text = when (state) { "connected" -> "Połączenie potwierdzone"; "testing" -> "Testowanie połączenia…"; "error" -> "Błąd / brak połączenia"; else -> "Nie sprawdzono połączenia" }
+                text = when (state) { "connected" -> "Połączenie przypisanego profilu potwierdzone"; "tested" -> "Test kandydata zakończony powodzeniem — przypisanie bez zmian"; "testing" -> "Testowanie połączenia…"; "error" -> "Błąd / brak połączenia"; else -> "Nie sprawdzono połączenia" }
                 textSize = 12f; setTextColor(muted); setPadding(8, 0, 0, 0)
             })
             box.addView(row)
@@ -3939,11 +3939,10 @@ class MainActivity : Activity() {
                 executor.execute {
                     val result = runBudgetedModelTest(cfg, "AGENT:${role.name}", "Odpowiadaj krótko po polsku.", "Odpowiedz dokładnie: AGENT OK", testScope)
                     runOnUiThread {
-                        val assignmentSaved = if (result.isSuccess) persistAgentProviderAssignment(role, cfg.id) else false
-                        agentConnection[role.name] = if (result.isSuccess && assignmentSaved) "connected" else "error"
+                        agentConnection[role.name] = if (result.isSuccess) "tested" else "error"
                         logAgent("${role.label}: test połączenia ${if (result.isSuccess) "OK" else "BŁĄD"} • ${cfg.name} / ${cfg.model}")
                         showShell("Agenci"); showAgents()
-                        if (result.isSuccess) toast("${role.label}: połączenie działa")
+                        if (result.isSuccess) toast("${role.label}: kandydat odpowiada; przypisanie nie zostało zmienione")
                         else AlertDialog.Builder(this).setTitle("Test agenta nieudany")
                             .setMessage((result.exceptionOrNull()?.message ?: "Nieznany błąd API") + "\n\n" + (result.exceptionOrNull() as? ProviderException)?.responseBody.orEmpty())
                             .setPositiveButton("OK", null).show()
