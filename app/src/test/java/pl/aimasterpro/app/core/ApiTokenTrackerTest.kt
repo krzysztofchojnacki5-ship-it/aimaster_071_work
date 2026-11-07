@@ -773,4 +773,22 @@ class ApiTokenTrackerTest {
         assertEquals(1, all.count { it.queryId == key })
         assertEquals("canonical-model-v2", all.single().modelName)
     }
+
+    @Test fun staleUnavailableRecoveryCannotDowngradeCanonicalRealUsage() {
+        val key = "team:task-canonical-replay:gateway"
+        val actual = ApiTokenTracker.recordQuery(
+            context, "gateway", "canonical-model-v2", "RESEARCHER", "task-canonical-replay",
+            310L, 145L, status = "REAL", idempotencyKey = key
+        )
+        val replayed = ApiTokenTracker.recordQuery(
+            context, "gateway", "requested-alias", "RESEARCHER", "task-canonical-replay",
+            250L, 4_096L, status = "UNAVAILABLE", idempotencyKey = key
+        )
+        val all = ApiTokenTracker.loadAllRecordsFromStorage(context)
+        assertEquals(actual.queryId, replayed.queryId)
+        assertEquals("canonical-model-v2", replayed.modelName)
+        assertEquals("REAL", replayed.status)
+        assertEquals(455L, replayed.totalTokens)
+        assertEquals(1, all.count { it.queryId == key })
+    }
 }
