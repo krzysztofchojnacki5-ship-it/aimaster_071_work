@@ -617,6 +617,16 @@ class ProviderClientNetworkTest {
     }
 
     @Test
+    fun explicitNullOptionalUsageCountersAreNotTreatedAsRealZeroes() {
+        assertEstimatedUsage(
+            """{"prompt_tokens":3,"completion_tokens":2,"total_tokens":5,"prompt_tokens_details":{"cached_tokens":null}}"""
+        )
+        assertEstimatedUsage(
+            """{"prompt_tokens":3,"completion_tokens":2,"total_tokens":5,"completion_tokens_details":{"reasoning_tokens":null}}"""
+        )
+    }
+
+    @Test
     fun openRouterPaidCacheRatePreventsFreeModelClassification() {
         assertEquals(
             false,
