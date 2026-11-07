@@ -6221,6 +6221,8 @@ class MainActivity : Activity() {
         AlertDialog.Builder(this).setTitle("Import starej bazy")
             .setMessage("Znaleziono ${migrated.size} profili. Import odbywa się lokalnie. Profile z nieczytelnym, zaszyfrowanym polem klucza zostaną przeniesione bez klucza i będzie trzeba wpisać go ponownie. Zastąpić obecną konfigurację?")
             .setNegativeButton("Anuluj", null).setPositiveButton("Importuj") { _, _ ->
+                // Match encrypted-backup import: quiesce requests before replacing provider profiles.
+                cancelProviderWorkBeforeConfigReplacement()
                 if (!store.replaceAllConfigs(migrated)) {
                     if (store.isStorageUncertain()) {
                         client.cancelActiveRequests()
