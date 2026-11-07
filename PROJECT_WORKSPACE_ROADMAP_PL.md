@@ -911,3 +911,8 @@ Dodano `CompanionApplication` jako klasę Application i zarejestrowano ją w man
 - Directory fsync nadal best-effort; nieatomowy fallback zabroniony. Bez zmian formatu AISW/receipt, commit point, public API i lock scope.
 - Cztery JUnit testy są ADDED / NOT RUN. Android preflight BLOCKED; brak Gradle, wrapper JAR i SDK; APK nie zbudowano. App 0.6.54/code 80; Companion Transport BLOCKED.
 - Następny krok 0.6.137: audyt recovery po awarii na granicy „atomic move zakończony, directory sync pominięty/odrzucony” oraz zachowania receipt temp po restartach; najpierw określić, które stany da się odtworzyć na istniejącym journalu bez zmiany protokołu. Dodać testy idempotencji i konfliktów; nie przedstawiać hostowych testów jako Android power-loss proof.
+
+
+## Bieżący stan prac — 0.6.139 (2026-11-07)
+
+Priorytetem jest domknięcie niezawodności magazynu profili przed powrotem do historii rozmów. W `SecureStore.saveConfig()` wdrożono zachowanie istniejącego ciphertextu przy pustym polu klucza API, po sprawdzeniu czy sekret jest czytelny. Cztery testy awarii i regresji dodano na roboczej gałęzi `work/0.6.139-saveconfig-secret-preservation`; testy są ADDED / NOT RUN. CI dla poprzedniego SHA `30e0f496...` nadal wykonuje testy i kompilację, więc nowego commita nie wysyłamy na gałąź audytową przed zakończeniem tego runu. Po walidacji 0.6.139 wracamy do odporności zapisu/odtwarzania historii rozmów. App source version pozostaje 0.6.54 / versionCode 80; nie utworzono APK, Companion pozostaje nieaktywny.
