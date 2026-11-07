@@ -261,6 +261,7 @@ class TaskResultArchiveTest {
             failing, "ambiguous-task", "developer", "Report with uncertain durability.", "p", "m", 3_000L
         ))
         assertFalse(TaskResultArchive.isArchiveReadable(context))
+        assertTrue(runCatching { TaskResultArchive.restoreArchivedReports(context) }.isFailure)
         assertNull(TaskResultArchive.get(context, "ambiguous-task"))
         assertFalse(TaskResultArchive.put(context, "second-task", "developer", "blocked", "p", "m", 4_000L))
     }
