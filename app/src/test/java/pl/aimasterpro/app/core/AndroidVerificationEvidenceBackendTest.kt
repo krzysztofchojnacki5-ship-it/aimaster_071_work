@@ -35,7 +35,12 @@ class AndroidVerificationEvidenceBackendTest {
     @Test fun ambiguousAndroidBackendCommitQuarantinesReadsAndFurtherWrites() {
         val prefs = context.getSharedPreferences("verification_evidence_v1", Context.MODE_PRIVATE)
         assertTrue(prefs.edit().putString("ledger", "original-ledger").commit())
-        val failingContext = AmbiguousCommitContext(context, "verification_evidence_v1")
+        val ambiguousPreferences = AmbiguousCommitContext(context, "verification_evidence_v1")
+        // Keep the wrapper visible through applicationContext so the backend exercises the
+        // same failing SharedPreferences adapter rather than bypassing it via the base context.
+        val failingContext = object : android.content.ContextWrapper(ambiguousPreferences) {
+            override fun getApplicationContext(): Context = this
+        }
         val store = VerificationEvidenceStore(AndroidVerificationEvidenceBackend(failingContext))
         val evidence = VerificationEvidence.runtimeCheck(
             "task-ambiguous-backend", VerificationEvidenceKind.UNIT_TESTS,
