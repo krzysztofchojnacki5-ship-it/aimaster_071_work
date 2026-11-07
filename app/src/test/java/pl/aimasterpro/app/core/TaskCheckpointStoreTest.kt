@@ -194,6 +194,61 @@ class TaskCheckpointStoreTest {
         assertEquals(500L, pending.estimatedOutputTokens)
     }
 
+    @Test fun timedOutRequestWithoutArchivedReportStillReconcilesUnknownUsage() {
+        val taskId = "task-timeout-no-report-reconcile"
+        assertTrue(TaskCheckpointStore.record(context, TaskCheckpointStore.Event(
+            taskId = taskId, agentId = "RESEARCHER", status = "TIMED_OUT",
+            detail = "coordinator deadline elapsed", timestamp = 100L,
+            providerId = "openai", model = "gpt-4o-mini", attempts = 1,
+            processId = "previous-process", estimatedInputTokens = 210L,
+            estimatedOutputTokens = 510L, idempotencyKey = "team:$taskId:openai"
+        )))
+
+        var recovered: TaskCheckpointStore.Event? = null
+        assertEquals(1, TaskCheckpointStore.recoverStaleRunning(context, 200L) {
+            recovered = it
+            true
+        })
+        assertEquals("TIMED_OUT", recovered?.status)
+        assertEquals("INTERRUPTED", TaskCheckpointStore.latest(context).single().status)
+    }
+
+    @Test fun cancelledInFlightRequestWithoutReportStillReconcilesUnknownUsage() {
+        val taskId = "task-cancelled-in-flight"
+        assertTrue(TaskCheckpointStore.record(context, TaskCheckpointStore.Event(
+            taskId = taskId, agentId = "RESEARCHER", status = "CANCELLED",
+            detail = "worker cancelled after request start", timestamp = 100L,
+            providerId = "openai", model = "gpt-4o-mini", attempts = 1,
+            processId = "previous-process", estimatedInputTokens = 220L,
+            estimatedOutputTokens = 520L, idempotencyKey = "team:$taskId:openai"
+        )))
+
+        var recovered: TaskCheckpointStore.Event? = null
+        assertEquals(1, TaskCheckpointStore.recoverStaleRunning(context, 200L) {
+            recovered = it
+            true
+        })
+        assertEquals("CANCELLED", recovered?.status)
+        assertEquals("INTERRUPTED", TaskCheckpointStore.latest(context).single().status)
+    }
+
+    @Test fun cancelledQueuedTaskWithoutRequestMetadataDoesNotTriggerUsageRecovery() {
+        assertTrue(TaskCheckpointStore.record(context, TaskCheckpointStore.Event(
+            taskId = "task-cancelled-before-request", agentId = "RESEARCHER", status = "CANCELLED",
+            detail = "cancelled while queued", timestamp = 100L,
+            providerId = "openai", model = "gpt-4o-mini", attempts = 0,
+            processId = "previous-process"
+        )))
+
+        var recoveryCalled = false
+        assertEquals(0, TaskCheckpointStore.recoverStaleRunning(context, 200L) {
+            recoveryCalled = true
+            true
+        })
+        assertFalse(recoveryCalled)
+        assertEquals("CANCELLED", TaskCheckpointStore.latest(context).single().status)
+    }
+
     @Test fun timedOutTaskMayRemainUsagePendingWhenArchivedReportExists() {
         val taskId = "task-timeout-usage-race"
         assertTrue(TaskCheckpointStore.record(context, TaskCheckpointStore.Event(
