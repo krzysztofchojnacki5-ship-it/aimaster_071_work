@@ -2037,3 +2037,10 @@ Doprecyzowanie projektu SQLite:
 - Awaria `TaskResultArchive.restoreArchivedReports()` jest teraz logowana na `AIMasterRecovery`; startup kontynuuje bez fałszywego komunikatu o odzyskaniu.
 - `chatTitles` aktualizuje się dopiero po udanym zapisie kanonicznego `chats_v2`.
 - Commit `ab954ce9e099afeecf6adfc68c251229d3c2e332`; statyczny przegląd kodu, bez uruchomionego testu/builda.
+
+### Checkpoint 0.6.139 — transakcyjność bezpośredniego writeRoot
+
+- `ChatHistoryStore.writeRoot()` używa wspólnej blokady pliku `chat_state` przez cały odczyt kontrolny, walidację i commit.
+- Test `directWriteRootWaitsForSharedPreferenceLockThroughValidationAndCommit` dodany; ADDED / NOT RUN.
+- Commity: `f9d566f9d837b8aea8596cc5ad2bb89d22caa5a0`, `4028df55984d1b0c19927c3abeed9659dcf0ce22`.
+- CI 42411603439 nadal w toku dla starszego SHA `30e0f496...`.
