@@ -315,7 +315,8 @@ class ProviderClient(
 
     /** Reads JSON token counters without JSONObject's permissive numeric/string coercion. */
     private fun exactNonNegativeCount(obj: JSONObject?, key: String, defaultIfMissing: Long? = null): Long? {
-        if (obj == null || !obj.has(key) || obj.isNull(key)) return defaultIfMissing
+        if (obj == null || !obj.has(key)) return defaultIfMissing
+        if (obj.isNull(key)) return null
         val value = obj.opt(key)
         val count = when (value) {
             is Int -> value.toLong()
