@@ -45,7 +45,7 @@ class AiMemoryStoreTest {
 
     @Test fun validMemoryMutationIsCommittedAndReadable() {
         val prefs = context.getSharedPreferences("ai_master_memory_store_v1", Context.MODE_PRIVATE)
-        AiMemoryStore.addMemory(context, "Zatwierdzona pamięć do testu trwałego zapisu.")
+        assertTrue(AiMemoryStore.addMemory(context, "Zatwierdzona pamięć do testu trwałego zapisu."))
         assertTrue(prefs.getString("memories", null).orEmpty().contains("trwałego zapisu"))
         assertTrue(AiMemoryStore.getMemories(context).contains("Zatwierdzona pamięć do testu trwałego zapisu."))
     }
