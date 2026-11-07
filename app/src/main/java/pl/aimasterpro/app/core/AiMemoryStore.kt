@@ -51,6 +51,7 @@ object AiMemoryStore {
         }
     }.getOrNull()
 
+    @Synchronized
     fun addMemory(context: Context, memory: String): Boolean = runCatching {
         if (memory.isBlank() || SharedPreferencesWriteHealth.isUncertain(PREFS_NAME)) return@runCatching false
         val list = readStoredMemories(context)?.toMutableList() ?: return@runCatching false
@@ -63,6 +64,7 @@ object AiMemoryStore {
             .let { SharedPreferencesWriteHealth.commit(PREFS_NAME, it) }
     }.getOrDefault(false)
 
+    @Synchronized
     fun removeMemory(context: Context, exactMemory: String): Boolean = runCatching {
         if (SharedPreferencesWriteHealth.isUncertain(PREFS_NAME)) return@runCatching false
         val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
