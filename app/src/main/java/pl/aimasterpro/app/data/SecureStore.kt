@@ -130,7 +130,9 @@ class SecureStore internal constructor(
         try {
             val editor = prefs.edit()
             if (value.isBlank()) {
-                if (hasStoredCiphertext(name) && getSecret(name) == null) return@synchronized false
+                val existingCiphertext = hasStoredCiphertext(name)
+                if (SecureStoreHealth.isUncertain()) return@synchronized false
+                if (existingCiphertext && getSecret(name) == null) return@synchronized false
                 editor.remove(name)
             } else {
                 val encrypted = encryptSecret(value) ?: return@synchronized false
@@ -198,7 +200,8 @@ class SecureStore internal constructor(
         if (SecureStoreHealth.isUncertain()) return@synchronized emptyList()
         val ids = readProviderIds()
         if (SecureStoreHealth.isUncertain()) return@synchronized emptyList()
-        ids.toList().sorted().mapNotNull { readConfig(it) }
+        val configs = ids.toList().sorted().mapNotNull { readConfig(it) }
+        if (SecureStoreHealth.isUncertain()) emptyList() else configs
     }
 
     private fun validateImportedConfig(config: JSONObject) {
@@ -299,6 +302,7 @@ class SecureStore internal constructor(
             JSONObject(stored).apply {
                 val secretKey = "key_$id"
                 if (hasStoredCiphertext(secretKey)) {
+                    if (SecureStoreHealth.isUncertain()) return@synchronized null
                     val decrypted = getSecret(secretKey)
                     if (decrypted == null) {
                         put("apiKey", "")
@@ -332,8 +336,9 @@ class SecureStore internal constructor(
         if (SecureStoreHealth.isUncertain()) return@synchronized emptyList()
         val ids = readProviderIds()
         if (SecureStoreHealth.isUncertain()) return@synchronized emptyList()
-        ids.filter { id ->
+        val unavailable = ids.filter { id ->
             hasStoredCiphertext("key_$id") && getSecret("key_$id") == null
         }.sorted()
+        if (SecureStoreHealth.isUncertain()) emptyList() else unavailable
     }
 }
