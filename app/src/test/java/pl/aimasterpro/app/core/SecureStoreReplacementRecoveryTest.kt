@@ -117,6 +117,29 @@ class SecureStoreReplacementRecoveryTest {
             SecureStore(context).allConfigs().map { it.optString("id") }.toSet())
     }
 
+    @Test fun thrownReplacementCommitBeforeApplyKeepsPreviousCatalog() {
+        seedOldCatalog()
+        val throwingStore = SecureStore(context) { _ ->
+            throw IllegalStateException("simulated commit exception before apply")
+        }
+
+        assertFalse(throwingStore.replaceAllConfigs(
+            listOf(provider("exception-master"), provider("exception-coder"))
+        ))
+        assertTrue(SecureStoreHealth.isUncertain())
+        assertTrue(throwingStore.allConfigs().isEmpty())
+
+        val prefs = context.getSharedPreferences("secure_provider_store", Context.MODE_PRIVATE)
+        assertEquals(setOf("old-provider"), prefs.getStringSet("provider_ids", emptySet()))
+        assertTrue(prefs.contains("config_old-provider"))
+        assertFalse(prefs.contains("config_exception-master"))
+        assertFalse(prefs.contains("config_exception-coder"))
+
+        SecureStoreHealth.resetForTests()
+        assertEquals(setOf("old-provider"),
+            SecureStore(context).allConfigs().map { it.optString("id") }.toSet())
+    }
+
     @Test fun startupKeepsOldAssignmentsWhenFailedSecureStoreCommitDidNotPersist() {
         seedOldCatalog()
         val failedContext = AmbiguousCommitContext(
