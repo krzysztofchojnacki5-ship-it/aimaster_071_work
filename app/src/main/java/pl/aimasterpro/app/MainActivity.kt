@@ -1795,10 +1795,11 @@ class MainActivity : Activity() {
                     // higher of input/output rates so parallel stages cannot consume its monthly budget.
                     val masterSynthesisReserveCostPln =
                         (masterSynthesisReserve.toDouble() * maxOf(
-                            synthesisPricing.inputPer1MUsd,
-                            synthesisPricing.outputPer1MUsd,
-                            synthesisPricing.cachedInputPer1MUsd ?: synthesisPricing.inputPer1MUsd,
-                            synthesisPricing.cacheWriteInputPer1MUsd ?: synthesisPricing.inputPer1MUsd
+                            maxOf(synthesisPricing.inputPer1MUsd, synthesisPricing.outputPer1MUsd),
+                            maxOf(
+                                synthesisPricing.cachedInputPer1MUsd ?: synthesisPricing.inputPer1MUsd,
+                                synthesisPricing.cacheWriteInputPer1MUsd ?: synthesisPricing.inputPer1MUsd
+                            )
                         ) * synthesisExchangeRate) / 1_000_000.0
                     val budgetPlan = pl.aimasterpro.app.core.ApiTokenTracker.planBatch(
                         this, budgetRequests, globalReserveTokens = masterSynthesisReserve,
