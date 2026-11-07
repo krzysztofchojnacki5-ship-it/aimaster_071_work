@@ -2068,3 +2068,13 @@ Doprecyzowanie projektu SQLite:
 - Commity `173e1ba8faff4870732209ac983c61a88c840bf4`, `ff41c04fb8f0dba91a216f3fc75c7f60fbf1d347`, `bf3556baa3d4bb491b96e08b89cd062bc403f46b`. ADDED / NOT RUN.
 
 Korekta implementacji legacy mirror: `writeLegacyMirror()` wykonuje best-effort `apply()` pod blokadą pliku, bez użycia trwałego commitu i bez quarantinowania całej historii z powodu awarii pomocniczej kopii. Test sprawdza, że błąd dostępu zachowuje poprzednią kopię i nie ustawia latcha. Commity `f8a9f87bb15e520853b1daa3e470c48198613c1c`, `a97eebbdb72c07f4668e16f91fb25c951468788f`.
+
+### Checkpoint 0.6.139 — backpressure i potwierdzanie replayu archiwów (2026-11-07)
+
+- Znaleziono lukę: obie klasy archiwów bezwarunkowo usuwały najstarsze wpisy po przekroczeniu limitu, nawet gdy wpisy nie zostały odtworzone do `chats_v2`. Przy niedostępności historii mogło to spowodować utratę oczekujących odpowiedzi/raportów.
+- Oba archiwa stosują teraz backpressure zamiast evictowania: pełne archiwum odrzuca nowy zapis i zachowuje wszystkie istniejące rekordy.
+- Po udanym `ChatHistoryStore.updateRoot()` zbierane są wyłącznie task ID wpisów, które zostały dopisane do istniejącego czatu lub już były w nim obecne. Te rekordy są następnie usuwane z archiwum. Wpisy bez czatu pozostają pending. Błąd acknowledgement nie zmienia wyniku potwierdzonego zapisu historii; trafia do Android Log.
+- Testy dodane: pełne archiwum nie wypiera najstarszych wpisów, overflow zwraca false, replay 25/80 wpisów zwalnia miejsce; podstawowy replay sprawdza usunięcie potwierdzonego wpisu.
+- Produkcja: `2b689a7cd54cd11c600764df4f91bf110073a229`, `270281ab07942d4274034a25b3ab899d5ae1440a`. Testy: `f3d1e5e40776276133de5c231947c7483911c895`, `589480a34f41579905a6bbcf9fcd69ea71c89f57`.
+- Work branch HEAD: `589480a34f41579905a6bbcf9fcd69ea71c89f57`. CI `42415438103` wciąż uruchomiony na starszym SHA `c650c5604074449593d138730bd7e2e2b89da9d2`; nie obejmuje tego checkpointu. Testy NOT RUN, APK NOT BUILT, Companion NOT ACTIVATED.
+
