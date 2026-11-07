@@ -34,7 +34,7 @@ class ChatHistoryStoreTest {
         }
         assertNull(ChatHistoryStore.shouldImportLegacyMirror(failingContext))
         SharedPreferencesWriteHealth.resetForTests("chat_state")
-        SharedPreferencesWriteHealth.commit("chat_state", prefs.edit().putString("marker", "value"))
+        assertFalse(ChatHistoryStore.writeRoot(AmbiguousCommitContext(context, "chat_state"), JSONObject().put("chats", JSONObject())))
         assertTrue(SharedPreferencesWriteHealth.isUncertain("chat_state"))
         assertNull(ChatHistoryStore.shouldImportLegacyMirror(context))
     }
