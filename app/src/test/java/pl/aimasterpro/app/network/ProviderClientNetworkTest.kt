@@ -575,4 +575,22 @@ class ProviderClientNetworkTest {
         assertEstimatedUsage("""{"prompt_tokens":100,"completion_tokens":2,"total_tokens":102,"prompt_tokens_details":{"cached_tokens":80,"cache_write_tokens":30}}""")
     }
 
+    @Test
+    fun openRouterModelCatalogParsesSeparateCacheReadAndWriteRates() {
+        val (server, _) = server { _, _ ->
+            200 to """{"data":[{"id":"vendor/cache-model","name":"Cache Model","pricing":{"prompt":"0.00000023","completion":"0.00000091","input_cache_read":"0.00000005","input_cache_write":"0.00000030"}}]}"""
+        }
+        try {
+            val config = config("http://127.0.0.1:${server.address.port}/v1").copy(
+                baseUrl = "http://127.0.0.1:${server.address.port}/v1"
+            )
+            val model = ProviderClient().discoverModelDetails(config).single()
+            assertEquals("vendor/cache-model", model.id)
+            assertEquals(0.23, model.promptPricePerMillion!!, 0.000001)
+            assertEquals(0.91, model.completionPricePerMillion!!, 0.000001)
+            assertEquals(0.05, model.cachedPromptPricePerMillion!!, 0.000001)
+            assertEquals(0.30, model.cachedPromptWritePricePerMillion!!, 0.000001)
+        } finally { server.stop(0) }
+    }
+
 }
