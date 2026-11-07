@@ -1822,3 +1822,12 @@ Doprecyzowanie projektu SQLite:
 - Ograniczenie testu: obecny test weryfikuje politykę blokady po ustawieniu latcha; nie symuluje fizycznego błędu I/O w `SharedPreferences.commit()`. Punkt commit jest scentralizowany, więc osobny test wymuszający false/wyjątek wymaga wstrzyknięcia małej abstrakcji edytora/zapisu. Nie oznaczamy tego scenariusza jako bezpośrednio przetestowanego.
 - Długoterminowa migracja do SQLite nadal pozostaje osobnym zadaniem. Nie zmieniono formatu ciphertextów, aliasu Android Keystore ani danych zapisanych na urządzeniu.
 - Commit kodu: `e2983da8`. CI dla tego SHA należy odczytać po zakończeniu; poprzedni run mógł zostać anulowany przez concurrency po pushu. Brak potwierdzonego PASS na tym etapie.
+
+
+### Uzupełnienie testu awarii commit — 2026-11-07
+
+- Konstruktor `SecureStore` otrzymał wewnętrzny punkt wstrzykiwania funkcji zatwierdzającej edytor. Domyślna ścieżka produkcyjna nadal wywołuje rzeczywiste `Editor.commit()`; testy mogą kontrolowanie zasymulować jego wynik.
+- Dodano `failedPreferencesCommitPoisonsAllStoreInstances()`: wstrzyknięta funkcja wywołuje `Editor.apply()` (natychmiast aktualizuje mapę pamięciową SharedPreferences), po czym zwraca false, symulując sytuację, w której proces widzi zmiany mimo niepotwierdzonego zapisu trwałego. Test potwierdza ustawienie blokady globalnej, blokadę drugiej instancji oraz brak dalszych mutacji.
+- Dodatkowy test zachowuje kontrolę nad resetem latcha wyłącznie w sekcji finally. W produkcji nie ma ścieżki ręcznego odblokowania; wymagany jest restart procesu.
+- Commit testu: `21aad12b`; ograniczenie punktu wstrzykiwania do konstruktora internal i uporządkowanie odczytów: `8ffd38ad`.
+- CI run dla `21aad12b` mógł zostać anulowany przez kolejny push w ramach concurrency. Ostateczny CI należy przypisać do najnowszego SHA kodu `8ffd38ad`, a nie do wcześniejszego runu.
