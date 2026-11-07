@@ -138,7 +138,7 @@ class MainActivity : Activity() {
         store = SecureStore(this)
         val recoveredTasks = runCatching {
             pl.aimasterpro.app.core.TaskCheckpointStore.recoverStaleRunning(this, onAmbiguousRequest = { event ->
-                if (event.status !in setOf("REQUESTING", "USAGE_PENDING", "INTERRUPTED_USAGE_PENDING")) true
+                if (event.status !in setOf("REQUESTING", "USAGE_PENDING", "INTERRUPTED_USAGE_PENDING", "TIMED_OUT", "CANCELLED")) true
                 else if (!pl.aimasterpro.app.core.TaskCheckpointStore.hasRecoverableUsageMetadata(event)) {
                     android.util.Log.e(
                         "AIMasterRecovery",
