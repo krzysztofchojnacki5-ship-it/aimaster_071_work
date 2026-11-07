@@ -140,6 +140,42 @@ class AgentProviderAssignmentStoreTest {
         assertNull(prefs.getString("agent_provider_MASTER", null))
     }
 
+    @Test fun saveWaitsForAssignmentReconciliationReadLockBeforeCommitting() {
+        val enteredRead = java.util.concurrent.CountDownLatch(1)
+        val releaseRead = java.util.concurrent.CountDownLatch(1)
+        val saveFinished = java.util.concurrent.CountDownLatch(1)
+        val saveResult = java.util.concurrent.atomic.AtomicBoolean(false)
+
+        val reader = Thread {
+            SharedPreferencesWriteHealth.withHealthyAccess("chat_state") {
+                enteredRead.countDown()
+                releaseRead.await(2, java.util.concurrent.TimeUnit.SECONDS)
+                prefs.getString("agent_provider_MASTER", null)
+            }
+        }
+        val writer = Thread {
+            saveResult.set(AgentProviderAssignmentStore.save(context, "MASTER", "gemini"))
+            saveFinished.countDown()
+        }
+
+        try {
+            reader.start()
+            assertTrue("reader did not acquire the preference lock", enteredRead.await(2, java.util.concurrent.TimeUnit.SECONDS))
+            writer.start()
+            assertFalse("provider save must wait for the in-flight assignment read/reconciliation section",
+                saveFinished.await(100, java.util.concurrent.TimeUnit.MILLISECONDS))
+        } finally {
+            releaseRead.countDown()
+        }
+
+        assertTrue("provider save did not finish", saveFinished.await(2, java.util.concurrent.TimeUnit.SECONDS))
+        reader.join(2_000)
+        writer.join(2_000)
+        assertTrue(saveResult.get())
+        assertEquals("gemini", prefs.getString("agent_provider_MASTER", null))
+        assertEquals("gemini", prefs.getString("selected_provider", null))
+    }
+
     @Test fun ambiguousAssignmentCommitQuarantinesRoutingState() {
         val failing = AmbiguousCommitContext(context, "chat_state")
         assertFalse(AgentProviderAssignmentStore.save(failing, "MASTER", "provider-new"))
