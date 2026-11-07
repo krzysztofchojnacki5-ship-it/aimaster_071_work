@@ -54,4 +54,30 @@ class AndroidVerificationEvidenceBackendTest {
             SharedPreferencesWriteHealth.withHealthyAccess("verification_evidence_v1") { true }
         }.isFailure)
     }
+    @Test fun androidBackendHoldsSharedPreferenceLockForWholeLedgerTransaction() {
+        val store = VerificationEvidenceStore(AndroidVerificationEvidenceBackend(context))
+        val evidence = VerificationEvidence.runtimeCheck(
+            "task-locking-backend", VerificationEvidenceKind.UNIT_TESTS,
+            VerificationEvidenceStatus.PASS, "transaction lock verified", 300L
+        )
+        val ready = java.util.concurrent.CountDownLatch(1)
+        val finished = java.util.concurrent.CountDownLatch(1)
+        val result = java.util.concurrent.atomic.AtomicBoolean(false)
+        val worker = Thread {
+            ready.countDown()
+            result.set(store.appendAll(listOf(evidence)))
+            finished.countDown()
+        }
+        SharedPreferencesWriteHealth.withHealthyAccess("verification_evidence_v1") {
+            worker.start()
+            assertTrue(ready.await(2, java.util.concurrent.TimeUnit.SECONDS))
+            assertFalse("Evidence transaction must wait on the shared preference lock",
+                finished.await(150, java.util.concurrent.TimeUnit.MILLISECONDS))
+        }
+        worker.join(3_000L)
+        assertTrue(finished.await(1, java.util.concurrent.TimeUnit.SECONDS))
+        assertTrue(result.get())
+        assertTrue(store.load().entries.contains(evidence))
+    }
+
 }

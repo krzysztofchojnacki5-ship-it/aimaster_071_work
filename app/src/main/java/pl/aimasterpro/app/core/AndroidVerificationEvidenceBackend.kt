@@ -6,9 +6,16 @@ import android.content.Context
 class AndroidVerificationEvidenceBackend(context: Context) : VerificationEvidenceBackend {
     private val preferences = context.applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
 
-    override fun read(): String? = preferences.getString(KEY, null)
+    override fun <T> withTransaction(operation: () -> T): T =
+        SharedPreferencesWriteHealth.withHealthyAccess(PREFS_NAME, operation)
 
-    override fun write(value: String): Boolean = preferences.edit().putString(KEY, value).commit()
+    override fun read(): String? = SharedPreferencesWriteHealth.withHealthyAccess(PREFS_NAME) {
+        preferences.getString(KEY, null)
+    }
+
+    override fun write(value: String): Boolean = SharedPreferencesWriteHealth.commit(
+        PREFS_NAME, preferences.edit().putString(KEY, value)
+    )
 
     private companion object {
         const val PREFS_NAME = "verification_evidence_v1"

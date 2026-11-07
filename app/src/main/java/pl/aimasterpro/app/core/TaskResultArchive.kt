@@ -37,13 +37,15 @@ object TaskResultArchive {
         createdAt: Long = System.currentTimeMillis(),
         chatId: String = ""
     ): Boolean {
+        return SharedPreferencesWriteHealth.withHealthyAccess(PREFS) {
+
         if (SharedPreferencesWriteHealth.isUncertain(PREFS) || taskId.isBlank() || agentId.isBlank() || providerId.isBlank() || model.isBlank() ||
-            chatId.length > 200) return false
+            chatId.length > 200) return@withHealthyAccess false
         val safeReport = CommunicationLogSanitizer.sanitize(report)
-        if (safeReport.isBlank() || safeReport.length > MAX_REPORT_CHARS || createdAt < 0L) return false
+        if (safeReport.isBlank() || safeReport.length > MAX_REPORT_CHARS || createdAt < 0L) return@withHealthyAccess false
         val old = read(context) ?: run {
             android.util.Log.e("AIMasterResultArchive", "Nie zapisano raportu: archiwum zawiera uszkodzone dane.")
-            return false
+            return@withHealthyAccess false
         }
         val next = JSONArray()
         next.put(encode(Entry(taskId, agentId, safeReport, providerId, model, createdAt, chatId)))
@@ -53,12 +55,14 @@ object TaskResultArchive {
         }
         val trimmed = JSONArray()
         for (i in 0 until minOf(next.length(), MAX_ENTRIES)) trimmed.put(next.getJSONObject(i))
-        return runCatching {
+        return@withHealthyAccess runCatching {
             SharedPreferencesWriteHealth.commit(
                 PREFS, context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
                     .putString(KEY, trimmed.toString())
             )
         }.getOrDefault(false)
+    
+        }
     }
 
     @Synchronized

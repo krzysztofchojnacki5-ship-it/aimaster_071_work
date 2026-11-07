@@ -133,4 +133,26 @@ class AgentOperationalMemoryStoreTest {
         assertEquals((1..12).map { "source-$it" }.toSet(), entries.single().sourceTaskIds.toSet())
     }
 
+    @Test fun mutationWaitsForSharedPreferenceLockAcrossReadModifyWrite() {
+        val ready = java.util.concurrent.CountDownLatch(1)
+        val finished = java.util.concurrent.CountDownLatch(1)
+        val worker = Thread {
+            ready.countDown()
+            AgentOperationalMemoryStore.addApproved(
+                context, "tester", "Zapis pamięci musi zachować pełny cykl transakcyjny.",
+                sourceTaskIds = listOf("locked-source")
+            )
+            finished.countDown()
+        }
+        SharedPreferencesWriteHealth.withHealthyAccess("ai_agent_operational_memory_v1") {
+            worker.start()
+            assertTrue(ready.await(2, java.util.concurrent.TimeUnit.SECONDS))
+            assertFalse("Memory mutation must wait while its preference file is locked",
+                finished.await(150, java.util.concurrent.TimeUnit.MILLISECONDS))
+        }
+        worker.join(3_000L)
+        assertTrue("Memory mutation did not finish after lock release", finished.await(1, java.util.concurrent.TimeUnit.SECONDS))
+        assertEquals(listOf("locked-source"), AgentOperationalMemoryStore.all(context).single().sourceTaskIds)
+    }
+
 }

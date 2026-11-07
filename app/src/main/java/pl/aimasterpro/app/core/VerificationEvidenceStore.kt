@@ -9,6 +9,8 @@ import java.util.Base64
 interface VerificationEvidenceBackend {
     fun read(): String?
     fun write(value: String): Boolean
+    /** Serializes a complete ledger read-modify-write, not only individual backend calls. */
+    fun <T> withTransaction(operation: () -> T): T = synchronized(this) { operation() }
 }
 
 /** Bounded, versioned local ledger. Corrupt data is never silently overwritten. */
@@ -19,53 +21,63 @@ class VerificationEvidenceStore(private val backend: VerificationEvidenceBackend
         val errorCode: String = ""
     )
 
-    fun load(): LoadResult = synchronized(PROCESS_MONITOR) { decode() }
+    fun load(): LoadResult = synchronized(PROCESS_MONITOR) { backend.withTransaction { decode() } }
 
     fun forTask(taskId: String): LoadResult = synchronized(PROCESS_MONITOR) {
-        if (taskId.isBlank()) return@synchronized LoadResult(emptyList(), false, "TASK_ID_EMPTY")
-        val result = decode()
-        if (result.valid) result.copy(entries = result.entries.filter { it.taskId == taskId }) else result
+        backend.withTransaction {
+            if (taskId.isBlank()) return@withTransaction LoadResult(emptyList(), false, "TASK_ID_EMPTY")
+            val result = decode()
+            if (result.valid) result.copy(entries = result.entries.filter { it.taskId == taskId }) else result
+        }
     }
 
     /** Exact scope lookup; legacy/unscoped evidence is intentionally excluded. */
     fun forScope(taskId: String, chatId: String, snapshotId: String): LoadResult = synchronized(PROCESS_MONITOR) {
-        if (taskId.isBlank() || chatId.isBlank() || snapshotId.isBlank()) {
-            return@synchronized LoadResult(emptyList(), false, "SCOPE_ID_EMPTY")
+        backend.withTransaction {
+            if (taskId.isBlank() || chatId.isBlank() || snapshotId.isBlank()) {
+                return@withTransaction LoadResult(emptyList(), false, "SCOPE_ID_EMPTY")
+            }
+            val result = decode()
+            if (result.valid) result.copy(entries = result.entries.filter {
+                it.taskId == taskId && it.chatId == chatId && it.snapshotId == snapshotId
+            }) else result
         }
-        val result = decode()
-        if (result.valid) result.copy(entries = result.entries.filter {
-            it.taskId == taskId && it.chatId == chatId && it.snapshotId == snapshotId
-        }) else result
     }
 
     /** Idempotent by evidence id. A conflicting duplicate id is rejected, not overwritten. */
     fun appendAll(evidence: List<VerificationEvidence>): Boolean = synchronized(PROCESS_MONITOR) {
-        if (evidence.isEmpty()) return@synchronized true
-        if (evidence.size > MAX_BATCH_RECORDS) return@synchronized false
+        backend.withTransaction {
+        if (evidence.isEmpty()) return@withTransaction true
+        if (evidence.size > MAX_BATCH_RECORDS) return@withTransaction false
         val current = decode()
-        if (!current.valid) return@synchronized false
+        if (!current.valid) return@withTransaction false
         val byId = LinkedHashMap<String, VerificationEvidence>()
         current.entries.forEach { byId[it.id] = it }
         evidence.forEach { item ->
-            if (!isWithinBounds(item)) return@synchronized false
+            if (!isWithinBounds(item)) return@withTransaction false
             val previous = byId[item.id]
-            if (previous != null && previous != item) return@synchronized false
+            if (previous != null && previous != item) return@withTransaction false
             byId[item.id] = item
         }
         val bounded = byId.values.sortedWith(
             compareByDescending<VerificationEvidence> { it.observedAtEpochMs }.thenBy { it.id }
         ).take(MAX_RECORDS)
         writeEncoded(bounded)
+        }
     }
 
     fun removeTask(taskId: String): Boolean = synchronized(PROCESS_MONITOR) {
-        if (taskId.isBlank()) return@synchronized false
-        val current = decode()
-        if (!current.valid) return@synchronized false
-        writeEncoded(current.entries.filterNot { it.taskId == taskId })
+        backend.withTransaction {
+            if (taskId.isBlank()) return@withTransaction false
+            val current = decode()
+            if (!current.valid) return@withTransaction false
+            writeEncoded(current.entries.filterNot { it.taskId == taskId })
+        }
     }
 
-    fun clear(): Boolean = synchronized(PROCESS_MONITOR) { writeEncoded(emptyList()) }
+    fun clear(): Boolean = synchronized(PROCESS_MONITOR) {
+        backend.withTransaction { writeEncoded(emptyList()) }
+    }
 
     private fun decode(): LoadResult {
         return try {

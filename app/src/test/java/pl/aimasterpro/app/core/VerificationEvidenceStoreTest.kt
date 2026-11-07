@@ -140,4 +140,31 @@ class VerificationEvidenceStoreTest {
         assertEquals("e820", loaded.entries.first().id)
         assertFalse(loaded.entries.any { it.id == "e0" })
     }
+    @Test fun concurrentWritersSerializeWholeBackendTransactionsAcrossStoreInstances() {
+        class LockingBackend : VerificationEvidenceBackend {
+            private var raw: String? = null
+            private val lock = Any()
+            override fun <T> withTransaction(operation: () -> T): T = synchronized(lock) { operation() }
+            override fun read(): String? = raw
+            override fun write(value: String): Boolean { raw = value; return true }
+        }
+        val backend = LockingBackend()
+        val stores = (0 until 4).map { VerificationEvidenceStore(backend) }
+        val workers = java.util.concurrent.Executors.newFixedThreadPool(8)
+        val start = java.util.concurrent.CountDownLatch(1)
+        val futures = (0 until 64).map { index ->
+            workers.submit<Boolean> {
+                check(start.await(2, java.util.concurrent.TimeUnit.SECONDS))
+                stores[index % stores.size].appendAll(listOf(pass("tx-$index", "task-$index", index.toLong())))
+            }
+        }
+        start.countDown()
+        try {
+            assertTrue(futures.all { it.get(5, java.util.concurrent.TimeUnit.SECONDS) })
+            assertEquals(64, stores.first().load().entries.size)
+        } finally {
+            workers.shutdownNow()
+        }
+    }
+
 }

@@ -32,44 +32,56 @@ object AgentOperationalMemoryStore {
         context: Context, agentId: String, text: String, category: String = "",
         sourceTaskIds: List<String> = emptyList(), confidence: String = "zatwierdzona"
     ): Entry? {
+        return SharedPreferencesWriteHealth.withHealthyAccess(PREFS) {
+
         val agent = agentId.trim().take(100)
         val clean = text.trim().replace(Regex("[\\t ]+"), " ").take(MAX_ENTRY_CHARS)
-        if (agent.isBlank() || clean.length < 8) return null
-        val entries = read(context)?.toMutableList() ?: return null
+        if (agent.isBlank() || clean.length < 8) return@withHealthyAccess null
+        val entries = read(context)?.toMutableList() ?: return@withHealthyAccess null
         val duplicateIndex = entries.indexOfFirst { it.agentId.equals(agent, true) && it.text.equals(clean, true) }
         if (duplicateIndex >= 0) {
             val duplicate = entries[duplicateIndex]
-            if (sourceTaskIds.all { it in duplicate.sourceTaskIds }) return duplicate
+            if (sourceTaskIds.all { it in duplicate.sourceTaskIds }) return@withHealthyAccess duplicate
             val merged = duplicate.copy(
                 sourceTaskIds = (duplicate.sourceTaskIds + sourceTaskIds).filter(String::isNotBlank).distinct().take(30),
                 confidence = if (duplicate.confidence == confidence) confidence.take(40) else "wielokrotnie zatwierdzona"
             )
             entries[duplicateIndex] = merged
-            return if (write(context, entries)) merged else null
+            return@withHealthyAccess if (write(context, entries)) merged else null
         }
         val item = Entry(UUID.randomUUID().toString(), agent, clean, category.trim().take(80),
             System.currentTimeMillis(), sourceTaskIds.filter(String::isNotBlank).distinct().take(30), confidence.take(40))
         entries.add(0, item)
-        return if (write(context, entries.take(MAX_ENTRIES))) item else null
+        return@withHealthyAccess if (write(context, entries.take(MAX_ENTRIES))) item else null
+    
+        }
     }
 
     @Synchronized fun remove(context: Context, id: String): Boolean {
-        val entries = read(context) ?: return false
+        return SharedPreferencesWriteHealth.withHealthyAccess(PREFS) {
+
+        val entries = read(context) ?: return@withHealthyAccess false
         val remaining = entries.filterNot { it.id == id }
-        if (remaining.size == entries.size) return false
-        return write(context, remaining)
+        if (remaining.size == entries.size) return@withHealthyAccess false
+        return@withHealthyAccess write(context, remaining)
+    
+        }
     }
 
     @Synchronized fun removeBySource(context: Context, sourceTaskId: String): Boolean {
-        if (sourceTaskId.isBlank()) return false
-        val entries = read(context) ?: return false
+        return SharedPreferencesWriteHealth.withHealthyAccess(PREFS) {
+
+        if (sourceTaskId.isBlank()) return@withHealthyAccess false
+        val entries = read(context) ?: return@withHealthyAccess false
         val updated = entries.mapNotNull { entry ->
-            if (sourceTaskId !in entry.sourceTaskIds) return@mapNotNull entry
+            if (sourceTaskId !in entry.sourceTaskIds) return@withHealthyAccess@mapNotNull entry
             val remainingSources = entry.sourceTaskIds.filterNot { it == sourceTaskId }
             if (remainingSources.isEmpty()) null
             else entry.copy(sourceTaskIds = remainingSources)
         }
-        return if (updated == entries) true else write(context, updated)
+        return@withHealthyAccess if (updated == entries) true else write(context, updated)
+    
+        }
     }
 
     /** Bounded relevance retrieval for one agent; never mixes another agent's private lessons. */
