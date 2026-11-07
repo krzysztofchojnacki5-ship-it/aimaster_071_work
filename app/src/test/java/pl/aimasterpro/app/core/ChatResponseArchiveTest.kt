@@ -256,6 +256,7 @@ class ChatResponseArchiveTest {
             "Response with uncertain durability.", "provider", "model", 3_000L
         ))
         assertFalse(ChatResponseArchive.isArchiveReadable(context))
+        assertTrue(runCatching { ChatResponseArchive.restoreArchivedResponses(context) }.isFailure)
         assertNull(ChatResponseArchive.get(context, "ambiguous-response"))
         assertFalse(ChatResponseArchive.put(
             context, "second-response", "chat", "MASTER", "blocked", "provider", "model", 4_000L
