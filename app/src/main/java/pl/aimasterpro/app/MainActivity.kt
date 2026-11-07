@@ -2667,7 +2667,12 @@ class MainActivity : Activity() {
                 add("Kopiuj całą rozmowę") { copyConversation() }
                 add("Eksportuj rozmowę do pliku (.md)") { exportChatToFile() }
                 add("Zmień nazwę rozmowy") { renameChat(currentChatId) }
-                add(if (isPinned(currentChatId)) "Odepnij rozmowę" else "Przypnij rozmowę") { togglePinned(currentChatId); toast(if (isPinned(currentChatId)) "Przypięto rozmowę." else "Odpięto rozmowę.") }
+                add(if (isPinned(currentChatId)) "Odepnij rozmowę" else "Przypnij rozmowę") {
+                    if (togglePinned(currentChatId)) {
+                        toast(if (isPinned(currentChatId)) "Przypięto rozmowę." else "Odpięto rozmowę.")
+                        populateDrawerList()
+                    } else toast("Nie udało się bezpiecznie zapisać przypięcia rozmowy.")
+                }
                 add("Usuń rozmowę") { deleteChat(currentChatId) }
             }
         }
@@ -2680,7 +2685,10 @@ class MainActivity : Activity() {
     private fun showChatOptions(id: String) {
         val items = mutableListOf<Pair<String, () -> Unit>>()
         fun add(label: String, f: () -> Unit) { items.add(label to f) }
-        add(if (isPinned(id)) "Odepnij" else "Przypnij") { togglePinned(id); populateDrawerList() }
+        add(if (isPinned(id)) "Odepnij" else "Przypnij") {
+            if (togglePinned(id)) populateDrawerList()
+            else toast("Nie udało się bezpiecznie zapisać przypięcia rozmowy.")
+        }
         add("Zmień nazwę") { renameChat(id) }
         add("Usuń") { deleteChat(id) }
         AlertDialog.Builder(this).setItems(items.map { it.first }.toTypedArray()) { _, which -> items[which].second() }.show()
@@ -2723,6 +2731,7 @@ class MainActivity : Activity() {
         AlertDialog.Builder(this).setTitle("Usunąć rozmowę?").setMessage("Tej operacji nie można cofnąć.")
             .setNegativeButton("Anuluj", null)
             .setPositiveButton("Usuń") { _, _ ->
+                var pinCleanupFailed = false
                 val deleted = synchronized(this) {
                     val isCurrent = id == currentChatId
                     if (isCurrent && !invalidateActiveEvidenceScopeForChatSwitch()) {
@@ -2770,7 +2779,10 @@ class MainActivity : Activity() {
                             return@setPositiveButton
                         }
                         chatTitles.remove(id)
-                        val pins = pinnedIds(); if (pins.remove(id)) chatPrefs.edit().putStringSet("pinned_chats", pins).apply()
+                        if (!pl.aimasterpro.app.core.ChatPinsStore.remove(this, id)) {
+                            pinCleanupFailed = true
+                            android.util.Log.w("AIMasterChat", "Rozmowa usunięta, ale nie udało się trwale usunąć jej przypięcia.")
+                        }
                         if (replacementId != null) {
                             currentChatId = replacementId
                             messages.clear()
@@ -2785,7 +2797,7 @@ class MainActivity : Activity() {
                     toast("Nie można bezpiecznie unieważnić aktywnego zakresu dowodów. Rozmowa nie została usunięta.")
                     return@setPositiveButton
                 }
-                toast("Usunięto rozmowę.")
+                toast(if (pinCleanupFailed) "Usunięto rozmowę, ale nie udało się trwale usunąć jej przypięcia." else "Usunięto rozmowę.")
             }.show()
     }
 
@@ -3117,9 +3129,14 @@ class MainActivity : Activity() {
         }.show()
     }
 
-    private fun pinnedIds(): MutableSet<String> = chatPrefs.getStringSet("pinned_chats", emptySet())?.toMutableSet() ?: mutableSetOf()
+    private fun pinnedIds(): MutableSet<String> {
+        val stored = pl.aimasterpro.app.core.ChatPinsStore.read(this)
+        if (stored == null) android.util.Log.e("AIMasterChat", "Nie można bezpiecznie odczytać przypiętych rozmów.")
+        return stored?.toMutableSet() ?: mutableSetOf()
+    }
     private fun isPinned(id: String): Boolean = id.isNotBlank() && pinnedIds().contains(id)
-    private fun togglePinned(id: String) { if (id.isBlank()) return; val set = pinnedIds(); if (!set.add(id)) set.remove(id); chatPrefs.edit().putStringSet("pinned_chats", set).apply() }
+    private fun togglePinned(id: String): Boolean =
+        id.isNotBlank() && pl.aimasterpro.app.core.ChatPinsStore.toggle(this, id)
 
     private fun showLibrary() {
         val root = pl.aimasterpro.app.core.ChatHistoryStore.readRoot(this)

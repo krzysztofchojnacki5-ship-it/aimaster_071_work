@@ -2085,3 +2085,11 @@ Doprecyzowanie projektu SQLite:
 - Dla aktywnego czatu Asystenta zachowywany jest istniejący last_user_chat_id; jeśli brak celu użytkownika, nowy identyfikator jest tworzony i zapisywany atomowo.
 - Jeśli odczyt nawigacji Asystenta lub commit usunięcia zawiedzie, operacja kończy się bez potwierdzenia usunięcia. Przy niepowodzeniu commit() przed apply() stary rekord i mirror pozostają bez zmian.
 - Dodano testy sukcesu oraz awarii przed apply(). Statyczny diff sprawdzony; CI/JUnit/Android debug NOT RUN do potwierdzenia. APK nie utworzono; Companion nieaktywny.
+
+## 0.6.144 — trwałość przypiętych rozmów (2026-11-07)
+
+- Dodano ChatPinsStore: odczyt, przełączanie i usuwanie przypięć odbywają się pod wspólną blokadą pliku chat_state.
+- Zapis przypięć używa SharedPreferencesWriteHealth.commit(); false/wyjątek uruchamia istniejący latch niepewnego stanu zamiast pozornego sukcesu.
+- MainActivity nie wykonuje już bezpośredniego apply() dla pinned_chats. Menu pokazuje błąd zapisu; usuwanie rozmowy raportuje osobno nieudaną synchronizację przypięcia po udanym usunięciu rozmowy.
+- Dodano 4 testy: toggle, idempotentne remove, awaria commitu przed apply oraz fail-closed odczyt po quarantine.
+- Statyczny diff sprawdzony; JUnit/Gradle/Android debug oczekują na CI. APK nie utworzono; Companion nieaktywny.
