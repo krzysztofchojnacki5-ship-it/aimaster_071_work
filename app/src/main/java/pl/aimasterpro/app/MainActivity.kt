@@ -2888,6 +2888,8 @@ class MainActivity : Activity() {
         if (!pl.aimasterpro.app.core.ChatHistoryStore.writeLegacyMirror(this, arr.toString())) {
             android.util.Log.w("AIMasterChat", "Nie udało się zaktualizować pomocniczej kopii legacy; kanoniczna historia pozostaje zapisana.")
         }
+        runCatching { pl.aimasterpro.app.core.ChatResponseArchive.acknowledgePersisted(this) }
+            .onFailure { android.util.Log.w("AIMasterRecovery", "Nie udało się zwolnić potwierdzonych wpisów archiwum odpowiedzi.", it) }
         true
     }
 
@@ -2907,7 +2909,12 @@ class MainActivity : Activity() {
             root.put("chats", chats)
             true
         }
-        if (!saved) android.util.Log.e("AIMasterChat", "Nie udało się trwale zapisać aktywności agentów.")
+        if (!saved) {
+            android.util.Log.e("AIMasterChat", "Nie udało się trwale zapisać aktywności agentów.")
+        } else {
+            runCatching { pl.aimasterpro.app.core.TaskResultArchive.acknowledgePersisted(this) }
+                .onFailure { android.util.Log.w("AIMasterRecovery", "Nie udało się zwolnić potwierdzonych wpisów archiwum raportów.", it) }
+        }
     }
 
     /** Zapamiętuje tylko ID bieżącej rozmowy (bez zmiany kolejności listy). */
@@ -3117,6 +3124,9 @@ class MainActivity : Activity() {
         }
         if (found && !saved) {
             android.util.Log.e("AIMasterChat", "Nie udało się trwale dopisać aktywności poprzedniego czatu.")
+        } else if (found && saved) {
+            runCatching { pl.aimasterpro.app.core.TaskResultArchive.acknowledgePersisted(this) }
+                .onFailure { android.util.Log.w("AIMasterRecovery", "Nie udało się zwolnić potwierdzonych wpisów archiwum raportów.", it) }
         }
         if (screen == "Rozmowy" && collaborationChatId == chatId) {
             runOnUiThread { refreshCollaborationTimeline(chatId) }
