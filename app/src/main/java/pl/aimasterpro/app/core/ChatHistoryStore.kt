@@ -17,8 +17,9 @@ object ChatHistoryStore {
         if (SharedPreferencesWriteHealth.isUncertain(PREFS)) return@runCatching null
         // Preference access itself can fail (not only JSON parsing). Treat that as unreadable,
         // never as a missing first-run document that could later be overwritten.
-        val raw = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString(KEY, null)
-            ?: return@runCatching JSONObject()
+        val raw = SharedPreferencesWriteHealth.withHealthyAccess(PREFS) {
+            context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString(KEY, null)
+        } ?: return@runCatching JSONObject()
         runCatching {
             val root = JSONObject(raw)
             if (root.has("chats")) {
