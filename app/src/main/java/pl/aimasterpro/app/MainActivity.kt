@@ -2940,6 +2940,8 @@ class MainActivity : Activity() {
     private fun restoreMessages() {
         val r = pl.aimasterpro.app.core.ChatHistoryStore.readRoot(this)
             ?: run { toast("Historia rozmów jest uszkodzona. Zachowano dane; przywracanie i zapisy zostały wstrzymane."); return }
+        val shouldImportLegacyHistory = pl.aimasterpro.app.core.ChatHistoryStore.shouldImportLegacyMirror(this)
+            ?: run { toast("Nie można bezpiecznie odczytać stanu historii. Przywracanie zostało wstrzymane."); return }
         messages.clear()
         assistantTaskIds.clear()
         val chats = r.optJSONObject("chats") ?: JSONObject()
@@ -2951,7 +2953,7 @@ class MainActivity : Activity() {
             for (i in 0 until arr.length()) { val item = arr.getJSONObject(i); messages.add(item.optString("role") to item.optString("text")) }
             val ids = currentChat.optJSONArray("assistantTaskIds") ?: JSONArray()
             for (i in 0 until ids.length()) assistantTaskIds.add(ids.optString(i))
-        } else if (chats.length() == 0) {
+        } else if (chats.length() == 0 && shouldImportLegacyHistory) {
             val legacy = chatPrefs.getString("chat_messages", null)
             if (!legacy.isNullOrBlank()) runCatching {
                 val a = JSONArray(legacy)
