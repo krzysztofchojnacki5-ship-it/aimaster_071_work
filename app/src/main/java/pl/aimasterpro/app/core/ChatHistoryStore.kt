@@ -14,6 +14,7 @@ object ChatHistoryStore {
 
     @Synchronized
     fun readRoot(context: Context): JSONObject? = runCatching {
+        if (SharedPreferencesWriteHealth.isUncertain(PREFS)) return@runCatching null
         // Preference access itself can fail (not only JSON parsing). Treat that as unreadable,
         // never as a missing first-run document that could later be overwritten.
         val raw = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString(KEY, null)
@@ -67,6 +68,7 @@ object ChatHistoryStore {
 
     @Synchronized
     fun writeRoot(context: Context, root: JSONObject): Boolean {
+        if (SharedPreferencesWriteHealth.isUncertain(PREFS)) return false
         // Re-validate before writing so callers cannot persist malformed chat structures.
         val serialized = root.toString()
         val validated = runCatching {
@@ -75,7 +77,7 @@ object ChatHistoryStore {
             val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
             val candidate = JSONObject(serialized)
             validate(candidate)
-            prefs.edit().putString(KEY, serialized).commit()
+            SharedPreferencesWriteHealth.commit(PREFS, prefs.edit().putString(KEY, serialized))
         }.getOrDefault(false)
         return validated
     }
