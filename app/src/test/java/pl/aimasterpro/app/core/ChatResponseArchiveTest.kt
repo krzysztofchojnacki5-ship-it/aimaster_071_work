@@ -248,4 +248,18 @@ class ChatResponseArchiveTest {
             .count { chat.getJSONArray("assistantTaskIds").getString(it) == "response-after-apply" })
     }
 
+
+    @Test fun ambiguousArchiveCommitQuarantinesRecoveryReadsAndWrites() {
+        val failing = AmbiguousCommitContext(context, "chat_response_archive_v1")
+        assertFalse(ChatResponseArchive.put(
+            failing, "ambiguous-response", "chat", "MASTER",
+            "Response with uncertain durability.", "provider", "model", 3_000L
+        ))
+        assertFalse(ChatResponseArchive.isArchiveReadable(context))
+        assertNull(ChatResponseArchive.get(context, "ambiguous-response"))
+        assertFalse(ChatResponseArchive.put(
+            context, "second-response", "chat", "MASTER", "blocked", "provider", "model", 4_000L
+        ))
+    }
+
 }
