@@ -96,6 +96,9 @@ object AgentOperationalMemoryStore {
 
     /** Null means malformed persisted data; mutators must not treat it as an empty library. */
     private fun read(context: Context): List<Entry>? = runCatching {
+        check(!SharedPreferencesWriteHealth.isUncertain(PREFS)) {
+            "Operational memory is unavailable after an ambiguous durable write."
+        }
         val raw = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString(KEY, null) ?: "[]"
         val array = JSONArray(raw)
         require(array.length() <= MAX_ENTRIES) { "Operational memory exceeds its supported size." }
@@ -141,6 +144,7 @@ object AgentOperationalMemoryStore {
     }.getOrNull()
 
     private fun write(context: Context, entries: List<Entry>): Boolean = runCatching {
+        if (SharedPreferencesWriteHealth.isUncertain(PREFS)) return@runCatching false
         val array = JSONArray()
         entries.take(MAX_ENTRIES).forEach { e ->
             array.put(JSONObject().put("id", e.id).put("agentId", e.agentId).put("text", e.text)
@@ -148,7 +152,7 @@ object AgentOperationalMemoryStore {
                 .put("sourceTaskIds", JSONArray(e.sourceTaskIds)).put("confidence", e.confidence))
         }
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
-            .putString(KEY, array.toString()).commit()
+            .putString(KEY, array.toString()).let { SharedPreferencesWriteHealth.commit(PREFS, it) }
     }.getOrDefault(false)
 
     private fun strings(array: JSONArray?): List<String> = if (array == null) emptyList() else
