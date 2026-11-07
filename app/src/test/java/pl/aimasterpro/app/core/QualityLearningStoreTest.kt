@@ -101,6 +101,28 @@ class QualityLearningStoreTest {
         assertEquals(corrupt, prefs.getString("proposals", null))
     }
 
+    @Test fun fractionalRatingAndNestedAuditCountersInvalidateFeedbackJournal() {
+        val prefs = context.getSharedPreferences("ai_quality_learning_v1", Context.MODE_PRIVATE)
+        val fractional = """[{"id":"r1","targetId":"task-1","targetType":"AGENT","rating":1.5,"comment":"","timestamp":1,"agent":"coder","provider":"groq","model":"m","category":""}]"""
+        assertTrue(prefs.edit().putString("feedback", fractional).commit())
+        assertTrue(QualityLearningStore.feedback(context).isEmpty())
+        QualityLearningStore.rate(context, "task-2", "AGENT", 1, "Nowa")
+        assertEquals(fractional, prefs.getString("feedback", null))
+        val badHistory = """[{"id":"r2","targetId":"task-1","targetType":"AGENT","rating":1,"comment":"","timestamp":1,"agent":"coder","provider":"groq","model":"m","category":"","history":[{"rating":-1.5,"comment":"old","timestamp":1}]}]"""
+        assertTrue(prefs.edit().putString("feedback", badHistory).commit())
+        assertTrue(QualityLearningStore.feedback(context).isEmpty())
+        assertEquals(badHistory, prefs.getString("feedback", null))
+    }
+
+    @Test fun fractionalProposalEvidenceCounterBlocksProposalMutation() {
+        val prefs = context.getSharedPreferences("ai_quality_learning_v1", Context.MODE_PRIVATE)
+        val corrupt = """[{"id":"p1","text":"proposal","status":"PROPOSAL","created":1,"updated":1,"evidence":2.5,"confidence":"low","tasks":[],"agents":[],"models":[]}]"""
+        assertTrue(prefs.edit().putString("proposals", corrupt).commit())
+        assertTrue(QualityLearningStore.proposals(context).isEmpty())
+        assertFalse(QualityLearningStore.setProposalStatus(context, "p1", "APPROVED"))
+        assertEquals(corrupt, prefs.getString("proposals", null))
+    }
+
     @Test fun sameTargetIdCanHaveDifferentTargetTypes() {
         QualityLearningStore.rate(context, "shared-id", "AGENT", 1, "Raport agenta", "coder", "groq", "model-a")
         QualityLearningStore.rate(context, "shared-id", "CHAT_ANSWER", -1, "Odpowiedź końcowa", "MASTER", "openrouter", "model-b")

@@ -4,6 +4,7 @@ import android.content.Context
 import org.json.JSONArray
 import org.json.JSONObject
 import java.util.UUID
+import java.math.BigDecimal
 
 /** Local quality feedback and human-approved learning proposals. No network calls are made here. */
 object QualityLearningStore {
@@ -232,31 +233,53 @@ object QualityLearningStore {
     private fun readArrayStrict(c: Context, key: String): List<JSONObject>? {
         val raw = c.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString(key, null) ?: return emptyList()
         return runCatching {
-        val array = JSONArray(raw)
-        (0 until array.length()).map { index ->
-            val row = array.getJSONObject(index)
-            if (key == FEEDBACK_KEY) {
-                require(listOf("id", "targetId", "targetType", "comment", "agent", "provider", "model", "category")
-                    .all { row.opt(it) is String })
-                require(row.opt("rating") is Number && row.opt("timestamp") is Number)
-                require(row.optInt("rating") == -1 || row.optInt("rating") == 1)
-                if (row.has("history")) {
-                    val history = row.optJSONArray("history") ?: error("Invalid feedback audit history.")
-                    for (i in 0 until history.length()) {
-                        val item = history.getJSONObject(i)
-                        require(item.opt("rating") is Number && item.opt("comment") is String && item.opt("timestamp") is Number)
-                    }
-                }
-            } else if (key == PROPOSALS_KEY) {
-                require(listOf("id", "text", "status", "confidence").all { row.opt(it) is String })
-                require(listOf("created", "updated", "evidence").all { row.opt(it) is Number })
-                listOf("tasks", "agents", "models").forEach { field ->
-                    val values = row.optJSONArray(field) ?: error("Invalid proposal provenance.")
-                    for (i in 0 until values.length()) require(values.opt(i) is String)
-                }
+            val array = JSONArray(raw)
+            val maxRows = if (key == FEEDBACK_KEY) MAX_FEEDBACK else MAX_PROPOSALS
+            require(array.length() <= maxRows) { "Quality journal exceeds its supported size." }
+            val seenIds = hashSetOf<String>()
+            fun exactLong(value: Any?): Long {
+                require(value is Int || value is Long || value is Double || value is Float) { "Quality journal counter has an invalid type." }
+                return if (value is Int || value is Long) (value as Number).toLong()
+                    else BigDecimal.valueOf((value as Number).toDouble()).longValueExact()
             }
-            row
-        }
+            (0 until array.length()).map { index ->
+                val row = array.getJSONObject(index)
+                if (key == FEEDBACK_KEY) {
+                    require(listOf("id", "targetId", "targetType", "comment", "agent", "provider", "model", "category")
+                        .all { row.opt(it) is String })
+                    val id = row.getString("id")
+                    require(id.isNotBlank() && seenIds.add(id) && row.getString("targetId").isNotBlank() && row.getString("targetType").isNotBlank())
+                    require(exactLong(row.opt("rating")) in setOf(-1L, 1L))
+                    require(exactLong(row.opt("timestamp")) >= 0L)
+                    if (row.has("history")) {
+                        val history = row.optJSONArray("history") ?: error("Invalid feedback audit history.")
+                        require(history.length() <= 50)
+                        for (i in 0 until history.length()) {
+                            val item = history.getJSONObject(i)
+                            require(item.opt("comment") is String)
+                            require(exactLong(item.opt("rating")) in setOf(-1L, 1L))
+                            require(exactLong(item.opt("timestamp")) >= 0L)
+                        }
+                    }
+                } else if (key == PROPOSALS_KEY) {
+                    require(listOf("id", "text", "status", "confidence").all { row.opt(it) is String })
+                    val id = row.getString("id")
+                    require(id.isNotBlank() && seenIds.add(id) && row.getString("text").isNotBlank())
+                    require(row.getString("status") in setOf("PROPOSAL", "APPROVED", "REJECTED"))
+                    require(exactLong(row.opt("created")) >= 0L && exactLong(row.opt("updated")) >= 0L)
+                    require(exactLong(row.opt("evidence")) in 0..Int.MAX_VALUE.toLong())
+                    listOf("tasks", "agents", "models").forEach { field ->
+                        val values = row.optJSONArray(field) ?: error("Invalid proposal provenance.")
+                        require(values.length() <= 100)
+                        val seenValues = hashSetOf<String>()
+                        for (i in 0 until values.length()) {
+                            val value = values.opt(i)
+                            require(value is String && value.isNotBlank() && seenValues.add(value))
+                        }
+                    }
+                } else error("Unknown quality journal key.")
+                row
+            }
         }.getOrNull()
     }
 
