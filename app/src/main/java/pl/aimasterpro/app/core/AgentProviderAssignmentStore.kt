@@ -10,7 +10,6 @@ import android.content.SharedPreferences
 object AgentProviderAssignmentStore {
     private const val PREFS = "chat_state"
     private const val MASTER = "MASTER"
-    private const val MASTER_KEY = "agent_provider_MASTER"
     private const val SELECTED_KEY = "selected_provider"
 
     fun read(
