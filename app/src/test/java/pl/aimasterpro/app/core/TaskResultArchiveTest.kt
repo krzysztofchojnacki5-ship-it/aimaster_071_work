@@ -111,6 +111,26 @@ class TaskResultArchiveTest {
         assertEquals(1, afterRetry.length())
     }
 
+    @Test fun acknowledgePersistedFreesReportCapacityWithoutReplaying() {
+        val chatId = "chat-report-ack"
+        createChat(chatId)
+        val report = "Already committed report."
+        assertTrue(TaskResultArchive.put(
+            context, "ack-report-task", "RESEARCHER", report,
+            "provider-a", "model-a", 2_500L, chatId
+        ))
+        assertTrue(ChatHistoryStore.updateRoot(context) { root ->
+            val rows = root.getJSONObject("chats").getJSONObject(chatId).getJSONArray("agentActivity")
+            rows.put("📦 [TASK_REPORT_ID:ack-report-task]\n$report")
+            true
+        })
+
+        assertEquals(1, TaskResultArchive.acknowledgePersisted(context))
+        assertNull(TaskResultArchive.get(context, "ack-report-task"))
+        assertEquals(0, TaskResultArchive.acknowledgePersisted(context))
+    }
+
+
     @Test fun recoveryDoesNotDuplicateReportAlreadyPersistedInChatActivity() {
         val chatId = "chat-already-has-report"
         val report = "Raport zapisany przed przerwaniem procesu."
