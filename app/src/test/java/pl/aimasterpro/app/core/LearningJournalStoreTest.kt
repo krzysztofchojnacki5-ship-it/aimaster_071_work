@@ -17,12 +17,14 @@ class LearningJournalStoreTest {
     private var previousMemories: String? = null
 
     @Before fun setUp() {
+        SharedPreferencesWriteHealth.resetForTests("ai_learning_journal_v1")
         context = RuntimeEnvironment.getApplication()
         previousMemories = context.getSharedPreferences("ai_master_memory_store_v1", Context.MODE_PRIVATE).getString("memories", null)
         LearningJournalStore.clear(context)
     }
 
     @After fun tearDown() {
+        SharedPreferencesWriteHealth.resetForTests("ai_learning_journal_v1")
         LearningJournalStore.clear(context)
         context.getSharedPreferences("ai_master_memory_store_v1", Context.MODE_PRIVATE).edit().apply {
             if (previousMemories == null) remove("memories") else putString("memories", previousMemories)
@@ -107,5 +109,19 @@ class LearningJournalStoreTest {
         LearningJournalStore.clear(context)
         assertTrue(LearningJournalStore.load(context).isEmpty())
         assertTrue(AiMemoryStore.getMemories(context).contains("TEST_APPROVED_MEMORY"))
+    }
+    @Test fun ambiguousCommitQuarantinesJournalReadsWritesAndClear() {
+        val prefs = context.getSharedPreferences("ai_learning_journal_v1", Context.MODE_PRIVATE)
+        val original = "[]"
+        assertTrue(prefs.edit().putString("events", original).commit())
+        val failingEditor = object : android.content.SharedPreferences.Editor by prefs.edit().putString("events", "[ambiguous]") {
+            override fun commit(): Boolean = false
+        }
+        assertTrue(!SharedPreferencesWriteHealth.commit("ai_learning_journal_v1", failingEditor))
+
+        LearningJournalStore.record(context, LearningJournalStore.Event(10L, "agent", "tester", "p", "m", "COMPLETED", 10L, 1, ""))
+        assertTrue(LearningJournalStore.load(context).isEmpty())
+        assertTrue(!LearningJournalStore.clear(context))
+        assertEquals(original, prefs.getString("events", null))
     }
 }
