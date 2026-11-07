@@ -1526,3 +1526,43 @@ CI:
 - nie ma jeszcze potwierdzonego PASS dla testów ani assembleDebug.
 
 Porównanie branch/main: 292 commits ahead, 0 behind. Main nadal 752149d40186144b0f458a32b5826c8928349c3a. Bez merge, APK i release. Companion Transport nadal BLOCKED.
+
+
+## Etap 22 — ograniczenie odczytu kopii i walidacja profili dostawców (2026-11-07)
+
+Audyt ścieżki importu ujawnił dodatkowy problem: MainActivity używał bufferedReader().readText() dla wybranego pliku kopii. Limit w BackupCrypto był sprawdzany dopiero po wczytaniu całego pliku do pamięci. Dodano strumieniowy odczyt z limitem 6 MiB, który przerywa czytanie po przekroczeniu limitu. Również dane przekazane bezpośrednio do importera są sprawdzane przed odszyfrowaniem.
+
+Higiena hasła:
+- hasło jest pobierane bezpośrednio do CharArray z pola wejściowego, bez tworzenia dodatkowego String przez toString();
+- tymczasowa tablica jest zerowana w finally po szyfrowaniu/odszyfrowywaniu;
+- pole hasła jest czyszczone po operacji;
+- tablica jest tworzona dopiero po walidacji danych wejściowych i dostępności konfiguracji, aby wczesne wyjścia nie pozostawiały jej w pamięci.
+
+Walidacja importu SecureStore:
+- wymagane pola tekstowe: id, name, kind, baseUrl, model;
+- dozwolone enumy kind: OPENAI_COMPATIBLE, GEMINI, ANTHROPIC;
+- ograniczenia długości dla ID, nazwy, URL, modelu i klucza API;
+- ID ograniczone do bezpiecznego zestawu znaków używanego w kluczach SharedPreferences;
+- kontrola typów opcjonalnych pól enabled i parentProviderId;
+- relacja parentProviderId musi wskazywać istniejący profil, nie może wskazywać na siebie ani tworzyć cyklu dziedziczenia;
+- walidacja odbywa się przed szyfrowaniem sekretów i przed jakąkolwiek mutacją preferencji;
+- zapis nadal pozostaje pojedynczym atomowym commit().
+
+Commity:
+- 0f6381e — walidacja schematu profili;
+- 1ffe5ab — odczyt kopii z limitem i czyszczenie buforów hasła;
+- decc47c — eliminacja bufora hasła na ścieżkach wczesnego wyjścia;
+- aee26c9 — testy wadliwego typu pola i brakującego rodzica;
+- 8a3657b — odrzucanie cykli dziedziczenia profili;
+- f367874 — test regresyjny cyklicznych relacji.
+
+CI:
+- run 42321919632 dla SHA f3678746fa715272a972151c41033820f4772bc1: PENDING przy ostatnim odczycie;
+- run 42321908552 dla SHA 8a3657bb8b04e9771e59d4a0eeb9277736d4dd08: anulowany przed uruchomieniem testów przez nowszy commit;
+- brak potwierdzonego PASS testów jednostkowych i assembleDebug.
+
+Weryfikacja kodu:
+- schema importu bazuje na rzeczywistym ProviderConfig z core/Models.kt i na serializacji saveProvider(); puste baseUrl/model pozostają dozwolone, ponieważ aplikacja przechowuje niekompletne profile do późniejszego uzupełnienia;
+- nie dodano walidacji składni URL, ponieważ puste i niestandardowe endpointy są prawidłowymi stanami edytowalnego profilu;
+- pełna walidacja testami nadal oczekuje na CI.
+
