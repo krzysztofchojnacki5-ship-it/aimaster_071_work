@@ -98,10 +98,23 @@ object TaskResultArchive {
             val chat = chats.optJSONObject(entry.chatId) ?: return@forEach
             val rows = chat.optJSONArray("agentActivity") ?: JSONArray()
             val marker = "[TASK_REPORT_ID:${entry.taskId}]"
-            if ((0 until rows.length()).any { index ->
-                val existing = rows.optString(index)
-                existing.contains(marker) || existing.endsWith(entry.report)
-            }) return@forEach
+            val alreadyMarked = (0 until rows.length()).any { index ->
+                rows.optString(index).contains(marker)
+            }
+            if (alreadyMarked) return@forEach
+
+            // Older app versions logged reports without task IDs. Use that legacy fallback only
+            // when this report text belongs to exactly one archived task in this chat. Identical
+            // reports from distinct tasks must never suppress one another.
+            val sameReportTaskCount = entries.count {
+                it.chatId == entry.chatId && it.report == entry.report
+            }
+            val hasUnmarkedLegacyCopy = sameReportTaskCount == 1 &&
+                (0 until rows.length()).any { index ->
+                    val existing = rows.optString(index)
+                    !existing.contains("[TASK_REPORT_ID:") && existing.endsWith(entry.report)
+                }
+            if (hasUnmarkedLegacyCopy) return@forEach
             rows.put("📦 Odzyskany raport agenta ${entry.agentId} (${entry.providerId}/${entry.model}) $marker\n${entry.report}")
             while (rows.length() > 150) rows.remove(0)
             chat.put("agentActivity", rows).put("updatedAt", maxOf(chat.optLong("updatedAt"), entry.createdAt))
