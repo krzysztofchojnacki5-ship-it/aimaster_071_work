@@ -477,6 +477,25 @@ class MainActivity : Activity() {
         return true
     }
 
+    /**
+     * Quiesce all provider work before replacing the provider set. An in-flight MASTER/agent
+     * request must not resolve a fallback or reload a profile while the import swaps configs.
+     */
+    private fun cancelProviderWorkBeforeConfigReplacement() {
+        requestGen++
+        activeWorkerGeneration = -1
+        activeRequestScope?.let { scope -> client.cancelRequestScope(scope) }
+        activeRequestScope = null
+        activeWorkerThread?.interrupt()
+        activeWorkerThread = null
+        client.cancelActiveRequests()
+        isThinking = false
+        thinkingChatId = ""
+        thinkingText = null
+        pulse?.cancel()
+        pulse = null
+    }
+
     /** Reconcile all persisted role IDs after a provider-set replacement/import. */
     private fun reconcileAgentAssignmentsAfterImport(
         importedConfigs: List<JSONObject>,
@@ -5886,6 +5905,9 @@ class MainActivity : Activity() {
                     if (result.isFailure) { toast("Nie można odszyfrować bazy. Sprawdź hasło i plik."); return@setPositiveButton }
                     runCatching {
                         val configs = BackupCrypto.parseProviderConfigs(result.getOrThrow())
+                        // Stop old-profile requests before the provider set changes. The
+                        // persisted assignments are invalidated immediately after a successful swap.
+                        cancelProviderWorkBeforeConfigReplacement()
                         require(store.replaceAllConfigs(configs)) { "Import nie został zatwierdzony. Dotychczasowe konfiguracje pozostały bez zmian." }
                         val preferredMasterId = configs.first().optString("id", "gemini")
                         require(reconcileAgentAssignmentsAfterImport(configs, preferredMasterId)) {
