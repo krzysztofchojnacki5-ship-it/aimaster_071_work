@@ -32,6 +32,7 @@ object HostActiveChangeSetStore {
         storage: StringPreferenceStore = AndroidStringPreferenceStore(context, PREFS),
         ledgerStorage: StringPreferenceStore = AndroidStringPreferenceStore(context, ChangeSetStore.PREFERENCES_NAME)): Boolean {
         require(chatId.isNotBlank() && workspaceIdentity.isNotBlank() && changeSetId.isNotBlank())
+        if (SharedPreferencesWriteHealth.isUncertain(PREFS)) return false
         val ledger = ChangeSetStore.readResult(context, ledgerStorage)
         if (ledger.status != ChangeSetStore.LedgerStatus.VALID) return false
         val change = ledger.items.singleOrNull { it.id == changeSetId } ?: return false
@@ -58,6 +59,9 @@ object HostActiveChangeSetStore {
         storage: StringPreferenceStore = AndroidStringPreferenceStore(context, PREFS),
         ledgerStorage: StringPreferenceStore = AndroidStringPreferenceStore(context, ChangeSetStore.PREFERENCES_NAME)): ReadResult {
         if (chatId.isBlank() || workspaceIdentity.isBlank()) return ReadResult(ReadStatus.INVALID, reason = "Brak chatId/workspaceIdentity")
+        if (SharedPreferencesWriteHealth.isUncertain(PREFS)) {
+            return ReadResult(ReadStatus.INVALID, reason = "Magazyn aktywnego zakresu ma niejednoznaczny wynik zapisu; wymagany restart procesu i uzgodnienie stanu.")
+        }
         val rawResult = runCatching {
             storage.read(KEY)
         }
@@ -103,6 +107,7 @@ object HostActiveChangeSetStore {
     @Synchronized
     fun invalidate(context: Context, changeSetId: String? = null,
         storage: StringPreferenceStore = AndroidStringPreferenceStore(context, PREFS)): Boolean {
+        if (SharedPreferencesWriteHealth.isUncertain(PREFS)) return false
         val rawResult = runCatching { storage.read(KEY) }
         if (rawResult.isFailure) return false
         val raw = rawResult.getOrNull() ?: return true
