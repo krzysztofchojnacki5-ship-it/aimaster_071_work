@@ -104,16 +104,21 @@ class ChatHistoryStoreTest {
         ) { proxy, method, args ->
             when (method.name) {
                 "getString" -> prefs.getString(args!![0] as String, args[1] as String?)
-                "edit" -> java.lang.reflect.Proxy.newProxyInstance(
-                    android.content.SharedPreferences.Editor::class.java.classLoader,
-                    arrayOf(android.content.SharedPreferences.Editor::class.java)
-                ) { _, editorMethod, editorArgs ->
-                    when (editorMethod.name) {
-                        "putString", "remove", "clear" -> null
-                        "commit" -> false
-                        "apply" -> Unit
-                        else -> null
-                    }
+                "edit" -> {
+                    lateinit var editorProxy: android.content.SharedPreferences.Editor
+                    editorProxy = java.lang.reflect.Proxy.newProxyInstance(
+                        android.content.SharedPreferences.Editor::class.java.classLoader,
+                        arrayOf(android.content.SharedPreferences.Editor::class.java)
+                    ) { _, editorMethod, _ ->
+                        when (editorMethod.name) {
+                            "putString", "remove", "clear" -> editorProxy
+                            "commit" -> false
+                            "apply" -> Unit
+                            "toString" -> "FailingEditor"
+                            else -> null
+                        }
+                    } as android.content.SharedPreferences.Editor
+                    editorProxy
                 }
                 "toString" -> "FailingSharedPreferences"
                 "hashCode" -> System.identityHashCode(proxy)
