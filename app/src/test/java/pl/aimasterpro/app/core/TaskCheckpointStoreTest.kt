@@ -16,6 +16,21 @@ class TaskCheckpointStoreTest {
         context.getSharedPreferences("task_result_archive_v1", Context.MODE_PRIVATE).edit().clear().commit()
     }
 
+    @Test fun checkpointReaderRejectsCoercedNumericStringsWithoutRewritingJournal() {
+        val prefs = context.getSharedPreferences("task_checkpoints_v1", Context.MODE_PRIVATE)
+        val corrupt = """[{"task":"task-corrupt-checkpoint","agent":"RESEARCHER","status":"REQUESTING","detail":"started","ts":100,"provider":"openai","model":"gpt-4o-mini","attempts":1,"estimatedInputTokens":"450","estimatedOutputTokens":1200,"idempotencyKey":"request-key"}]"""
+        assertTrue(prefs.edit().putString("events", corrupt).commit())
+
+        assertFalse("Numeric strings must not be coerced into trusted recovery metadata",
+            TaskCheckpointStore.isJournalReadable(context))
+        assertFalse(TaskCheckpointStore.record(context, TaskCheckpointStore.Event(
+            taskId = "new-task", agentId = "MASTER", status = "QUEUED", detail = "",
+            timestamp = 200L, providerId = "", model = "", attempts = 0
+        )))
+        assertEquals("Corrupt recovery evidence must remain intact for diagnosis",
+            corrupt, prefs.getString("events", null))
+    }
+
     @Test fun safeCheckpointBaseUrlPreservesExplicitPortAndExcludesSensitiveUrlParts() {
         assertEquals(
             "http://127.0.0.1:11434",
