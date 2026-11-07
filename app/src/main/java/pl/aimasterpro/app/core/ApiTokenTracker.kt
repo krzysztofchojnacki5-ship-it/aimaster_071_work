@@ -565,8 +565,8 @@ object ApiTokenTracker {
 
         val normalizedBase = baseUrl.trimEnd('/').lowercase(Locale.ROOT)
         var exact: JSONObject? = null
-        var baseMatch: JSONObject? = null
-        val identities = mutableSetOf<String>()
+        val baseMatches = mutableListOf<JSONObject>()
+        val identities = mutableSetOf<List<String>>()
         for (index in 0 until catalog.length()) {
             val row = catalog.opt(index) as? JSONObject
                 ?: throw IllegalStateException("Katalog cen zawiera wpis, który nie jest obiektem.")
@@ -577,7 +577,7 @@ object ApiTokenTracker {
                 "Katalog cen zawiera niekompletną tożsamość wpisu."
             }
             val rowNormalizedBase = rowBase.trimEnd('/').lowercase(Locale.ROOT)
-            require(identities.add("$rowProvider|$rowNormalizedBase|$rowModel")) {
+            require(identities.add(listOf(rowProvider, rowNormalizedBase, rowModel))) {
                 "Katalog cen zawiera zduplikowaną tożsamość modelu."
             }
             val freeValue = row.opt("explicitlyFree")
@@ -587,11 +587,14 @@ object ApiTokenTracker {
 
             if (rowModel == modelName && rowNormalizedBase == normalizedBase) {
                 if (rowProvider == providerId) exact = row
-                else if (normalizedBase.isNotBlank()) baseMatch = row
+                else if (normalizedBase.isNotBlank()) baseMatches += row
             }
         }
 
-        val row = exact ?: baseMatch
+        require(exact != null || baseMatches.size <= 1) {
+            "Katalog cen zawiera niejednoznaczne dopasowanie modelu dla adresu bazowego."
+        }
+        val row = exact ?: baseMatches.singleOrNull()
         if (row != null) {
             val explicitlyFree = row.opt("explicitlyFree") as? Boolean
             val input = readCatalogRate(row, "inputPer1MUsd")
