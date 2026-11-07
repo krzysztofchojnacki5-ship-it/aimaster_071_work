@@ -1950,3 +1950,5 @@ Doprecyzowanie projektu SQLite:
 - Dodano testy Robolectric z proxy SharedPreferences symulującym wyjątki: awaria drugiego odczytu konfiguracji odrzuca całą częściową listę; awaria odczytu `provider_ids` blokuje zapis przed commitem.
 - Commity: `115657d8` (odczyty fail-closed), `ba6c6dca` (odrzucanie częściowych wyników), `5779f298` (testy błędów odczytu).
 - CI dla `ba6c6dca` i `5779f298` uruchamia się osobno po kolejnych pushach; status końcowy musi być potwierdzony na najnowszym SHA. Nie traktować anulowanych runów jako PASS/FAIL.
+
+- Uzupełniono testy o awarię odczytu zaszyfrowanego pola `key_<id>`: sekret pozostaje w oryginalnym SharedPreferences, latch blokuje dalsze operacje, a próba wyczyszczenia pustą wartością nie może go usunąć. Commit: `61e23cf7`.
