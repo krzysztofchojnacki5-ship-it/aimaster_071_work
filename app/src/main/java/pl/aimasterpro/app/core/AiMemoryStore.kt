@@ -20,6 +20,7 @@ object AiMemoryStore {
     )
 
     fun getMemories(context: Context): List<String> = runCatching {
+        if (SharedPreferencesWriteHealth.isUncertain(PREFS_NAME)) return@runCatching defaultMemories()
         val raw = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
             .getString("memories", null) ?: return@runCatching defaultMemories()
         val arr = JSONArray(raw)
@@ -37,6 +38,7 @@ object AiMemoryStore {
      * library: mutation callers must stop rather than replace the unreadable source.
      */
     private fun readStoredMemories(context: Context): List<String>? = runCatching {
+        if (SharedPreferencesWriteHealth.isUncertain(PREFS_NAME)) return@runCatching null
         val raw = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
             .getString("memories", null) ?: return@runCatching defaultMemories()
         val arr = JSONArray(raw)
@@ -48,24 +50,25 @@ object AiMemoryStore {
     }.getOrNull()
 
     fun addMemory(context: Context, memory: String): Boolean = runCatching {
-        if (memory.isBlank()) return@runCatching false
+        if (memory.isBlank() || SharedPreferencesWriteHealth.isUncertain(PREFS_NAME)) return@runCatching false
         val list = readStoredMemories(context)?.toMutableList() ?: return@runCatching false
         if (list.contains(memory)) return@runCatching true
         list.add(0, memory)
         val arr = JSONArray()
         list.take(100).forEach { arr.put(it) }
         context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit()
-            .putString("memories", arr.toString()).commit()
+            .let { SharedPreferencesWriteHealth.commit(PREFS_NAME, it) }
     }.getOrDefault(false)
 
     fun removeMemory(context: Context, exactMemory: String): Boolean = runCatching {
+        if (SharedPreferencesWriteHealth.isUncertain(PREFS_NAME)) return@runCatching false
         val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         if (prefs.getString("memories", null) == null) return@runCatching true
         val remaining = readStoredMemories(context)?.filterNot { it == exactMemory }
             ?: return@runCatching false
         val arr = JSONArray()
         remaining.forEach { arr.put(it) }
-        prefs.edit().putString("memories", arr.toString()).commit()
+        SharedPreferencesWriteHealth.commit(PREFS_NAME, prefs.edit().putString("memories", arr.toString()))
     }.getOrDefault(false)
 
     /**
