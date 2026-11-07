@@ -505,7 +505,7 @@ class ProviderClientNetworkTest {
     }
 
     @Test
-    fun anthropicCachedReadTokensAreNotComparedToUncachedInputCount() {
+    fun anthropicCacheReadTokensAreIncludedInBillableInputTotals() {
         val (server, _) = server { _, _ ->
             200 to """{"content":[{"type":"text","text":"response"}],"usage":{"input_tokens":3,"output_tokens":2,"cache_read_input_tokens":8}}"""
         }
@@ -516,8 +516,41 @@ class ProviderClientNetworkTest {
             )
             val result = ProviderClient().chat(cfg, "system", "test")
             assertEquals("REAL", result.usage.status)
+            assertEquals(11L, result.usage.inputTokens)
             assertEquals(8L, result.usage.cachedTokens)
+            assertEquals(13L, result.usage.totalTokens)
         } finally { server.stop(0) }
+    }
+
+    @Test
+    fun anthropicCacheCreationTokensAreIncludedAndMalformedCountsAreRejected() {
+        val (server, _) = server { _, _ ->
+            200 to """{"content":[{"type":"text","text":"response"}],"usage":{"input_tokens":3,"output_tokens":2,"cache_read_input_tokens":8,"cache_creation_input_tokens":4}}"""
+        }
+        try {
+            val cfg = ProviderConfig(
+                "anthropic-cache-create-local-test", "Anthropic cache creation local test", ProviderKind.ANTHROPIC,
+                "http://127.0.0.1:${server.address.port}/v1", "test-model", ""
+            )
+            val result = ProviderClient().chat(cfg, "system", "test")
+            assertEquals("REAL", result.usage.status)
+            assertEquals(15L, result.usage.inputTokens)
+            assertEquals(12L, result.usage.cachedTokens)
+            assertEquals(17L, result.usage.totalTokens)
+        } finally { server.stop(0) }
+
+        val (malformedServer, _) = server { _, _ ->
+            200 to """{"content":[{"type":"text","text":"response"}],"usage":{"input_tokens":3,"output_tokens":2,"cache_creation_input_tokens":"4"}}"""
+        }
+        try {
+            val cfg = ProviderConfig(
+                "anthropic-cache-malformed-local-test", "Anthropic cache malformed local test", ProviderKind.ANTHROPIC,
+                "http://127.0.0.1:${malformedServer.address.port}/v1", "test-model", ""
+            )
+            val result = ProviderClient().chat(cfg, "system", "test")
+            assertEquals("ESTIMATED", result.usage.status)
+            assertEquals(0L, result.usage.cachedTokens)
+        } finally { malformedServer.stop(0) }
     }
 
 }
