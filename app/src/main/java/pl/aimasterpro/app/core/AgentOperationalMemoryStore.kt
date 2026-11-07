@@ -74,7 +74,7 @@ object AgentOperationalMemoryStore {
         if (sourceTaskId.isBlank()) return@withHealthyAccess false
         val entries = read(context) ?: return@withHealthyAccess false
         val updated = entries.mapNotNull { entry ->
-            if (sourceTaskId !in entry.sourceTaskIds) return@withHealthyAccess@mapNotNull entry
+            if (sourceTaskId !in entry.sourceTaskIds) return@mapNotNull entry
             val remainingSources = entry.sourceTaskIds.filterNot { it == sourceTaskId }
             if (remainingSources.isEmpty()) null
             else entry.copy(sourceTaskIds = remainingSources)

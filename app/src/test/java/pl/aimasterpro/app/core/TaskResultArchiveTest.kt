@@ -254,4 +254,28 @@ class TaskResultArchiveTest {
         assertNull(TaskResultArchive.get(context, "ambiguous-task"))
         assertFalse(TaskResultArchive.put(context, "second-task", "developer", "blocked", "p", "m", 4_000L))
     }
+    @Test fun archivePutWaitsForSharedPreferenceLockAcrossReadModifyWrite() {
+        val ready = java.util.concurrent.CountDownLatch(1)
+        val finished = java.util.concurrent.CountDownLatch(1)
+        val result = java.util.concurrent.atomic.AtomicBoolean(false)
+        val worker = Thread {
+            ready.countDown()
+            result.set(TaskResultArchive.put(
+                context, "task-locked-archive", "RESEARCHER", "Atomic archive transaction.",
+                "provider", "model", 2_000L, "chat-locked"
+            ))
+            finished.countDown()
+        }
+        SharedPreferencesWriteHealth.withHealthyAccess("task_result_archive_v1") {
+            worker.start()
+            assertTrue(ready.await(2, java.util.concurrent.TimeUnit.SECONDS))
+            assertFalse("Archive put must wait while its preference file is locked",
+                finished.await(150, java.util.concurrent.TimeUnit.MILLISECONDS))
+        }
+        worker.join(3_000L)
+        assertTrue(finished.await(1, java.util.concurrent.TimeUnit.SECONDS))
+        assertTrue(result.get())
+        assertEquals("task-locked-archive", TaskResultArchive.latest(context).single().taskId)
+    }
+
 }
