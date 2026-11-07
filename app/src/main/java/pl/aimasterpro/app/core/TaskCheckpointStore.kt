@@ -11,23 +11,11 @@ object TaskCheckpointStore {
     private const val MAX_EVENTS = 800
     private val TERMINAL_STATUSES = setOf("COMPLETED", "FAILED", "BLOCKED", "TIMED_OUT", "CANCELLED", "INTERRUPTED")
     private val processId = java.util.UUID.randomUUID().toString()
-    @Volatile private var storageUncertain = false
-
     /** An ambiguous commit can leave the process-local preference map ahead of durable storage. */
-    fun isStorageUncertain(): Boolean = storageUncertain
+    fun isStorageUncertain(): Boolean = SharedPreferencesWriteHealth.isUncertain(PREFS)
 
     internal fun resetStorageHealthForTests() {
-        storageUncertain = false
-    }
-
-    private fun commitOrMarkUncertain(write: () -> Boolean): Boolean {
-        if (storageUncertain) return false
-        return try {
-            write().also { if (!it) storageUncertain = true }
-        } catch (_: Exception) {
-            storageUncertain = true
-            false
-        }
+        SharedPreferencesWriteHealth.resetForTests(PREFS)
     }
 
     data class Event(
@@ -52,7 +40,7 @@ object TaskCheckpointStore {
      */
     @Synchronized
     fun record(context: Context, event: Event): Boolean {
-        if (storageUncertain) return false
+        if (SharedPreferencesWriteHealth.isUncertain(PREFS)) return false
         if (event.taskId.isBlank() || event.agentId.isBlank() || event.status.isBlank() ||
             event.timestamp < 0L || event.attempts < 0 ||
             event.estimatedInputTokens < 0L || event.estimatedOutputTokens < 0L) return false
@@ -117,22 +105,23 @@ object TaskCheckpointStore {
     }
 
     @Synchronized
-    fun load(context: Context): List<Event> = if (storageUncertain) emptyList() else readEvents(context) ?: emptyList()
+    fun load(context: Context): List<Event> = if (SharedPreferencesWriteHealth.isUncertain(PREFS)) emptyList() else readEvents(context) ?: emptyList()
 
     /** Distinguishes an empty journal from unreadable persisted recovery data. */
     @Synchronized
-    fun isJournalReadable(context: Context): Boolean = !storageUncertain && readEvents(context) != null
+    fun isJournalReadable(context: Context): Boolean = !SharedPreferencesWriteHealth.isUncertain(PREFS) && readEvents(context) != null
 
     /**
      * A corrupt journal is distinct from an empty journal. Callers that append must not
      * replace unreadable persisted data with a new empty history.
      */
     private fun readEvents(context: Context): List<Event>? {
-        if (storageUncertain) return null
+        if (SharedPreferencesWriteHealth.isUncertain(PREFS)) return null
         return runCatching {
-        val a = JSONArray(
-            context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString(KEY, "[]") ?: "[]"
-        )
+            SharedPreferencesWriteHealth.withHealthyAccess(PREFS) {
+                val a = JSONArray(
+                    context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString(KEY, "[]") ?: "[]"
+                )
         (0 until a.length()).map { i ->
             val o = a.getJSONObject(i)
             fun exactString(key: String, default: String = ""): String {
@@ -177,8 +166,9 @@ object TaskCheckpointStore {
                 exactString("idempotencyKey"),
                 exactString("baseUrl")
             )
-        }
-    }.getOrNull()
+                }
+            }
+        }.getOrNull()
     }
 
     /** At process startup, queued/running work from another process cannot be resumed safely. */
@@ -188,7 +178,7 @@ object TaskCheckpointStore {
         now: Long = System.currentTimeMillis(),
         onAmbiguousRequest: (Event) -> Boolean = { true }
     ): Int {
-        if (storageUncertain) return 0
+        if (SharedPreferencesWriteHealth.isUncertain(PREFS)) return 0
         val stale = latest(context).filter { event ->
             val archivedResultExists = runCatching {
                 TaskResultArchive.get(context, event.taskId) != null
@@ -276,13 +266,14 @@ object TaskCheckpointStore {
 
     @Synchronized
     fun clear(context: Context): Boolean {
-        if (storageUncertain) return false
-        return commitOrMarkUncertain {
-            context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().remove(KEY).commit()
-        }
+        if (SharedPreferencesWriteHealth.isUncertain(PREFS)) return false
+        return SharedPreferencesWriteHealth.commit(
+            PREFS, context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().remove(KEY)
+        )
     }
 
-    private fun save(context: Context, rows: List<Event>): Boolean = commitOrMarkUncertain {
+    private fun save(context: Context, rows: List<Event>): Boolean {
+        if (SharedPreferencesWriteHealth.isUncertain(PREFS)) return false
         val a = JSONArray()
         rows.forEach { e ->
             a.put(
@@ -302,8 +293,8 @@ object TaskCheckpointStore {
                     .put("baseUrl", e.baseUrl)
             )
         }
-        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
+        val editor = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
             .putString(KEY, a.toString())
-            .commit()
+        return SharedPreferencesWriteHealth.commit(PREFS, editor)
     }
 }
