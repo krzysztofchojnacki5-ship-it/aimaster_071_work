@@ -225,4 +225,22 @@ class TaskCheckpointStoreTest {
         assertEquals("INTERRUPTED", TaskCheckpointStore.latest(context).single().status)
     }
 
+
+    @Test fun automaticUsageRecoveryRequiresCompleteRequestMetadata() {
+        val incomplete = TaskCheckpointStore.Event(
+            taskId = "legacy-request", agentId = "RESEARCHER", status = "USAGE_PENDING",
+            detail = "", timestamp = 1L, providerId = "provider-a", model = "model-a",
+            attempts = 1, processId = "old", estimatedInputTokens = 0L,
+            estimatedOutputTokens = 1200L, idempotencyKey = ""
+        )
+        assertFalse(TaskCheckpointStore.hasRecoverableUsageMetadata(incomplete))
+        assertFalse(TaskCheckpointStore.hasRecoverableUsageMetadata(incomplete.copy(estimatedInputTokens = 450L)))
+        assertFalse(TaskCheckpointStore.hasRecoverableUsageMetadata(incomplete.copy(
+            estimatedInputTokens = 450L, idempotencyKey = "team:legacy-request:provider-a", model = ""
+        )))
+        assertTrue(TaskCheckpointStore.hasRecoverableUsageMetadata(incomplete.copy(
+            estimatedInputTokens = 450L, idempotencyKey = "team:legacy-request:provider-a"
+        )))
+    }
+
 }
