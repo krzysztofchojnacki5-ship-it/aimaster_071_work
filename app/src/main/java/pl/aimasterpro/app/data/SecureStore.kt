@@ -18,6 +18,9 @@ internal fun shouldCreateFreshSecureStoreKey(aliasExists: Boolean, hasPersistedC
 internal fun hasUnreadableExistingSecrets(existingSecretIds: Set<String>, readableSecretIds: Set<String>): Boolean =
     existingSecretIds.any { it !in readableSecretIds }
 
+internal fun canReplaceUnreadableSecret(aliasExists: Boolean, keyIsSecretKey: Boolean): Boolean =
+    aliasExists && keyIsSecretKey
+
 class SecureStore(context: Context) {
     private val prefs = context.getSharedPreferences("secure_provider_store", Context.MODE_PRIVATE)
     private val alias = "ai_master_provider_key_v1"
@@ -239,6 +242,15 @@ class SecureStore(context: Context) {
             }
         }
     }.getOrNull()
+
+    /** True only when the current Android Keystore alias is present and contains an AES SecretKey. */
+    @Synchronized fun canReplaceUnreadableSecrets(): Boolean = runCatching {
+        val store = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
+        canReplaceUnreadableSecret(
+            aliasExists = store.containsAlias(alias),
+            keyIsSecretKey = store.containsAlias(alias) && store.getKey(alias, null) is SecretKey
+        )
+    }.getOrDefault(false)
 
     /** IDs whose encrypted API keys exist but cannot currently be decrypted. */
     @Synchronized fun unavailableSecretProviderIds(): List<String> =
