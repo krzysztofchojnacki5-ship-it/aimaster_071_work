@@ -38,14 +38,14 @@ object MasterWorkJournalStore {
 
     fun latest(context: Context, limit: Int = MAX_RECORDS): List<Record> = transaction(context) { rows ->
         rows.take(limit.coerceIn(0, MAX_RECORDS))
-    }
+    } ?: emptyList()
 
     /** Inserts or replaces one task record atomically, preserving other active work. */
     fun save(context: Context, record: Record): Boolean = transaction(context) { rows ->
         if (!valid(record)) return@transaction false
         val updated = listOf(record) + rows.filterNot { it.taskId == record.taskId }
         write(context, updated.take(MAX_RECORDS))
-    }
+    } ?: false
 
     /** Atomic progress update; null indicates missing/corrupt data or a rejected mutation. */
     fun update(context: Context, taskId: String, transform: (Record) -> Record?): Record? =
@@ -60,7 +60,7 @@ object MasterWorkJournalStore {
     fun remove(context: Context, taskId: String): Boolean = transaction(context) { rows ->
         if (rows.none { it.taskId == taskId }) return@transaction false
         write(context, rows.filterNot { it.taskId == taskId })
-    }
+    } ?: false
 
     private fun valid(r: Record): Boolean =
         r.taskId.isNotBlank() && r.taskId.length <= 160 &&
@@ -109,7 +109,11 @@ object MasterWorkJournalStore {
                 completedSteps = list("completedSteps", MAX_STEPS),
                 decisions = list("decisions", MAX_DECISIONS),
                 nextSteps = list("nextSteps", MAX_STEPS),
-                updatedAt = o.getLong("updatedAt")
+                updatedAt = run {
+                    val value = o.opt("updatedAt")
+                    require(value is Int || value is Long)
+                    (value as Number).toLong()
+                }
             )
             require(ids.add(record.taskId) && valid(record))
             record
