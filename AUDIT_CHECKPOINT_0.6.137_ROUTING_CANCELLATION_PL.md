@@ -1477,3 +1477,22 @@ CI:
 - run 42321007105 dla SHA d35b6b99a66c7db3561fca541e7a16aa5600e5c0: PENDING przy ostatnim odczycie;
 - poprzedni run 42320893601 dla SHA cc1215c2ae8ed517608f07298655c2cc9007c84a: IN_PROGRESS przy ostatnim odczycie, może zostać zastąpiony przez nowszy run;
 - żaden wynik testów ani assembleDebug nie jest jeszcze potwierdzony jako PASS.
+
+
+### Etap 20 — walidacja schematu kopii i komunikatów importu (2026-11-07)
+
+Przegląd MainActivity wykazał dwa problemy warstwy wywołującej:
+- importer nowego formatu nie sprawdzał schemaVersion mimo zapisywania go podczas eksportu;
+- komunikat błędu nadal sugerował częściową aktualizację, choć Etap 19 przeniósł wszystkie zapisy do jednego commit().
+
+Zmiany:
+- importer kopii weryfikuje teraz schemaVersion == 1 przed zmianą konfiguracji;
+- oba importery (nowa kopia i migracja starego formatu) komunikują, że przy odrzuceniu importu istniejące konfiguracje pozostają bez zmian;
+- zapis konfiguracji pozostaje za jednym transakcyjnym Editor.commit() z Etapu 19.
+
+Commit: cd12622b4bc551c4362cf81d20f6aaa668d23c78.
+
+CI:
+- run 42321164179 dla SHA cd12622b4bc551c4362cf81d20f6aaa668d23c78: PENDING przy ostatnim odczycie;
+- run 42321007105 dla SHA d35b6b99a66c7db3561fca541e7a16aa5600e5c0: IN_PROGRESS przy ostatnim odczycie; wcześniejsze runy dla poprzednich SHA są anulowane przez nowsze commity;
+- brak potwierdzonego PASS testów i assembleDebug.
