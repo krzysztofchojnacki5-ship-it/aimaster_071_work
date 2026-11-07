@@ -71,8 +71,9 @@ object LearningJournalStore {
         check(!SharedPreferencesWriteHealth.isUncertain(PREFS)) {
             "Learning journal is unavailable after an ambiguous durable write."
         }
-        val raw = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-            .getString(KEY, null) ?: return@runCatching emptyList()
+        val raw = SharedPreferencesWriteHealth.withHealthyAccess(PREFS) {
+            context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString(KEY, null)
+        } ?: return@runCatching emptyList()
         runCatching {
             val arr = JSONArray(raw)
             require(arr.length() <= MAX_EVENTS) { "Learning journal exceeds its supported size." }
