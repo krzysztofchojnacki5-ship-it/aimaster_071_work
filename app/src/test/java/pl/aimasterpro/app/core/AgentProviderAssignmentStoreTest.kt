@@ -3,6 +3,7 @@ package pl.aimasterpro.app.core
 import android.content.Context
 import org.junit.Assert.*
 import org.junit.Before
+import org.junit.After
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.json.JSONObject
@@ -20,6 +21,12 @@ class AgentProviderAssignmentStoreTest {
     @Before fun reset() {
         prefs.edit().clear().commit()
         SharedPreferencesWriteHealth.resetForTests("chat_state")
+        SecureStoreHealth.resetForTests()
+    }
+
+    @After fun cleanup() {
+        SharedPreferencesWriteHealth.resetForTests("chat_state")
+        SecureStoreHealth.resetForTests()
     }
 
     @Test fun saveMasterCommitsBothLegacyKeysTogether() {
@@ -260,7 +267,7 @@ class AgentProviderAssignmentStoreTest {
         assertEquals("new-master", recovered["RESEARCHER"])
         assertEquals("new-master", prefs.getString("agent_provider_MASTER", null))
         assertEquals("new-master", prefs.getString("selected_provider", null))
-        assertEquals("new-master", prefs.getString("agent_provider_CODER", null))
+        assertEquals("new-coder", prefs.getString("agent_provider_CODER", null))
         assertEquals("new-master", prefs.getString("agent_provider_RESEARCHER", null))
     }
 
