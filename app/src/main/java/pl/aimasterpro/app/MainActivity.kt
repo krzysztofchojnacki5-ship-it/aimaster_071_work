@@ -1449,7 +1449,7 @@ class MainActivity : Activity() {
                             this, res.providerId.ifBlank { cfg.id }, res.model.ifBlank { cfg.model }, requestAgentId, requestTaskId,
                             res.usage.inputTokens, res.usage.outputTokens, res.usage.reasoningTokens,
                             res.usage.cachedTokens, res.usage.status, cfg.baseUrl, effectiveBudgetReservationId,
-                            requestIdempotencyKey, res.usage.cacheWriteTokens
+                            requestIdempotencyKey, res.usage.cacheWriteTokens, res.usage.cacheWrite1hTokens
                         )
                     }.onFailure { error ->
                         runCatching { logAgentForChat(requestChatId, "[USAGE_RECORD_FAILED] Odpowiedź API mogła zostać rozliczona, ale zapis tokenów nie powiódł się: ${error.message ?: error.javaClass.simpleName}") }
@@ -1802,6 +1802,8 @@ class MainActivity : Activity() {
                                     synthesisPricing.cacheWriteInputPer1MUsd ?: synthesisPricing.inputPer1MUsd
                                 )
                             ),
+                            synthesisPricing.cacheWriteInput1hPer1MUsd ?: synthesisPricing.cacheWriteInputPer1MUsd ?: synthesisPricing.inputPer1MUsd
+                            ),
                             maxOf(
                                 synthesisPricing.outputPer1MUsd,
                                 synthesisPricing.internalReasoningPer1MUsd ?: synthesisPricing.outputPer1MUsd
@@ -1848,7 +1850,7 @@ class MainActivity : Activity() {
                             onLog = { sender, recipient, msg, status -> logAgentDialogueForChat(chatId, sender, recipient, msg, status) },
                             onUsage = { agentId, taskId, actualProvider, usage ->
                                 pl.aimasterpro.app.core.ApiTokenTracker.recordQuery(this, actualProvider.id, actualProvider.model, agentId, taskId, usage.inputTokens, usage.outputTokens, usage.reasoningTokens, usage.cachedTokens, usage.status, actualProvider.baseUrl, budgetPlan.reservationId,
-                                    "team:$taskId:${actualProvider.id}", usage.cacheWriteTokens)
+                                    "team:$taskId:${actualProvider.id}", usage.cacheWriteTokens, usage.cacheWrite1hTokens)
                             },
                             unknownOutputEstimateTokens = adaptivePlan.outputTokensPerAgent,
                             onUnknownUsage = { agentId, taskId, actualProvider, estimatedInput, estimatedOutput ->
@@ -2038,7 +2040,7 @@ class MainActivity : Activity() {
                                             this, actualProvider.id, actualProvider.model, agentId, taskId,
                                             usage.inputTokens, usage.outputTokens, usage.reasoningTokens,
                                             usage.cachedTokens, usage.status, actualProvider.baseUrl, reviewBudget.reservationId,
-                                            "team:$taskId:${actualProvider.id}", usage.cacheWriteTokens
+                                            "team:$taskId:${actualProvider.id}", usage.cacheWriteTokens, usage.cacheWrite1hTokens
                                         )
                                     },
                                     unknownOutputEstimateTokens = minOf(adaptivePlan.outputTokensPerAgent.coerceAtLeast(500L), 1_200L),
@@ -3555,11 +3557,12 @@ class MainActivity : Activity() {
             val completion = if (o.isNull("completionPricePerMillion")) null else o.optDouble("completionPricePerMillion", Double.NaN).takeIf { it.isFinite() }
             val cachedPrompt = if (o.isNull("cachedPromptPricePerMillion")) null else o.optDouble("cachedPromptPricePerMillion", Double.NaN).takeIf { it.isFinite() }
             val cachedPromptWrite = if (o.isNull("cachedPromptWritePricePerMillion")) null else o.optDouble("cachedPromptWritePricePerMillion", Double.NaN).takeIf { it.isFinite() }
+            val cachedPromptWrite1h = if (o.isNull("cachedPromptWrite1hPricePerMillion")) null else o.optDouble("cachedPromptWrite1hPricePerMillion", Double.NaN).takeIf { it.isFinite() }
             val internalReasoning = if (o.isNull("internalReasoningPricePerMillion")) null else o.optDouble("internalReasoningPricePerMillion", Double.NaN).takeIf { it.isFinite() }
             val free = if (o.isNull("freeByPricing")) null else o.optBoolean("freeByPricing")
             out.add(CatalogEntry(providerId, o.optString("providerName", providerId), o.optString("baseUrl"), ProviderModelInfo(
                 id, o.optString("modelName", id), o.optLong("contextLength", -1L).takeIf { it > 0 },
-                prompt, completion, free, o.optString("description"), cachedPrompt, cachedPromptWrite, internalReasoning
+                prompt, completion, free, o.optString("description"), cachedPrompt, cachedPromptWrite, cachedPromptWrite1h, internalReasoning
             )))
         }
         return out.distinctBy { "${it.providerId}:${it.info.id}" }.sortedWith(compareBy({ it.providerName.lowercase() }, { it.info.id.lowercase() }))
@@ -3576,6 +3579,7 @@ class MainActivity : Activity() {
                 .put("completionPricePerMillion", e.info.completionPricePerMillion ?: JSONObject.NULL)
                 .put("cachedPromptPricePerMillion", e.info.cachedPromptPricePerMillion ?: JSONObject.NULL)
                 .put("cachedPromptWritePricePerMillion", e.info.cachedPromptWritePricePerMillion ?: JSONObject.NULL)
+                .put("cachedPromptWrite1hPricePerMillion", e.info.cachedPromptWrite1hPricePerMillion ?: JSONObject.NULL)
                 .put("internalReasoningPricePerMillion", e.info.internalReasoningPricePerMillion ?: JSONObject.NULL)
                 .put("freeByPricing", e.info.freeByPricing ?: JSONObject.NULL).put("description", e.info.description))
         }
@@ -3588,7 +3592,7 @@ class MainActivity : Activity() {
                 pl.aimasterpro.app.core.CatalogModelPrice(
                     info.id, info.promptPricePerMillion, info.completionPricePerMillion, info.freeByPricing,
                     info.cachedPromptPricePerMillion, info.cachedPromptWritePricePerMillion,
-                    info.internalReasoningPricePerMillion
+                    info.internalReasoningPricePerMillion, info.cachedPromptWrite1hPricePerMillion
                 )
             }
         )
@@ -3719,7 +3723,8 @@ class MainActivity : Activity() {
             pl.aimasterpro.app.core.ApiTokenTracker.recordQuery(
                 this, response.providerId.ifBlank { config.id }, response.model.ifBlank { config.model }, "TEST", taskId,
                 usage.inputTokens, usage.outputTokens, usage.reasoningTokens, usage.cachedTokens,
-                usage.status, config.baseUrl, reservationId, cacheWriteTokens = usage.cacheWriteTokens
+                usage.status, config.baseUrl, reservationId, cacheWriteTokens = usage.cacheWriteTokens,
+                cacheWrite1hTokens = usage.cacheWrite1hTokens
             )
         }.onFailure {
             android.util.Log.e("AIMasterBudget", "Nie udało się zapisać użycia testu $testLabel.", it)
@@ -4613,7 +4618,7 @@ class MainActivity : Activity() {
                                 this, actualProvider.id, actualProvider.model, agentId, taskId,
                                 usage.inputTokens, usage.outputTokens, usage.reasoningTokens,
                                 usage.cachedTokens, usage.status, actualProvider.baseUrl, reviewBudget.reservationId,
-                                "team:$taskId:${actualProvider.id}", usage.cacheWriteTokens
+                                "team:$taskId:${actualProvider.id}", usage.cacheWriteTokens, usage.cacheWrite1hTokens
                             )
                         },
                         unknownOutputEstimateTokens = 1_200L,
