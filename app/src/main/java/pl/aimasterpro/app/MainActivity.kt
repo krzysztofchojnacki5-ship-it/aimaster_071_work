@@ -3245,7 +3245,19 @@ class MainActivity : Activity() {
         val baseProfiles = allSaved.filter { it.parentProviderId.isBlank() }
         val unavailableSecretIds = store.unavailableSecretProviderIds()
         if (unavailableSecretIds.isNotEmpty()) {
-            card("⚠ Klucze API niedostępne", "Nie udało się odszyfrować kluczy w profilach: ${unavailableSecretIds.joinToString(", ")}. Profile są wyłączone z użycia. Nie nadpisuj ani nie usuwaj danych; sprawdź dostępność oryginalnego klucza Android Keystore.")
+            val recoveryCard = card("⚠ Klucze API niedostępne", "Nie udało się odszyfrować kluczy w profilach: ${unavailableSecretIds.joinToString(", ")}. Profile pozostają wyłączone. Jeśli masz aktualne klucze API, możesz wprowadzić je ponownie dla pojedynczego profilu. Pozostałe dane nie zostaną zmienione.")
+            unavailableSecretIds.forEach { id ->
+                val raw = store.readConfig(id) ?: return@forEach
+                val kind = runCatching { ProviderKind.valueOf(raw.optString("kind")) }.getOrDefault(ProviderKind.OPENAI_COMPATIBLE)
+                val recoveryProfile = ProviderConfig(
+                    raw.optString("id", id), raw.optString("name", id), kind,
+                    raw.optString("baseUrl"), raw.optString("model"), "",
+                    raw.optBoolean("enabled", true), raw.optString("parentProviderId", "")
+                )
+                action("NAPRAW KLUCZ: ${recoveryProfile.name}", recoveryCard) {
+                    providerDialog(recoveryProfile, recoverSecret = true)
+                }
+            }
         }
 
         card("MODELE • centrum zarządzania", "Jedno miejsce do pobierania modeli, sprawdzania cen, kopiowania identyfikatorów i tworzenia profili modeli. Agenci korzystają później z gotowych profili.")
@@ -3626,16 +3638,16 @@ class MainActivity : Activity() {
         }
     }
 
-    private fun providerDialog(old: ProviderConfig) {
+    private fun providerDialog(old: ProviderConfig, recoverSecret: Boolean = false) {
         val box = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(20, 4, 20, 4) }
         val name = field("Nazwa", old.name); val url = field("Base URL", old.baseUrl); val model = field("Model ID", old.model)
-        val key = field("Klucz API (pozostaw pusty, aby zachować istniejący)", "", InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD)
+        val key = field(if (recoverSecret) "Wprowadź nowy klucz API — wymagany do naprawy" else "Klucz API (pozostaw pusty, aby zachować istniejący)", "", InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD)
         val kindSpinner = Spinner(this)
         val kindOptions = listOf("OpenAI-compatible", "Google Gemini API", "Anthropic API")
         kindSpinner.adapter = ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item, kindOptions)
         kindSpinner.setSelection(when (old.kind) { ProviderKind.OPENAI_COMPATIBLE -> 0; ProviderKind.GEMINI -> 1; ProviderKind.ANTHROPIC -> 2 })
         listOf(TextView(this).apply { text = "Typ dostawcy"; setTextColor(white) }, kindSpinner, name, url, model, key).forEach { box.addView(it); if (it is EditText) it.setPadding(dp(12), dp(8), dp(12), dp(8)) }
-        AlertDialog.Builder(this).setTitle("Konfiguracja dostawcy").setView(box)
+        AlertDialog.Builder(this).setTitle(if (recoverSecret) "Odzyskiwanie profilu dostawcy" else "Konfiguracja dostawcy").setView(box)
             .setNegativeButton("Anuluj", null)
             .setPositiveButton("Zapisz") { _, _ ->
                 val kind = when (kindSpinner.selectedItemPosition) { 1 -> ProviderKind.GEMINI; 2 -> ProviderKind.ANTHROPIC; else -> ProviderKind.OPENAI_COMPATIBLE }
@@ -3677,12 +3689,12 @@ class MainActivity : Activity() {
         }
     }
 
-    private fun saveProvider(config: ProviderConfig) {
+    private fun saveProvider(config: ProviderConfig): Boolean {
         val json = JSONObject().put("id", config.id).put("name", config.name).put("kind", config.kind.name)
             .put("baseUrl", config.baseUrl).put("model", config.model).put("apiKey", config.apiKey).put("enabled", config.enabled).put("parentProviderId", config.parentProviderId)
-        if (!store.saveConfig(json)) {
-            toast("Nie udało się bezpiecznie zapisać klucza API. Konfiguracja nie została zapisana.")
-        }
+        val saved = store.saveConfig(json)
+        if (!saved) toast("Nie udało się bezpiecznie zapisać klucza API. Konfiguracja nie została zapisana.")
+        return saved
     }
 
     private fun loadProvider(id: String): ProviderConfig? {
