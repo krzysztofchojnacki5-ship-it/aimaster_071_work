@@ -608,6 +608,12 @@ class ProviderClientNetworkTest {
             )
         )
         assertEquals(
+            false,
+            resolveOpenRouterFreePricing(
+                "openrouter/free", true, null, null, null, 0.0000001
+            )
+        )
+        assertEquals(
             null,
             resolveOpenRouterFreePricing(
                 "vendor/non-openrouter", false, 0.0, 0.0, null, null
