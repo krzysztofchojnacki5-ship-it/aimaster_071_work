@@ -1868,3 +1868,10 @@ Doprecyzowanie projektu SQLite:
 - Przegląd architektury wykazał, że aplikacja ma wiele niezależnych magazynów SharedPreferences (m.in. checkpointy, historia czatów, pamięć AI, rejestr tokenów). Planowana migracja SQLite w tym etapie dotyczy wyłącznie `secure_provider_store` i nie może automatycznie obejmować pozostałych magazynów.
 - Wymagania przed implementacją migracji SecureStore: wersjonowany schemat i migracja transakcyjna; unikalne ograniczenia ID; metadane profilu i zaszyfrowany sekret w jednej transakcji; zachowanie Android Keystore bez eksportowania klucza; marker migracji ustawiany dopiero po odczycie kontrolnym; stary SharedPreferences pozostaje nietknięty aż do potwierdzenia nowego DB; idempotentne wznowienie po przerwaniu procesu; testy crash-pointów przed/po commit i po markerze; ścieżka rollback bez usuwania starego źródła.
 - Nie rozpoczęto migracji ani zmiany formatu danych. To etap projektowania, nie wdrożenie.
+
+
+### Specyfikacja migracji SQLite — dokument projektowy
+
+- Dodano `SECURESTORE_SQLITE_MIGRATION_DESIGN_PL.md`, commit `41bf664c`.
+- Dokument określa schemat DB, zachowanie formatu ciphertext i aliasu Keystore, transakcyjną migrację z legacy SharedPreferences, atomowy marker, punkty odzyskiwania po awarii, operacje po migracji i wymagany zestaw testów.
+- To wyłącznie specyfikacja. Nie dodano SQLiteOpenHelper, nie zmieniono źródła prawdy i nie ruszono istniejących danych.
