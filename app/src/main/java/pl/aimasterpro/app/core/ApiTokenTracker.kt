@@ -455,7 +455,9 @@ object ApiTokenTracker {
             (it.cacheWriteInputPer1MUsd == null || (it.cacheWriteInputPer1MUsd.isFinite() && it.cacheWriteInputPer1MUsd >= 0.0)) &&
             (it.explicitlyFree != true ||
                 ((it.inputPer1MUsd == null || it.inputPer1MUsd == 0.0) &&
-                    (it.outputPer1MUsd == null || it.outputPer1MUsd == 0.0)))
+                    (it.outputPer1MUsd == null || it.outputPer1MUsd == 0.0) &&
+                    (it.cachedInputPer1MUsd == null || it.cachedInputPer1MUsd == 0.0) &&
+                    (it.cacheWriteInputPer1MUsd == null || it.cacheWriteInputPer1MUsd == 0.0)))
         }) { "Katalog zawiera nieprawidłowe ceny modelu." }
         require(models.map { it.modelName }.distinct().size == models.size) {
             "Katalog zawiera zduplikowane identyfikatory modeli."
