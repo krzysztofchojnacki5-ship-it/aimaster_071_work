@@ -541,6 +541,13 @@ object ApiTokenTracker {
         }
     }
 
+    private fun catalogRateIsAbsentOrZero(row: JSONObject, key: String): Boolean {
+        if (!row.has(key) || row.isNull(key)) return true
+        val value = row.opt(key) as? Number ?: return false
+        val rate = value.toDouble()
+        return rate.isFinite() && rate == 0.0
+    }
+
     @Synchronized
     fun getPricing(context: Context, modelName: String, providerId: String = "", baseUrl: String = ""): ModelPricing {
         val raw = context.getSharedPreferences(PRICING_PREFS, Context.MODE_PRIVATE)
@@ -560,7 +567,15 @@ object ApiTokenTracker {
             }
             val row = exact ?: baseMatch
             if (row != null) {
-                if (row.opt("explicitlyFree") == true) return ModelPricing(modelName, 0.0, 0.0)
+                if (row.opt("explicitlyFree") == true) {
+                    val everyPublishedRateIsZero = listOf(
+                        "inputPer1MUsd", "outputPer1MUsd", "cachedInputPer1MUsd",
+                        "cacheWriteInputPer1MUsd", "cacheWriteInput1hPer1MUsd",
+                        "internalReasoningPer1MUsd"
+                    ).all { key -> catalogRateIsAbsentOrZero(row, key) }
+                    if (everyPublishedRateIsZero) return ModelPricing(modelName, 0.0, 0.0)
+                    // Otherwise fall through and honor any valid published paid rates below.
+                }
                 val input = (row.opt("inputPer1MUsd") as? Number)?.toDouble()
                 val output = (row.opt("outputPer1MUsd") as? Number)?.toDouble()
                 if (input != null && output != null && input.isFinite() && output.isFinite() && input >= 0.0 && output >= 0.0) {

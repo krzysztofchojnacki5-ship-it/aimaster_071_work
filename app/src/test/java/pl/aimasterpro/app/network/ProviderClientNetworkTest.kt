@@ -25,6 +25,34 @@ class ProviderClientNetworkTest {
         base, "test-model", ""
     )
 
+    private fun assertAnthropicEstimatedUsage(usageJson: String) {
+        val (server, _) = server { _, _ ->
+            200 to """{"content":[{"type":"text","text":"response"}],"usage":$usageJson}"""
+        }
+        try {
+            val cfg = ProviderConfig(
+                "anthropic-malformed-usage-test", "Anthropic malformed usage test", ProviderKind.ANTHROPIC,
+                "http://127.0.0.1:${server.address.port}/v1", "test-model", ""
+            )
+            val result = ProviderClient().chat(cfg, "system", "test")
+            assertEquals("ESTIMATED", result.usage.status)
+        } finally { server.stop(0) }
+    }
+
+    private fun assertGeminiOpenAiEstimatedUsage(usageJson: String) {
+        val (server, _) = server { _, _ ->
+            200 to """{"choices":[{"message":{"content":"response"}}],"usage":$usageJson}"""
+        }
+        try {
+            val cfg = ProviderConfig(
+                "gemini-openai-malformed-usage-test", "Gemini OpenAI malformed usage test", ProviderKind.GEMINI,
+                "http://127.0.0.1:${server.address.port}/v1beta/openai", "test-model", ""
+            )
+            val result = ProviderClient().chat(cfg, "system", "test")
+            assertEquals("ESTIMATED", result.usage.status)
+        } finally { server.stop(0) }
+    }
+
     private fun assertEstimatedUsage(usageJson: String) {
         val (server, _) = server { _, _ ->
             200 to """{"choices":[{"message":{"content":"response"}}],"usage":$usageJson}"""
@@ -453,6 +481,20 @@ class ProviderClientNetworkTest {
 
 
     @Test
+    fun nonStringResponseModelCannotOverrideConfiguredBillingIdentity() {
+        val (server, _) = server { _, _ ->
+            200 to """{"model":123,"choices":[{"message":{"content":"OK"}}],"usage":{"prompt_tokens":3,"completion_tokens":2,"total_tokens":5}}"""
+        }
+        try {
+            val configured = config("http://127.0.0.1:${server.address.port}/v1")
+            val result = ProviderClient().chat(configured, "system", "test")
+            assertEquals(configured.id, result.providerId)
+            assertEquals(configured.model, result.model)
+            assertEquals("REAL", result.usage.status)
+        } finally { server.stop(0) }
+    }
+
+    @Test
     fun fractionalTokenCountersAreEstimatedInsteadOfCoerced() {
         assertEstimatedUsage("""{"prompt_tokens":3.5,"completion_tokens":2,"total_tokens":5.5}""")
     }
@@ -614,6 +656,21 @@ class ProviderClientNetworkTest {
             assertTrue(models.all { it.freeByPricing == false })
             assertTrue(models.all { it.promptPricePerMillion == null && it.completionPricePerMillion == null })
         } finally { server.stop(0) }
+    }
+
+    @Test
+    fun malformedNestedUsageObjectsInvalidateRealUsage() {
+        assertEstimatedUsage("""{"prompt_tokens":3,"completion_tokens":2,"total_tokens":5,"prompt_tokens_details":"invalid"}""")
+        assertEstimatedUsage("""{"prompt_tokens":3,"completion_tokens":2,"total_tokens":5,"completion_tokens_details":[]}""")
+        assertEstimatedUsage("""{"prompt_tokens":3,"completion_tokens":2,"total_tokens":5,"prompt_tokens_details":null}""")
+        assertEstimatedUsage("""{"prompt_tokens":3,"completion_tokens":2,"total_tokens":5,"completion_tokens_details":null}""")
+        assertAnthropicEstimatedUsage("""{"input_tokens":3,"output_tokens":2,"cache_creation":"invalid"}""")
+        assertAnthropicEstimatedUsage("""{"input_tokens":3,"output_tokens":2,"output_tokens_details":[]}""")
+        assertAnthropicEstimatedUsage("""{"input_tokens":3,"output_tokens":2,"cache_creation":null}""")
+        assertAnthropicEstimatedUsage("""{"input_tokens":3,"output_tokens":2,"output_tokens_details":null}""")
+        assertGeminiOpenAiEstimatedUsage("""{"prompt_tokens":3,"completion_tokens":2,"total_tokens":5,"prompt_tokens_details":"invalid"}""")
+        assertGeminiOpenAiEstimatedUsage("""{"prompt_tokens":3,"completion_tokens":2,"total_tokens":5,"completion_tokens_details":[]}""")
+        assertGeminiOpenAiEstimatedUsage("""{"prompt_tokens":3,"completion_tokens":2,"total_tokens":5,"prompt_tokens_details":null}""")
     }
 
     @Test

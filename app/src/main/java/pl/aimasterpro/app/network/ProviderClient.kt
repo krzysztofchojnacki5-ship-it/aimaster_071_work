@@ -311,7 +311,7 @@ class ProviderClient(
     }
 
     private fun responseModel(result: JSONObject, configuredModel: String, field: String = "model"): String =
-        result.optString(field).trim().takeIf { it.isNotEmpty() } ?: configuredModel
+        (result.opt(field) as? String)?.trim()?.takeIf { it.isNotEmpty() } ?: configuredModel
 
     /** Reads JSON token counters without JSONObject's permissive numeric/string coercion. */
     private fun exactNonNegativeCount(obj: JSONObject?, key: String, defaultIfMissing: Long? = null): Long? {
@@ -324,6 +324,12 @@ class ProviderClient(
             else -> return null
         }
         return count.takeIf { it >= 0L }
+    }
+
+    /** Optional metadata must be absent or an actual JSON object; malformed shapes cannot mean zero usage. */
+    private fun optionalJsonObjectFieldIsValid(obj: JSONObject?, key: String): Boolean {
+        if (obj == null || !obj.has(key)) return true
+        return obj.opt(key) is JSONObject
     }
 
     private fun preferredUsageCount(
@@ -393,7 +399,10 @@ class ProviderClient(
             val reasoning = exactNonNegativeCount(reasoningDetails, "thinking_tokens", 0L)
             val reasoningKnown = reasoningDetails?.has("thinking_tokens") == true &&
                 reasoningDetails?.isNull("thinking_tokens") == false && reasoning != null
-            val realUsage = cacheBreakdownValid && validUsageBreakdown(
+            val metadataObjectsValid =
+                optionalJsonObjectFieldIsValid(usageObj, "cache_creation") &&
+                    optionalJsonObjectFieldIsValid(usageObj, "output_tokens_details")
+            val realUsage = metadataObjectsValid && cacheBreakdownValid && validUsageBreakdown(
                 input, output, null, cached, reasoning, cacheWrite = cacheWrite, cacheWrite1h = cacheWrite1h
             )
             val finalInput = if (realUsage) input!! else (systemPrompt.length + userText.length) / 4.toLong()
@@ -456,7 +465,10 @@ class ProviderClient(
             val reasoning = exactNonNegativeCount(reasoningDetails, "reasoning_tokens", 0L)
             val reasoningKnown = reasoningDetails?.has("reasoning_tokens") == true &&
                 reasoningDetails?.isNull("reasoning_tokens") == false && reasoning != null
-            val realUsage = validUsageBreakdown(input, output, reportedTotal, cached, reasoning, reportedTotalFieldValid, cacheWrite, cacheWrite1h)
+            val metadataObjectsValid =
+                optionalJsonObjectFieldIsValid(usageObj, "prompt_tokens_details") &&
+                    optionalJsonObjectFieldIsValid(usageObj, "completion_tokens_details")
+            val realUsage = metadataObjectsValid && validUsageBreakdown(input, output, reportedTotal, cached, reasoning, reportedTotalFieldValid, cacheWrite, cacheWrite1h)
 
             val finalInput = if (realUsage) input!! else (systemPrompt.length + userText.length) / 4.toLong()
             val finalOutput = if (realUsage) output!! else text.length / 4.toLong()
@@ -495,7 +507,10 @@ class ProviderClient(
                 val reasoningDetails = usageObj?.optJSONObject("completion_tokens_details")
                 val reasoning = exactNonNegativeCount(reasoningDetails, "reasoning_tokens", 0L)
                 val reasoningKnown = reasoningDetails?.has("reasoning_tokens") == true
-                val realUsage = validUsageBreakdown(input, output, reportedTotal, cached, reasoning, reportedTotalFieldValid, cacheWrite, cacheWrite1h)
+                val metadataObjectsValid =
+                    optionalJsonObjectFieldIsValid(usageObj, "prompt_tokens_details") &&
+                        optionalJsonObjectFieldIsValid(usageObj, "completion_tokens_details")
+                val realUsage = metadataObjectsValid && validUsageBreakdown(input, output, reportedTotal, cached, reasoning, reportedTotalFieldValid, cacheWrite, cacheWrite1h)
                 val finalInput = if (realUsage) input!! else (systemPrompt.length + userText.length) / 4L
                 val finalOutput = if (realUsage) output!! else text.length / 4L
                 val finalTotal = if (realUsage) Math.addExact(finalInput, finalOutput) else finalInput + finalOutput

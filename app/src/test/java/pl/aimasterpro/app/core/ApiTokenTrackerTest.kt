@@ -696,6 +696,20 @@ class ApiTokenTrackerTest {
         assertEquals(0.0, pricing.outputPer1MUsd, 0.0)
     }
 
+    @Test fun contradictoryPersistedFreeFlagCannotZeroOutPublishedPaidRates() {
+        val prefs = context.getSharedPreferences("api_token_pricing_v1", Context.MODE_PRIVATE)
+        prefs.edit().putString(
+            "catalog_model_prices",
+            """[{"providerId":"corrupt-free-provider","modelName":"vendor/contradictory-free","baseUrl":"https://corrupt.example/v1","inputPer1MUsd":0.12,"outputPer1MUsd":0.34,"explicitlyFree":true}]"""
+        ).commit()
+
+        val pricing = ApiTokenTracker.getPricing(
+            context, "vendor/contradictory-free", "corrupt-free-provider", "https://corrupt.example/v1"
+        )
+        assertEquals(0.12, pricing.inputPer1MUsd, 0.0000001)
+        assertEquals(0.34, pricing.outputPer1MUsd, 0.0000001)
+    }
+
     @Test fun explicitPaidProviderCatalogOverridesStaleFreeAllowlist() {
         ApiTokenTracker.replaceCatalogPricingForProvider(
             context, "openrouter", "https://openrouter.ai/api/v1",
