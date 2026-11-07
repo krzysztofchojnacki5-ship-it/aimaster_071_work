@@ -36,31 +36,42 @@ object TaskResultCache {
         return Cached(row.optString("report"), row.optLong("createdAt"))
     }
 
-    @Synchronized fun put(context: Context, fingerprint: String, report: String, now: Long = System.currentTimeMillis()): Boolean {
-        if (fingerprint.isBlank() || report.isBlank() || now < 0L) return false
-        val safeReport = CommunicationLogSanitizer.sanitize(report)
-        if (safeReport.isBlank()) return false
-        val old = read(context, now) ?: run {
-            android.util.Log.e("AIMasterTaskCache", "Nie zapisano wyniku: cache zawiera uszkodzone dane.")
-            return false
-        }
-        val next = JSONArray()
-        for (i in 0 until old.length()) {
-            val row = old.getJSONObject(i)
-            if (row.optString("fingerprint") != fingerprint) next.put(row)
-        }
-        next.put(JSONObject().put("fingerprint", fingerprint).put("report", safeReport).put("createdAt", now))
-        val trimmed = JSONArray()
-        val start = (next.length() - MAX_ENTRIES).coerceAtLeast(0)
-        for (i in start until next.length()) trimmed.put(next.getJSONObject(i))
-        return context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
-            .putString(KEY, trimmed.toString()).commit()
-    }
+    /**
+     * Cache writes use the same per-file transaction lock and ambiguous-commit quarantine as
+     * recovery-critical stores. A false commit must never be followed by a read-modify-write
+     * that could overwrite the last known durable snapshot.
+     */
+    @Synchronized fun put(context: Context, fingerprint: String, report: String, now: Long = System.currentTimeMillis()): Boolean =
+        runCatching {
+            SharedPreferencesWriteHealth.withHealthyAccess(PREFS) {
+                if (fingerprint.isBlank() || report.isBlank() || now < 0L) return@withHealthyAccess false
+                val safeReport = CommunicationLogSanitizer.sanitize(report)
+                if (safeReport.isBlank()) return@withHealthyAccess false
+                val old = read(context, now) ?: run {
+                    android.util.Log.e("AIMasterTaskCache", "Nie zapisano wyniku: cache zawiera uszkodzone dane.")
+                    return@withHealthyAccess false
+                }
+                val next = JSONArray()
+                for (i in 0 until old.length()) {
+                    val row = old.getJSONObject(i)
+                    if (row.optString("fingerprint") != fingerprint) next.put(row)
+                }
+                next.put(JSONObject().put("fingerprint", fingerprint).put("report", safeReport).put("createdAt", now))
+                val trimmed = JSONArray()
+                val start = (next.length() - MAX_ENTRIES).coerceAtLeast(0)
+                for (i in start until next.length()) trimmed.put(next.getJSONObject(i))
+                SharedPreferencesWriteHealth.commit(
+                    PREFS, context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
+                        .putString(KEY, trimmed.toString())
+                )
+            }
+        }.getOrDefault(false)
 
     /** Corrupt cache rows are not dropped or replaced by an empty cache during a write. */
-    private fun read(context: Context, now: Long): JSONArray? {
-        val raw = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString(KEY, null) ?: return JSONArray()
-        return runCatching {
+    private fun read(context: Context, now: Long): JSONArray? = runCatching {
+        SharedPreferencesWriteHealth.withHealthyAccess(PREFS) {
+            val raw = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString(KEY, null)
+                ?: return@withHealthyAccess JSONArray()
             val source = JSONArray(raw)
             val valid = JSONArray()
             val seenFingerprints = hashSetOf<String>()
@@ -79,6 +90,6 @@ object TaskResultCache {
                 if (age in 0..TTL_MS) valid.put(row)
             }
             valid
-        }.getOrNull()
-    }
+        }
+    }.getOrNull()
 }
