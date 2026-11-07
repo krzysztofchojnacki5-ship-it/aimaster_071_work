@@ -524,6 +524,29 @@ class ApiTokenTrackerTest {
         assertTrue(ApiTokenTracker.loadAllRecordsFromStorage(context).isEmpty())
         assertTrue(context.getSharedPreferences("api_token_tracker_records_v1", Context.MODE_PRIVATE).getString("records", null).isNullOrBlank())
     }
+    @Test fun duplicateIdempotencyKeysMakeUsageLedgerUnhealthyAndBlockWrites() {
+        val prefs = context.getSharedPreferences("api_token_tracker_records_v1", Context.MODE_PRIVATE)
+        val duplicate = """[
+            {"qId":"same-request","ts":1,"prov":"openai","model":"gpt-4o-mini","agent":"MASTER","task":"task-1","in":10,"out":5,"tot":15,"reas":0,"cache":0,"status":"REAL","usd":0.0,"pln":0.0},
+            {"qId":"same-request","ts":2,"prov":"openai","model":"gpt-4o-mini","agent":"MASTER","task":"task-1","in":20,"out":5,"tot":25,"reas":0,"cache":0,"status":"REAL","usd":0.0,"pln":0.0}
+        ]""".trimIndent()
+        assertTrue(prefs.edit().putString("records", duplicate).commit())
+
+        val plan = ApiTokenTracker.planBatch(
+            context,
+            listOf(BudgetRequest("blocked-task", "MASTER", "openai", "https://api.openai.com/v1", "gpt-4o-mini", 10, 10))
+        )
+        assertTrue(plan.allowedTaskIds.isEmpty())
+        assertTrue(plan.blockedReasons.getValue("blocked-task").contains("rejestr użycia API"))
+        assertTrue(runCatching {
+            ApiTokenTracker.recordQuery(
+                context, "openai", "gpt-4o-mini", "MASTER", "new-task",
+                10L, 5L, status = "REAL", idempotencyKey = "new-request"
+            )
+        }.isFailure)
+        assertEquals(duplicate, prefs.getString("records", null))
+    }
+
     @Test fun corruptUsageLedgerIsNotOverwrittenByNewUsageRecord() {
         val prefs = context.getSharedPreferences("api_token_tracker_records_v1", Context.MODE_PRIVATE)
         val corrupt = """[{"qId":"old-record","tot":10},broken]"""
