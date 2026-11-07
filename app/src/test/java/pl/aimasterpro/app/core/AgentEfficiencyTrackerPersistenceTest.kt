@@ -55,6 +55,15 @@ class AgentEfficiencyTrackerPersistenceTest {
         assertEquals(max - 1, stats.avgDurationMs)
     }
 
+    @Test fun statsAttemptAverageDoesNotOverflowIntAccumulation() {
+        val rows = (0 until 500).map { index ->
+            validRow().replace("\"task\":\"task-1\"", "\"task\":\"task-" + index + "\"")
+                .replace("\"attempts\":1", "\"attempts\":" + Int.MAX_VALUE)
+        }
+        prefs.edit().putString("outcomes", """[${rows.joinToString(",")}]""").commit()
+        val stats = AgentEfficiencyTracker.stats(context).single()
+        assertEquals(Int.MAX_VALUE.toDouble(), stats.avgAttempts, 0.0)
+    }
     @Test fun validHistoryRoundTripsAndCanBeExtended() {
         prefs.edit().putString("outcomes", """[${validRow()}]""").commit()
         assertEquals(1, AgentEfficiencyTracker.load(context).size)

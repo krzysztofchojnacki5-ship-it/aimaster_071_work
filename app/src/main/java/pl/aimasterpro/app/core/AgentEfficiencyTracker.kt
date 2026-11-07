@@ -125,6 +125,6 @@ object AgentEfficiencyTracker {
         val averageDuration = durationTotal.divide(BigInteger.valueOf(rows.size.toLong())).longValueExact()
         AgentStats(agent, rows.size, rows.count { it.status == "COMPLETED" }, rows.count { it.status != "COMPLETED" },
             averageDuration,
-            rows.sumOf { it.attempts }.toDouble() / rows.size)
+            rows.sumOf { it.attempts.toLong() }.toDouble() / rows.size)
     }.sortedByDescending { it.tasks }
 }
