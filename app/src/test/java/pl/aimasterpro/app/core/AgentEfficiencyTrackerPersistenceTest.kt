@@ -45,6 +45,15 @@ class AgentEfficiencyTrackerPersistenceTest {
         assertTrue(AgentEfficiencyTracker.load(context).isEmpty())
     }
 
+    @Test fun statsAverageDoesNotOverflowForLargeValidDurations() {
+        val max = Long.MAX_VALUE
+        val first = validRow().replace("\"duration\":100", "\"duration\":" + max)
+        val second = validRow().replace("\"task\":\"task-1\"", "\"task\":\"task-2\")
+            .replace("\"duration\":100", "\"duration\":" + (max - 2))
+        prefs.edit().putString("outcomes", """[$first,$second]""").commit()
+        val stats = AgentEfficiencyTracker.stats(context).single()
+        assertEquals(max - 1, stats.avgDurationMs)
+    }
     @Test fun validHistoryRoundTripsAndCanBeExtended() {
         prefs.edit().putString("outcomes", """[${validRow()}]""").commit()
         assertEquals(1, AgentEfficiencyTracker.load(context).size)

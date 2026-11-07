@@ -4,6 +4,7 @@ import android.content.Context
 import org.json.JSONArray
 import org.json.JSONObject
 import java.math.BigDecimal
+import java.math.BigInteger
 
 /** Measures observable execution efficiency; it does not claim to score answer quality. */
 object AgentEfficiencyTracker {
@@ -119,8 +120,11 @@ object AgentEfficiencyTracker {
     }
 
     fun stats(context: Context): List<AgentStats> = load(context).groupBy { it.agentId }.map { (agent, rows) ->
+        val durationTotal = rows.asSequence().map { BigInteger.valueOf(it.durationMs) }
+            .fold(BigInteger.ZERO, BigInteger::add)
+        val averageDuration = durationTotal.divide(BigInteger.valueOf(rows.size.toLong())).longValueExact()
         AgentStats(agent, rows.size, rows.count { it.status == "COMPLETED" }, rows.count { it.status != "COMPLETED" },
-            rows.sumOf { it.durationMs } / rows.size,
+            averageDuration,
             rows.sumOf { it.attempts }.toDouble() / rows.size)
     }.sortedByDescending { it.tasks }
 }
