@@ -754,6 +754,21 @@ class ApiTokenTrackerTest {
         assertTrue(runCatching { ApiTokenTracker.setExchangeRate(context, Double.POSITIVE_INFINITY) }.isFailure)
     }
 
+    @Test fun recordQueryRejectsIncompleteLedgerIdentityBeforeWriting() {
+        val prefs = context.getSharedPreferences("api_token_tracker_records_v1", Context.MODE_PRIVATE)
+        prefs.edit().remove("records").commit()
+        val invalidCalls = listOf<() -> Unit>(
+            { ApiTokenTracker.recordQuery(context, "", "model", "MASTER", "task", inputTokens = 1L, outputTokens = 1L) },
+            { ApiTokenTracker.recordQuery(context, "provider", "", "MASTER", "task", inputTokens = 1L, outputTokens = 1L) },
+            { ApiTokenTracker.recordQuery(context, "provider", "model", "", "task", inputTokens = 1L, outputTokens = 1L) },
+            { ApiTokenTracker.recordQuery(context, "provider", "model", "MASTER", "", inputTokens = 1L, outputTokens = 1L) },
+            { ApiTokenTracker.recordQuery(context, "provider", "model", "MASTER", "task", inputTokens = 1L, outputTokens = 1L, status = " ") }
+        )
+        invalidCalls.forEach { call -> assertTrue(runCatching(call).isFailure) }
+        assertEquals(null, prefs.getString("records", null))
+        assertTrue(ApiTokenTracker.loadAllRecordsFromStorage(context).isEmpty())
+    }
+
     @Test fun negativePersistedCostMakesUsageLedgerUnhealthy() {
         val prefs = context.getSharedPreferences("api_token_tracker_records_v1", Context.MODE_PRIVATE)
         val corrupt = """[{"qId":"bad-cost","ts":1,"prov":"p","model":"m","agent":"MASTER","task":"x","in":1,"out":1,"tot":2,"reas":0,"cache":0,"status":"REAL","usd":-1.0,"pln":-4.0}]"""

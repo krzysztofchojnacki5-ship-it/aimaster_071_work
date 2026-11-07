@@ -34,7 +34,9 @@ object TaskCheckpointStore {
      */
     @Synchronized
     fun record(context: Context, event: Event): Boolean {
-        if (event.taskId.isBlank()) return false
+        if (event.taskId.isBlank() || event.agentId.isBlank() || event.status.isBlank() ||
+            event.timestamp < 0L || event.attempts < 0 ||
+            event.estimatedInputTokens < 0L || event.estimatedOutputTokens < 0L) return false
         val rows = readEvents(context)?.toMutableList() ?: return false
         // A late worker callback must not overwrite a terminal result already recorded by
         // the coordinator (for example TIMED_OUT followed by the worker's CANCELLED callback).
@@ -134,10 +136,15 @@ object TaskCheckpointStore {
                 attemptsLong in 0L..Int.MAX_VALUE.toLong() && timestamp >= 0L) {
                 "Checkpoint row has invalid token estimates, timestamp or attempt count."
             }
+            val agentId = exactString("agent")
+            val status = exactString("status")
+            require(agentId.isNotBlank() && status.isNotBlank()) {
+                "Checkpoint row has no agent or lifecycle status."
+            }
             Event(
                 id,
-                exactString("agent"),
-                exactString("status"),
+                agentId,
+                status,
                 exactString("detail"),
                 timestamp,
                 exactString("provider"),
@@ -229,7 +236,9 @@ object TaskCheckpointStore {
 
     /** Only complete request metadata can authorize automatic UNAVAILABLE reconciliation. */
     fun hasRecoverableUsageMetadata(event: Event): Boolean =
-        event.providerId.isNotBlank() &&
+        event.taskId.isNotBlank() &&
+            event.agentId.isNotBlank() &&
+            event.providerId.isNotBlank() &&
             event.model.isNotBlank() &&
             event.estimatedInputTokens > 0L &&
             event.estimatedOutputTokens > 0L &&

@@ -580,6 +580,39 @@ class TaskCheckpointStoreTest {
     }
 
 
+    @Test fun checkpointWriterRejectsInvalidEnvelopeWithoutCorruptingJournal() {
+        val invalidEvents = listOf(
+            TaskCheckpointStore.Event("blank-agent", "", "RUNNING", "", 100L, "", "", 0),
+            TaskCheckpointStore.Event("blank-status", "RESEARCHER", " ", "", 100L, "", "", 0),
+            TaskCheckpointStore.Event("negative-time", "RESEARCHER", "RUNNING", "", -1L, "", "", 0),
+            TaskCheckpointStore.Event("negative-attempts", "RESEARCHER", "RUNNING", "", 100L, "", "", -1),
+            TaskCheckpointStore.Event("negative-input", "RESEARCHER", "RUNNING", "", 100L, "", "", 0, estimatedInputTokens = -1L)
+        )
+        invalidEvents.forEach { event ->
+            assertFalse("Invalid checkpoint envelope must not be persisted: ${event.taskId}",
+                TaskCheckpointStore.record(context, event))
+            assertTrue(TaskCheckpointStore.isJournalReadable(context))
+            assertTrue(TaskCheckpointStore.latest(context).isEmpty())
+        }
+    }
+
+    @Test fun journalRejectsBlankAgentAndLifecycleStatus() {
+        val prefs = context.getSharedPreferences("task_checkpoints_v1", Context.MODE_PRIVATE)
+        val malformedRows = listOf(
+            """[{"task":"blank-agent","agent":"","status":"RUNNING","detail":"","ts":100,"provider":"","model":"","attempts":0}]""",
+            """[{"task":"blank-status","agent":"RESEARCHER","status":"","detail":"","ts":100,"provider":"","model":"","attempts":0}]"""
+        )
+        malformedRows.forEach { malformed ->
+            assertTrue(prefs.edit().putString("events", malformed).commit())
+            assertFalse(TaskCheckpointStore.isJournalReadable(context))
+            assertFalse(TaskCheckpointStore.record(context, TaskCheckpointStore.Event(
+                "after-invalid-row", "RESEARCHER", "QUEUED", "", 200L, "", "", 0
+            )))
+            assertEquals(malformed, prefs.getString("events", null))
+            prefs.edit().clear().commit()
+        }
+    }
+
     @Test fun automaticUsageRecoveryRequiresCompleteRequestMetadata() {
         val incomplete = TaskCheckpointStore.Event(
             taskId = "legacy-request", agentId = "RESEARCHER", status = "USAGE_PENDING",

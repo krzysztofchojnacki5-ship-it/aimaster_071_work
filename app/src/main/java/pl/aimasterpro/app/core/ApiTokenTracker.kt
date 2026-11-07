@@ -149,6 +149,10 @@ object ApiTokenTracker {
         cacheWrite1hTokens: Long = 0L,
         reasoningTokensKnown: Boolean = false
     ): TokenRecord {
+        require(providerId.isNotBlank() && modelName.isNotBlank() && agentId.isNotBlank() &&
+            taskId.isNotBlank() && status.isNotBlank()) {
+            "Tożsamość wpisu rozliczeniowego nie może zawierać pustych pól."
+        }
         require(inputTokens >= 0L && outputTokens >= 0L && reasoningTokens >= 0L &&
             reasoningTokens <= outputTokens && cachedTokens >= 0L && cacheWriteTokens >= 0L && cacheWrite1hTokens >= 0L &&
             Math.addExact(Math.addExact(cachedTokens, cacheWriteTokens), cacheWrite1hTokens) <= inputTokens) {
