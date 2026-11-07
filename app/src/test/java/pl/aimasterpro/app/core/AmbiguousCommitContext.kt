@@ -8,7 +8,8 @@ import java.lang.reflect.Proxy
 /** Simulates commit() returning false after apply() has already changed the in-memory map. */
 internal class AmbiguousCommitContext(
     base: Context,
-    private val targetPreferencesName: String
+    private val targetPreferencesName: String,
+    private val applyBeforeFailure: Boolean = true
 ) : ContextWrapper(base) {
     override fun getSharedPreferences(name: String, mode: Int): SharedPreferences {
         val delegate = super.getSharedPreferences(name, mode)
@@ -26,7 +27,7 @@ internal class AmbiguousCommitContext(
             ) { _, editorMethod, editorArgs ->
                 when (editorMethod.name) {
                     "commit" -> {
-                        editor.apply()
+                        if (applyBeforeFailure) editor.apply()
                         false
                     }
                     "apply" -> editor.apply()
