@@ -968,3 +968,7 @@ Usunięto dwufazowy zapis `currentId` oraz `last_user_chat_id`. Nowe API `update
 Run `42411603439` zakończył się `cancelled` (nie jest to wynik testów). Uruchomiono nowy run `42415438103` dla scalonego HEAD `c650c5604074449593d138730bd7e2e2b89da9d2` na gałęzi audytowej. Job `128532366193`; status `in_progress`; testy i kompilacja jeszcze oczekują na start.
 
 Uzupełnienie: przejście do Asystenta i tworzenie nowego czatu nie zapisują już `last_user_chat_id` osobnym `apply()`. Korzystają z atomowej ścieżki `saveCurrentId()`; nieudany commit blokuje przełączenie. Commit `2db4679b...`; przegląd statyczny, testy UI NOT RUN.
+
+### 0.6.139 — wszystkie zapisy MainActivity do chat_state pod kontrolą store
+
+Zapis legacy mirror `chat_messages` przeniesiono do `ChatHistoryStore.writeLegacyMirror()`, który używa wspólnej blokady i latcha niejednoznacznego commitu. MainActivity nie ma już bezpośredniego `commit()` do `chat_state`; błąd kopii legacy jest ostrzeżeniem, a kanoniczny zapis pozostaje rozstrzygający. Dodano test awarii commit i test blokady. Commity `173e1ba8...`, `ff41c04f...`, `bf3556ba...`; ADDED / NOT RUN.
