@@ -1796,13 +1796,14 @@ class MainActivity : Activity() {
                     val masterSynthesisReserveCostPln =
                         (masterSynthesisReserve.toDouble() * maxOf(
                             maxOf(
-                                synthesisPricing.inputPer1MUsd,
                                 maxOf(
-                                    synthesisPricing.cachedInputPer1MUsd ?: synthesisPricing.inputPer1MUsd,
-                                    synthesisPricing.cacheWriteInputPer1MUsd ?: synthesisPricing.inputPer1MUsd
-                                )
-                            ),
-                            synthesisPricing.cacheWriteInput1hPer1MUsd ?: synthesisPricing.cacheWriteInputPer1MUsd ?: synthesisPricing.inputPer1MUsd
+                                    synthesisPricing.inputPer1MUsd,
+                                    maxOf(
+                                        synthesisPricing.cachedInputPer1MUsd ?: synthesisPricing.inputPer1MUsd,
+                                        synthesisPricing.cacheWriteInputPer1MUsd ?: synthesisPricing.inputPer1MUsd
+                                    )
+                                ),
+                                synthesisPricing.cacheWriteInput1hPer1MUsd ?: synthesisPricing.cacheWriteInputPer1MUsd ?: synthesisPricing.inputPer1MUsd
                             ),
                             maxOf(
                                 synthesisPricing.outputPer1MUsd,
