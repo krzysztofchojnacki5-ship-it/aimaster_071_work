@@ -191,4 +191,38 @@ class TaskCheckpointStoreTest {
         assertEquals(malformed, prefs.getString("events", null))
     }
 
+
+    @Test fun usagePendingStatePreservesRequestMetadataForRestartReconciliation() {
+        assertTrue(TaskCheckpointStore.record(context, TaskCheckpointStore.Event(
+            taskId = "task-metadata-preserve", agentId = "RESEARCHER", status = "REQUESTING",
+            detail = "request started", timestamp = 100L, providerId = "provider-a", model = "model-a",
+            attempts = 1, processId = "previous-process", estimatedInputTokens = 450L,
+            estimatedOutputTokens = 1200L, idempotencyKey = "team:task-metadata-preserve:provider-a",
+            baseUrl = "https://api.example"
+        )))
+        assertTrue(TaskCheckpointStore.record(context, TaskCheckpointStore.Event(
+            taskId = "task-metadata-preserve", agentId = "RESEARCHER", status = "USAGE_PENDING",
+            detail = "usage write failed", timestamp = 200L, providerId = "provider-a", model = "model-a",
+            attempts = 1, processId = "previous-process"
+        )))
+
+        val latest = TaskCheckpointStore.latest(context).single()
+        assertEquals("USAGE_PENDING", latest.status)
+        assertEquals(450L, latest.estimatedInputTokens)
+        assertEquals(1200L, latest.estimatedOutputTokens)
+        assertEquals("team:task-metadata-preserve:provider-a", latest.idempotencyKey)
+        assertEquals("https://api.example", latest.baseUrl)
+
+        var recovered: TaskCheckpointStore.Event? = null
+        assertEquals(1, TaskCheckpointStore.recoverStaleRunning(context, 300L) {
+            recovered = it
+            true
+        })
+        assertEquals(450L, recovered?.estimatedInputTokens)
+        assertEquals(1200L, recovered?.estimatedOutputTokens)
+        assertEquals("team:task-metadata-preserve:provider-a", recovered?.idempotencyKey)
+        assertEquals("https://api.example", recovered?.baseUrl)
+        assertEquals("INTERRUPTED", TaskCheckpointStore.latest(context).single().status)
+    }
+
 }
