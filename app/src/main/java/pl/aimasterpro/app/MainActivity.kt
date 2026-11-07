@@ -3533,7 +3533,10 @@ class MainActivity : Activity() {
             apiKey = "", // klucz pozostaje wyłącznie w profilu bazowym dostawcy
             parentProviderId = baseId
         )
-        saveProvider(profile.copy(apiKey = ""))
+        if (!saveProvider(profile.copy(apiKey = ""))) {
+            toast("Nie udało się zapisać profilu modelu. Nie dodano go do konfiguracji.")
+            return
+        }
         showShell("Modele"); showProviders()
         toast("Dodano profil modelu: ${info.name}. Przypisz go odpowiedniej roli w zakładce Agenci.")
     }
