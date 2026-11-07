@@ -188,4 +188,29 @@ class SecureStoreImportTest {
         assertFalse(shouldCreateFreshSecureStoreKey(aliasExists = true, hasPersistedCiphertexts = false))
     }
 
+    @Test fun fullReplacementRejectsWhenAnyExistingSecretIsUnreadable() {
+        val context = org.robolectric.RuntimeEnvironment.getApplication()
+        val prefs = context.getSharedPreferences("secure_provider_store", Context.MODE_PRIVATE)
+        prefs.edit()
+            .putStringSet("provider_ids", setOf("provider_one"))
+            .putString("config_provider_one", validConfig().toString())
+            .putString("key_provider_one", "!")
+            .commit()
+        val beforeConfig = prefs.getString("config_provider_one", null)
+
+        val result = SecureStore(context).replaceAllConfigs(listOf(validConfig("replacement")))
+
+        assertFalse(result)
+        assertEquals(setOf("provider_one"), prefs.getStringSet("provider_ids", emptySet()))
+        assertEquals("!", prefs.getString("key_provider_one", null))
+        assertEquals(beforeConfig, prefs.getString("config_provider_one", null))
+        assertFalse(prefs.contains("config_replacement"))
+    }
+
+    @Test fun unreadableSecretSetDetectionIsFailClosed() {
+        assertTrue(hasUnreadableExistingSecrets(setOf("key_a", "key_b"), setOf("key_a")))
+        assertFalse(hasUnreadableExistingSecrets(setOf("key_a"), setOf("key_a")))
+        assertFalse(hasUnreadableExistingSecrets(emptySet(), emptySet()))
+    }
+
 }
