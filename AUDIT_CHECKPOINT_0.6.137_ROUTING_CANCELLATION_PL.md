@@ -1858,3 +1858,13 @@ Doprecyzowanie projektu SQLite:
 - CI run: `42328556129`; job `128269544334`; krok `Run unit tests and compile debug variant` jest w toku. Konfiguracja JDK 17, Android SDK/API 36 i Gradle 8.13 zakończyła się powodzeniem.
 - Commit dokumentacji checkpointu po zmianach: `6ce958af`; nie zmienia kodu aplikacji.
 - Stan porównania z `main`: 355 commitów ahead, 0 behind. Brak merge i brak zmian w `main`.
+
+
+### Regresja: wyjątek podczas commit oraz granice migracji
+
+- Dodano test `thrownPreferencesCommitPoisonsAllStoreInstances()`: wstrzyknięty zapis aktualizuje mapę in-memory przez `apply()`, po czym rzuca wyjątek. Test sprawdza globalną blokadę i brak kolejnych zapisów z drugiej instancji.
+- Commit testu: `fedc346d`.
+- CI dla SHA `fedc346d`: run `42328857853`; status ostatniego odczytu: `in_progress`. Starsze runy zostały anulowane przez nowsze push'e; ich anulowanie nie jest wynikiem testów.
+- Przegląd architektury wykazał, że aplikacja ma wiele niezależnych magazynów SharedPreferences (m.in. checkpointy, historia czatów, pamięć AI, rejestr tokenów). Planowana migracja SQLite w tym etapie dotyczy wyłącznie `secure_provider_store` i nie może automatycznie obejmować pozostałych magazynów.
+- Wymagania przed implementacją migracji SecureStore: wersjonowany schemat i migracja transakcyjna; unikalne ograniczenia ID; metadane profilu i zaszyfrowany sekret w jednej transakcji; zachowanie Android Keystore bez eksportowania klucza; marker migracji ustawiany dopiero po odczycie kontrolnym; stary SharedPreferences pozostaje nietknięty aż do potwierdzenia nowego DB; idempotentne wznowienie po przerwaniu procesu; testy crash-pointów przed/po commit i po markerze; ścieżka rollback bez usuwania starego źródła.
+- Nie rozpoczęto migracji ani zmiany formatu danych. To etap projektowania, nie wdrożenie.
