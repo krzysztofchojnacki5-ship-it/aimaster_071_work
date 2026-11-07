@@ -535,7 +535,8 @@ class ProviderClientNetworkTest {
             val result = ProviderClient().chat(cfg, "system", "test")
             assertEquals("REAL", result.usage.status)
             assertEquals(15L, result.usage.inputTokens)
-            assertEquals(12L, result.usage.cachedTokens)
+            assertEquals(8L, result.usage.cachedTokens)
+            assertEquals(4L, result.usage.cacheWriteTokens)
             assertEquals(17L, result.usage.totalTokens)
         } finally { server.stop(0) }
 
@@ -551,6 +552,26 @@ class ProviderClientNetworkTest {
             assertEquals("ESTIMATED", result.usage.status)
             assertEquals(0L, result.usage.cachedTokens)
         } finally { malformedServer.stop(0) }
+    }
+
+    @Test
+    fun openRouterCacheWriteUsageIsSeparatedAndMalformedWriteCountsAreEstimated() {
+        val (server, _) = server { _, _ ->
+            200 to """{"choices":[{"message":{"content":"response"}}],"usage":{"prompt_tokens":100,"completion_tokens":2,"total_tokens":102,"prompt_tokens_details":{"cached_tokens":20,"cache_write_tokens":30}}}"""
+        }
+        try {
+            val result = ProviderClient().chat(
+                config("http://127.0.0.1:${server.address.port}/v1"), "system", "test"
+            )
+            assertEquals("REAL", result.usage.status)
+            assertEquals(100L, result.usage.inputTokens)
+            assertEquals(20L, result.usage.cachedTokens)
+            assertEquals(30L, result.usage.cacheWriteTokens)
+            assertEquals(102L, result.usage.totalTokens)
+        } finally { server.stop(0) }
+
+        assertEstimatedUsage("""{"prompt_tokens":100,"completion_tokens":2,"total_tokens":102,"prompt_tokens_details":{"cached_tokens":20,"cache_write_tokens":"30"}}""")
+        assertEstimatedUsage("""{"prompt_tokens":100,"completion_tokens":2,"total_tokens":102,"prompt_tokens_details":{"cached_tokens":80,"cache_write_tokens":30}}""")
     }
 
 }
