@@ -87,6 +87,10 @@ object TaskCheckpointStore {
     @Synchronized
     fun load(context: Context): List<Event> = readEvents(context) ?: emptyList()
 
+    /** Distinguishes an empty journal from unreadable persisted recovery data. */
+    @Synchronized
+    fun isJournalReadable(context: Context): Boolean = readEvents(context) != null
+
     /**
      * A corrupt journal is distinct from an empty journal. Callers that append must not
      * replace unreadable persisted data with a new empty history.
