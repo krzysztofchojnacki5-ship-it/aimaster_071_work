@@ -172,6 +172,12 @@ class MainActivity : Activity() {
             pl.aimasterpro.app.core.AgentProviderAssignmentStore.read(this, assignmentDefaults)
         )
         selectedProviderId = agentProviders[AgentRole.MASTER.name] ?: selectedProviderId
+        if (chatPrefs.getString("selected_provider", null) != selectedProviderId) {
+            val synced = pl.aimasterpro.app.core.AgentProviderAssignmentStore.save(
+                this, AgentRole.MASTER.name, selectedProviderId
+            )
+            if (!synced) android.util.Log.e("AIMasterAssignments", "Nie udało się uzgodnić legacy selected_provider z przypisaniem MASTER.")
+        }
         AgentRole.values().forEach { role -> agentConnection[role.name] = "unknown" }
         window.statusBarColor = bg
         window.navigationBarColor = bg
