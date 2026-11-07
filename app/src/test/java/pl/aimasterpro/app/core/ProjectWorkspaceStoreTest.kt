@@ -271,6 +271,44 @@ class ProjectWorkspaceStoreTest {
         }
     }
 
+    @Test fun recoversInterruptedJournaledSwapAfterStoreRecreation() {
+        val root = tempDir("workspace-journal-restart-")
+        try {
+            val originalStore = ProjectWorkspaceStore(root)
+            originalStore.importZip(ByteArrayInputStream(zip("README.md" to "stable after restart")), "stable.zip", 41L)
+
+            val current = File(root, "current")
+            val manifest = File(root, "current.manifest")
+            val previous = File(root, ".previous-123e4567-e89b-12d3-a456-426614174000")
+            val previousManifest = File(root, ".previous-123e4567-e89b-12d3-a456-426614174000.manifest")
+            assertTrue(current.renameTo(previous))
+            assertTrue(manifest.renameTo(previousManifest))
+
+            File(root, "workspace.swap.journal").outputStream().use { stream ->
+                DataOutputStream(stream).use { output ->
+                    output.writeInt(0x41495357) // AISW
+                    output.writeInt(2)
+                    output.writeUTF("123e4567-e89b-12d3-a456-426614174000")
+                    output.writeBoolean(true)
+                    output.writeUTF("0".repeat(64))
+                    output.writeBoolean(false)
+                }
+            }
+
+            // A fresh store instance models a process restart: only durable files remain.
+            val restartedStore = ProjectWorkspaceStore(root)
+            val recovered = restartedStore.currentInfo()
+            assertNotNull(recovered)
+            assertEquals("stable after restart", restartedStore.readTextFile("README.md").content)
+            assertTrue(restartedStore.verifyCurrentWorkspace().valid)
+            assertFalse(File(root, "workspace.swap.journal").exists())
+            assertFalse(previous.exists())
+            assertFalse(previousManifest.exists())
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
     @Test fun temporaryWriterCleanupPreservesPathNotCreatedByWriter() {
         val root = tempDir("workspace-temp-not-owned-")
         try {
@@ -340,8 +378,8 @@ class ProjectWorkspaceStoreTest {
             assertTrue(manifest.isFile)
             assertTrue(store.verifyCurrentWorkspace().valid)
             assertEquals("durable manifest", store.readTextFile("src/Main.kt").content)
-            assertTrue(root.listFiles().orEmpty().none {
-                it.name.startsWith(".current.manifest.") && it.name.endsWith(".tmp")
+            assertTrue("manifest publication must leave no root-level temporary files", root.listFiles().orEmpty().none {
+                it.isFile && it.name.endsWith(".tmp")
             })
         } finally { root.deleteRecursively() }
     }
