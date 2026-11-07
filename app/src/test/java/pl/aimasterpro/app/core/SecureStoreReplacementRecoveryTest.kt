@@ -1,6 +1,8 @@
 package pl.aimasterpro.app.core
 
 import android.content.Context
+import android.content.ContextWrapper
+import android.content.SharedPreferences
 import org.json.JSONObject
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -15,6 +17,7 @@ import pl.aimasterpro.app.data.SecureStore
 import pl.aimasterpro.app.data.SecureStoreHealth
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
+import java.lang.reflect.Proxy
 
 @RunWith(RobolectricTestRunner::class)
 class SecureStoreReplacementRecoveryTest {
@@ -156,6 +159,35 @@ class SecureStoreReplacementRecoveryTest {
         assertFalse(prefs.contains("key_would-be-imported"))
         assertFalse(prefs.contains("config_invalid-later"))
         assertFalse(prefs.contains("key_invalid-later"))
+    }
+
+    @Test fun startupCanReloadDurableCatalogAfterTransientProviderIdReadFailure() {
+        seedOldCatalog()
+        val base = context
+        val delegate = base.getSharedPreferences("secure_provider_store", Context.MODE_PRIVATE)
+        val failingPreferences = Proxy.newProxyInstance(
+            SharedPreferences::class.java.classLoader,
+            arrayOf(SharedPreferences::class.java)
+        ) { _, method, args ->
+            if (method.name == "getStringSet" && args?.getOrNull(0) == "provider_ids") {
+                throw IllegalStateException("simulated transient provider ID read failure")
+            }
+            method.invoke(delegate, *(args ?: emptyArray()))
+        } as SharedPreferences
+        val failingContext = object : ContextWrapper(base) {
+            override fun getSharedPreferences(name: String, mode: Int): SharedPreferences =
+                if (name == "secure_provider_store") failingPreferences
+                else super.getSharedPreferences(name, mode)
+        }
+
+        assertTrue(SecureStore(failingContext).allConfigs().isEmpty())
+        assertTrue(SecureStoreHealth.isUncertain())
+        assertEquals(setOf("old-provider"), delegate.getStringSet("provider_ids", emptySet()))
+
+        // Simulated new process: use the base preferences instance after clearing process-local latch.
+        SecureStoreHealth.resetForTests()
+        assertEquals(setOf("old-provider"),
+            SecureStore(base).allConfigs().map { it.optString("id") }.toSet())
     }
 
     @Test fun startupKeepsOldAssignmentsWhenFailedSecureStoreCommitDidNotPersist() {
