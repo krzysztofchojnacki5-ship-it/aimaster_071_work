@@ -13,18 +13,32 @@ import javax.crypto.spec.SecretKeySpec
 object BackupCrypto {
     private const val ITERATIONS = 210_000
     private const val KEY_BITS = 256
+    private const val MAX_PLAIN_BYTES = 4 * 1024 * 1024
+    private const val MAX_ENVELOPE_CHARS = 6 * 1024 * 1024
+    private const val GCM_TAG_BITS = 128
+
+    private fun deriveKey(password: CharArray, salt: ByteArray): SecretKeySpec {
+        val spec = PBEKeySpec(password, salt, ITERATIONS, KEY_BITS)
+        return try {
+            val encoded = SecretKeyFactory.getInstance("PBKDF2WithHmacSHA256").generateSecret(spec).encoded
+            SecretKeySpec(encoded, "AES").also { encoded.fill(0) }
+        } finally {
+            spec.clearPassword()
+        }
+    }
 
     fun encrypt(plain: String, password: CharArray): String {
         require(password.size >= 8) { "Hasło musi mieć co najmniej 8 znaków." }
         require(plain.isNotBlank()) { "Tekst do zaszyfrowania nie może być pusty." }
+        val plainBytes = plain.toByteArray(Charsets.UTF_8)
+        require(plainBytes.size <= MAX_PLAIN_BYTES) { "Kopia jest zbyt duża (limit 4 MiB)." }
         val salt = ByteArray(16).also { SecureRandom().nextBytes(it) }
         val iv = ByteArray(12).also { SecureRandom().nextBytes(it) }
-        val spec = PBEKeySpec(password, salt, ITERATIONS, KEY_BITS)
-        val key = SecretKeySpec(SecretKeyFactory.getInstance("PBKDF2WithHmacSHA256").generateSecret(spec).encoded, "AES")
-        spec.clearPassword()
+        val key = deriveKey(password, salt)
         val cipher = Cipher.getInstance("AES/GCM/NoPadding")
         cipher.init(Cipher.ENCRYPT_MODE, key, GCMParameterSpec(128, iv))
-        val ciphertext = cipher.doFinal(plain.toByteArray(Charsets.UTF_8))
+        val ciphertext = cipher.doFinal(plainBytes)
+        plainBytes.fill(0)
         return JSONObject().put("format", "AIMASTER_BACKUP").put("version", 1)
             .put("iterations", ITERATIONS).put("salt", Base64.encodeToString(salt, Base64.NO_WRAP))
             .put("iv", Base64.encodeToString(iv, Base64.NO_WRAP))
@@ -32,7 +46,8 @@ object BackupCrypto {
     }
 
     fun decrypt(encoded: String, password: CharArray): String {
-        require(password.isNotEmpty()) { "Hasło nie może być puste." }
+        require(password.size >= 8) { "Hasło musi mieć co najmniej 8 znaków." }
+        require(encoded.length <= MAX_ENVELOPE_CHARS) { "Plik kopii przekracza limit 6 MiB." }
         val envelope = runCatching { JSONObject(encoded) }.getOrElse { throw IllegalArgumentException("Nieprawidłowy format JSON kopii zapasowej.") }
         require(envelope.optString("format") == "AIMASTER_BACKUP" && envelope.optInt("version") == 1) {
             "To nie jest poprawna kopia zapasowa AI Master Pro (nieznany format lub wersja)."
@@ -54,13 +69,13 @@ object BackupCrypto {
         val data = Base64.decode(dataBase64, Base64.NO_WRAP)
         require(salt.size == 16) { "Nieprawidłowa długość soli (salt)." }
         require(iv.size == 12) { "Nieprawidłowa długość wektora inicjalizującego (IV)." }
+        require(data.size in 17..(MAX_PLAIN_BYTES + 16)) { "Dane kopii mają nieprawidłowy rozmiar." }
 
-        val spec = PBEKeySpec(password, salt, ITERATIONS, KEY_BITS)
-        val keyFactory = SecretKeyFactory.getInstance("PBKDF2WithHmacSHA256")
-        val key = SecretKeySpec(keyFactory.generateSecret(spec).encoded, "AES")
-        spec.clearPassword()
+        val key = deriveKey(password, salt)
         val cipher = Cipher.getInstance("AES/GCM/NoPadding")
-        cipher.init(Cipher.DECRYPT_MODE, key, GCMParameterSpec(128, iv))
-        return String(cipher.doFinal(data), Charsets.UTF_8)
+        cipher.init(Cipher.DECRYPT_MODE, key, GCMParameterSpec(GCM_TAG_BITS, iv))
+        val plain = cipher.doFinal(data)
+        require(plain.size <= MAX_PLAIN_BYTES) { "Dane kopii przekraczają dozwolony rozmiar." }
+        return try { String(plain, Charsets.UTF_8) } finally { plain.fill(0) }
     }
 }
