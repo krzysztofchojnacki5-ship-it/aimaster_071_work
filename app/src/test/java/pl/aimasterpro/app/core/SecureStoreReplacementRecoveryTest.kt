@@ -19,10 +19,12 @@ import org.robolectric.RuntimeEnvironment
 @RunWith(RobolectricTestRunner::class)
 class SecureStoreReplacementRecoveryTest {
     private val context get() = RuntimeEnvironment.getApplication()
-    private val defaults = linkedMapOf(
-        "MASTER" to "new-master",
-        "CODER" to "new-coder",
-        "RESEARCHER" to "new-master"
+    // Mirrors MainActivity startup: selected_provider is the MASTER legacy fallback;
+    // specialist roles default to the seeded Groq profile.
+    private val startupDefaults = linkedMapOf(
+        "MASTER" to "old-provider",
+        "CODER" to "groq",
+        "RESEARCHER" to "groq"
     )
 
     @Before fun reset() {
@@ -54,6 +56,13 @@ class SecureStoreReplacementRecoveryTest {
         assertTrue(AgentProviderAssignmentStore.save(context, "RESEARCHER", "old-provider"))
     }
 
+    /** Reproduces the relevant seedDefaultProviders() effects before startup reconciliation. */
+    private fun seedStartupDefaults() {
+        val store = SecureStore(context)
+        assertTrue(store.saveConfig(provider("gemini")))
+        assertTrue(store.saveConfig(provider("groq")))
+    }
+
     @Test fun startupRecoversWhenFailedSecureStoreCommitExposedNewCatalogInMemory() {
         seedOldCatalog()
         val failedContext = AmbiguousCommitContext(
@@ -66,17 +75,20 @@ class SecureStoreReplacementRecoveryTest {
 
         // Process restart: discard process-local uncertainty and reload whichever snapshot survived.
         SecureStoreHealth.resetForTests()
+        seedStartupDefaults()
         val catalog = SecureStore(context).allConfigs().map { it.optString("id") }.toSet()
-        assertEquals(setOf("new-master", "new-coder"), catalog)
+        assertEquals(setOf("new-master", "new-coder", "gemini", "groq"), catalog)
 
         val recovered = AgentProviderAssignmentStore.reconcileExistingAssignments(
-            context, defaults, catalog, "old-provider"
+            context, startupDefaults, catalog, "old-provider"
         )
         assertNotNull(recovered)
-        assertEquals("new-master", recovered!!["MASTER"])
-        assertEquals("new-coder", recovered["CODER"])
-        assertEquals("new-master", recovered["RESEARCHER"])
-        assertEquals("new-master", context.getSharedPreferences("chat_state", Context.MODE_PRIVATE)
+        // The interrupted import's preferred MASTER ID was not persisted. Startup therefore
+        // uses the seeded Gemini fallback; specialist roles use Groq.
+        assertEquals("gemini", recovered!!["MASTER"])
+        assertEquals("groq", recovered["CODER"])
+        assertEquals("groq", recovered["RESEARCHER"])
+        assertEquals("gemini", context.getSharedPreferences("chat_state", Context.MODE_PRIVATE)
             .getString("selected_provider", null))
     }
 
@@ -91,11 +103,12 @@ class SecureStoreReplacementRecoveryTest {
         assertTrue(SecureStoreHealth.isUncertain())
 
         SecureStoreHealth.resetForTests()
+        seedStartupDefaults()
         val catalog = SecureStore(context).allConfigs().map { it.optString("id") }.toSet()
-        assertEquals(setOf("old-provider"), catalog)
+        assertEquals(setOf("old-provider", "gemini", "groq"), catalog)
 
         val recovered = AgentProviderAssignmentStore.reconcileExistingAssignments(
-            context, defaults, catalog, "old-provider"
+            context, startupDefaults, catalog, "old-provider"
         )
         assertNotNull(recovered)
         assertEquals("old-provider", recovered!!["MASTER"])
