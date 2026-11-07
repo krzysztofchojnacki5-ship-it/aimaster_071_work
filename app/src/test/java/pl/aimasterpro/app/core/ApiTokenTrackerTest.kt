@@ -974,7 +974,8 @@ class ApiTokenTrackerTest {
             context, "reasoning-price-provider", "vendor/reasoning-price-model",
             "MASTER", "reasoning-price-task",
             inputTokens = 0L, outputTokens = 1_000_000L, reasoningTokens = 400_000L,
-            status = "REAL", baseUrl = "https://reasoning-price.example/v1"
+            status = "REAL", baseUrl = "https://reasoning-price.example/v1",
+            reasoningTokensKnown = true
         )
         // 600k visible output at $0.50/M + 400k reasoning at $0.90/M.
         assertEquals(0.66, record.costUsd, 0.000001)
@@ -1057,6 +1058,27 @@ class ApiTokenTrackerTest {
         )
         assertEquals(2.00, plan.estimatedReservedCostPln, 0.00001)
         ApiTokenTracker.releaseBatchReservation(plan.reservationId)
+    }
+
+    @Test fun missingReasoningBreakdownUsesConservativePublishedRate() {
+        ApiTokenTracker.replaceCatalogPricingForProvider(
+            context, "reasoning-unknown-provider", "https://reasoning-unknown.example/v1",
+            listOf(CatalogModelPrice(
+                "vendor/reasoning-unknown-model", 0.23, 0.50, false,
+                internalReasoningPer1MUsd = 0.90
+            ))
+        )
+        val record = ApiTokenTracker.recordQuery(
+            context, "reasoning-unknown-provider", "vendor/reasoning-unknown-model",
+            "MASTER", "reasoning-unknown-task",
+            inputTokens = 0L, outputTokens = 1_000_000L, reasoningTokens = 0L,
+            status = "REAL", baseUrl = "https://reasoning-unknown.example/v1",
+            reasoningTokensKnown = false
+        )
+        // Without a provider breakdown, reserve/charge the whole output at the highest published rate.
+        assertEquals(0.90, record.costUsd, 0.000001)
+        assertEquals(3.60, record.costPln, 0.00001)
+        assertFalse(record.reasoningTokensKnown)
     }
 
 }
