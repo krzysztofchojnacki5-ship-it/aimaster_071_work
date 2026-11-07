@@ -253,4 +253,22 @@ class ProjectWorkspaceStoreApplyTest {
         assertTrue(store.hasPendingWorkspaceTransaction())
     }
 
+
+    @Test fun authorizedRollbackRefusesTamperedFilesEvenWhenManifestIdentityMatches() {
+        val (store, root) = store("README.md" to "before\\n", "src/A.kt" to "old\\n")
+        val patch = preview(store, "src/A.kt", "old\\n", "--- a/src/A.kt\\n+++ b/src/A.kt\\n@@ -1 +1 @@\\n-old\\n+new\\n")
+        val applied = store.applyPreview(patch, changeSetId = "changeset-tampered", chatId = "chat-tampered")
+        assertTrue(store.markPatchReceiptRollbackRequested("changeset-tampered", applied.transactionId))
+        File(root, "current/src/A.kt").writeText("external edit\\n")
+
+        assertEquals("manifest identity is unchanged", applied.workspaceIdentity, store.currentIdentity())
+        val result = runCatching {
+            store.restoreSnapshotForPatchRollback(applied.snapshot.id, "changeset-tampered", applied.transactionId)
+        }
+
+        assertTrue("rollback must not overwrite tampered workspace files", result.isFailure)
+        assertEquals("external edit\\n", File(root, "current/src/A.kt").readText())
+        assertTrue(store.hasPendingWorkspaceTransaction())
+    }
+
 }
