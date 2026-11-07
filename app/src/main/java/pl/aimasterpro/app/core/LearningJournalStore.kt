@@ -45,8 +45,10 @@ object LearningJournalStore {
                 .put("category", e.category).put("taskId", e.taskId)
                 .put("inputTokens", e.inputTokens.coerceAtLeast(0L)).put("outputTokens", e.outputTokens.coerceAtLeast(0L)))
         }
-        val saved = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
-            .putString(KEY, json.toString()).commit()
+        val saved = runCatching {
+            context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
+                .putString(KEY, json.toString()).commit()
+        }.getOrDefault(false)
         if (!saved) android.util.Log.e("AIMasterLearning", "Nie udało się trwale zapisać dziennika operacyjnego.")
     }
 
@@ -54,9 +56,10 @@ object LearningJournalStore {
     fun load(context: Context): List<Event> = readStrict(context) ?: emptyList()
 
     /** Corrupt rows are not dropped: writers must preserve the original journal for recovery. */
-    private fun readStrict(context: Context): List<Event>? {
-        val raw = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString(KEY, null) ?: return emptyList()
-        return runCatching {
+    private fun readStrict(context: Context): List<Event>? = runCatching {
+        val raw = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            .getString(KEY, null) ?: return@runCatching emptyList()
+        runCatching {
             val arr = JSONArray(raw)
             (0 until arr.length()).map { i ->
                 val o = arr.getJSONObject(i)
@@ -80,7 +83,7 @@ object LearningJournalStore {
                     o.optString("taskId"), input, output)
             }
         }.getOrNull()
-    }
+    }.getOrNull()
 
     fun contextString(context: Context): String {
         val rows = load(context).filter { it.agentId.isNotBlank() && it.kind == "agent" }
@@ -95,7 +98,7 @@ object LearningJournalStore {
         return "HISTORIA WYKONANIA AGENTÓW (metryki operacyjne, nie ocena merytorycznej jakości odpowiedzi):\n" + rows.joinToString("\n")
     }
 
-    fun clear(context: Context) {
-        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().remove(KEY).apply()
-    }
+    fun clear(context: Context): Boolean = runCatching {
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().remove(KEY).commit()
+    }.getOrDefault(false)
 }
