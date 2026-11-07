@@ -209,4 +209,43 @@ class ChatResponseArchiveTest {
         assertNull(ChatResponseArchive.get(context, "bounded-task-4"))
     }
 
+
+@Test fun archivedAnswerSurvivesHistoryCommitFailureBeforeApplyAndReplaysAfterRestart() {
+        val chatId = "chat-response-before-apply"
+        createChat(chatId)
+        assertTrue(ChatResponseArchive.put(
+            context, "response-before-apply", chatId, "MASTER", "Recover this answer",
+            "provider-a", "model-a", 20_000L
+        ))
+        val failing = AmbiguousCommitContext(context, "chat_state", applyBeforeFailure = false)
+        assertTrue(runCatching { ChatResponseArchive.restoreArchivedResponses(failing) }.isFailure)
+        assertNotNull(ChatResponseArchive.get(context, "response-before-apply"))
+
+        SharedPreferencesWriteHealth.resetForTests("chat_state")
+        assertEquals(1, ChatResponseArchive.restoreArchivedResponses(context))
+        assertEquals(0, ChatResponseArchive.restoreArchivedResponses(context))
+        val chat = ChatHistoryStore.readRoot(context)!!.getJSONObject("chats").getJSONObject(chatId)
+        assertEquals(2, chat.getJSONArray("messages").length())
+        assertEquals("response-before-apply", chat.getJSONArray("assistantTaskIds").getString(0))
+    }
+
+    @Test fun archivedAnswerAppliedBeforeAmbiguousFailureIsNotDuplicatedAfterRestart() {
+        val chatId = "chat-response-after-apply"
+        createChat(chatId)
+        assertTrue(ChatResponseArchive.put(
+            context, "response-after-apply", chatId, "MASTER", "Already applied answer",
+            "provider-a", "model-a", 21_000L
+        ))
+        val failing = AmbiguousCommitContext(context, "chat_state", applyBeforeFailure = true)
+        assertTrue(runCatching { ChatResponseArchive.restoreArchivedResponses(failing) }.isFailure)
+        assertNotNull(ChatResponseArchive.get(context, "response-after-apply"))
+
+        SharedPreferencesWriteHealth.resetForTests("chat_state")
+        assertEquals(0, ChatResponseArchive.restoreArchivedResponses(context))
+        val chat = ChatHistoryStore.readRoot(context)!!.getJSONObject("chats").getJSONObject(chatId)
+        assertEquals(2, chat.getJSONArray("messages").length())
+        assertEquals(1, (0 until chat.getJSONArray("assistantTaskIds").length())
+            .count { chat.getJSONArray("assistantTaskIds").getString(it) == "response-after-apply" })
+    }
+
 }
