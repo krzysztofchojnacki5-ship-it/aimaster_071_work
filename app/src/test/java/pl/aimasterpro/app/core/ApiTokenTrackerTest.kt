@@ -961,4 +961,55 @@ class ApiTokenTrackerTest {
         ApiTokenTracker.releaseBatchReservation(plan.reservationId)
     }
 
+    @Test fun reasoningTokensUseSeparateCatalogRateWhenProviderPublishesOne() {
+        ApiTokenTracker.replaceCatalogPricingForProvider(
+            context, "reasoning-price-provider", "https://reasoning-price.example/v1",
+            listOf(CatalogModelPrice(
+                "vendor/reasoning-price-model", 0.23, 0.50, false,
+                internalReasoningPer1MUsd = 0.90
+            ))
+        )
+        val record = ApiTokenTracker.recordQuery(
+            context, "reasoning-price-provider", "vendor/reasoning-price-model",
+            "MASTER", "reasoning-price-task",
+            inputTokens = 0L, outputTokens = 1_000_000L, reasoningTokens = 400_000L,
+            status = "REAL", baseUrl = "https://reasoning-price.example/v1"
+        )
+        // 600k visible output at $0.50/M + 400k reasoning at $0.90/M.
+        assertEquals(0.66, record.costUsd, 0.000001)
+        assertEquals(2.64, record.costPln, 0.00001)
+    }
+
+    @Test fun reasoningTokensCannotExceedOutputTokensInUsageLedger() {
+        val result = runCatching {
+            ApiTokenTracker.recordQuery(
+                context, "provider", "model", "MASTER", "bad-reasoning-count",
+                inputTokens = 1L, outputTokens = 5L, reasoningTokens = 6L, status = "REAL"
+            )
+        }
+        assertTrue(result.isFailure)
+        assertTrue(ApiTokenTracker.loadAllRecordsFromStorage(context).isEmpty())
+    }
+
+    @Test fun reservationUsesPublishedInternalReasoningRateForOutputEstimate() {
+        ApiTokenTracker.setLimits(context, daily = 2_000_000L, monthly = 50.0, perAgent = 2_000_000L)
+        ApiTokenTracker.replaceCatalogPricingForProvider(
+            context, "reasoning-reserve-provider", "https://reasoning-reserve.example/v1",
+            listOf(CatalogModelPrice(
+                "vendor/reasoning-reserve-model", 0.23, 0.50, false,
+                internalReasoningPer1MUsd = 0.90
+            ))
+        )
+        val plan = ApiTokenTracker.planBatch(
+            context,
+            listOf(BudgetRequest(
+                "reasoning-reserve-task", "MASTER", "reasoning-reserve-provider",
+                "https://reasoning-reserve.example/v1", "vendor/reasoning-reserve-model",
+                0L, 1_000_000L
+            ))
+        )
+        assertEquals(3.60, plan.estimatedReservedCostPln, 0.00001)
+        ApiTokenTracker.releaseBatchReservation(plan.reservationId)
+    }
+
 }
