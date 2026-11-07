@@ -153,6 +153,13 @@ class TaskCheckpointStoreTest {
         assertEquals("INTERRUPTED_USAGE_PENDING", retryRecovery?.status)
         assertEquals("COMPLETED", TaskCheckpointStore.latest(context).single().status)
         assertEquals("Report committed before process death.", TaskResultArchive.get(context, taskId)?.report)
+
+        var unexpectedRetry = false
+        assertEquals(0, TaskCheckpointStore.recoverStaleRunning(context, 400L) {
+            unexpectedRetry = true
+            true
+        })
+        assertFalse("A completed archived task must not be reconciled on every app start", unexpectedRetry)
     }
 
     @Test fun timedOutTaskCanRecordUsagePendingWithoutArchivedReportWhenMetadataIsComplete() {
