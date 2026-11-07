@@ -1366,19 +1366,29 @@ class ProjectWorkspaceStore(private val root: File) {
     }
 
     private fun writeManifest(file: File, info: WorkspaceInfo) {
-        DataOutputStream(BufferedOutputStream(FileOutputStream(file))).use { out ->
-            out.writeInt(MANIFEST_MAGIC)
-            out.writeInt(MANIFEST_VERSION)
-            out.writeUTF(info.archiveName)
-            out.writeLong(info.importedAt)
-            out.writeInt(info.fileCount)
-            out.writeLong(info.totalBytes)
-            info.files.forEach { record ->
-                out.writeUTF(record.path)
-                out.writeLong(record.sizeBytes)
-                out.writeUTF(record.sha256)
-            }
-        }
+        val parent = file.parentFile ?: error("Manifest workspace nie ma katalogu nadrzędnego.")
+        require(parent.isDirectory) { "Katalog manifestu workspace nie istnieje." }
+        require(!file.exists()) { "Manifest docelowy już istnieje; zapis bez jawnej transakcji jest zabroniony." }
+        val temp = File(parent, ".${file.name}.${UUID.randomUUID()}.tmp")
+        publishWorkspaceDurableFile(
+            temp = temp,
+            target = file,
+            replaceExisting = false,
+            writePayload = { out ->
+                out.writeInt(MANIFEST_MAGIC)
+                out.writeInt(MANIFEST_VERSION)
+                out.writeUTF(info.archiveName)
+                out.writeLong(info.importedAt)
+                out.writeInt(info.fileCount)
+                out.writeLong(info.totalBytes)
+                info.files.forEach { record ->
+                    out.writeUTF(record.path)
+                    out.writeLong(record.sizeBytes)
+                    out.writeUTF(record.sha256)
+                }
+            },
+            syncDirectory = ::syncDirectoryBestEffort
+        )
     }
 
     private fun readManifest(file: File): WorkspaceInfo? = runCatching {
