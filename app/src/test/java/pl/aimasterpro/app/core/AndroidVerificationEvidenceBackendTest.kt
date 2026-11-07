@@ -45,8 +45,8 @@ class AndroidVerificationEvidenceBackendTest {
         assertFalse(store.appendAll(listOf(evidence)))
         assertFalse("Quarantined backend reads must not appear valid", store.load().valid)
         assertFalse("Quarantined backend must reject further writes", store.appendAll(listOf(evidence)))
-        assertFalse(SharedPreferencesWriteHealth.withHealthyAccess("verification_evidence_v1") {
-            false
-        })
+        assertTrue(runCatching {
+            SharedPreferencesWriteHealth.withHealthyAccess("verification_evidence_v1") { true }
+        }.isFailure)
     }
 }
