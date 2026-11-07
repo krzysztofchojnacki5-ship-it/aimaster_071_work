@@ -1772,3 +1772,19 @@ To jest ustalenie audytowe i plan; nie wprowadzono jeszcze zmian w kodzie Secure
 - Na 2026-11-07 02:55 CET job 128253800019 nadal in_progress; krok „Run unit tests and compile debug variant” nie zakończył się. Nie ma podstaw do uznania testów lub assembleDebug za PASS.
 - app/build.gradle.kts: minSdk 26, obecnie brak Room/DataStore/SQLite dependency; natywne android.database.sqlite.SQLiteOpenHelper/SQLiteDatabase są dostępne bez dodawania biblioteki. Dla pierwszej migracji można więc rozważyć natywne SQLite, jeśli zakres transakcji i testów będzie prostszy niż wprowadzanie Room.
 - Migracja musi być idempotentna i crash-safe: pozostawić prefs nietknięte; utworzyć DB i tabelę wersji; w jednej transakcji wstawić komplet metadanych oraz istniejących ciphertextów; wykonać kontrolny odczyt wszystkich rekordów; dopiero potem zapisać trwały marker migracji. Stare prefs zachować co najmniej do kolejnego uruchomienia i potwierdzenia, że DB jest kompletna. Nie usuwać ani nie rotować aliasu Keystore w trakcie migracji.
+
+
+## Pokrycie testami SecureStore — przegląd 2026-11-07
+
+Odczytano app/src/test/java/pl/aimasterpro/app/data/SecureStoreImportTest.kt:
+- testy obejmują walidację schematu, duplikaty ID, brakującego rodzica, cykl dziedziczenia, uszkodzony/nieczytelny ciphertext, brak aliasu oraz blokowanie importu, który usunąłby istniejące nieczytelne sekrety;
+- nie ma testu wymuszającego SharedPreferences.Editor.commit() == false ani testu zachowania SecureStore po takim wyniku;
+- obecne asercje „bez zmiany istniejącej konfiguracji” dotyczą odrzuceń na etapie walidacji/przygotowania przed commit(), nie awarii zapisu po commitToMemory(); nie dowodzą rollbacku przy błędzie dysku;
+- testy SecureStore korzystają z Robolectric i rzeczywistego SharedPreferences, dlatego test błędu commit() wymaga wprowadzenia małego punktu wstrzykiwania abstrakcji zapisu lub wydzielenia polityki stanu magazynu. Nie należy testować fałszywego scenariusza przez zwykłe błędne dane, bo to inna ścieżka.
+
+Doprecyzowanie projektu SQLite:
+- tabela providers może przechowywać id jako PRIMARY KEY, metadata_json bez apiKey/_secretUnavailable oraz encrypted_secret jako nieprzezroczysty ciphertext Base64; relacje parentProviderId pozostają w JSON albo w osobnej kolumnie;
+- wersja schematu i znacznik ukończenia migracji muszą być w tej samej transakcji SQLite co wszystkie rekordy. Nie opierać przełączenia źródła prawdy na osobnym SharedPreferences.commit(), który sam ma problem z niepewnym wynikiem;
+- przy pierwszym uruchomieniu: jeżeli DB nie zawiera znacznika migracji, odczytać stare prefs, wykonać BEGIN/TRANSACTION, skopiować wszystkie provider_ids/config_*/key_* (ciphertext bez odszyfrowywania), zweryfikować liczbę i kompletność rekordów, zapisać schema_version + migration_complete w tej samej transakcji i dopiero commit;
+- stare prefs pozostają nietknięte jako kopia odzyskiwania. Jeżeli DB ma ukończoną migrację, DB jest źródłem prawdy; jeżeli DB jest niekompletna/uszkodzona, nie nadpisywać jej automatycznie ze starych prefs i nie udawać pustej bazy — blokada z diagnostyką.
+- Zachować alias ai_master_provider_key_v1 i format ciphertextów; migracja bazy nie wymaga odszyfrowywania ani ponownego szyfrowania kluczy API.
