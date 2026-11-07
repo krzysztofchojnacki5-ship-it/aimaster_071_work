@@ -83,7 +83,7 @@ def changed_paths_from_status(output: str) -> list[str]:
     return result
 
 
-def validate(*, inbox: str, report: str, task_id: str, head_branch: str,
+def validate(*, inbox: str, current_base_inbox: str, report: str, task_id: str, head_branch: str,
              base_branch: str, declared_base_sha: str, merge_base: str,
              changed_paths: list[str], head_repo: str, base_repo: str) -> list[str]:
     errors = []
@@ -107,8 +107,11 @@ def validate(*, inbox: str, report: str, task_id: str, head_branch: str,
 
     try:
         manifest = parse_manifest(inbox, task_id)
+        current_manifest = parse_manifest(current_base_inbox, task_id)
     except PolicyError as exc:
         return [str(exc)]
+    if current_manifest != manifest:
+        return ["Task authorization in current base INBOX changed or was revoked after the task branch base"]
 
     report_path = f"AI_MASTER_BRIDGE/REPORTS/{task_id}.md"
     if report_path not in changed_paths:
@@ -138,6 +141,7 @@ def validate_repo(repo: str, base_sha: str, head_sha: str, base_branch: str,
             repo, "diff", "--name-status", "--no-renames", f"{merge_base}...{head_sha}"
         ))
         inbox = git(repo, "show", f"{merge_base}:AI_MASTER_BRIDGE/INBOX.md")
+        current_base_inbox = git(repo, "show", f"{base_sha}:AI_MASTER_BRIDGE/INBOX.md")
         match = BRANCH_RE.fullmatch(head_branch)
         if not match:
             raise PolicyError("Invalid task branch name")
@@ -148,7 +152,8 @@ def validate_repo(repo: str, base_sha: str, head_sha: str, base_branch: str,
         )
         declared = base_match.group(1) if base_match else ""
         return validate(
-            inbox=inbox, report=report, task_id=task_id, head_branch=head_branch,
+            inbox=inbox, current_base_inbox=current_base_inbox, report=report,
+            task_id=task_id, head_branch=head_branch,
             base_branch=base_branch, declared_base_sha=declared, merge_base=merge_base,
             changed_paths=paths, head_repo=head_repo, base_repo=base_repo,
         )
