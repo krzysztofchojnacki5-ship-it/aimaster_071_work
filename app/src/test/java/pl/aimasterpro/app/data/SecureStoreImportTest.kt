@@ -1,11 +1,14 @@
 package pl.aimasterpro.app.data
 
 import android.content.Context
+import android.content.ContextWrapper
+import android.content.SharedPreferences
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.lang.reflect.Proxy
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
@@ -90,6 +93,63 @@ class SecureStoreImportTest {
             assertFalse(prefs.contains("config_blocked"))
             assertFalse(prefs.contains("key_blocked"))
         } finally { SecureStoreHealth.resetForTests() }
+    }
+
+    @Test fun preferenceReadFailurePoisonsStoreAndDiscardsPartialConfigList() {
+        val base = org.robolectric.RuntimeEnvironment.getApplication()
+        val delegate = base.getSharedPreferences("secure_provider_store", Context.MODE_PRIVATE)
+        delegate.edit()
+            .putStringSet("provider_ids", setOf("a_first", "z_broken"))
+            .putString("config_a_first", validConfig("a_first").toString())
+            .putString("config_z_broken", validConfig("z_broken").toString())
+            .commit()
+        val failingPreferences = Proxy.newProxyInstance(
+            SharedPreferences::class.java.classLoader,
+            arrayOf(SharedPreferences::class.java)
+        ) { _, method, args ->
+            if (method.name == "getString" && args?.getOrNull(0) == "config_z_broken") {
+                throw IllegalStateException("simulated preference read failure")
+            }
+            method.invoke(delegate, *(args ?: emptyArray()))
+        } as SharedPreferences
+        val context = object : ContextWrapper(base) {
+            override fun getSharedPreferences(name: String, mode: Int): SharedPreferences =
+                if (name == "secure_provider_store") failingPreferences else super.getSharedPreferences(name, mode)
+        }
+        val store = SecureStore(context)
+        try {
+            assertTrue(store.allConfigs().isEmpty())
+            assertTrue(store.isStorageUncertain())
+            assertEquals(null, store.readConfig("a_first"))
+        } finally {
+            SecureStoreHealth.resetForTests()
+        }
+    }
+
+    @Test fun providerIdReadFailureBlocksSaveBeforeAnyPreferenceCommit() {
+        val base = org.robolectric.RuntimeEnvironment.getApplication()
+        val delegate = base.getSharedPreferences("secure_provider_store", Context.MODE_PRIVATE)
+        val failingPreferences = Proxy.newProxyInstance(
+            SharedPreferences::class.java.classLoader,
+            arrayOf(SharedPreferences::class.java)
+        ) { _, method, args ->
+            if (method.name == "getStringSet" && args?.getOrNull(0) == "provider_ids") {
+                throw IllegalStateException("simulated provider id read failure")
+            }
+            method.invoke(delegate, *(args ?: emptyArray()))
+        } as SharedPreferences
+        val context = object : ContextWrapper(base) {
+            override fun getSharedPreferences(name: String, mode: Int): SharedPreferences =
+                if (name == "secure_provider_store") failingPreferences else super.getSharedPreferences(name, mode)
+        }
+        val store = SecureStore(context)
+        try {
+            assertFalse(store.saveConfig(validConfig("must_not_commit")))
+            assertTrue(store.isStorageUncertain())
+            assertFalse(delegate.contains("config_must_not_commit"))
+        } finally {
+            SecureStoreHealth.resetForTests()
+        }
     }
 
     @Test fun emptyReplacementIsRejectedWithoutChangingExistingConfig() {
