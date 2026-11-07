@@ -12,6 +12,9 @@ import javax.crypto.SecretKey
 import javax.crypto.spec.GCMParameterSpec
 
 /** Stores provider secrets with Android Keystore AES-GCM and fails closed if an existing key disappears. */
+internal fun shouldCreateFreshSecureStoreKey(aliasExists: Boolean, hasPersistedCiphertexts: Boolean): Boolean =
+    !aliasExists && !hasPersistedCiphertexts
+
 class SecureStore(context: Context) {
     private val prefs = context.getSharedPreferences("secure_provider_store", Context.MODE_PRIVATE)
     private val alias = "ai_master_provider_key_v1"
@@ -26,7 +29,7 @@ class SecureStore(context: Context) {
             val persistedCiphertexts = prefs.all.keys.any { key ->
                 key.startsWith("key_") && !prefs.getString(key, null).isNullOrBlank()
             }
-            check(!persistedCiphertexts) {
+            check(shouldCreateFreshSecureStoreKey(aliasExists = false, hasPersistedCiphertexts = persistedCiphertexts)) {
                 "Brak klucza Android Keystore dla istniejących sekretów. Nie utworzono nowego klucza, aby nie nadpisać możliwości odzyskania danych."
             }
             return generateNewKey()
