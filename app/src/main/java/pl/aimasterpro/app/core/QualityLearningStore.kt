@@ -146,16 +146,37 @@ object QualityLearningStore {
         return true
     }
 
-    /** Idempotently rebuilds shared and agent-scoped memory from approved proposals after interruptions/upgrades. */
+    /**
+     * Reconciles both sides of proposal approval after process death. A corrupt proposal ledger
+     * is not an empty ledger: in that case no memory is added or removed.
+     */
     @Synchronized fun syncApprovedAgentMemories(context: Context): Int {
+        if (readArrayStrict(context, PROPOSALS_KEY) == null) {
+            android.util.Log.e("AIMasterQuality", "Pominięto uzgadnianie pamięci: rejestr propozycji jest niedostępny lub uszkodzony.")
+            return 0
+        }
         var synchronized = 0
-        proposals(context).filter { it.status == "APPROVED" }.forEach { proposal ->
+        proposals(context).forEach { proposal ->
             val memoryEntry = "[UCZENIE ZATWIERDZONE ${proposal.id.take(8)}; dowody=${proposal.evidenceCount}; pewność=${proposal.confidence}] ${proposal.text}".take(1000)
-            if (AiMemoryStore.addMemory(context, memoryEntry)) synchronized++
-            proposal.affectedAgents.forEach { agentId ->
-                if (AgentOperationalMemoryStore.addApproved(context, agentId, proposal.text,
-                    category = "wniosek jakościowy", sourceTaskIds = listOf("proposal:${proposal.id}"),
-                    confidence = proposal.confidence) != null) synchronized++
+            val sourceRef = "proposal:${proposal.id}"
+            if (proposal.status == "APPROVED") {
+                if (AiMemoryStore.addMemory(context, memoryEntry)) synchronized++
+                else android.util.Log.e("AIMasterQuality", "Nie udało się uzgodnić pamięci wspólnej dla propozycji ${proposal.id}.")
+                proposal.affectedAgents.forEach { agentId ->
+                    if (AgentOperationalMemoryStore.addApproved(context, agentId, proposal.text,
+                        category = "wniosek jakościowy", sourceTaskIds = listOf(sourceRef),
+                        confidence = proposal.confidence) != null) synchronized++
+                    else android.util.Log.e("AIMasterQuality", "Nie udało się uzgodnić pamięci agenta dla propozycji ${proposal.id}.")
+                }
+            } else {
+                // A crash after REJECTED/PROPOSAL was committed but before memory cleanup
+                // must not leave a revoked lesson active indefinitely.
+                if (!AiMemoryStore.removeMemory(context, memoryEntry)) {
+                    android.util.Log.e("AIMasterQuality", "Nie udało się usunąć cofniętej reguły wspólnej dla propozycji ${proposal.id}.")
+                }
+                if (!AgentOperationalMemoryStore.removeBySource(context, sourceRef)) {
+                    android.util.Log.e("AIMasterQuality", "Nie udało się usunąć cofniętej reguły agenta dla propozycji ${proposal.id}.")
+                }
             }
         }
         return synchronized
