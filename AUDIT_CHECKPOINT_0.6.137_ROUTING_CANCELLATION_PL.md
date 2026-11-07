@@ -1911,3 +1911,14 @@ Doprecyzowanie projektu SQLite:
 - Commity kodu: `e83c171c` (automatyczny katalog) i `9a340a40` (ponowne kontrole w workerach).
 - CI dla najnowszego SHA `9a340a40d16743df757fc2c0f8d70d575fa3e055`: run `42329774728`, status `pending` w chwili zapisu checkpointu. Poprzednie runy anulowano przez nowsze push'e; anulowanie nie oznacza ani PASS, ani FAIL.
 - Porównanie gałęzi: 367 ahead / 0 behind. `main` pozostaje nietknięty.
+
+
+### Ochrona bezpośrednich wywołań TeamRunEngine — 2026-11-07
+
+- Przegląd wszystkich użyć `TeamRunEngine.runBatch()` ujawnił trzy bezpośrednie ścieżki HTTP, które omijały `chatWithFallback()`: główna współpraca agentów, peer review oraz peer review patcha.
+- Wszystkie trzy callbacki `onRequestStarting` sprawdzają teraz `store.isStorageUncertain()` i zwracają `false` przed zapisem checkpointu `REQUESTING`. TeamRunEngine już egzekwuje kontrakt: gdy callback nie potwierdzi trwałego checkpointu, nie wykonuje POST.
+- Istniejący test `requestCheckpointIsDurableBeforeHttpAndBlocksSendWhenPersistenceFails()` w `TeamRunEngineNetworkTest` potwierdza, że `onRequestStarting=false` blokuje HTTP; test nie wymaga dodatkowego serwera ani nowych zależności.
+- Commity: `22f2e397` (guardy trzech ścieżek agentów) oraz `c18c37c5` (odrzucenie odpowiedzi katalogu po wykryciu awarii SecureStore).
+- Dodatkowo automatyczna synchronizacja katalogu sprawdza stan po każdym HTTP i przed zapisem katalogu, aby nie utrwalać odpowiedzi, jeśli magazyn został w międzyczasie zablokowany.
+- CI dla SHA `22f2e397`: run `42329952558`, w toku przy ostatnim odczycie. Najnowszy commit kodu `c18c37c5` ma run `42330058130`, status `pending`; to on będzie miarodajny dla aktualnego kodu.
+- Stan gałęzi po tych zmianach: 370 ahead / 0 behind. `main` bez zmian.
