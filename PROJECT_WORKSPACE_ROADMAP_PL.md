@@ -944,3 +944,7 @@ Rozszerzono testy obu archiwów: po niejednoznacznym commit `restoreArchivedResp
 ### 0.6.139 — testy dostępu i serializacji archiwum odpowiedzi
 
 Dodano dwa testy ChatResponseArchive: błąd dostępu do preferencji nie może wyglądać jak puste archiwum; zapis musi respektować blokadę całego read-modify-write. Commit `bccb390d...`; ADDED / NOT RUN. CI 42411603439 nadal dotyczy SHA `30e0f496...`.
+
+### 0.6.139 — poprawka kontraktu błędu zapisu archiwów
+
+Wykryto i poprawiono propagowanie wyjątku z dostępu do SharedPreferences w `ChatResponseArchive.put()` i `TaskResultArchive.put()`. Oba API zwracają teraz `false` przy błędzie dostępu, pozostawiając dane nietknięte. Testy regresji istnieją dla obu archiwów; ADDED / NOT RUN. Commity: `d8223a7b...`, `9692a908...`.
