@@ -323,31 +323,55 @@ object ApiTokenTracker {
             require(seenQueryIds.add(queryId)) {
                 "Usage ledger contains a duplicate idempotency key; refusing ambiguous double accounting."
             }
-            val total = o.optLong("tot")
-            val input = o.optLong("in")
-            val output = o.optLong("out")
-            val reasoning = o.optLong("reas")
-            val cached = o.optLong("cache")
-            val costUsd = o.optDouble("usd")
-            val costPln = o.optDouble("pln")
+            // JSONObject.optLong/optDouble coerce strings and truncate fractional values.
+            // That is unsafe for a billing ledger: malformed persisted usage must fail closed.
+            fun exactLong(key: String): Long {
+                val value = o.opt(key)
+                require(value is Int || value is Long) { "Usage field '$key' is not an exact integer." }
+                return (value as Number).toLong()
+            }
+            fun exactString(key: String): String {
+                val value = o.opt(key)
+                require(value is String) { "Usage field '$key' is not a string." }
+                return value as String
+            }
+            val timestamp = exactLong("ts")
+            val total = exactLong("tot")
+            val input = exactLong("in")
+            val output = exactLong("out")
+            val reasoning = exactLong("reas")
+            val cached = exactLong("cache")
+            val usdValue = o.opt("usd")
+            val plnValue = o.opt("pln")
+            require(usdValue is Number && plnValue is Number) { "Usage cost fields are not numeric." }
+            val costUsd = (usdValue as Number).toDouble()
+            val costPln = (plnValue as Number).toDouble()
+            val providerId = exactString("prov")
+            val modelName = exactString("model")
+            val agentId = exactString("agent")
+            val taskId = exactString("task")
+            val status = exactString("status")
+            require(timestamp >= 0L && providerId.isNotBlank() && modelName.isNotBlank() &&
+                agentId.isNotBlank() && taskId.isNotBlank() && status.isNotBlank()) {
+                "Usage record is missing valid identity or timestamp fields."
+            }
             require(input >= 0L && output >= 0L && total >= 0L && reasoning >= 0L && cached >= 0L) { "Usage record has negative token counts." }
             val expectedTotal = Math.addExact(input, output)
             require(total == expectedTotal) { "Usage record total does not match input plus output token counts." }
             require(costUsd.isFinite() && costPln.isFinite() && costUsd >= 0.0 && costPln >= 0.0) { "Usage record has invalid cost values." }
-            require(o.has("tot") && o.has("qId")) { "Usage record is missing required fields." }
             list.add(TokenRecord(
                 queryId = queryId,
-                timestamp = o.optLong("ts"),
-                providerId = o.optString("prov"),
-                modelName = o.optString("model"),
-                agentId = o.optString("agent"),
-                taskId = o.optString("task", "general"),
+                timestamp = timestamp,
+                providerId = providerId,
+                modelName = modelName,
+                agentId = agentId,
+                taskId = taskId,
                 inputTokens = input,
                 outputTokens = output,
                 totalTokens = total,
                 reasoningTokens = reasoning,
                 cachedTokens = cached,
-                status = o.optString("status", "ESTIMATED"),
+                status = status,
                 costUsd = costUsd,
                 costPln = costPln
             ))
