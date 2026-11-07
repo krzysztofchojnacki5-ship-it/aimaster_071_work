@@ -37,6 +37,11 @@ object BackupCrypto {
         require(envelope.optString("format") == "AIMASTER_BACKUP" && envelope.optInt("version") == 1) {
             "To nie jest poprawna kopia zapasowa AI Master Pro (nieznany format lub wersja)."
         }
+        val iterationsValue = envelope.opt("iterations")
+        require((iterationsValue is Int || iterationsValue is Long) &&
+            (iterationsValue as Number).toLong() == ITERATIONS.toLong()) {
+            "Nieobsługiwana lub nieprawidłowa liczba iteracji KDF."
+        }
         val saltBase64 = envelope.optString("salt", "")
         val ivBase64 = envelope.optString("iv", "")
         val dataBase64 = envelope.optString("data", "")
@@ -49,7 +54,7 @@ object BackupCrypto {
         require(salt.size == 16) { "Nieprawidłowa długość soli (salt)." }
         require(iv.size == 12) { "Nieprawidłowa długość wektora inicjalizującego (IV)." }
 
-        val spec = PBEKeySpec(password, salt, envelope.optInt("iterations", ITERATIONS), KEY_BITS)
+        val spec = PBEKeySpec(password, salt, ITERATIONS, KEY_BITS)
         val keyFactory = SecretKeyFactory.getInstance("PBKDF2WithHmacSHA256")
         val key = SecretKeySpec(keyFactory.generateSecret(spec).encoded, "AES")
         spec.clearPassword()
