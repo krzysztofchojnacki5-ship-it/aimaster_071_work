@@ -15,6 +15,9 @@ import javax.crypto.spec.GCMParameterSpec
 internal fun shouldCreateFreshSecureStoreKey(aliasExists: Boolean, hasPersistedCiphertexts: Boolean): Boolean =
     !aliasExists && !hasPersistedCiphertexts
 
+internal fun hasUnreadableExistingSecrets(existingSecretIds: Set<String>, readableSecretIds: Set<String>): Boolean =
+    existingSecretIds.any { it !in readableSecretIds }
+
 class SecureStore(context: Context) {
     private val prefs = context.getSharedPreferences("secure_provider_store", Context.MODE_PRIVATE)
     private val alias = "ai_master_provider_key_v1"
@@ -120,7 +123,7 @@ class SecureStore(context: Context) {
                 throw IllegalStateException("Istniejący klucz API jest niedostępny. Nie nadpisano go pustą wartością.")
             }
             val encrypted = encryptSecret(incomingSecret)
-            val safe = JSONObject(config.toString()).apply { remove("apiKey") }
+            val safe = JSONObject(config.toString()).apply { remove("apiKey"); remove("_secretUnavailable") }
             val ids = (prefs.getStringSet("provider_ids", emptySet()) ?: emptySet()).toMutableSet()
             ids.add(id)
             val editor = prefs.edit().putString("config_$id", safe.toString()).putStringSet("provider_ids", ids)
@@ -178,6 +181,13 @@ class SecureStore(context: Context) {
             require(newIds.all { it.isNotBlank() }) { "Id dostawcy nie może być pusty." }
             require(newIds.size == newIds.toSet().size) { "Kopia zawiera powtórzone identyfikatory dostawców." }
             copied.forEach(::validateImportedConfig)
+            val existingSecretIds = prefs.all.keys.filter { key ->
+                key.startsWith("key_") && !prefs.getString(key, null).isNullOrBlank()
+            }.toSet()
+            val readableSecretIds = existingSecretIds.filter { getSecret(it) != null }.toSet()
+            require(!hasUnreadableExistingSecrets(existingSecretIds, readableSecretIds)) {
+                "Import przerwany: co najmniej jeden istniejący klucz API jest niedostępny. Nie zmieniono żadnej konfiguracji."
+            }
             val idSet = newIds.toSet()
             val parentById = copied.associate { it.optString("id") to it.optString("parentProviderId", "") }
             parentById.forEach { (id, parent) ->
