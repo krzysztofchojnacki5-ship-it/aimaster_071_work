@@ -225,4 +225,21 @@ class ProjectWorkspaceStoreApplyTest {
         assertFalse(store.hasPendingWorkspaceTransaction())
     }
 
+
+    @Test fun authorizedRollbackRefusesAThirdWorkspaceIdentity() {
+        val (store, root) = store("README.md" to "before\\n", "src/A.kt" to "old\\n")
+        val patch = preview(store, "src/A.kt", "old\\n", "--- a/src/A.kt\\n+++ b/src/A.kt\\n@@ -1 +1 @@\\n-old\\n+new\\n")
+        val applied = store.applyPreview(patch, changeSetId = "changeset-third", chatId = "chat-third")
+        assertTrue(store.markPatchReceiptRollbackRequested("changeset-third", applied.transactionId))
+
+        File(root, "current.manifest").writeText("third workspace identity")
+        val result = runCatching {
+            store.restoreSnapshotForPatchRollback(applied.snapshot.id, "changeset-third", applied.transactionId)
+        }
+
+        assertTrue("rollback must not overwrite a workspace with a third identity", result.isFailure)
+        assertEquals("new\\n", File(root, "current/src/A.kt").readText())
+        assertTrue(store.hasPendingWorkspaceTransaction())
+    }
+
 }
