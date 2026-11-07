@@ -204,7 +204,7 @@ Dodano test `startupRecoveryRepairsOldDurableAssignmentsWhenImportReconciliation
 
 ### Zaobserwowana właściwość / ograniczenie
 
-Jeśli stary snapshot `chat_state` przetrwa awarię, startup nie zna już `preferredMasterId` przekazanego do przerwanego importu — ta wartość nie jest zapisywana w `secure_provider_store`. Mechanizm wybiera więc deterministycznie pierwsze poprawne ID z posortowanego katalogu, jeśli ani zapis MASTER, ani legacy `selected_provider`, ani domyślne ID MASTER nie są aktualne. To zachowanie jest bezpieczne (nie kieruje do usuniętego profilu), ale może różnić się od preferencji importu (np. pierwszy profil kopii albo Gemini przy imporcie starej bazy).
+Jeśli stary snapshot `chat_state` przetrwa awarię, startup nie zna już `preferredMasterId` przekazanego do przerwanego importu — ta wartość nie jest zapisywana w `secure_provider_store`. Mechanizm wybiera więc deterministycznie pierwsze poprawne ID z katalogu, jeśli ani zapis MASTER, ani legacy `selected_provider`, ani domyślne ID MASTER nie są aktualne. W rzeczywistym `MainActivity.onCreate()` przed uzgodnieniem wykonywane jest jeszcze `seedDefaultProviders()`; dlatego przy braku zachowanej preferencji MASTER może wrócić do jednego z wbudowanych profili (zwykle Gemini), zamiast do pierwszego profilu importu. To zachowanie jest bezpieczne (nie kieruje do usuniętego profilu), ale może różnić się od preferencji importu.
 
 Nie zmieniono jeszcze formatu magazynu ani nie dodano markera zamiaru importu. Taka zmiana wymaga osobnej decyzji, ponieważ marker musi mieć jasno określony cykl życia, aby nie nadpisywać późniejszego, świadomego wyboru użytkownika.
 
@@ -214,3 +214,6 @@ Nie zmieniono jeszcze formatu magazynu ani nie dodano markera zamiaru importu. T
 - Startup recovery po starym i nowym snapshotcie: pokryte testami.
 - Testy nieuruchomione; brak potwierdzenia JUnit/Robolectric.
 - Android build nieuruchomiony; APK nie tworzono.
+
+
+Test starego snapshotu został doprecyzowany tak, aby katalog testowy obejmował również profile domyślne Gemini i Groq, które aplikacja dodaje przed startup reconciliation. Oczekiwany wynik testu odpowiada więc rzeczywistemu fallbackowi przy utracie preferencji importu: MASTER wraca do Gemini, a role specjalistyczne do Groq, o ile te profile są obecne.
