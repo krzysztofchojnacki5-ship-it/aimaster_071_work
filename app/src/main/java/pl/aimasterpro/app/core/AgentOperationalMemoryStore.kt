@@ -114,16 +114,16 @@ object AgentOperationalMemoryStore {
         }
     }.getOrNull()
 
-    private fun write(context: Context, entries: List<Entry>): Boolean {
+    private fun write(context: Context, entries: List<Entry>): Boolean = runCatching {
         val array = JSONArray()
         entries.take(MAX_ENTRIES).forEach { e ->
             array.put(JSONObject().put("id", e.id).put("agentId", e.agentId).put("text", e.text)
                 .put("category", e.category).put("createdAt", e.createdAt)
                 .put("sourceTaskIds", JSONArray(e.sourceTaskIds)).put("confidence", e.confidence))
         }
-        return context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
             .putString(KEY, array.toString()).commit()
-    }
+    }.getOrDefault(false)
 
     private fun strings(array: JSONArray?): List<String> = if (array == null) emptyList() else
         (0 until array.length()).mapNotNull { array.optString(it).takeIf(String::isNotBlank) }
