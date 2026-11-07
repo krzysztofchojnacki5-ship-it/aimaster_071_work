@@ -936,3 +936,7 @@ Dodano scenariusze commit failure przed i po apply dla replayu ChatResponseArchi
 ### 0.6.139 — odporność zapisu archiwum odpowiedzi MASTER
 
 Dodano test awarii niejednoznacznego commit w ChatResponseArchive: po apply + zwróceniu false magazyn musi wejść w kwarantannę, nie udawać czytelności i blokować następne zapisy. Commit testowy e08735883591841b645202f33e72d307f809f1b5; ADDED / NOT RUN. CI nadal waliduje starszy SHA 30e0f496...
+
+### 0.6.139 — jawne przerwanie replayu przy kwarantannie archiwum
+
+Rozszerzono testy obu archiwów: po niejednoznacznym commit `restoreArchivedResponses()` i `restoreArchivedReports()` muszą przerwać działanie, a nie zwrócić pustego wyniku odzyskiwania. Commity testowe: `5eb52b62...`, `5fbfa126...`; ADDED / NOT RUN. CI 42411603439 nadal dotyczy starszego SHA `30e0f496...`.
