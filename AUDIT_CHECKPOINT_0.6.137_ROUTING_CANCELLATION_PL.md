@@ -2022,3 +2022,10 @@ Doprecyzowanie projektu SQLite:
 - Test `archivePutWaitsForSharedPreferenceLockAcrossReadModifyWrite` sprawdza serializację pełnej operacji zapisu.
 - Commit `bccb390d38f4ecb42ffb64fcf60fe128a4ddb8bd`; ADDED / NOT RUN.
 - CI 42411603439 nadal in_progress na wcześniejszym SHA `30e0f496...`.
+
+### Checkpoint 0.6.139 — poprawka błędu dostępu archiwów
+
+- Naprawiono rzeczywistą niespójność kontraktu `put()`: awaria `withHealthyAccess()` nie może wydostać się jako wyjątek; oba archiwa odpowiedzi i raportów zwracają `false`.
+- Testy istnieją: `preferenceAccessFailureDoesNotPretendResponseArchiveIsEmptyOrAcceptNewAnswer` oraz `preferenceAccessFailureDoesNotPretendArchiveIsEmptyOrAcceptNewReport`; test blokady transakcji read-modify-write dla obu archiwów.
+- Commity: `d8223a7b90d9a27c117ca98a1943002160186577`, `9692a908422a227f1078133837ea5aa0e03277ab`, `bccb390d38f4ecb42ffb64fcf60fe128a4ddb8bd`.
+- Testy nadal ADDED / NOT RUN; nie ogłaszać zaliczenia bez wyniku CI.
