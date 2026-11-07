@@ -1691,3 +1691,15 @@ Commit:
 - 3881ba1b0cb77a077c112909ccfdb9eed87b87a9 — pełne czyszczenie buforów BackupCrypto.
 
 Testy istniejące obejmują round-trip, błędne hasło, tampering, zgodność formatu v1, limity payload/envelope oraz minimalną długość hasła. Nowe zmiany wymagają ponownego wyniku CI; nie oznaczono ich jako PASS.
+
+
+Uzupełnienie Etapu 25:
+- deriveKey() przenosi zerowanie encoded key bytes do finally, również gdy konstrukcja SecretKeySpec zawiedzie;
+- dodano jawne sprawdzenie możliwości zastąpienia uszkodzonego sekretu: istniejący alias musi być dostępny i zawierać SecretKey;
+- UI nie pokazuje akcji naprawy pojedynczego sekretu, gdy alias Keystore nie istnieje lub ma nieprawidłowy typ. Zamiast tego wyjaśnia, że wymagany byłby osobny, świadomy reset magazynu;
+- dodano test polityki dopuszczania naprawy wyłącznie przy istniejącym, prawidłowym kluczu.
+
+Dodatkowe commity:
+- d7cd42e — bezpieczne wykrywanie dostępności aliasu;
+- 908bd1b — test polityki odzyskiwania;
+- e43a459 — UI nie oferuje mylącej naprawy przy braku aliasu.
