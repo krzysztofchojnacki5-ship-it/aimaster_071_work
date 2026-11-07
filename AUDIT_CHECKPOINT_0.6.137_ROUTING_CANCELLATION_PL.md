@@ -1841,3 +1841,12 @@ Doprecyzowanie projektu SQLite:
 - Weryfikacja statyczna potwierdziła oba guardy w aktualnym `MainActivity.kt`.
 - Commit: `23c3b590`.
 - CI uruchomione dla SHA `23c3b590`, run `42328456275`; status przy zapisie checkpointu: pending. Starszy run `42328153066` dla `8ffd38ad` nadal był in_progress, ale nowszy push może spowodować anulowanie przez concurrency. Nie ma jeszcze potwierdzonego PASS.
+
+
+### Ochrona pozostałych wejść do funkcji profili — 2026-11-07
+
+- Kolejny przegląd call-site'ów wykazał, że ścieżka kopii zapasowej mogła wejść do formularza eksportu/importu przy niepewnym stanie i pokazać mylący komunikat o pustej bazie. Dodano wczesną blokadę obu operacji i skierowanie do ekranu MODELE.
+- `saveProvider()` rozróżnia zwykły błąd zapisu od globalnego stanu niepewnego i podaje właściwą instrukcję restartu.
+- Wcześniej dodane guardy chat/fallback i selektora modeli pozostają aktywne. Główne wejścia do użycia profili nie powinny traktować pustej listy zwróconej przez fail-closed `SecureStore` jako prawidłowej konfiguracji.
+- Commit kodu: `739a7658`.
+- CI dla wcześniejszego kodu `23c3b590` jest osobnym uruchomieniem i nie waliduje tego dodatkowego commita. Oczekiwany jest run dla najnowszego kodu; nie przypisujemy mu wyniku przed zakończeniem.
