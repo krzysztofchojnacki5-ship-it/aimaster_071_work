@@ -63,11 +63,14 @@ object TaskCheckpointStore {
                     ?: current.estimatedOutputTokens,
                 idempotencyKey = event.idempotencyKey.ifBlank { current.idempotencyKey }
             )
-            val usagePendingCanBeRecovered = event.status == "USAGE_PENDING" &&
-                hasRecoverableUsageMetadata(mergedUsageMetadata)
+            val usagePendingCanBeRecovered = event.status in setOf(
+                "USAGE_PENDING", "INTERRUPTED_USAGE_PENDING"
+            ) && hasRecoverableUsageMetadata(mergedUsageMetadata)
+            val usageRecoveryCompleted = current.status in setOf("TIMED_OUT", "CANCELLED") &&
+                event.status == "INTERRUPTED" && hasRecoverableUsageMetadata(mergedUsageMetadata)
             val isArchiveBackedReconciliation = archivedResultExists &&
                 event.status in setOf("COMPLETED", "INTERRUPTED_USAGE_PENDING")
-            if (!isArchiveBackedReconciliation && !usagePendingCanBeRecovered) return true
+            if (!isArchiveBackedReconciliation && !usagePendingCanBeRecovered && !usageRecoveryCompleted) return true
         }
         // Later lifecycle states often omit request-only metadata. Preserve the latest
         // REQUESTING details so a USAGE_PENDING checkpoint can still be reconciled after restart.
