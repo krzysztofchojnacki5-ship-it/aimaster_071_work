@@ -222,4 +222,27 @@ class ChatHistoryStoreTest {
             .getJSONObject("chats").getJSONObject("stable").getString("title"))
     }
 
+    @Test fun updateRootAmbiguousCommitQuarantinesAndRecoversAppliedSnapshotAfterRestart() {
+        val chatId = "update-root-ambiguous"
+        val original = JSONObject().put("currentId", chatId)
+            .put("chats", JSONObject().put(chatId, JSONObject()
+                .put("messages", JSONArray()).put("title", "Before")))
+        assertTrue(ChatHistoryStore.writeRoot(context, original))
+
+        val failing = AmbiguousCommitContext(context, "chat_state")
+        assertFalse(ChatHistoryStore.updateRoot(failing) { current ->
+            current.getJSONObject("chats").getJSONObject(chatId).put("title", "After")
+            true
+        })
+
+        assertTrue(SharedPreferencesWriteHealth.isUncertain("chat_state"))
+        assertNull(ChatHistoryStore.readRoot(context))
+        assertEquals("After", JSONObject(prefs.getString("chats_v2", null)!!)
+            .getJSONObject("chats").getJSONObject(chatId).getString("title"))
+
+        SharedPreferencesWriteHealth.resetForTests("chat_state")
+        assertEquals("After", ChatHistoryStore.readRoot(context)!!
+            .getJSONObject("chats").getJSONObject(chatId).getString("title"))
+    }
+
 }
