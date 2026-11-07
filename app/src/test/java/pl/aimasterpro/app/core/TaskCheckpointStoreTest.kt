@@ -346,6 +346,24 @@ class TaskCheckpointStoreTest {
         assertFalse(TaskCheckpointStore.clear(failingContext))
     }
 
+    @Test fun journalHealthDistinguishesEmptyReadableJournalFromCorruptData() {
+        assertTrue(TaskCheckpointStore.isJournalReadable(context))
+        val prefs = context.getSharedPreferences("task_checkpoints_v1", Context.MODE_PRIVATE)
+        val corrupt = """[{"task":"broken"}"""
+        assertTrue(prefs.edit().putString("events", corrupt).commit())
+        assertFalse(TaskCheckpointStore.isJournalReadable(context))
+        assertEquals(corrupt, prefs.getString("events", null))
+    }
+
+    @Test fun journalHealthReportsPreferenceAccessFailure() {
+        val failingContext = object : android.content.ContextWrapper(context) {
+            override fun getSharedPreferences(name: String, mode: Int): android.content.SharedPreferences {
+                throw IllegalStateException("controlled checkpoint journal read failure")
+            }
+        }
+        assertFalse(TaskCheckpointStore.isJournalReadable(failingContext))
+    }
+
     @Test fun corruptJournalIsNotSilentlyReplacedByAnEmptyHistory() {
         val prefs = context.getSharedPreferences("task_checkpoints_v1", Context.MODE_PRIVATE)
         val corrupt = """{"events":[broken"""
