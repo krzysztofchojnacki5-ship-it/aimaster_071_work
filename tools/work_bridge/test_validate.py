@@ -66,6 +66,17 @@ class WorkBridgeTests(unittest.TestCase):
         errors = self.check(changed_paths=[REPORT_PATH, "app/src/main/Forbidden.kt"])
         self.assertTrue(any("not authorized" in e for e in errors))
 
+    def test_non_string_allowlist_entry_rejected(self):
+        data = {
+            "id": TASK,
+            "status": "READY",
+            "base_branch": "bridge/work-bridge-bootstrap",
+            "allowed_paths": [{"unexpected": "object"}],
+        }
+        bad_inbox = "<!-- WB_TASK_V1\\n" + json.dumps(data) + "\\n-->\\n"
+        errors = self.check(inbox=bad_inbox)
+        self.assertTrue(any("must be a string" in e for e in errors))
+
     def test_wrong_branch_task_id_rejected(self):
         errors = self.check(head_branch="bridge/task-WB-099-wrong")
         self.assertTrue(any("does not match" in e for e in errors))
