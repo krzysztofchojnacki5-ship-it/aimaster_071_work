@@ -1207,3 +1207,12 @@ Weryfikacja:
 - kod i test zapisane na branchu; test nie został jeszcze wykonany;
 - najnowszy CI po zmianach Etapu 12 może zostać anulowany przez push kolejnego kodu; oczekujemy na run obejmujący Etap 13;
 - brak merge, APK, release i zmian main; Companion Transport pozostaje BLOCKED.
+
+
+### CI po Etapie 13
+
+- Aktualny kod/test objęty runem: SHA ab282f310b7a4bb44f3a23407c44fa7eea965925.
+- Workflow run: 42315729083; job 128227729164.
+- JDK 17, Android SDK, API 36 i Gradle 8.13: SUCCESS.
+- Krok testów jednostkowych i kompilacji debug: IN_PROGRESS; raportów i logów końcowych jeszcze nie udostępniono.
+- Późniejszy commit dokumentacji checkpointu nie zmienia kodu i jest ignorowany przez paths-ignore.
