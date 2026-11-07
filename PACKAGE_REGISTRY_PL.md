@@ -401,3 +401,11 @@ Rejestr rozróżnia paczkę źródłową od wersji aplikacji/APK. Numer paczki n
 - Dodano `archivePutWaitsForSharedPreferenceLockAcrossReadModifyWrite`: zapis musi czekać na blokadę pliku preferencji, aby nie wykonywać odczyt–modyfikacja–zapis równolegle z innym operatorem magazynu.
 - Commit: `bccb390d38f4ecb42ffb64fcf60fe128a4ddb8bd`.
 - Testy ADDED / NOT RUN. CI 42411603439 nadal in_progress dla starszego SHA `30e0f496...`.
+
+### 0.6.139 — fail-closed przy błędzie dostępu do archiwów (2026-11-07)
+
+- Audyt wykrył rzeczywistą niespójność: `ChatResponseArchive.put()` i `TaskResultArchive.put()` mogły propagować wyjątek z `withHealthyAccess()` przy niedostępnych SharedPreferences, zamiast zwrócić `false` zgodnie z kontraktem zapisu.
+- Oba zapisy opakowano bezpiecznym wynikiem `runCatching`; błąd odczytu/dostępu kończy się teraz `false`, bez zastępowania danych i bez akceptowania nowego wpisu.
+- Testy pokrywające ten przypadek istnieją dla obu archiwów; test blokady read-modify-write dodano również dla ChatResponseArchive.
+- Commity produkcyjne: `d8223a7b90d9a27c117ca98a1943002160186577`, `9692a908422a227f1078133837ea5aa0e03277ab`. Testy: `bccb390d38f4ecb42ffb64fcf60fe128a4ddb8bd`.
+- Status testów: ADDED / NOT RUN; brak potwierdzenia kompilacji.
