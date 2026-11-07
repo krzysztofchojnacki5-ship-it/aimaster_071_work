@@ -179,4 +179,13 @@ class SecureStoreImportTest {
         assertEquals("!", prefs.getString("key_provider_one", null))
     }
 
+    @Test fun missingKeystoreAliasIsNotRecreatedWhileEncryptedSecretsRemain() {
+        assertFalse(shouldCreateFreshSecureStoreKey(aliasExists = false, hasPersistedCiphertexts = true))
+    }
+
+    @Test fun missingKeystoreAliasCanBeCreatedForFreshStoreOnly() {
+        assertTrue(shouldCreateFreshSecureStoreKey(aliasExists = false, hasPersistedCiphertexts = false))
+        assertFalse(shouldCreateFreshSecureStoreKey(aliasExists = true, hasPersistedCiphertexts = false))
+    }
+
 }
