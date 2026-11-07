@@ -136,6 +136,23 @@ class ApiTokenTrackerTest {
         ApiTokenTracker.releaseBatchReservation(second.reservationId)
     }
 
+    @Test fun reasoningTokensRemainOutputMetadataAndAreNotChargedTwice() {
+        val record = ApiTokenTracker.recordQuery(
+            context, "openai", "gpt-4o-mini", "MASTER", "reasoning-cost",
+            inputTokens = 1_000_000L,
+            outputTokens = 1_000_000L,
+            reasoningTokens = 500_000L,
+            status = "REAL"
+        )
+
+        // Reasoning is a subset of output tokens for this usage schema, not an extra
+        // billable bucket. The default model rates are $0.15/$0.60 per million.
+        assertEquals(2_000_000L, record.totalTokens)
+        assertEquals(500_000L, record.reasoningTokens)
+        assertEquals(0.75, record.costUsd, 0.0000001)
+        assertEquals(3.0, record.costPln, 0.000001)
+    }
+
     @Test fun successfulUsageIsPersistedAndVisibleInMonitorPeriods() {
         ApiTokenTracker.recordQuery(context, "ollama", "llama3", "MASTER", "chat-1", 120, 30, status = "REAL", baseUrl = "http://127.0.0.1:11434/v1")
         val all = ApiTokenTracker.loadAllRecordsFromStorage(context)
