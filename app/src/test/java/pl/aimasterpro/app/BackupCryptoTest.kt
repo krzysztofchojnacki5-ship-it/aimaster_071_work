@@ -37,6 +37,26 @@ class BackupCryptoTest {
         BackupCrypto.decrypt("{\"format\":\"UNKNOWN\",\"version\":1}", "password123".toCharArray())
     }
 
+    @Test
+    fun testStringVersionIsRejectedInsteadOfCoercedToInteger() {
+        val encrypted = BackupCrypto.encrypt("secret", "securepassword123".toCharArray())
+        val envelope = org.json.JSONObject(encrypted).put("version", "1")
+        try {
+            BackupCrypto.decrypt(envelope.toString(), "securepassword123".toCharArray())
+            fail("A string version must not be coerced to an integer.")
+        } catch (_: IllegalArgumentException) { }
+    }
+
+    @Test
+    fun testNonStringFormatIsRejected() {
+        val encrypted = BackupCrypto.encrypt("secret", "securepassword123".toCharArray())
+        val envelope = org.json.JSONObject(encrypted).put("format", 123)
+        try {
+            BackupCrypto.decrypt(envelope.toString(), "securepassword123".toCharArray())
+            fail("A non-string format field must be rejected.")
+        } catch (_: IllegalArgumentException) { }
+    }
+
     @Test(expected = Exception::class)
     fun testMissingCryptoFields() {
         BackupCrypto.decrypt("{\"format\":\"AIMASTER_BACKUP\",\"version\":1}", "password123".toCharArray())
