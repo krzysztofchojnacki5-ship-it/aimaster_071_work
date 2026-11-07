@@ -1460,7 +1460,8 @@ class MainActivity : Activity() {
                             taskId = requestTaskId, agentId = requestAgentId,
                             status = if (usagePersisted) "USAGE_RECORDED" else "USAGE_PENDING",
                             detail = if (usagePersisted) "Rzeczywiste usage zapisano trwale." else "Odpowiedź odebrana; trwałe księgowanie usage wymaga odzyskania.",
-                            timestamp = System.currentTimeMillis(), providerId = cfg.id, model = cfg.model,
+                            timestamp = System.currentTimeMillis(),
+                            providerId = res.providerId.ifBlank { cfg.id }, model = res.model.ifBlank { cfg.model },
                             attempts = requestAttempt, estimatedInputTokens = estimatedRequestInput,
                             estimatedOutputTokens = 4_096L, idempotencyKey = requestIdempotencyKey,
                             baseUrl = safeCheckpointBaseUrl
@@ -1471,7 +1472,7 @@ class MainActivity : Activity() {
                     }
                     if (cfg.id != config.id) {
                         runCatching {
-                            logAgentForChat(requestChatId, "🧭 Smart Routing: wybrano profil ${cfg.name} (${cfg.model}) zamiast pierwotnego ${config.name} na podstawie dostępności i historii kondycji.")
+                            logAgentForChat(requestChatId, "🧭 Smart Routing: wybrano profil ${cfg.name} (${res.model.ifBlank { cfg.model }}) zamiast pierwotnego ${config.name} na podstawie dostępności i historii kondycji.")
                         }
                         runCatching {
                             logAgentDialogueForChat(requestChatId, "SYSTEM", "MASTER", "Routing wybrał profil ${cfg.name} na podstawie dostępności, limitów i lokalnej historii kondycji modeli.", "SMART_ROUTING")
@@ -1483,7 +1484,7 @@ class MainActivity : Activity() {
                             }
                         }
                     }
-                    return res.copy(providerId = cfg.id, model = cfg.model)
+                    return res.copy(providerId = res.providerId.ifBlank { cfg.id }, model = res.model.ifBlank { cfg.model })
                 } catch (t: Throwable) {
                     val earlyProviderFailure = t as? ProviderException
                     if ((earlyProviderFailure?.category == "CANCELLED" || Thread.currentThread().isInterrupted) &&
