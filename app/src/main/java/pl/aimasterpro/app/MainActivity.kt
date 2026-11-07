@@ -2885,7 +2885,9 @@ class MainActivity : Activity() {
         }
         persistedTitle?.let { chatTitles[currentChatId] = it }
         // Legacy mirror is best-effort only; chats_v2 is the canonical durable document.
-        chatPrefs.edit().putString("chat_messages", arr.toString()).commit()
+        if (!pl.aimasterpro.app.core.ChatHistoryStore.writeLegacyMirror(this, arr.toString())) {
+            android.util.Log.w("AIMasterChat", "Nie udało się zaktualizować pomocniczej kopii legacy; kanoniczna historia pozostaje zapisana.")
+        }
         true
     }
 
