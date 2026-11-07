@@ -15,12 +15,13 @@ object AgentProviderAssignmentStore {
         context: Context,
         roleDefaults: Map<String, String>
     ): Map<String, String> {
-        check(!SharedPreferencesWriteHealth.isUncertain(PREFS)) { "Provider assignments are unavailable after an ambiguous storage write." }
-        val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-        return roleDefaults.mapValues { (role, defaultId) ->
-            // Missing/blank is a legitimate first-run state; a type mismatch is corruption.
-            // Let it propagate so callers cannot silently route to a different provider.
-            prefs.getString(key(role), null)?.takeIf { it.isNotBlank() } ?: defaultId
+        return SharedPreferencesWriteHealth.withHealthyAccess(PREFS) {
+            val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            roleDefaults.mapValues { (role, defaultId) ->
+                // Missing/blank is a legitimate first-run state; a type mismatch is corruption.
+                // Let it propagate so callers cannot silently route to a different provider.
+                prefs.getString(key(role), null)?.takeIf { it.isNotBlank() } ?: defaultId
+            }
         }
     }
 
@@ -48,6 +49,7 @@ object AgentProviderAssignmentStore {
     ): Map<String, String>? {
         if (validProviderIds.isEmpty() || validProviderIds.any { it.isBlank() } || SharedPreferencesWriteHealth.isUncertain(PREFS)) return null
         return runCatching {
+            SharedPreferencesWriteHealth.withHealthyAccess(PREFS) {
             val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
             val oldMaster = prefs.getString(key(MASTER), null)
             val masterId = oldMaster?.takeIf { it in validProviderIds }
@@ -65,8 +67,9 @@ object AgentProviderAssignmentStore {
             val editor = prefs.edit()
             resolved.forEach { (role, id) -> editor.putString(key(role), id) }
             editor.putString(SELECTED_KEY, masterId)
-            if (!SharedPreferencesWriteHealth.commit(PREFS, editor)) return null
+            if (!SharedPreferencesWriteHealth.commit(PREFS, editor)) return@withHealthyAccess null
             resolved
+            }
         }.getOrNull()
     }
 
@@ -83,6 +86,7 @@ object AgentProviderAssignmentStore {
     ): Map<String, String>? {
         if (validProviderIds.isEmpty() || validProviderIds.any { it.isBlank() } || SharedPreferencesWriteHealth.isUncertain(PREFS)) return null
         return runCatching {
+            SharedPreferencesWriteHealth.withHealthyAccess(PREFS) {
             val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
             val masterFallback = preferredMasterId.takeIf { it in validProviderIds }
                 ?: roleDefaults[MASTER]?.takeIf { it in validProviderIds }
@@ -101,8 +105,9 @@ object AgentProviderAssignmentStore {
             val editor = prefs.edit()
             resolved.forEach { (role, id) -> editor.putString(key(role), id) }
             editor.putString(SELECTED_KEY, resolved[MASTER] ?: masterFallback)
-            if (!SharedPreferencesWriteHealth.commit(PREFS, editor)) return null
+            if (!SharedPreferencesWriteHealth.commit(PREFS, editor)) return@withHealthyAccess null
             resolved
+            }
         }.getOrNull()
     }
 
