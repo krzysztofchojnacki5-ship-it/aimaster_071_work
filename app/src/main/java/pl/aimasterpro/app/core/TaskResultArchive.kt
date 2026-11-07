@@ -37,7 +37,7 @@ object TaskResultArchive {
         createdAt: Long = System.currentTimeMillis(),
         chatId: String = ""
     ): Boolean {
-        if (taskId.isBlank() || agentId.isBlank() || providerId.isBlank() || model.isBlank() ||
+        if (SharedPreferencesWriteHealth.isUncertain(PREFS) || taskId.isBlank() || agentId.isBlank() || providerId.isBlank() || model.isBlank() ||
             chatId.length > 200) return false
         val safeReport = CommunicationLogSanitizer.sanitize(report)
         if (safeReport.isBlank() || safeReport.length > MAX_REPORT_CHARS || createdAt < 0L) return false
@@ -54,9 +54,10 @@ object TaskResultArchive {
         val trimmed = JSONArray()
         for (i in 0 until minOf(next.length(), MAX_ENTRIES)) trimmed.put(next.getJSONObject(i))
         return runCatching {
-            context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
-                .putString(KEY, trimmed.toString())
-                .commit()
+            SharedPreferencesWriteHealth.commit(
+                PREFS, context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
+                    .putString(KEY, trimmed.toString())
+            )
         }.getOrDefault(false)
     }
 
@@ -156,6 +157,7 @@ object TaskResultArchive {
 
     /** Corrupt rows are never silently dropped or overwritten with a fresh empty archive. */
     private fun read(context: Context): JSONArray? = runCatching {
+        if (SharedPreferencesWriteHealth.isUncertain(PREFS)) return@runCatching null
         val raw = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
             .getString(KEY, null) ?: return@runCatching JSONArray()
         runCatching {
