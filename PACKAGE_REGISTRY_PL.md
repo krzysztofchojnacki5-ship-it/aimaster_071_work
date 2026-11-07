@@ -367,3 +367,11 @@ Rejestr rozróżnia paczkę źródłową od wersji aplikacji/APK. Numer paczki n
 - Commit produkcyjny: `49da9dcb2a9de7296301476b90c65301c000fc0e`; korekta zachowania no-op dla usuniętych czatów: `84c495ec0028394b6a1dab14b1599c31211c2f0e`.
 - Dodano test współbieżności `concurrentAtomicRootUpdatesPreserveMessageAndActivityChanges`, który równolegle dopisuje wiadomość i raport aktywności do tego samego czatu i sprawdza, że obie zmiany przetrwały. Commit testowy: `b4193751f496aa6d53846852deee1b77a969ad5f`.
 - Test ADDED / NOT RUN; CI 42411603439 nadal dotyczy SHA 30e0f496... i nie waliduje tych zmian. APK NOT BUILT; Companion NOT ACTIVATED.
+
+### Aktualizacja 0.6.139 — pełna atomizacja zapisów historii w MainActivity (2026-11-07)
+
+- Przegląd wszystkich zapisów w MainActivity potwierdził 7 mutujących ścieżek; wszystkie korzystają teraz z `ChatHistoryStore.updateRoot()`. Statyczna kontrola pliku: 7 wywołań updateRoot, 0 wywołań writeRoot.
+- Zmiany obejmują: renameChat, deleteChat, persistMessages, persistAgentActivity, saveCurrentId, appendToStoredChat i appendAgentActivityForChat. Pozwala to serializować te aktualizacje z replayem ChatResponseArchive i TaskResultArchive.
+- Zachowano semantykę no-op dla odpowiedzi/aktywności kierowanych do czatu, który został już usunięty; korekta w commicie `84c495ec0028394b6a1dab14b1599c31211c2f0e`.
+- Test współbieżności wiadomość + agentActivity dodany w commicie `b4193751f496aa6d53846852deee1b77a969ad5f`; ADDED / NOT RUN.
+- Robocza gałąź po aktualizacji dokumentacji: `f614a5f5c2369824a75f99b7f780826e793b44c0`. CI 42411603439 nadal in_progress dla starszego SHA `30e0f496...`; nie ma jeszcze wyniku dla zmian 0.6.139.
