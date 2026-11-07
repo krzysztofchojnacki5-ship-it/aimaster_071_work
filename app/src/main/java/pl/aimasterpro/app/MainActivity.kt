@@ -1888,7 +1888,7 @@ class MainActivity : Activity() {
                                     true
                                 }
                             },
-                            onRequestStarting = { task, actualProvider, estimatedInput, estimatedOutput, idempotencyKey ->
+                            onRequestStarting = { task, actualProvider, estimatedInput, estimatedOutput, idempotencyKey, attemptCount ->
                                 if (store.isStorageUncertain()) {
                                     logAgentForChat(chatId, "⛔ Magazyn konfiguracji ma niepewny stan. Żądanie do dostawcy nie zostało wysłane; uruchom ponownie aplikację.")
                                     false
@@ -1904,7 +1904,7 @@ class MainActivity : Activity() {
                                             taskId = task.id, agentId = task.agentId, status = "REQUESTING",
                                             detail = "Żądanie API rozpoczęte; wynik rozliczenia może być nieznany.",
                                             timestamp = System.currentTimeMillis(), providerId = actualProvider.id,
-                                            model = actualProvider.model, attempts = 1,
+                                            model = actualProvider.model, attempts = attemptCount,
                                             estimatedInputTokens = estimatedInput, estimatedOutputTokens = estimatedOutput,
                                             idempotencyKey = idempotencyKey, baseUrl = safeBaseUrl
                                         )
@@ -2052,7 +2052,7 @@ class MainActivity : Activity() {
                                         if (!archived) logAgentForChat(chatId, "❌ Nie udało się trwale zarchiwizować raportu peer review ${result.agentId}.")
                                         archived
                                     },
-                                    onRequestStarting = { task, actualProvider, estimatedInput, estimatedOutput, idempotencyKey ->
+                                    onRequestStarting = { task, actualProvider, estimatedInput, estimatedOutput, idempotencyKey, attemptCount ->
                                         if (store.isStorageUncertain()) {
                                             logAgentForChat(chatId, "⛔ Magazyn konfiguracji ma niepewny stan. Żądanie do dostawcy nie zostało wysłane; uruchom ponownie aplikację.")
                                             false
@@ -2068,7 +2068,7 @@ class MainActivity : Activity() {
                                                     taskId = task.id, agentId = task.agentId, status = "REQUESTING",
                                                     detail = "Żądanie API rozpoczęte; wynik rozliczenia może być nieznany.",
                                                     timestamp = System.currentTimeMillis(), providerId = actualProvider.id,
-                                                    model = actualProvider.model, attempts = 1,
+                                                    model = actualProvider.model, attempts = attemptCount,
                                                     estimatedInputTokens = estimatedInput, estimatedOutputTokens = estimatedOutput,
                                                     idempotencyKey = idempotencyKey, baseUrl = safeBaseUrl
                                                 )
@@ -4615,7 +4615,7 @@ class MainActivity : Activity() {
                             if (!archived) logAgentForChat(chatId, "❌ Nie udało się trwale zarchiwizować raportu recenzji patcha ${result.agentId}.")
                             archived
                         },
-                        onRequestStarting = { task, actualProvider, estimatedInput, estimatedOutput, idempotencyKey ->
+                        onRequestStarting = { task, actualProvider, estimatedInput, estimatedOutput, idempotencyKey, attemptCount ->
                             if (store.isStorageUncertain()) {
                                 logAgentForChat(chatId, "⛔ Magazyn konfiguracji ma niepewny stan. Żądanie do dostawcy nie zostało wysłane; uruchom ponownie aplikację.")
                                 false
@@ -4631,7 +4631,7 @@ class MainActivity : Activity() {
                                         taskId = task.id, agentId = task.agentId, status = "REQUESTING",
                                         detail = "Żądanie API rozpoczęte; wynik rozliczenia może być nieznany.",
                                         timestamp = System.currentTimeMillis(), providerId = actualProvider.id,
-                                        model = actualProvider.model, attempts = 1,
+                                        model = actualProvider.model, attempts = attemptCount,
                                         estimatedInputTokens = estimatedInput, estimatedOutputTokens = estimatedOutput,
                                         idempotencyKey = idempotencyKey, baseUrl = safeBaseUrl
                                     )
