@@ -94,6 +94,35 @@ class SecureStore(context: Context) {
         return ids.mapNotNull { readConfig(it) }
     }
 
+    private fun validateImportedConfig(config: JSONObject) {
+        fun requiredString(name: String, max: Int, allowBlank: Boolean = true): String {
+            require(config.has(name) && !config.isNull(name)) { "Brak pola konfiguracji: $name." }
+            val value = config.opt(name)
+            require(value is String && value.length <= max && (allowBlank || value.isNotBlank())) {
+                "Nieprawidłowe pole konfiguracji: $name."
+            }
+            return value as String
+        }
+        val id = requiredString("id", 128, allowBlank = false)
+        require(id.matches(Regex("[A-Za-z0-9._:-]+"))) { "Id dostawcy zawiera niedozwolone znaki." }
+        requiredString("name", 160, allowBlank = false)
+        val kind = requiredString("kind", 40, allowBlank = false)
+        require(kind in setOf("OPENAI_COMPATIBLE", "GEMINI", "ANTHROPIC")) { "Nieobsługiwany typ dostawcy." }
+        requiredString("baseUrl", 2048)
+        requiredString("model", 512)
+        if (config.has("apiKey") && !config.isNull("apiKey")) {
+            val apiKey = config.opt("apiKey")
+            require(apiKey is String && apiKey.length <= 8192) { "Nieprawidłowy klucz API w kopii." }
+        }
+        if (config.has("enabled")) require(config.opt("enabled") is Boolean) { "Nieprawidłowy status dostawcy." }
+        if (config.has("parentProviderId") && !config.isNull("parentProviderId")) {
+            val parent = config.opt("parentProviderId")
+            require(parent is String && parent.length <= 128) { "Nieprawidłowy identyfikator profilu nadrzędnego." }
+            require(parent.isEmpty() || parent.matches(Regex("[A-Za-z0-9._:-]+"))) { "Id profilu nadrzędnego zawiera niedozwolone znaki." }
+            require(parent != id) { "Profil nie może być własnym profilem nadrzędnym." }
+        }
+    }
+
     /**
      * Pre-encrypts and validates every entry before changing preferences. The final replacement,
      * including provider IDs, metadata and encrypted API keys, is committed with one Editor commit.
@@ -106,6 +135,12 @@ class SecureStore(context: Context) {
             val newIds = copied.map { it.optString("id", "default") }
             require(newIds.all { it.isNotBlank() }) { "Id dostawcy nie może być pusty." }
             require(newIds.size == newIds.toSet().size) { "Kopia zawiera powtórzone identyfikatory dostawców." }
+            copied.forEach(::validateImportedConfig)
+            val idSet = newIds.toSet()
+            copied.forEach { config ->
+                val parent = config.optString("parentProviderId", "")
+                require(parent.isEmpty() || parent in idSet) { "Profil wskazuje na nieistniejącego dostawcę nadrzędnego." }
+            }
             val prepared = copied.map { config ->
                 val id = config.optString("id", "default")
                 val encrypted = encryptSecret(config.optString("apiKey"))
