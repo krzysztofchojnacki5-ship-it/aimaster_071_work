@@ -126,6 +126,35 @@ class SecureStoreImportTest {
         }
     }
 
+    @Test fun ciphertextPreferenceReadFailurePoisonsStoreWithoutDeletingSecret() {
+        val base = org.robolectric.RuntimeEnvironment.getApplication()
+        val delegate = base.getSharedPreferences("secure_provider_store", Context.MODE_PRIVATE)
+        delegate.edit().putString("key_provider_one", "persisted-ciphertext").commit()
+        val failingPreferences = Proxy.newProxyInstance(
+            SharedPreferences::class.java.classLoader,
+            arrayOf(SharedPreferences::class.java)
+        ) { _, method, args ->
+            if (method.name == "getString" && args?.getOrNull(0) == "key_provider_one") {
+                throw IllegalStateException("simulated ciphertext read failure")
+            }
+            method.invoke(delegate, *(args ?: emptyArray()))
+        } as SharedPreferences
+        val context = object : ContextWrapper(base) {
+            override fun getSharedPreferences(name: String, mode: Int): SharedPreferences =
+                if (name == "secure_provider_store") failingPreferences else super.getSharedPreferences(name, mode)
+        }
+        val store = SecureStore(context)
+        try {
+            assertEquals(null, store.getSecret("key_provider_one"))
+            assertTrue(store.isStorageUncertain())
+            assertEquals("persisted-ciphertext", delegate.getString("key_provider_one", null))
+            assertFalse(store.putSecret("key_provider_one", ""))
+            assertEquals("persisted-ciphertext", delegate.getString("key_provider_one", null))
+        } finally {
+            SecureStoreHealth.resetForTests()
+        }
+    }
+
     @Test fun providerIdReadFailureBlocksSaveBeforeAnyPreferenceCommit() {
         val base = org.robolectric.RuntimeEnvironment.getApplication()
         val delegate = base.getSharedPreferences("secure_provider_store", Context.MODE_PRIVATE)
