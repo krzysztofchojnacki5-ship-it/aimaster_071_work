@@ -168,16 +168,26 @@ class MainActivity : Activity() {
         val assignmentDefaults = AgentRole.values().associate { role ->
             role.name to if (role == AgentRole.MASTER) selectedProviderId else "groq"
         }
-        agentProviders.putAll(
-            pl.aimasterpro.app.core.AgentProviderAssignmentStore.read(this, assignmentDefaults)
-        )
-        selectedProviderId = agentProviders[AgentRole.MASTER.name] ?: selectedProviderId
-        if (chatPrefs.getString("selected_provider", null) != selectedProviderId) {
-            val synced = pl.aimasterpro.app.core.AgentProviderAssignmentStore.save(
-                this, AgentRole.MASTER.name, selectedProviderId
+        val validProviderIds = if (store.isStorageUncertain()) emptySet()
+            else store.allConfigs().map { it.optString("id") }.filter { it.isNotBlank() }.toSet()
+        val recoveredAssignments = if (validProviderIds.isNotEmpty()) {
+            pl.aimasterpro.app.core.AgentProviderAssignmentStore.reconcileExistingAssignments(
+                this, assignmentDefaults, validProviderIds,
+                chatPrefs.getString("selected_provider", null)
             )
-            if (!synced) android.util.Log.e("AIMasterAssignments", "Nie udało się uzgodnić legacy selected_provider z przypisaniem MASTER.")
+        } else null
+        if (recoveredAssignments != null) {
+            agentProviders.putAll(recoveredAssignments)
+        } else {
+            agentProviders.putAll(
+                pl.aimasterpro.app.core.AgentProviderAssignmentStore.read(this, assignmentDefaults)
+            )
+            android.util.Log.w(
+                "AIMasterAssignments",
+                "Nie uzgodniono przypisań przy starcie: katalog dostawców jest pusty, magazyn niepewny lub zapis nie powiódł się."
+            )
         }
+        selectedProviderId = agentProviders[AgentRole.MASTER.name] ?: selectedProviderId
         AgentRole.values().forEach { role -> agentConnection[role.name] = "unknown" }
         window.statusBarColor = bg
         window.navigationBarColor = bg
