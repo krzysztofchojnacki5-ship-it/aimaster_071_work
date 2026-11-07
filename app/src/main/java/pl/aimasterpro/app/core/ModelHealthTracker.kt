@@ -24,28 +24,71 @@ object ModelHealthTracker {
 
     @Synchronized
     fun record(context: Context, provider: ProviderConfig, success: Boolean, category: String = "", latencyMs: Long = 0L) {
-        val host = runCatching { URL(provider.baseUrl).host.lowercase(Locale.ROOT) }.getOrDefault(provider.baseUrl.lowercase(Locale.ROOT))
+        require(provider.id.isNotBlank() && provider.model.isNotBlank() && latencyMs >= 0L) {
+            "Nieprawidłowa tożsamość dostawcy lub opóźnienie zdarzenia kondycji modelu."
+        }
+        val host = runCatching { URL(provider.baseUrl).host.lowercase(Locale.ROOT) }
+            .getOrDefault(provider.baseUrl.trim().lowercase(Locale.ROOT))
+        val providerIdentity = provider.parentProviderId.ifBlank { provider.id }
+        require(host.isNotBlank() && providerIdentity.isNotBlank()) {
+            "Zdarzenie kondycji modelu nie zawiera kompletnej tożsamości."
+        }
+        // A damaged history is never replaced with a fresh partial journal.
         val all = load(context).toMutableList()
-        all.add(0, Event(System.currentTimeMillis(), provider.parentProviderId.ifBlank { provider.id }, host, provider.model, success, category, latencyMs.coerceAtLeast(0L)))
+        all.add(0, Event(System.currentTimeMillis(), providerIdentity, host, provider.model, success, category, latencyMs))
         val json = JSONArray()
         all.take(MAX_EVENTS).forEach { e ->
             json.put(JSONObject().put("ts", e.timestamp).put("provider", e.providerId).put("host", e.host)
                 .put("model", e.model).put("ok", e.success).put("category", e.category).put("latency", e.latencyMs))
         }
-        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putString(KEY, json.toString()).apply()
+        check(context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putString(KEY, json.toString()).commit()) {
+            "Nie udało się trwale zapisać historii kondycji modeli."
+        }
+    }
+
+    private fun exactNonNegativeLong(value: Any?, field: String): Long {
+        val number = value as? Number
+            ?: throw IllegalStateException("Historia kondycji zawiera nieprawidłowe pole: $field.")
+        val doubleValue = number.toDouble()
+        val longValue = number.toLong()
+        require(doubleValue.isFinite() && doubleValue >= 0.0 && doubleValue == longValue.toDouble()) {
+            "Historia kondycji zawiera nieprawidłową wartość liczbową: $field."
+        }
+        return longValue
     }
 
     @Synchronized
     fun load(context: Context): List<Event> {
-        val raw = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString(KEY, null) ?: return emptyList()
-        return runCatching {
+        val raw = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString(KEY, null)
+            ?: return emptyList()
+        return try {
             val arr = JSONArray(raw)
-            (0 until arr.length()).mapNotNull { i ->
-                val o = arr.optJSONObject(i) ?: return@mapNotNull null
-                Event(o.optLong("ts"), o.optString("provider"), o.optString("host"), o.optString("model"),
-                    o.optBoolean("ok"), o.optString("category"), o.optLong("latency"))
+            require(arr.length() <= MAX_EVENTS) { "Historia kondycji przekracza bezpieczny rozmiar." }
+            (0 until arr.length()).map { index ->
+                val o = arr.opt(index) as? JSONObject
+                    ?: throw IllegalStateException("Historia kondycji zawiera wpis, który nie jest obiektem.")
+                val provider = o.opt("provider") as? String
+                val host = o.opt("host") as? String
+                val model = o.opt("model") as? String
+                val category = o.opt("category") as? String
+                val success = o.opt("ok") as? Boolean
+                require(!provider.isNullOrBlank() && !host.isNullOrBlank() && !model.isNullOrBlank() &&
+                    category != null && success != null) {
+                    "Historia kondycji zawiera niekompletną tożsamość lub metadane."
+                }
+                Event(
+                    exactNonNegativeLong(o.opt("ts"), "ts"),
+                    provider,
+                    host,
+                    model,
+                    success,
+                    category,
+                    exactNonNegativeLong(o.opt("latency"), "latency")
+                )
             }
-        }.getOrDefault(emptyList())
+        } catch (error: Exception) {
+            throw IllegalStateException("Historia kondycji modeli jest uszkodzona; odczyt i zapis zostały wstrzymane.", error)
+        }
     }
 
     data class Snapshot(
@@ -93,11 +136,11 @@ object ModelHealthTracker {
     fun rank(context: Context, configs: List<ProviderConfig>): List<ProviderConfig> {
         if (configs.size < 2) return configs
         val primary = configs.first()
-        val primaryHealth = snapshot(context, primary) ?: return configs
+        val primaryHealth = runCatching { snapshot(context, primary) }.getOrNull() ?: return configs
         // Require at least two independent observations and a backup with an observed success.
         if (primaryHealth.samples < 2) return configs
         val alternatives = configs.drop(1).map { candidate ->
-            candidate to snapshot(context, candidate)
+            candidate to runCatching { snapshot(context, candidate) }.getOrNull()
         }.sortedByDescending { (_, health) -> health?.rankingScore ?: 50.0 }
         val provenBackup = alternatives.firstOrNull { (_, health) -> health != null && health.successes > 0 }
         val backupScore = provenBackup?.second?.rankingScore ?: Double.NEGATIVE_INFINITY

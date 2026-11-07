@@ -40,4 +40,33 @@ class ModelHealthTrackerTest {
         val other = primary.copy(model = "model-c")
         assertNull(ModelHealthTracker.snapshot(context, other))
     }
+
+    @Test fun malformedHistoryFailsClosedAndIsNeverOverwritten() {
+        val prefs = context.getSharedPreferences("model_health_history_v1", Context.MODE_PRIVATE)
+        val corrupt = """[{"ts":"bad","provider":"p1","host":"api.primary.test","model":"model-a","ok":true,"category":"","latency":1}]"""
+        assertTrue(prefs.edit().putString("events", corrupt).commit())
+
+        assertTrue(runCatching { ModelHealthTracker.load(context) }.isFailure)
+        assertEquals("p1", ModelHealthTracker.rank(context, listOf(primary, backup)).first().id)
+        assertTrue(runCatching { ModelHealthTracker.record(context, backup, true, "", 100) }.isFailure)
+        assertEquals(corrupt, prefs.getString("events", null))
+    }
+
+    @Test fun malformedHistoryRowCannotBeSilentlyDropped() {
+        val prefs = context.getSharedPreferences("model_health_history_v1", Context.MODE_PRIVATE)
+        val corrupt = """[{"ts":1,"provider":"p1","host":"api.primary.test","model":"model-a","ok":true,"category":"","latency":1},null]"""
+        assertTrue(prefs.edit().putString("events", corrupt).commit())
+        assertTrue(runCatching { ModelHealthTracker.load(context) }.isFailure)
+        assertEquals(corrupt, prefs.getString("events", null))
+    }
+
+    @Test fun negativeOrFractionalHistoryCountersAreRejected() {
+        val prefs = context.getSharedPreferences("model_health_history_v1", Context.MODE_PRIVATE)
+        val negative = """[{"ts":-1,"provider":"p1","host":"api.primary.test","model":"model-a","ok":true,"category":"","latency":1}]"""
+        assertTrue(prefs.edit().putString("events", negative).commit())
+        assertTrue(runCatching { ModelHealthTracker.load(context) }.isFailure)
+        val fractional = """[{"ts":1.5,"provider":"p1","host":"api.primary.test","model":"model-a","ok":true,"category":"","latency":1}]"""
+        assertTrue(prefs.edit().putString("events", fractional).commit())
+        assertTrue(runCatching { ModelHealthTracker.load(context) }.isFailure)
+    }
 }
