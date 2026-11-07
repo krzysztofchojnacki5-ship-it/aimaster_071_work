@@ -368,13 +368,15 @@ class ChatHistoryStoreTest {
     }
 
 
-    @Test fun legacyMirrorCommitFailureQuarantinesSharedPreferenceFileWithoutReplacingOldMirror() {
+    @Test fun legacyMirrorAccessFailureDoesNotQuarantineCanonicalHistoryOrReplaceOldMirror() {
         assertTrue(prefs.edit().putString("chat_messages", "old-mirror").commit())
-        val failing = AmbiguousCommitContext(context, "chat_state", applyBeforeFailure = false)
+        val failing = object : android.content.ContextWrapper(context) {
+            override fun getSharedPreferences(name: String, mode: Int): android.content.SharedPreferences {
+                throw IllegalStateException("controlled legacy mirror access failure")
+            }
+        }
         assertFalse(ChatHistoryStore.writeLegacyMirror(failing, "new-mirror"))
-        assertTrue(SharedPreferencesWriteHealth.isUncertain("chat_state"))
-        assertEquals("old-mirror", prefs.getString("chat_messages", null))
-        SharedPreferencesWriteHealth.resetForTests("chat_state")
+        assertFalse(SharedPreferencesWriteHealth.isUncertain("chat_state"))
         assertEquals("old-mirror", prefs.getString("chat_messages", null))
     }
 
