@@ -599,7 +599,8 @@ class ApiTokenTrackerTest {
             """[{"qId":"fractional-input","ts":1,"prov":"p","model":"m","agent":"MASTER","task":"x","in":1.5,"out":1,"tot":2.5,"reas":0,"cache":0,"status":"REAL","usd":0.01,"pln":0.04}]""",
             """[{"qId":"string-input","ts":1,"prov":"p","model":"m","agent":"MASTER","task":"x","in":"10","out":1,"tot":11,"reas":0,"cache":0,"status":"REAL","usd":0.01,"pln":0.04}]""",
             """[{"qId":"fractional-time","ts":1.5,"prov":"p","model":"m","agent":"MASTER","task":"x","in":1,"out":1,"tot":2,"reas":0,"cache":0,"status":"REAL","usd":0.01,"pln":0.04}]""",
-            """[{"qId":"string-cost","ts":1,"prov":"p","model":"m","agent":"MASTER","task":"x","in":1,"out":1,"tot":2,"reas":0,"cache":0,"status":"REAL","usd":"0.01","pln":0.04}]"""
+            """[{"qId":"string-cost","ts":1,"prov":"p","model":"m","agent":"MASTER","task":"x","in":1,"out":1,"tot":2,"reas":0,"cache":0,"status":"REAL","usd":"0.01","pln":0.04}]""",
+            """[{"qId":"truncated-row","tot":0}]"""
         )
 
         malformedRows.forEachIndexed { index, raw ->
