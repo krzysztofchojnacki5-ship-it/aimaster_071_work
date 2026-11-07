@@ -55,7 +55,7 @@ object AgentProviderAssignmentStore {
                 val old = prefs.getString(key(role), null)
                 when {
                     role == MASTER -> masterFallback
-                    old in validProviderIds -> old!!
+                    old != null && old in validProviderIds -> old
                     defaultId in validProviderIds -> defaultId
                     else -> masterFallback
                 }
