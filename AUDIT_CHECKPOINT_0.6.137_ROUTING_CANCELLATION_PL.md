@@ -1714,3 +1714,10 @@ Dodatkowa korekta zgodności starszych zapisów:
 Commits:
 - f290633 — spójne rozpoznawanie pustych i nieprawidłowych wpisów sekretów;
 - 0af2423 — test zgodności pustego legacy wpisu.
+
+
+Kontrola zgodności z formatem istniejącej instalacji:
+- porównano SecureStore z gałęzi main (stan bazowy 0.6.54): nazwa SharedPreferences secure_provider_store, alias ai_master_provider_key_v1 oraz nazewnictwo config_<id>/key_<id> są zgodne;
+- dotychczasowe profile i zaszyfrowane sekrety nie wymagają migracji nazwy magazynu ani aliasu;
+- stare puste wpisy key_<id> są traktowane jak brak sekretu; niepuste, ale nieczytelne wpisy są chronione i nie są automatycznie usuwane;
+- migracja kopii legacy pozostaje osobną ścieżką importLegacyBackup(), a replaceAllConfigs() teraz odrzuca import, jeśli zastąpiłby magazyn zawierający choć jeden nieczytelny sekret.
