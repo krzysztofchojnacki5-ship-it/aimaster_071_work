@@ -1922,3 +1922,6 @@ Doprecyzowanie projektu SQLite:
 - Dodatkowo automatyczna synchronizacja katalogu sprawdza stan po każdym HTTP i przed zapisem katalogu, aby nie utrwalać odpowiedzi, jeśli magazyn został w międzyczasie zablokowany.
 - CI dla SHA `22f2e397`: run `42329952558`, w toku przy ostatnim odczycie. Najnowszy commit kodu `c18c37c5` ma run `42330058130`, status `pending`; to on będzie miarodajny dla aktualnego kodu.
 - Stan gałęzi po tych zmianach: 370 ahead / 0 behind. `main` bez zmian.
+
+
+- Dodatkowy przegląd migracji potwierdził `android:allowBackup="false"` w manifeście. W projekcie SQLite dopisano jawne `PRAGMA foreign_keys=ON`, kontrolę zgodności kolumn z JSON oraz `PRAGMA quick_check` i `PRAGMA foreign_key_check` po ponownym otwarciu bazy. Commit dokumentacji: `ae2fb547`. To nadal wyłącznie specyfikacja, bez zmiany kodu magazynu.
