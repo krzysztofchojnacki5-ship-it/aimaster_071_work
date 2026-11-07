@@ -40,8 +40,10 @@ data class ProviderModelInfo(
     val description: String = "",
     /** USD per million tokens for cached input reads, when explicitly published by the provider. */
     val cachedPromptPricePerMillion: Double? = null,
-    /** USD per million tokens for cache writes, when explicitly published by the provider. */
+    /** USD per million tokens for default (5-minute) cache writes. */
     val cachedPromptWritePricePerMillion: Double? = null,
+    /** USD per million tokens for 1-hour cache writes. */
+    val cachedPromptWrite1hPricePerMillion: Double? = null,
     /** USD per million tokens for reasoning tokens when the provider prices them separately. */
     val internalReasoningPricePerMillion: Double? = null
 )
@@ -54,13 +56,15 @@ internal fun resolveOpenRouterFreePricing(
     completionPrice: Double?,
     cachedReadPrice: Double?,
     cacheWritePrice: Double?,
-    internalReasoningPrice: Double? = null
+    internalReasoningPrice: Double? = null,
+    cacheWrite1hPrice: Double? = null
 ): Boolean? {
     if (!isOpenRouter) return null
     val hasPricing = promptPrice != null && completionPrice != null
     val explicitlyFree = modelId.equals("openrouter/free", true) || modelId.endsWith(":free", true)
     val hasPaidCacheRate = (cachedReadPrice != null && cachedReadPrice > 0.0) ||
         (cacheWritePrice != null && cacheWritePrice > 0.0) ||
+        (cacheWrite1hPrice != null && cacheWrite1hPrice > 0.0) ||
         (internalReasoningPrice != null && internalReasoningPrice > 0.0)
     return when {
         hasPaidCacheRate -> false
@@ -330,10 +334,11 @@ class ProviderClient(
     private fun validUsageBreakdown(
         input: Long?, output: Long?, reportedTotal: Long?, cached: Long?, reasoning: Long?,
         reportedTotalFieldValid: Boolean = true,
-        cacheWrite: Long? = 0L
+        cacheWrite: Long? = 0L,
+        cacheWrite1h: Long? = 0L
     ): Boolean {
-        if (!reportedTotalFieldValid || input == null || output == null || cached == null || reasoning == null || cacheWrite == null) return false
-        val cachedAndWritten = try { Math.addExact(cached, cacheWrite) } catch (_: ArithmeticException) { return false }
+        if (!reportedTotalFieldValid || input == null || output == null || cached == null || reasoning == null || cacheWrite == null || cacheWrite1h == null) return false
+        val cachedAndWritten = try { Math.addExact(Math.addExact(cached, cacheWrite), cacheWrite1h) } catch (_: ArithmeticException) { return false }
         if (cachedAndWritten > input || reasoning > output) return false
         val sum = try { Math.addExact(input, output) } catch (_: ArithmeticException) { return false }
         return reportedTotal == null || reportedTotal == sum
@@ -364,22 +369,36 @@ class ProviderClient(
             val uncachedInput = exactNonNegativeCount(usageObj, "input_tokens")
             val output = exactNonNegativeCount(usageObj, "output_tokens")
             val cacheRead = exactNonNegativeCount(usageObj, "cache_read_input_tokens", 0L)
-            val cacheCreation = exactNonNegativeCount(usageObj, "cache_creation_input_tokens", 0L)
+            val cacheCreationTotal = exactNonNegativeCount(usageObj, "cache_creation_input_tokens", 0L)
+            val cacheCreation = usageObj?.optJSONObject("cache_creation")
+            val cacheWrite = if (cacheCreation != null) {
+                exactNonNegativeCount(cacheCreation, "ephemeral_5m_input_tokens", 0L)
+            } else cacheCreationTotal
+            val cacheWrite1h = if (cacheCreation != null) {
+                exactNonNegativeCount(cacheCreation, "ephemeral_1h_input_tokens", 0L)
+            } else 0L
+            val cacheWriteSum = if (cacheWrite != null && cacheWrite1h != null) {
+                runCatching { Math.addExact(cacheWrite, cacheWrite1h) }.getOrNull()
+            } else null
+            val cacheBreakdownValid = cacheCreation == null ||
+                (cacheCreationTotal != null && cacheWriteSum != null && cacheCreationTotal == cacheWriteSum)
             val cached = cacheRead
-            val cacheWrite = cacheCreation
-            val input = if (uncachedInput != null && cached != null && cacheWrite != null) {
-                runCatching { Math.addExact(Math.addExact(uncachedInput, cached), cacheWrite) }.getOrNull()
+            val input = if (uncachedInput != null && cached != null && cacheWriteSum != null) {
+                runCatching { Math.addExact(Math.addExact(uncachedInput, cached), cacheWriteSum) }.getOrNull()
             } else null
             val reasoning = 0L
-            val realUsage = validUsageBreakdown(input, output, null, cached, reasoning, cacheWrite = cacheWrite)
+            val realUsage = cacheBreakdownValid && validUsageBreakdown(
+                input, output, null, cached, reasoning, cacheWrite = cacheWrite, cacheWrite1h = cacheWrite1h
+            )
             val finalInput = if (realUsage) input!! else (systemPrompt.length + userText.length) / 4.toLong()
             val finalOutput = if (realUsage) output!! else text.length / 4.toLong()
             val finalTotal = if (realUsage) Math.addExact(finalInput, finalOutput) else finalInput + finalOutput
             val finalCached = if (realUsage) cached!! else 0L
             val finalCacheWrite = if (realUsage) cacheWrite!! else 0L
+            val finalCacheWrite1h = if (realUsage) cacheWrite1h!! else 0L
             val status = if (realUsage) "REAL" else "ESTIMATED"
 
-            ChatResponse(text, TokenUsageResult(finalInput, finalOutput, finalTotal, reasoning, finalCached, status, finalCacheWrite), providerId = config.id, model = responseModel(result, config.model))
+            ChatResponse(text, TokenUsageResult(finalInput, finalOutput, finalTotal, reasoning, finalCached, status, finalCacheWrite, finalCacheWrite1h), providerId = config.id, model = responseModel(result, config.model))
         }
         ProviderKind.OPENAI_COMPATIBLE -> {
             val root = config.baseUrl.trimEnd('/')
@@ -406,19 +425,24 @@ class ProviderClient(
             val reportedTotalFieldValid = usageObj == null || !usageObj.has("total_tokens") || reportedTotal != null
             val promptDetails = usageObj?.optJSONObject("prompt_tokens_details")
             val cached = exactNonNegativeCount(promptDetails, "cached_tokens", 0L)
-            val cacheWrite = exactNonNegativeCount(promptDetails, "cache_write_tokens", 0L)
+            val cacheWriteRaw = exactNonNegativeCount(promptDetails, "cache_write_tokens", 0L)
+            val cacheWrite1h = exactNonNegativeCount(promptDetails, "cache_write_1h_tokens", 0L)
+            val cacheWrite = if (cacheWrite1h != null && promptDetails?.has("cache_write_1h_tokens") == true) {
+                exactNonNegativeCount(promptDetails, "cache_write_tokens", 0L)
+            } else cacheWriteRaw
             val reasoning = exactNonNegativeCount(usageObj?.optJSONObject("completion_tokens_details"), "reasoning_tokens", 0L)
-            val realUsage = validUsageBreakdown(input, output, reportedTotal, cached, reasoning, reportedTotalFieldValid, cacheWrite)
+            val realUsage = validUsageBreakdown(input, output, reportedTotal, cached, reasoning, reportedTotalFieldValid, cacheWrite, cacheWrite1h)
 
             val finalInput = if (realUsage) input!! else (systemPrompt.length + userText.length) / 4.toLong()
             val finalOutput = if (realUsage) output!! else text.length / 4.toLong()
             val finalTotal = if (realUsage) Math.addExact(finalInput, finalOutput) else finalInput + finalOutput
             val finalCached = if (realUsage) cached!! else 0L
             val finalCacheWrite = if (realUsage) cacheWrite!! else 0L
+            val finalCacheWrite1h = if (realUsage) cacheWrite1h!! else 0L
             val finalReasoning = if (realUsage) reasoning!! else 0L
             val status = if (realUsage) "REAL" else "ESTIMATED"
 
-            ChatResponse(text, TokenUsageResult(finalInput, finalOutput, finalTotal, finalReasoning, finalCached, status, finalCacheWrite), providerId = config.id, model = responseModel(result, config.model))
+            ChatResponse(text, TokenUsageResult(finalInput, finalOutput, finalTotal, finalReasoning, finalCached, status, finalCacheWrite, finalCacheWrite1h), providerId = config.id, model = responseModel(result, config.model))
         }
         ProviderKind.GEMINI -> {
             val root = config.baseUrl.trimEnd('/')
@@ -442,14 +466,16 @@ class ProviderClient(
                 val promptDetails = usageObj?.optJSONObject("prompt_tokens_details")
                 val cached = exactNonNegativeCount(promptDetails, "cached_tokens", 0L)
                 val cacheWrite = exactNonNegativeCount(promptDetails, "cache_write_tokens", 0L)
-                val realUsage = validUsageBreakdown(input, output, reportedTotal, cached, 0L, reportedTotalFieldValid, cacheWrite)
+                val cacheWrite1h = exactNonNegativeCount(promptDetails, "cache_write_1h_tokens", 0L)
+                val realUsage = validUsageBreakdown(input, output, reportedTotal, cached, 0L, reportedTotalFieldValid, cacheWrite, cacheWrite1h)
                 val finalInput = if (realUsage) input!! else (systemPrompt.length + userText.length) / 4L
                 val finalOutput = if (realUsage) output!! else text.length / 4L
                 val finalTotal = if (realUsage) Math.addExact(finalInput, finalOutput) else finalInput + finalOutput
                 val finalCached = if (realUsage) cached!! else 0L
                 val finalCacheWrite = if (realUsage) cacheWrite!! else 0L
+                val finalCacheWrite1h = if (realUsage) cacheWrite1h!! else 0L
                 val status = if (realUsage) "REAL" else "ESTIMATED"
-                ChatResponse(text, TokenUsageResult(finalInput, finalOutput, finalTotal, 0L, finalCached, status, finalCacheWrite), providerId = config.id, model = responseModel(result, config.model))
+                ChatResponse(text, TokenUsageResult(finalInput, finalOutput, finalTotal, 0L, finalCached, status, finalCacheWrite, finalCacheWrite1h), providerId = config.id, model = responseModel(result, config.model))
             } else {
                 // Native Gemini REST API
                 val encodedKey = java.net.URLEncoder.encode(config.apiKey, "UTF-8")
@@ -519,6 +545,7 @@ class ProviderClient(
                         val completionRaw = pricing?.optString("completion")
                         val cachedReadRaw = pricing?.optString("input_cache_read")
                         val cachedWriteRaw = pricing?.optString("input_cache_write")
+                        val cachedWrite1hRaw = pricing?.optString("input_cache_write_1h")
                         val reasoningRaw = pricing?.optString("internal_reasoning")
                         val prompt = promptRaw?.toDoubleOrNull()?.times(1_000_000.0)
                             ?.takeIf { it.isFinite() && it >= 0.0 }
@@ -528,10 +555,12 @@ class ProviderClient(
                             ?.takeIf { it.isFinite() && it >= 0.0 }
                         val cachedWrite = cachedWriteRaw?.toDoubleOrNull()?.times(1_000_000.0)
                             ?.takeIf { it.isFinite() && it >= 0.0 }
+                        val cachedWrite1h = cachedWrite1hRaw?.toDoubleOrNull()?.times(1_000_000.0)
+                            ?.takeIf { it.isFinite() && it >= 0.0 }
                         val reasoning = reasoningRaw?.toDoubleOrNull()?.times(1_000_000.0)
                             ?.takeIf { it.isFinite() && it >= 0.0 }
                         val free = resolveOpenRouterFreePricing(
-                            id, isOpenRouter, prompt, completion, cachedRead, cachedWrite, reasoning
+                            id, isOpenRouter, prompt, completion, cachedRead, cachedWrite, reasoning, cachedWrite1h
                         )
                         ProviderModelInfo(
                             id = id,
@@ -543,6 +572,7 @@ class ProviderClient(
                             description = o.optString("description", ""),
                             cachedPromptPricePerMillion = cachedRead,
                             cachedPromptWritePricePerMillion = cachedWrite,
+                            cachedPromptWrite1hPricePerMillion = cachedWrite1h,
                             internalReasoningPricePerMillion = reasoning
                         )
                     }.sortedBy { it.id }
