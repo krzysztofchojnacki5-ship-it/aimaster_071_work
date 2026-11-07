@@ -411,3 +411,9 @@ Rejestr rozróżnia paczkę źródłową od wersji aplikacji/APK. Numer paczki n
 - Status testów: ADDED / NOT RUN; brak potwierdzenia kompilacji.
 
 - Wzmocniono testy blokady obu archiwów: zamiast polegać wyłącznie na opóźnieniu, test czeka na stan wątku `BLOCKED` na monitorze wspólnej blokady. Commity: `b14f6ff8d48ff125b8c1bcc274889ecf15f1896b`, `808555f1fabbd45e51cd9f757b812a0601adc72e`. Nadal ADDED / NOT RUN.
+
+### 0.6.139 — diagnostyka odzyskiwania i spójność cache UI
+
+- `MainActivity` zapisuje błąd `TaskResultArchive.restoreArchivedReports()` do logu `AIMasterRecovery`, analogicznie do archiwum odpowiedzi. Start aplikacji nadal jest kontynuowany, a archiwum pozostaje do ponowienia.
+- `persistMessages()` aktualizuje `chatTitles` dopiero po potwierdzeniu trwałego zapisu `chats_v2`; awaria commit nie zmienia już lokalnego cache tytułu.
+- Commit: `ab954ce9e099afeecf6adfc68c251229d3c2e332`. Weryfikacja statyczna wykonana; test/build NOT RUN.
