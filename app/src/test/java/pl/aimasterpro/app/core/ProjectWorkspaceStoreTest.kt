@@ -320,6 +320,62 @@ class ProjectWorkspaceStoreTest {
         } finally { root.deleteRecursively() }
     }
 
+    @Test fun committedWorkspaceIsNotCleanedWhenHostReceiptConflictsWithJournal() {
+        val root = tempDir("workspace-receipt-conflict-")
+        try {
+            val store = ProjectWorkspaceStore(root)
+            store.importZip(ByteArrayInputStream(zip("README.md" to "previous workspace")), "previous.zip", 10L)
+            val previousIdentity = store.currentIdentity()!!
+            val previousManifestBytes = File(root, "current.manifest").readBytes()
+
+            store.importZip(ByteArrayInputStream(zip("README.md" to "committed workspace")), "committed.zip", 20L)
+            val currentManifest = File(root, "current.manifest")
+            val currentManifestHash = java.security.MessageDigest.getInstance("SHA-256")
+                .digest(currentManifest.readBytes()).joinToString("") { "%02x".format(it) }
+            val transactionId = "123e4567-e89b-12d3-a456-426614174000"
+            val conflictingReceiptId = "223e4567-e89b-12d3-a456-426614174000"
+            val previous = File(root, ".previous-$transactionId")
+            assertTrue(previous.mkdirs())
+            File(previous, "README.md").writeText("previous workspace")
+            File(root, ".previous-$transactionId.manifest").writeBytes(previousManifestBytes)
+
+            java.io.DataOutputStream(File(root, "workspace.swap.journal").outputStream()).use { out ->
+                out.writeInt(0x41495357) // AISW
+                out.writeInt(2)
+                out.writeUTF(transactionId)
+                out.writeBoolean(true)
+                out.writeUTF(currentManifestHash)
+                out.writeBoolean(true)
+                out.writeUTF("change-set-1")
+                out.writeUTF("chat-1")
+                out.writeUTF("snapshot-1")
+                out.writeUTF(previousIdentity)
+            }
+            java.io.DataOutputStream(File(root, "workspace.patch.receipt").outputStream()).use { out ->
+                out.writeInt(0x41495052) // AIPR
+                out.writeInt(3)
+                out.writeUTF(conflictingReceiptId)
+                out.writeUTF("change-set-1")
+                out.writeUTF("chat-1")
+                out.writeUTF("snapshot-1")
+                out.writeUTF(previousIdentity)
+                out.writeUTF(currentManifestHash)
+                out.writeBoolean(false)
+                out.writeBoolean(false)
+            }
+
+            assertTrue("receipt mismatch must block startup recovery",
+                runCatching { ProjectWorkspaceStore(root) }.isFailure)
+            assertTrue("journal is retained for diagnosis/retry", File(root, "workspace.swap.journal").isFile)
+            assertTrue("previous workspace is retained until receipt reconciliation", previous.isDirectory)
+            assertTrue(File(root, ".previous-$transactionId.manifest").isFile)
+            assertTrue(File(root, "current").isDirectory)
+            assertTrue(currentManifest.isFile)
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
     @Test fun durablePublisherFailureBeforeAtomicMovePreservesTargetAndCleansOwnedTemp() {
         val root = tempDir("workspace-publisher-move-failure-")
         try {
