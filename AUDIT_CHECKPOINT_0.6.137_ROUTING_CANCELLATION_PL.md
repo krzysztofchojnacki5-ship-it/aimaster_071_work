@@ -1764,3 +1764,11 @@ Wniosek projektowy przed zmianą kodu:
 4. Przed migracją dodać testy awarii/odtworzenia i jasno rozdzielić awarię przygotowania danych od awarii commit/dysku.
 
 To jest ustalenie audytowe i plan; nie wprowadzono jeszcze zmian w kodzie SecureStore. Nie wolno twierdzić, że import pozostawia poprzednią bazę nietkniętą, jeśli commit() zwróci false.
+
+
+## CI i wykonalność magazynu transakcyjnego
+
+- Odczytano .github/workflows/android-audit.yml: job ma timeout-minutes: 45; komenda wykonuje kolejno :app:testDebugUnitTest oraz :app:assembleDebug. Workflow ignoruje *.md i ma concurrency cancel-in-progress=true dla tej samej gałęzi. Dlatego nie należy wykonywać pushy kodu przed zakończeniem bieżącego przebiegu.
+- Na 2026-11-07 02:55 CET job 128253800019 nadal in_progress; krok „Run unit tests and compile debug variant” nie zakończył się. Nie ma podstaw do uznania testów lub assembleDebug za PASS.
+- app/build.gradle.kts: minSdk 26, obecnie brak Room/DataStore/SQLite dependency; natywne android.database.sqlite.SQLiteOpenHelper/SQLiteDatabase są dostępne bez dodawania biblioteki. Dla pierwszej migracji można więc rozważyć natywne SQLite, jeśli zakres transakcji i testów będzie prostszy niż wprowadzanie Room.
+- Migracja musi być idempotentna i crash-safe: pozostawić prefs nietknięte; utworzyć DB i tabelę wersji; w jednej transakcji wstawić komplet metadanych oraz istniejących ciphertextów; wykonać kontrolny odczyt wszystkich rekordów; dopiero potem zapisać trwały marker migracji. Stare prefs zachować co najmniej do kolejnego uruchomienia i potwierdzenia, że DB jest kompletna. Nie usuwać ani nie rotować aliasu Keystore w trakcie migracji.
