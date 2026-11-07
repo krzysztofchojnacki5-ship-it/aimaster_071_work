@@ -179,6 +179,13 @@ object TaskCheckpointStore {
         onAmbiguousRequest: (Event) -> Boolean = { true }
     ): Int {
         if (SharedPreferencesWriteHealth.isUncertain(PREFS)) return 0
+        // Recovery must not downgrade a possibly archived report to INTERRUPTED when the
+        // archive itself cannot be read. Preserve every checkpoint until archive evidence is
+        // available; the next process start can retry the complete reconciliation safely.
+        if (!TaskResultArchive.isArchiveReadable(context)) {
+            android.util.Log.e("AIMasterRecovery", "Odzyskiwanie checkpointów wstrzymane: archiwum raportów jest niedostępne lub uszkodzone.")
+            return 0
+        }
         val stale = latest(context).filter { event ->
             val archivedResultExists = runCatching {
                 TaskResultArchive.get(context, event.taskId) != null
