@@ -54,8 +54,8 @@ class BackupCryptoTest {
     @Test
     fun testUnsupportedKdfIterationCountIsRejectedBeforeKeyDerivation() {
         val encrypted = BackupCrypto.encrypt("secret", "securepassword123".toCharArray())
-        val weakened = encrypted.replace("\\\"iterations\\\": 210000", "\\\"iterations\\\": 1")
-        val excessive = encrypted.replace("\\\"iterations\\\": 210000", "\\\"iterations\\\": 2147483647")
+        val weakened = encrypted.replace("\"iterations\": 210000", "\"iterations\": 1")
+        val excessive = encrypted.replace("\"iterations\": 210000", "\"iterations\": 2147483647")
         assertNotEquals(encrypted, weakened)
         assertNotEquals(encrypted, excessive)
         try {
