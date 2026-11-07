@@ -432,3 +432,5 @@ Rejestr rozróżnia paczkę źródłową od wersji aplikacji/APK. Numer paczki n
 - Dodano `ChatHistoryStore.updateRootAndLastUserChatId()`: oba klucze trafiają do jednego `SharedPreferences.Editor` i jednego commitu pod wspólną blokadą. `MainActivity.saveCurrentId()` korzysta teraz z tej ścieżki dla zwykłych rozmów; czatów MASTER/ASSISTANT to nie dotyczy.
 - Testy: `currentChatAndLastUserNavigationMirrorCommitTogether`, `ambiguousCurrentChatCommitNeverSplitsCanonicalIdFromNavigationMirror`.
 - Commity: storage `c85a4a5288746e3b964376297020a6199bb9dc57`, MainActivity `e49f3d94fb17ca9f39972ddf9f7aba631edd2b33`, testy `a2c955b0eeff9b41c428f69c197db8aec230d112`. Testy ADDED / NOT RUN.
+
+| 0.6.140-SOURCE | `audit/0.6.140-chat-history-restore` (commit źródłowy) | 0.6.54 | 80 | Pochodna checkpointu 0.6.139; usunięcie legacy mirror write, fail-closed parser migracji i jawna obsługa błędów odtwarzania historii | Zmiany i testy dodane; CI/JUnit/Android build NOT RUN w chwili utworzenia |

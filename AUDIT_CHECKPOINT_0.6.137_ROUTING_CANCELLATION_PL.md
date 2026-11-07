@@ -2051,3 +2051,13 @@ Doprecyzowanie projektu SQLite:
 - `MainActivity.saveCurrentId()` nie wykonuje już drugiego niezależnego commitu.
 - Dodano testy `currentChatAndLastUserNavigationMirrorCommitTogether` i `ambiguousCurrentChatCommitNeverSplitsCanonicalIdFromNavigationMirror`.
 - Commity `c85a4a5288746e3b964376297020a6199bb9dc57`, `e49f3d94fb17ca9f39972ddf9f7aba631edd2b33`, `a2c955b0eeff9b41c428f69c197db8aec230d112`. ADDED / NOT RUN.
+
+
+## 0.6.140 — ścisłe odtwarzanie starszej historii czatu (2026-11-07)
+
+- Usunięto best-effort zapis legacy mirror chat_messages z persistMessages(). Kanonicznym i jedynym zapisem historii pozostaje chats_v2; legacy mirror nie jest już aktualizowany po migracji.
+- Import chat_messages jest parsowany przed wyczyszczeniem lub zmianą kolekcji w pamięci. Błąd odczytu SharedPreferences albo nieprawidłowy JSON/wiersz kończy odzyskiwanie bez częściowej mutacji stanu.
+- restoreMessages() sprawdza wyniki persistMessages() i saveCurrentId(). Niepowodzenie trwałego zapisu jest jawnie komunikowane; nie jest przedstawiane jako potwierdzone odzyskanie.
+- Dodano LegacyChatHistoryImporter i testy: pusty/brakujący mirror, zachowanie kolejności, niepoprawny JSON, nieprawidłowe wiersze i typy pól.
+- Zakres nie obejmuje testu rzeczywistej śmierci procesu ani gwarancji power-loss. Testy JUnit/Robolectric i Android debug compilation: ADDED / NOT RUN do potwierdzenia przez CI.
+- Companion pozostaje nieaktywny; APK nie został zbudowany.

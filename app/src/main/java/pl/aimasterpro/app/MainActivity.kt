@@ -2881,8 +2881,6 @@ class MainActivity : Activity() {
             return false
         }
         persistedTitle?.let { chatTitles[currentChatId] = it }
-        // Legacy mirror is best-effort only; chats_v2 is the canonical durable document.
-        chatPrefs.edit().putString("chat_messages", arr.toString()).commit()
         true
     }
 
@@ -2966,28 +2964,53 @@ class MainActivity : Activity() {
             ?: run { toast("Historia rozmów jest uszkodzona. Zachowano dane; przywracanie i zapisy zostały wstrzymane."); return }
         val shouldImportLegacyHistory = pl.aimasterpro.app.core.ChatHistoryStore.shouldImportLegacyMirror(this)
             ?: run { toast("Nie można bezpiecznie odczytać stanu historii. Przywracanie zostało wstrzymane."); return }
+        val chats = r.optJSONObject("chats") ?: JSONObject()
+
+        // Parse the legacy mirror before mutating in-memory state. A failed read or malformed
+        // row must not turn a recoverable legacy document into a partially restored empty chat.
+        val legacyMessages = if (chats.length() == 0 && shouldImportLegacyHistory) {
+            val legacyRaw = try {
+                chatPrefs.getString("chat_messages", null)
+            } catch (error: Exception) {
+                android.util.Log.e("AIMasterChat", "Nie można odczytać starszej historii rozmów.", error)
+                toast("Nie można bezpiecznie odczytać starszej historii. Dane pozostawiono bez zmian.")
+                return
+            }
+            pl.aimasterpro.app.core.LegacyChatHistoryImporter.parse(legacyRaw)
+                ?: run {
+                    android.util.Log.e("AIMasterChat", "Starsza historia rozmów ma nieprawidłowy format.")
+                    toast("Starsza historia rozmów jest uszkodzona. Dane pozostawiono bez zmian.")
+                    return
+                }
+        } else {
+            null
+        }
+
         messages.clear()
         assistantTaskIds.clear()
-        val chats = r.optJSONObject("chats") ?: JSONObject()
         for (id in chats.keys()) chatTitles[id] = chats.optJSONObject(id)?.optString("title", "") ?: ""
         currentChatId = r.optString("currentId", "")
         val currentChat = if (currentChatId.isNotBlank()) chats.optJSONObject(currentChatId) else null
         val arr = currentChat?.optJSONArray("messages")
         if (arr != null) {
-            for (i in 0 until arr.length()) { val item = arr.getJSONObject(i); messages.add(item.optString("role") to item.optString("text")) }
+            for (i in 0 until arr.length()) {
+                val item = arr.getJSONObject(i)
+                messages.add(item.optString("role") to item.optString("text"))
+            }
             val ids = currentChat.optJSONArray("assistantTaskIds") ?: JSONArray()
             for (i in 0 until ids.length()) assistantTaskIds.add(ids.optString(i))
-        } else if (chats.length() == 0 && shouldImportLegacyHistory) {
-            val legacy = chatPrefs.getString("chat_messages", null)
-            if (!legacy.isNullOrBlank()) runCatching {
-                val a = JSONArray(legacy)
-                for (i in 0 until a.length()) { val item = a.getJSONObject(i); messages.add(item.optString("role") to item.optString("text")) }
-            }
+        } else if (legacyMessages != null) {
+            legacyMessages.forEach { messages.add(it.role to it.text) }
         }
         if (currentChatId.isBlank() || (arr == null && messages.isEmpty())) currentChatId = UUID.randomUUID().toString()
         alignAssistantTaskIds()
-        if (messages.isNotEmpty()) persistMessages()
-        saveCurrentId()
+        if (messages.isNotEmpty() && !persistMessages()) {
+            toast("Historia została odtworzona tylko w pamięci. Trwały zapis nie powiódł się; dane nie są potwierdzone jako zapisane.")
+            return
+        }
+        if (!saveCurrentId()) {
+            toast("Nie udało się trwale zapisać identyfikatora bieżącej rozmowy. Przywrócone dane pozostają w pamięci.")
+        }
     }
 
     @Synchronized private fun restoreMessagesForCurrentChat() {
