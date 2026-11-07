@@ -430,6 +430,11 @@ class MainActivity : Activity() {
             toast("Magazyn konfiguracji ma niepewny stan. Przypisanie nie zostało zmienione.")
             return false
         }
+        val providerRow = store.readConfig(providerId)
+        if (providerRow == null || store.isStorageUncertain() || providerRow.optString("id") != providerId) {
+            toast("Wybrany profil nie istnieje lub nie można go bezpiecznie odczytać. Przypisanie nie zostało zmienione.")
+            return false
+        }
         val saved = pl.aimasterpro.app.core.AgentProviderAssignmentStore.save(this, role.name, providerId)
         if (!saved) {
             toast("Nie udało się trwale zapisać przypisania. Zachowano poprzedni wybór.")
