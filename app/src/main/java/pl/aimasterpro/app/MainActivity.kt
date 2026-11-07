@@ -138,6 +138,13 @@ class MainActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         store = SecureStore(this)
+        val pausedMasterWork = runCatching {
+            pl.aimasterpro.app.core.MasterWorkJournalStore.pauseActive(this)
+        }.getOrDefault(0)
+        if (pausedMasterWork > 0) android.util.Log.w(
+            "AIMasterRecovery",
+            "Po restarcie oznaczono $pausedMasterWork aktywnych planów MASTER-a jako PAUSED; aplikacja nie wznowiła ich automatycznie."
+        )
         // Reconcile approved/revoked learning before any agent can consume persisted memory.
         runCatching {
             pl.aimasterpro.app.core.QualityLearningStore.syncApprovedAgentMemories(this)
@@ -1796,6 +1803,23 @@ class MainActivity : Activity() {
                     val explicitTeamRequest = listOf("cały zespół", "caly zespol", "wszyscy agenci", "uruchom cały zespół", "uruchom caly zespol").any(prompt.lowercase(java.util.Locale.ROOT)::contains)
                     val adaptivePlan = pl.aimasterpro.app.core.AdaptiveExecutionPolicy.plan(prompt, tasks.size, explicitTeamRequest, routing.mode == pl.aimasterpro.app.agents.AgentRoutingPolicy.Mode.TEAM)
                     val adaptiveTasks = tasks.take(adaptivePlan.maxAgents)
+                    val workJournalRecord = pl.aimasterpro.app.core.MasterWorkJournalStore.Record(
+                        taskId = requestTaskId,
+                        chatId = chatId,
+                        title = "Zadanie zespołowe • ${adaptiveTasks.size} agentów",
+                        objective = "Koordynacja analizy specjalistów, recenzji i końcowej syntezy MASTER-a.",
+                        branch = "",
+                        headSha = "",
+                        status = "ACTIVE",
+                        currentStep = "Plan i routing agentów przygotowane.",
+                        completedSteps = listOf("Plan i routing agentów przygotowane"),
+                        decisions = listOf("Dziennik nie przechowuje promptów, raportów ani danych uwierzytelniających."),
+                        nextSteps = listOf("Analiza specjalistów", "Peer Review (jeśli możliwy)", "Synteza MASTER-a"),
+                        updatedAt = System.currentTimeMillis()
+                    )
+                    check(pl.aimasterpro.app.core.MasterWorkJournalStore.save(this, workJournalRecord)) {
+                        "Nie udało się trwale zapisać dziennika pracy MASTER-a; zespół nie został uruchomiony."
+                    }
                     if (adaptiveTasks.size < tasks.size) logAgentForChat(chatId, "🧠 Adaptacyjny budżet: ${adaptivePlan.reason}; ograniczono liczbę specjalistów ${tasks.size} → ${adaptiveTasks.size}.")
                     else logAgentForChat(chatId, "🧠 Adaptacyjny budżet: ${adaptivePlan.reason}.")
                     val cacheFingerprints = adaptiveTasks.associate { task ->
@@ -1924,6 +1948,33 @@ class MainActivity : Activity() {
                                     pl.aimasterpro.app.core.TaskCheckpointStore.Event(task.id, task.agentId, state, detail,
                                         System.currentTimeMillis(), providerId, model, attempts))
                                 if (!saved) android.util.Log.e("AIMasterRecovery", "Nie udało się trwale zapisać checkpointu zadania.")
+                                val journalStatus = when (state) {
+                                    "CANCELLED" -> "PAUSED"
+                                    "BLOCKED", "FAILED", "TIMED_OUT", "USAGE_PENDING", "RESULT_PERSIST_PENDING" -> "BLOCKED"
+                                    else -> "ACTIVE"
+                                }
+                                val journalStep = when (state) {
+                                    "QUEUED" -> "W kolejce: ${task.agentId}"
+                                    "RUNNING" -> "Analiza specjalisty: ${task.agentId}"
+                                    "COMPLETED" -> "Raport zapisany: ${task.agentId}"
+                                    "USAGE_PENDING" -> "Raport ${task.agentId} wymaga odzyskania księgowania usage."
+                                    "RESULT_PERSIST_PENDING" -> "Raport ${task.agentId} wymaga potwierdzenia trwałego zapisu."
+                                    else -> "Agent ${task.agentId}: $state"
+                                }
+                                val journalUpdated = pl.aimasterpro.app.core.MasterWorkJournalStore.update(this, requestTaskId) { current ->
+                                    current.copy(
+                                        status = journalStatus,
+                                        currentStep = journalStep,
+                                        completedSteps = if (state == "COMPLETED")
+                                            (current.completedSteps + "Raport specjalisty ${task.agentId} zapisany").distinct().take(40)
+                                        else current.completedSteps,
+                                        nextSteps = if (state in setOf("BLOCKED", "FAILED", "TIMED_OUT", "CANCELLED", "USAGE_PENDING", "RESULT_PERSIST_PENDING"))
+                                            listOf("Sprawdź checkpointy i archiwum raportów przed wznowieniem.")
+                                        else current.nextSteps,
+                                        updatedAt = System.currentTimeMillis()
+                                    )
+                                }
+                                if (journalUpdated == null) android.util.Log.e("AIMasterRecovery", "Nie udało się zaktualizować dziennika nadrzędnego zadania MASTER-a.")
                             },
                             onTaskResult = { taskResult ->
                                 val archived = pl.aimasterpro.app.core.TaskResultArchive.put(
@@ -2179,6 +2230,16 @@ class MainActivity : Activity() {
                             )
                         )
                     }
+                    pl.aimasterpro.app.core.MasterWorkJournalStore.update(this, requestTaskId) { current ->
+                        current.copy(
+                            status = "ACTIVE",
+                            currentStep = "Synteza MASTER-a: scalanie raportów i recenzji.",
+                            completedSteps = (current.completedSteps + "Analiza specjalistów zakończona" +
+                                if (peerReviewResults.isNotEmpty()) "Peer Review zakończony" else "Peer Review pominięty lub niedostępny").distinct().take(40),
+                            nextSteps = listOf("Zapis końcowej odpowiedzi w historii czatu."),
+                            updatedAt = System.currentTimeMillis()
+                        )
+                    }
                     val synthesisResults = results + peerReviewResults
                     runOnUiThread {
                         if (gen == requestGen) {
@@ -2336,6 +2397,23 @@ class MainActivity : Activity() {
                     assistantTaskIds.add(requestTaskId)
                     persistMessages()
                 } else appendToStoredChat(chatId, "assistant", reply, requestTaskId)
+                val journalFinalized = pl.aimasterpro.app.core.MasterWorkJournalStore.update(this, requestTaskId) { current ->
+                    current.copy(
+                        status = if (ok && chatResultPersisted) "COMPLETED" else if (!chatResultPersisted) "PAUSED" else "BLOCKED",
+                        currentStep = when {
+                            ok && chatResultPersisted -> "Odpowiedź MASTER-a zapisana w historii czatu."
+                            !chatResultPersisted -> "Odpowiedź nie została trwale zapisana; wymaga odzyskania."
+                            else -> "Zadanie zakończone błędem; wymagane sprawdzenie checkpointów."
+                        },
+                        completedSteps = if (ok && chatResultPersisted)
+                            (current.completedSteps + "Końcowa synteza MASTER-a zapisana").distinct().take(40)
+                        else current.completedSteps,
+                        nextSteps = if (ok && chatResultPersisted) emptyList()
+                            else listOf("Sprawdź historię czatu, checkpointy i archiwum przed ponownym uruchomieniem."),
+                        updatedAt = System.currentTimeMillis()
+                    )
+                }
+                if (journalFinalized == null) android.util.Log.e("AIMasterRecovery", "Nie udało się zamknąć dziennika pracy MASTER-a.")
                 if (chatResultPersisted) {
                     val checkpoint = pl.aimasterpro.app.core.TaskCheckpointStore.latest(this)
                         .firstOrNull { it.taskId == requestTaskId }

@@ -62,6 +62,22 @@ object MasterWorkJournalStore {
         write(context, rows.filterNot { it.taskId == taskId })
     } ?: false
 
+    /** Marks work left ACTIVE by a previous process as interrupted; never claims it resumed. */
+    fun pauseActive(context: Context, now: Long = System.currentTimeMillis()): Int =
+        transaction(context) { rows ->
+            val active = rows.filter { it.status == "ACTIVE" }
+            if (active.isEmpty()) return@transaction 0
+            val paused = rows.map { record ->
+                if (record.status != "ACTIVE") record else record.copy(
+                    status = "PAUSED",
+                    currentStep = "Przerwano po zamknięciu procesu; wznowienie wymaga jawnej decyzji koordynatora.",
+                    nextSteps = (record.nextSteps + "Sprawdź checkpointy i zdecyduj o wznowieniu.").distinct().take(MAX_STEPS),
+                    updatedAt = now.coerceAtLeast(0L)
+                )
+            }
+            if (write(context, paused)) active.size else 0
+        } ?: 0
+
     private fun valid(r: Record): Boolean =
         r.taskId.isNotBlank() && r.taskId.length <= 160 &&
             r.chatId.length <= 160 && r.title.isNotBlank() && r.title.length <= 180 &&

@@ -57,6 +57,16 @@ class MasterWorkJournalStoreTest {
         assertEquals(16, MasterWorkJournalStore.latest(context).size)
     }
 
+    @Test fun startupPausesOnlyPreviouslyActiveWork() {
+        assertTrue(MasterWorkJournalStore.save(context, record("active-task", 1L)))
+        assertTrue(MasterWorkJournalStore.save(context, record("completed-task", 2L).copy(status = "COMPLETED")))
+        assertEquals(1, MasterWorkJournalStore.pauseActive(context, 99L))
+        assertEquals("PAUSED", MasterWorkJournalStore.get(context, "active-task")!!.status)
+        assertEquals(99L, MasterWorkJournalStore.get(context, "active-task")!!.updatedAt)
+        assertEquals("COMPLETED", MasterWorkJournalStore.get(context, "completed-task")!!.status)
+        assertEquals(0, MasterWorkJournalStore.pauseActive(context, 100L))
+    }
+
     @Test fun corruptMasterJournalIsNotReplacedByFreshPlan() {
         val prefs = context.getSharedPreferences("ai_master_work_journal_v1", Context.MODE_PRIVATE)
         val corrupt = """[{"taskId":"broken","status":"ACTIVE"},null]"""
