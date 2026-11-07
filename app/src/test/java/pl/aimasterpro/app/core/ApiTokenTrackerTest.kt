@@ -898,4 +898,46 @@ class ApiTokenTrackerTest {
         assertEquals(455L, replayed.totalTokens)
         assertEquals(1, all.count { it.queryId == key })
     }
+    @Test fun cacheReadAndWriteTokensUseIndependentCatalogRates() {
+        ApiTokenTracker.replaceCatalogPricingForProvider(
+            context, "catalog-cache-write-provider", "https://cache-write.example/v1",
+            listOf(CatalogModelPrice("vendor/cache-write-model", 0.23, 0.91, false, 0.05, 0.30))
+        )
+        val record = ApiTokenTracker.recordQuery(
+            context, "catalog-cache-write-provider", "vendor/cache-write-model", "MASTER", "cache-write-task",
+            inputTokens = 1_000_000L, outputTokens = 0L, cachedTokens = 200_000L,
+            cacheWriteTokens = 300_000L, status = "REAL",
+            baseUrl = "https://cache-write.example/v1", idempotencyKey = "cache-write-request"
+        )
+        // 500k regular at $0.23/M + 200k read at $0.05/M + 300k write at $0.30/M.
+        assertEquals(0.215, record.costUsd, 0.000001)
+        assertEquals(0.86, record.costPln, 0.00001)
+        assertEquals(200_000L, record.cachedTokens)
+        assertEquals(300_000L, record.cacheWriteTokens)
+        val persisted = ApiTokenTracker.loadAllRecordsFromStorage(context).single()
+        assertEquals(300_000L, persisted.cacheWriteTokens)
+    }
+
+    @Test fun cacheReadAndWriteCountsCannotExceedInputTokens() {
+        val result = runCatching {
+            ApiTokenTracker.recordQuery(
+                context, "provider", "model", "MASTER", "invalid-cache-counts",
+                inputTokens = 100L, outputTokens = 1L, cachedTokens = 70L,
+                cacheWriteTokens = 31L, status = "REAL"
+            )
+        }
+        assertTrue(result.isFailure)
+        assertTrue(ApiTokenTracker.loadAllRecordsFromStorage(context).isEmpty())
+    }
+
+    @Test fun legacyUsageRowsWithoutCacheWriteFieldRemainReadable() {
+        val prefs = context.getSharedPreferences("api_token_tracker_records_v1", Context.MODE_PRIVATE)
+        val legacy = """[{"qId":"legacy-cache-row","ts":1,"prov":"p","model":"m","agent":"MASTER","task":"legacy","in":10,"out":2,"tot":12,"reas":0,"cache":3,"status":"REAL","usd":0.01,"pln":0.04}]"""
+        assertTrue(prefs.edit().putString("records", legacy).commit())
+        val rows = ApiTokenTracker.loadAllRecordsFromStorage(context)
+        assertEquals(1, rows.size)
+        assertEquals(0L, rows.single().cacheWriteTokens)
+        assertTrue(ApiTokenTracker.budgetUsageSnapshot(context).ledgerHealthy)
+    }
+
 }
