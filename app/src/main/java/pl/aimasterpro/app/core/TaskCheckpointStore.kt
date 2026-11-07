@@ -119,18 +119,30 @@ object TaskCheckpointStore {
             val usageRecovered = !needsUsageRecovery || runCatching { onAmbiguousRequest(event) }.getOrDefault(false)
             // A crash can occur after the report archive commits but before COMPLETED is journaled.
             // Reconcile that durable report without repeating the provider request or billing usage.
-            val resultRecovered = event.status == "RESULT_PERSIST_PENDING" &&
-                runCatching { TaskResultArchive.get(context, event.taskId) != null }.getOrDefault(false)
+            // The report may be archived before the final checkpoint, including while usage
+            // accounting is pending. Always reconcile the archive independently of the last
+            // lifecycle status so a crash in that narrow window cannot hide a durable report.
+            val resultRecovered = runCatching {
+                TaskResultArchive.get(context, event.taskId) != null
+            }.getOrDefault(false)
             val nextStatus = when {
                 needsUsageRecovery && !usageRecovered -> "INTERRUPTED_USAGE_PENDING"
                 resultRecovered -> "COMPLETED"
                 else -> "INTERRUPTED"
             }
             val detail = when {
-                needsUsageRecovery && usageRecovered -> "Proces zakończył się po rozpoczęciu żądania; nieznane zużycie API zabezpieczono jako UNAVAILABLE."
-                needsUsageRecovery -> "Proces zakończył się po rozpoczęciu żądania; księgowanie UNAVAILABLE oczekuje na ponowienie."
-                resultRecovered -> "Raport odzyskano z trwałego archiwum; nie ponawiano żądania API."
-                event.status == "RESULT_PERSIST_PENDING" -> "Proces zakończył się po odebraniu raportu; nie znaleziono potwierdzonego zapisu w archiwum wyników."
+                needsUsageRecovery && !usageRecovered && resultRecovered ->
+                    "Raport odzyskano z archiwum; księgowanie UNAVAILABLE nadal oczekuje na ponowienie."
+                needsUsageRecovery && !usageRecovered ->
+                    "Proces zakończył się po rozpoczęciu żądania; księgowanie UNAVAILABLE oczekuje na ponowienie."
+                resultRecovered && needsUsageRecovery ->
+                    "Raport odzyskano z trwałego archiwum; zużycie API zabezpieczono jako UNAVAILABLE bez ponawiania żądania."
+                resultRecovered ->
+                    "Raport odzyskano z trwałego archiwum; nie ponawiano żądania API."
+                needsUsageRecovery ->
+                    "Proces zakończył się po rozpoczęciu żądania; nieznane zużycie API zabezpieczono jako UNAVAILABLE."
+                event.status == "RESULT_PERSIST_PENDING" ->
+                    "Proces zakończył się po odebraniu raportu; nie znaleziono potwierdzonego zapisu w archiwum wyników."
                 else -> "Proces aplikacji zakończył się przed zapisaniem wyniku."
             }
             val saved = record(context, event.copy(
