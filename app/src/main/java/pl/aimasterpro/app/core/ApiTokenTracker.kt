@@ -498,13 +498,29 @@ object ApiTokenTracker {
             "Katalog zawiera zduplikowane identyfikatory modeli."
         }
         val prefs = context.getSharedPreferences(PRICING_PREFS, Context.MODE_PRIVATE)
-        val arr = runCatching { JSONArray(prefs.getString("catalog_model_prices", "[]") ?: "[]") }.getOrDefault(JSONArray())
+        // Never turn unreadable persisted pricing into an empty catalog during refresh.
+        // Other providers' billing rates must remain intact until the catalog is repaired.
+        val rawCatalog = prefs.getString("catalog_model_prices", "[]") ?: "[]"
+        val arr = try {
+            JSONArray(rawCatalog)
+        } catch (error: Exception) {
+            throw IllegalStateException("Zapisany katalog cen jest uszkodzony; odświeżenie wstrzymano bez nadpisania danych.", error)
+        }
         val normalizedBase = baseUrl.trimEnd('/').lowercase(Locale.ROOT)
         val kept = JSONArray()
         for (i in 0 until arr.length()) {
-            val row = arr.optJSONObject(i) ?: continue
-            val sameProviderCatalog = row.optString("providerId") == providerId &&
-                row.optString("baseUrl").trimEnd('/').lowercase(Locale.ROOT) == normalizedBase
+            val row = arr.optJSONObject(i)
+                ?: throw IllegalStateException("Zapisany katalog cen zawiera nieprawidłowy wpis; odświeżenie wstrzymano.")
+            val storedProvider = row.opt("providerId")
+            val storedModel = row.opt("modelName")
+            val storedBase = row.opt("baseUrl")
+            require(storedProvider is String && storedProvider.isNotBlank() &&
+                storedModel is String && storedModel.isNotBlank() &&
+                storedBase is String && storedBase.isNotBlank()) {
+                "Zapisany katalog cen zawiera niekompletną tożsamość wpisu."
+            }
+            val sameProviderCatalog = storedProvider == providerId &&
+                storedBase.trimEnd('/').lowercase(Locale.ROOT) == normalizedBase
             if (!sameProviderCatalog) kept.put(row)
         }
         models.forEach { model ->
