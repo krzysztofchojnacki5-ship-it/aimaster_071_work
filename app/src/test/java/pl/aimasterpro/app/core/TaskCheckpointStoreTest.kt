@@ -16,6 +16,18 @@ class TaskCheckpointStoreTest {
         context.getSharedPreferences("task_result_archive_v1", Context.MODE_PRIVATE).edit().clear().commit()
     }
 
+    @Test fun safeCheckpointBaseUrlPreservesExplicitPortAndExcludesSensitiveUrlParts() {
+        assertEquals(
+            "http://127.0.0.1:11434",
+            TaskCheckpointStore.safeBaseUrlForCheckpoint("http://user:secret@127.0.0.1:11434/v1/chat/completions?key=hidden")
+        )
+        assertEquals(
+            "https://api.example.com",
+            TaskCheckpointStore.safeBaseUrlForCheckpoint("https://api.example.com/v1?token=hidden")
+        )
+        assertEquals("", TaskCheckpointStore.safeBaseUrlForCheckpoint("not a valid URL"))
+    }
+
     @Test fun staleRequestingTaskReconcilesUnknownUsageBeforeMarkingInterrupted() {
         val event = TaskCheckpointStore.Event(
             taskId = "task-request-in-flight", agentId = "RESEARCHER", status = "REQUESTING",
