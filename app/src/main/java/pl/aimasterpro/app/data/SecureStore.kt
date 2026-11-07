@@ -299,7 +299,16 @@ class SecureStore internal constructor(
         } catch (_: Exception) {
             SecureStoreHealth.markUncertain()
             return@synchronized null
-        } ?: return@synchronized null
+        }
+        if (stored == null) {
+            val ids = readProviderIds()
+            if (!SecureStoreHealth.isUncertain() && id in ids) {
+                // A provider ID without its config record is persistent-store corruption,
+                // not an ordinary lookup miss.
+                SecureStoreHealth.markUncertain()
+            }
+            return@synchronized null
+        }
         val config = try {
             JSONObject(stored)
         } catch (_: Exception) {
