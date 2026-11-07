@@ -158,9 +158,9 @@ object TaskCheckpointStore {
         return load(context).filter { seen.add(it.taskId) }
     }
 
-    fun clear(context: Context) {
-        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().remove(KEY).apply()
-    }
+    fun clear(context: Context): Boolean = runCatching {
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().remove(KEY).commit()
+    }.getOrDefault(false)
 
     private fun save(context: Context, rows: List<Event>): Boolean = runCatching {
         val a = JSONArray()
