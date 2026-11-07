@@ -24,6 +24,21 @@ class ProviderClientNetworkTest {
         base, "test-model", ""
     )
 
+    private fun assertEstimatedUsage(usageJson: String) {
+        val (server, _) = server { _, _ ->
+            200 to """{"choices":[{"message":{"content":"response"}}],"usage":$usageJson}"""
+        }
+        try {
+            val result = ProviderClient().chat(config("http://127.0.0.1:${server.address.port}/v1"), "system", "test")
+            assertEquals("ESTIMATED", result.usage.status)
+            assertTrue(result.usage.inputTokens >= 0L)
+            assertTrue(result.usage.outputTokens >= 0L)
+            assertEquals(result.usage.inputTokens + result.usage.outputTokens, result.usage.totalTokens)
+            assertEquals(0L, result.usage.cachedTokens)
+            assertEquals(0L, result.usage.reasoningTokens)
+        } finally { server.stop(0) }
+    }
+
     @Test
     fun singleOpenAiCompatibleRequestUsesHttpAndClosesResponse() {
         val (server, count) = server { _, _ ->
@@ -430,6 +445,31 @@ class ProviderClientNetworkTest {
             assertEquals(configured.id, result.providerId)
             assertEquals("vendor/canonical-model-v2", result.model)
         } finally { server.stop(0) }
+    }
+
+
+    @Test
+    fun fractionalTokenCountersAreEstimatedInsteadOfCoerced() {
+        assertEstimatedUsage("""{"prompt_tokens":3.5,"completion_tokens":2,"total_tokens":5.5}""")
+    }
+
+    @Test
+    fun stringTokenCountersAreEstimatedInsteadOfCoerced() {
+        assertEstimatedUsage("""{"prompt_tokens":"3","completion_tokens":2,"total_tokens":5}""")
+    }
+
+    @Test
+    fun inconsistentAndOverflowingReportedTotalsAreEstimated() {
+        assertEstimatedUsage("""{"prompt_tokens":3,"completion_tokens":2,"total_tokens":99}""")
+        assertEstimatedUsage("""{"prompt_tokens":9223372036854775807,"completion_tokens":1}""")
+    }
+
+    @Test
+    fun malformedOptionalUsageCountersInvalidateRealUsage() {
+        assertEstimatedUsage("""{"prompt_tokens":3,"completion_tokens":2,"total_tokens":5,"prompt_tokens_details":{"cached_tokens":1.5}}""")
+        assertEstimatedUsage("""{"prompt_tokens":3,"completion_tokens":2,"total_tokens":5,"completion_tokens_details":{"reasoning_tokens":"1"}}""")
+        assertEstimatedUsage("""{"prompt_tokens":3,"completion_tokens":2,"total_tokens":5,"prompt_tokens_details":{"cached_tokens":4}}""")
+        assertEstimatedUsage("""{"prompt_tokens":3,"completion_tokens":2,"total_tokens":5,"completion_tokens_details":{"reasoning_tokens":3}}""")
     }
 
 }
