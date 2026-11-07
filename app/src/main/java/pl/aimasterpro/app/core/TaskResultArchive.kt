@@ -37,7 +37,7 @@ object TaskResultArchive {
         createdAt: Long = System.currentTimeMillis(),
         chatId: String = ""
     ): Boolean {
-        return SharedPreferencesWriteHealth.withHealthyAccess(PREFS) {
+        return runCatching { SharedPreferencesWriteHealth.withHealthyAccess(PREFS) {
 
         if (SharedPreferencesWriteHealth.isUncertain(PREFS) || taskId.isBlank() || agentId.isBlank() || providerId.isBlank() || model.isBlank() ||
             chatId.length > 200) return@withHealthyAccess false
@@ -62,7 +62,7 @@ object TaskResultArchive {
             )
         }.getOrDefault(false)
     
-        }
+        } }.getOrDefault(false)
     }
 
     @Synchronized
