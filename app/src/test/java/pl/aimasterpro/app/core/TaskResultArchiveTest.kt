@@ -22,6 +22,16 @@ class TaskResultArchiveTest {
         SharedPreferencesWriteHealth.resetForTests("chat_state")
     }
 
+    private fun createChat(chatId: String) {
+        val root = JSONObject().put("currentId", chatId).put(
+            "chats", JSONObject().put(chatId, JSONObject()
+                .put("title", "Recovery")
+                .put("messages", JSONArray().put(JSONObject().put("role", "user").put("text", "Question")))
+                .put("agentActivity", JSONArray()))
+        )
+        assertTrue(ChatHistoryStore.writeRoot(context, root))
+    }
+
     @Test fun successfulReportIsDurableAndAddressableByTaskId() {
         assertTrue(TaskResultArchive.put(
             context, "task-1", "developer", "Pełny raport agenta.", "provider-a", "model-a", 1_000L
