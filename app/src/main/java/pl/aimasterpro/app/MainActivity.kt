@@ -5885,12 +5885,7 @@ class MainActivity : Activity() {
                     }
                     if (result.isFailure) { toast("Nie można odszyfrować bazy. Sprawdź hasło i plik."); return@setPositiveButton }
                     runCatching {
-                        val data = JSONObject(result.getOrThrow())
-                        require(data.optString("app") == "AI_MASTER_PRO_ANDROID") { "To nie jest baza tej aplikacji." }
-                        val arr = data.getJSONArray("providers")
-                        val configs = (0 until arr.length()).map { arr.getJSONObject(it) }
-                        require(configs.isNotEmpty()) { "Kopia nie zawiera konfiguracji." }
-                        require(data.optInt("schemaVersion", -1) == 1) { "Nieobsługiwana wersja schematu kopii konfiguracji." }
+                        val configs = BackupCrypto.parseProviderConfigs(result.getOrThrow())
                         require(store.replaceAllConfigs(configs)) { "Import nie został zatwierdzony. Dotychczasowe konfiguracje pozostały bez zmian." }
                         val preferredMasterId = configs.first().optString("id", "gemini")
                         require(reconcileAgentAssignmentsAfterImport(configs, preferredMasterId)) {
