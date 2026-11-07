@@ -56,9 +56,19 @@ class SecureStore internal constructor(
         }
     }
 
-    private fun hasStoredCiphertext(name: String): Boolean = runCatching {
+    private fun readProviderIds(): Set<String> = try {
+        (prefs.getStringSet("provider_ids", emptySet()) ?: emptySet()).toSet()
+    } catch (_: Exception) {
+        SecureStoreHealth.markUncertain()
+        emptySet()
+    }
+
+    private fun hasStoredCiphertext(name: String): Boolean = try {
         !prefs.getString(name, null).isNullOrBlank()
-    }.getOrElse { prefs.contains(name) }
+    } catch (_: Exception) {
+        SecureStoreHealth.markUncertain()
+        false
+    }
 
     /**
      * Returns the AES key, creating it only when no entry exists. An existing entry is never deleted
@@ -67,9 +77,14 @@ class SecureStore internal constructor(
     @Synchronized private fun key(): SecretKey {
         val store = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
         if (!store.containsAlias(alias)) {
-            val persistedCiphertexts = prefs.all.keys.any { key ->
+            val preferenceKeys = try { prefs.all.keys } catch (error: Exception) {
+                SecureStoreHealth.markUncertain()
+                throw error
+            }
+            val persistedCiphertexts = preferenceKeys.any { key ->
                 key.startsWith("key_") && hasStoredCiphertext(key)
             }
+            check(!SecureStoreHealth.isUncertain()) { "Nie można bezpiecznie odczytać magazynu konfiguracji." }
             check(shouldCreateFreshSecureStoreKey(aliasExists = false, hasPersistedCiphertexts = persistedCiphertexts)) {
                 "Brak klucza Android Keystore dla istniejących sekretów. Nie utworzono nowego klucza, aby nie nadpisać możliwości odzyskania danych."
             }
@@ -127,8 +142,12 @@ class SecureStore internal constructor(
 
     fun getSecret(name: String): String? = synchronized(SecureStoreHealth.lock()) {
         if (SecureStoreHealth.isUncertain()) return@synchronized null
+        val encoded = try { prefs.getString(name, null) } catch (_: Exception) {
+            SecureStoreHealth.markUncertain()
+            return@synchronized null
+        } ?: return@synchronized null
         runCatching {
-            val packed = Base64.decode(prefs.getString(name, null), Base64.NO_WRAP)
+            val packed = Base64.decode(encoded, Base64.NO_WRAP)
             try {
                 require(packed.size >= 28) { "Zaszyfrowany klucz jest niekompletny." }
                 val iv = packed.copyOfRange(0, 12)
@@ -160,12 +179,14 @@ class SecureStore internal constructor(
             val id = config.getString("id")
             val incomingSecret = config.optString("apiKey")
             val existingSecretPresent = hasStoredCiphertext("key_$id")
+            check(!SecureStoreHealth.isUncertain()) { "Nie można bezpiecznie odczytać magazynu konfiguracji." }
             if (existingSecretPresent && incomingSecret.isBlank() && getSecret("key_$id") == null) {
                 throw IllegalStateException("Istniejący klucz API jest niedostępny. Nie nadpisano go pustą wartością.")
             }
             val encrypted = encryptSecret(incomingSecret)
             val safe = JSONObject(config.toString()).apply { remove("apiKey"); remove("_secretUnavailable") }
-            val ids = (prefs.getStringSet("provider_ids", emptySet()) ?: emptySet()).toMutableSet()
+            val ids = readProviderIds().toMutableSet()
+            check(!SecureStoreHealth.isUncertain()) { "Nie można bezpiecznie odczytać identyfikatorów dostawców." }
             ids.add(id)
             val editor = prefs.edit().putString("config_$id", safe.toString()).putStringSet("provider_ids", ids)
             if (encrypted == null) editor.remove("key_$id") else editor.putString("key_$id", encrypted)
@@ -175,8 +196,9 @@ class SecureStore internal constructor(
 
     fun allConfigs(): List<JSONObject> = synchronized(SecureStoreHealth.lock()) {
         if (SecureStoreHealth.isUncertain()) return@synchronized emptyList()
-        val ids = (prefs.getStringSet("provider_ids", emptySet()) ?: emptySet()).toList().sorted()
-        ids.mapNotNull { readConfig(it) }
+        val ids = readProviderIds()
+        if (SecureStoreHealth.isUncertain()) return@synchronized emptyList()
+        ids.toList().sorted().mapNotNull { readConfig(it) }
     }
 
     private fun validateImportedConfig(config: JSONObject) {
@@ -222,9 +244,14 @@ class SecureStore internal constructor(
             require(newIds.all { it.isNotBlank() }) { "Id dostawcy nie może być pusty." }
             require(newIds.size == newIds.toSet().size) { "Kopia zawiera powtórzone identyfikatory dostawców." }
             copied.forEach(::validateImportedConfig)
-            val existingSecretIds = prefs.all.keys.filter { key ->
+            val preferenceKeys = try { prefs.all.keys } catch (error: Exception) {
+                SecureStoreHealth.markUncertain()
+                throw error
+            }
+            val existingSecretIds = preferenceKeys.filter { key ->
                 key.startsWith("key_") && hasStoredCiphertext(key)
             }.toSet()
+            check(!SecureStoreHealth.isUncertain()) { "Nie można bezpiecznie odczytać zapisanych sekretów." }
             val readableSecretIds = existingSecretIds.filter { getSecret(it) != null }.toSet()
             require(!hasUnreadableExistingSecrets(existingSecretIds, readableSecretIds)) {
                 "Import przerwany: co najmniej jeden istniejący klucz API jest niedostępny. Nie zmieniono żadnej konfiguracji."
@@ -247,7 +274,8 @@ class SecureStore internal constructor(
                 Triple(id, safe, encrypted)
             }
 
-            val oldIds = (prefs.getStringSet("provider_ids", emptySet()) ?: emptySet()).toSet()
+            val oldIds = readProviderIds()
+            check(!SecureStoreHealth.isUncertain()) { "Nie można bezpiecznie odczytać identyfikatorów dostawców." }
             val editor = prefs.edit()
             oldIds.filterNot { it in newIds }.forEach { id ->
                 editor.remove("config_$id").remove("key_$id")
@@ -264,7 +292,10 @@ class SecureStore internal constructor(
     fun readConfig(id: String): JSONObject? = synchronized(SecureStoreHealth.lock()) {
         if (SecureStoreHealth.isUncertain()) return@synchronized null
         runCatching {
-            val stored = prefs.getString("config_$id", null) ?: return@synchronized null
+            val stored = try { prefs.getString("config_$id", null) } catch (_: Exception) {
+                SecureStoreHealth.markUncertain()
+                return@synchronized null
+            } ?: return@synchronized null
             JSONObject(stored).apply {
                 val secretKey = "key_$id"
                 if (hasStoredCiphertext(secretKey)) {
@@ -299,7 +330,9 @@ class SecureStore internal constructor(
     /** IDs whose encrypted API keys exist but cannot currently be decrypted. */
     fun unavailableSecretProviderIds(): List<String> = synchronized(SecureStoreHealth.lock()) {
         if (SecureStoreHealth.isUncertain()) return@synchronized emptyList()
-        (prefs.getStringSet("provider_ids", emptySet()) ?: emptySet()).filter { id ->
+        val ids = readProviderIds()
+        if (SecureStoreHealth.isUncertain()) return@synchronized emptyList()
+        ids.filter { id ->
             hasStoredCiphertext("key_$id") && getSecret("key_$id") == null
         }.sorted()
     }
