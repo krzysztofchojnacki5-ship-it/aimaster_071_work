@@ -11,7 +11,10 @@ import org.robolectric.RuntimeEnvironment
 @RunWith(RobolectricTestRunner::class)
 class TaskCheckpointStoreTest {
     private val context get() = RuntimeEnvironment.getApplication()
-    @Before fun reset() { context.getSharedPreferences("task_checkpoints_v1", Context.MODE_PRIVATE).edit().clear().commit() }
+    @Before fun reset() {
+        context.getSharedPreferences("task_checkpoints_v1", Context.MODE_PRIVATE).edit().clear().commit()
+        context.getSharedPreferences("task_result_archive_v1", Context.MODE_PRIVATE).edit().clear().commit()
+    }
 
     @Test fun staleRequestingTaskReconcilesUnknownUsageBeforeMarkingInterrupted() {
         val event = TaskCheckpointStore.Event(
@@ -85,6 +88,28 @@ class TaskCheckpointStoreTest {
         assertFalse(usageRecoveryCalled)
         assertEquals("INTERRUPTED", TaskCheckpointStore.latest(context).single().status)
         assertTrue(TaskCheckpointStore.latest(context).single().detail.contains("trwały zapis wyniku"))
+    }
+
+    @Test fun resultPersistPendingTaskIsCompletedWhenDurableArchiveAlreadyContainsReport() {
+        assertTrue(TaskCheckpointStore.record(context, TaskCheckpointStore.Event(
+            taskId = "task-result-archived", agentId = "RESEARCHER", status = "RESULT_PERSIST_PENDING",
+            detail = "report archive write completed; checkpoint update pending", timestamp = 100L,
+            providerId = "openai", model = "gpt-4o-mini", attempts = 1, processId = "previous-process"
+        )))
+        assertTrue(TaskResultArchive.put(
+            context, "task-result-archived", "RESEARCHER", "Pełny raport odzyskiwalny po restarcie.",
+            "openai", "gpt-4o-mini", 150L
+        ))
+        var usageRecoveryCalled = false
+        assertEquals(1, TaskCheckpointStore.recoverStaleRunning(context, 200L) {
+            usageRecoveryCalled = true
+            false
+        })
+        assertFalse(usageRecoveryCalled)
+        val recovered = TaskCheckpointStore.latest(context).single()
+        assertEquals("COMPLETED", recovered.status)
+        assertTrue(recovered.detail.contains("trwałego archiwum"))
+        assertEquals("Pełny raport odzyskiwalny po restarcie.", TaskResultArchive.get(context, "task-result-archived")?.report)
     }
 
     @Test fun usageRecordedTaskIsMarkedInterruptedWithoutDuplicateRecoveryCallback() {
