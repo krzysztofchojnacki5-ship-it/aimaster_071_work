@@ -211,9 +211,86 @@ Ten plik jest kolejką poleceń ChatGPT MASTER → agent Android Studio.
 **Instrukcja końcowa:** zachowaj branch i raport jako audit evidence. MASTER independently verifies every result.
 
 ---
+
+---
+## WB-007 — Odtwarzalna ścieżka Android Studio → APK Debug → instalacja
+
+**Status:** READY — P0 / najwyższy priorytet. Jawnie autoryzowane przez ChatGPT MASTER 2026-11-08.
+
+**Cel:** Doprowadzić projekt do rzeczywistej, powtarzalnej ścieżki budowania APK, którą właściciel może uruchamiać i testować w Android Studio. Nie wystarczy sama dokumentacja ani kompilacja CI — wymagany jest rzeczywisty artefakt APK z udowodnionego builda.
+
+**Repozytorium:** krzysztofchojnacki5-ship-it/aimaster_071_work
+**Base branch:** audit/0.6.149-single-chat-snapshot
+**Base SHA:** e37c3eded7be0ac8f92532e35cbb1e6f0dcb7eca
+**Branch zadaniowy:** build/WB-007-android-apk-pipeline
+
+**Dozwolone ścieżki:**
+- gradle/wrapper/gradle-wrapper.jar
+- gradle/wrapper/gradle-wrapper.properties
+- gradlew
+- gradlew.bat
+- .github/workflows/android-audit.yml
+- BUILD_AND_INSTALL_APK_PL.md
+- BUILD_STATUS_0.6.150_PL.md
+- PACKAGE_REGISTRY_PL.md
+
+**Zakres:**
+1. Potwierdź dokładny base SHA i czyste drzewo. Zachowaj aktualne źródła aplikacji.
+2. Zbadaj Gradle Wrapper: skrypty gradlew i gradlew.bat istnieją, ale w bazowej gałęzi nie znaleziono gradle/wrapper/gradle-wrapper.jar. Odtwórz go oficjalnym zadaniem Gradle Wrapper dla Gradle 8.13 albo z zaufanej dystrybucji Gradle 8.13. Nie pobieraj z nieznanych mirrorów.
+3. Zapewnij uruchamianie z Windows przez gradlew.bat oraz Android Studio przez Gradle Wrapper. Zweryfikuj skrypt POSIX pod kątem praw wykonywania.
+4. Utrzymaj kompatybilność: AGP 8.13.2, Kotlin 2.0.21, Gradle 8.13, JDK 17, compileSdk 36, minSdk 26.
+5. Rozszerz istniejący workflow android-audit.yml tak, aby po testach i assembleDebug publikował app/build/outputs/apk/debug/app-debug.apk jako artefakt GitHub Actions. Nie osłabiaj testów ani uprawnień.
+6. Dodaj BUILD_AND_INSTALL_APK_PL.md: klonowanie repo, checkout gałęzi, otwarcie katalogu w Android Studio, JDK 17, SDK 36, Gradle Sync, testDebugUnitTest, assembleDebug, lokalizacja APK, instalacja telefonu i typowe problemy.
+7. Zapisz applicationId, debug applicationIdSuffix, versionName/versionCode i SHA-256 artefaktu. Obecny app/build.gradle.kts deklaruje versionName 0.6.54, versionCode 80, mimo że gałąź źródeł ma numer 0.6.149. Wyjaśnij rozbieżność; nie zmieniaj numeracji bez spójnego planu i aktualizacji rejestru.
+8. Uruchom rzeczywiście ./gradlew --version, ./gradlew :app:testDebugUnitTest oraz ./gradlew :app:assembleDebug. Zapisz kody wyjścia, wersje JDK/Gradle/SDK, czas, ścieżkę APK, rozmiar i SHA-256. Brak SDK/sieci = NOT RUN/BLOCKED z przyczyną; nie zastępuj lokalnego builda wynikiem CI.
+9. Uzupełnij BUILD_STATUS_0.6.150_PL.md i PACKAGE_REGISTRY_PL.md wyłącznie rzeczywistymi wynikami. PASS tylko jeśli APK istnieje i dowód builda jest zachowany.
+10. Sprawdź diff, git diff --check, allowlistę i sekrety. Wypchnij wyłącznie branch zadaniowy. Bez PR/merge — MASTER wykona niezależny przegląd.
+
+**Zakazy:** żadnych zmian Kotlin/Java/UI/agentów; bez release signing, kluczy, release APK, automatycznego merge, zmiany applicationId i Companion.
+
+**Kryteria akceptacji:** wrapper działa z czystego checkoutu; Android Studio ma dokładną instrukcję; CI publikuje debug APK; testy i assembleDebug mają rzeczywiste wyniki; jeśli lokalny build jest możliwy, APK ma SHA-256 i można go zainstalować; zmiany tylko w allowliście.
+
+---
+## WB-008 — Agent Manager parity: centrum zarządzania agentami w AI MASTER PRO
+
+**Status:** READY — P1 / po WB-007. Jawnie autoryzowane przez ChatGPT MASTER 2026-11-08.
+
+**Cel:** Zbudować własne centrum zarządzania agentami o funkcjonalności porównywalnej z panelem Agent Manager w Android Studio/IDE. Nie kopiować kodu, binariów, prywatnych API ani zasobów Google/JetBrains. Odtworzyć obserwowalne funkcje i UX własną implementacją.
+
+**Repozytorium:** krzysztofchojnacki5-ship-it/aimaster_071_work
+**Base branch:** audit/0.6.149-single-chat-snapshot
+**Base SHA:** e37c3eded7be0ac8f92532e35cbb1e6f0dcb7eca
+**Branch zadaniowy:** feature/WB-008-agent-manager-parity
+
+**Dozwolone ścieżki:**
+- app/src/main/java/pl/aimasterpro/app/MainActivity.kt
+- app/src/main/java/pl/aimasterpro/app/agents/AgentCatalog.kt
+- app/src/main/java/pl/aimasterpro/app/agents/TeamRunEngine.kt
+- app/src/main/java/pl/aimasterpro/app/core/ApiTokenTracker.kt
+- app/src/main/java/pl/aimasterpro/app/core/AgentManager*.kt
+- app/src/test/java/pl/aimasterpro/app/agents/AgentManager*Test.kt
+- app/src/test/java/pl/aimasterpro/app/core/AgentManager*Test.kt
+- AGENT_MANAGER_PARITY_AUDIT_PL.md
+- AI_MASTER_BRIDGE/REPORTS/WB-008.md
+
+**Zakres:**
+1. Najpierw opisz na podstawie dostępnego UI/obserwacji agenta Android Studio funkcje panelu Agent Manager: lista agentów, stan queued/running/completed/failed/cancelled, zadania, aktywność, równoległość, logi/komunikacja, wykorzystanie kontekstu/tokenów, limity i zatrzymywanie/wznawianie. Odróżnij funkcje widoczne od danych, których IDE nie udostępnia.
+2. Zmapuj istniejące w AI MASTER PRO: AgentCatalog, TeamRunEngine, ApiTokenTracker, ProviderQuotaScheduler, MasterWorkJournalStore, TaskCheckpointStore, DiagnosticStore i obecny UI aktywności. Nie duplikuj źródeł prawdy.
+3. Zaprojektuj ekran Agent Manager z kartami agentów, statusem, zadaniem, providerem/modelem, tokenami/kosztami, limitem kontekstu wyłącznie jeśli dostawca go ujawnia, czasem pracy, błędami, heartbeat, logiem komunikacji i kontrolkami stop/pause/resume.
+4. Dane wyłącznie z rzeczywistych zdarzeń/liczników. Nie wymyślaj tokenów, kontekstu, procentów ani kosztów. Brak danych = N/A.
+5. MASTER ma widzieć agentów równoległych, postęp i statusy. Każdy agent ma executionId, taskId, chatId, provider/model.
+6. Stop/pause/resume muszą wykonywać realne akcje powiązane z TeamRunEngine/checkpointami; kontrolki pozorne są niedozwolone.
+7. Zachowaj budżet, darmowy routing, limity równoległości, redakcję sekretów, anulowanie i brak aktywacji Companion.
+8. Najpierw audyt parytetu i model danych, potem mały vertical slice. Nie przepisuj całego MainActivity i nie twórz atrap produkcyjnych.
+9. Dodaj testy stanów, agregacji usage, brakujących danych i przejść sterowania. Uruchom i zapisz wyniki. Android build po WB-007, jeśli środowisko gotowe.
+10. Wypchnij wyłącznie branch zadaniowy. Bez PR/merge do niezależnego audytu MASTER.
+
+**Kryteria akceptacji:** audyt porównawczy; jeden spójny model danych; widok realnej aktywności wielu agentów; prawdziwe kontrolki lub disabled; testy; zmiany tylko w allowliście.
+
+**Priorytet:** WB-007 przed WB-008. WB-006 read-only poller odłożony — nie pobieraj go jako pierwszego zadania.
 ## WB-006 — Pierwszy zewnętrzny worker: read-only poller kolejki
 
-**Status:** READY — jawnie autoryzowane przez ChatGPT MASTER 2026-11-08.
+**Status:** DEFERRED — jawnie autoryzowane przez ChatGPT MASTER 2026-11-08.
 
 **Cel:** Zbudować pierwszy uruchamialny element przyszłego workera 24/7. W tej fazie program tylko odczytuje i waliduje kolejkę Work Bridge. Nie wykonuje zadań, nie wywołuje modeli i nie zapisuje niczego do GitHub. To celowo bezpieczny fundament przed dodaniem lease, wykonawcy i sandboxa.
 
@@ -235,7 +312,7 @@ Ten plik jest kolejką poleceń ChatGPT MASTER → agent Android Studio.
 <!-- WB_TASK_V1
 {
   "id": "WB-006",
-  "status": "READY",
+  "status": "DEFERRED",
   "base_branch": "bridge/work-bridge-bootstrap",
   "allowed_paths": [
     "tools/autonomous_worker/poller.py",
