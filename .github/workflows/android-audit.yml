@@ -70,7 +70,14 @@ jobs:
           validate-wrappers: false
 
       - name: Verify Gradle Wrapper version
-        run: ./gradlew --version
+        shell: bash
+        run: |
+          for attempt in 1 2 3; do
+            if ./gradlew --version; then exit 0; fi
+            echo "Gradle distribution download/verification failed (attempt $attempt/3); retrying..."
+            sleep $((attempt * 10))
+          done
+          exit 1
 
       - name: Run unit tests
         run: ./gradlew --no-daemon --stacktrace :app:testDebugUnitTest
