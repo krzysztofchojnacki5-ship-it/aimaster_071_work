@@ -234,6 +234,25 @@ Ten plik jest kolejką poleceń ChatGPT MASTER → agent Android Studio.
 - BUILD_STATUS_0.6.150_PL.md
 - PACKAGE_REGISTRY_PL.md
 
+**Maszynowa autoryzacja WB_TASK_V1:**
+<!-- WB_TASK_V1
+{
+  "id": "WB-007",
+  "status": "READY",
+  "base_branch": "audit/0.6.149-single-chat-snapshot",
+  "allowed_paths": [
+    "gradle/wrapper/gradle-wrapper.jar",
+    "gradle/wrapper/gradle-wrapper.properties",
+    "gradlew",
+    "gradlew.bat",
+    ".github/workflows/android-audit.yml",
+    "BUILD_AND_INSTALL_APK_PL.md",
+    "BUILD_STATUS_0.6.150_PL.md",
+    "PACKAGE_REGISTRY_PL.md"
+  ]
+}
+-->
+
 **Zakres:**
 1. Potwierdź dokładny base SHA i czyste drzewo. Zachowaj aktualne źródła aplikacji.
 2. Zbadaj Gradle Wrapper: skrypty gradlew i gradlew.bat istnieją, ale w bazowej gałęzi nie znaleziono gradle/wrapper/gradle-wrapper.jar. Odtwórz go oficjalnym zadaniem Gradle Wrapper dla Gradle 8.13 albo z zaufanej dystrybucji Gradle 8.13. Nie pobieraj z nieznanych mirrorów.
@@ -272,6 +291,27 @@ Ten plik jest kolejką poleceń ChatGPT MASTER → agent Android Studio.
 - app/src/test/java/pl/aimasterpro/app/core/AgentManager*Test.kt
 - AGENT_MANAGER_PARITY_AUDIT_PL.md
 - AI_MASTER_BRIDGE/REPORTS/WB-008.md
+
+**Maszynowa autoryzacja WB_TASK_V1:**
+<!-- WB_TASK_V1
+{
+  "id": "WB-008",
+  "status": "READY",
+  "base_branch": "audit/0.6.149-single-chat-snapshot",
+  "allowed_paths": [
+    "app/src/main/java/pl/aimasterpro/app/MainActivity.kt",
+    "app/src/main/java/pl/aimasterpro/app/agents/AgentCatalog.kt",
+    "app/src/main/java/pl/aimasterpro/app/agents/TeamRunEngine.kt",
+    "app/src/main/java/pl/aimasterpro/app/core/ApiTokenTracker.kt",
+    "app/src/main/java/pl/aimasterpro/app/agents/AgentManagerModels.kt",
+    "app/src/main/java/pl/aimasterpro/app/agents/AgentManagerStore.kt",
+    "app/src/main/java/pl/aimasterpro/app/agents/AgentManagerScreen.kt",
+    "app/src/test/java/pl/aimasterpro/app/agents/AgentManagerParityTest.kt",
+    "AGENT_MANAGER_PARITY_AUDIT_PL.md",
+    "AI_MASTER_BRIDGE/REPORTS/WB-008.md"
+  ]
+}
+-->
 
 **Zakres:**
 1. Najpierw opisz na podstawie dostępnego UI/obserwacji agenta Android Studio funkcje panelu Agent Manager: lista agentów, stan queued/running/completed/failed/cancelled, zadania, aktywność, równoległość, logi/komunikacja, wykorzystanie kontekstu/tokenów, limity i zatrzymywanie/wznawianie. Odróżnij funkcje widoczne od danych, których IDE nie udostępnia.
