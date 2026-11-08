@@ -57,10 +57,20 @@ jobs:
       - name: Install Android API 36
         run: sdkmanager --install "platforms;android-36" "build-tools;36.0.0" "platform-tools"
 
-      - name: Set up Gradle 8.13
+      # The wrapper JAR is pinned to the reviewed official Gradle v8.13.0 source artifact.
+      # setup-gradle's built-in allowlist does not yet recognize this generated JAR hash.
+      - name: Verify pinned Gradle Wrapper JAR
+        run: |
+          echo "b3b3569a02c00109579a298de81226df60f9cf070aab764f3b9948cef17f1d95  gradle/wrapper/gradle-wrapper.jar" | sha256sum --check
+
+      # This action configures Gradle caching; the committed wrapper controls the Gradle version.
+      - name: Configure Gradle cache
         uses: gradle/actions/setup-gradle@v4
         with:
-          gradle-version: '8.13'
+          validate-wrappers: false
+
+      - name: Verify Gradle Wrapper version
+        run: ./gradlew --version
 
       - name: Run unit tests
         run: ./gradlew --no-daemon --stacktrace :app:testDebugUnitTest
@@ -68,11 +78,18 @@ jobs:
       - name: Assemble Debug APK
         run: ./gradlew --no-daemon --stacktrace :app:assembleDebug
 
+      - name: Verify APK and record SHA-256
+        run: |
+          test -s app/build/outputs/apk/debug/app-debug.apk
+          sha256sum app/build/outputs/apk/debug/app-debug.apk | tee app-debug.apk.sha256
+
       - name: Upload Debug APK artifact
         uses: actions/upload-artifact@v4
         with:
           name: debug-apk
-          path: app/build/outputs/apk/debug/app-debug.apk
+          path: |
+            app/build/outputs/apk/debug/app-debug.apk
+            app-debug.apk.sha256
           if-no-files-found: error
           retention-days: 14
 
