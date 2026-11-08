@@ -209,3 +209,69 @@ Ten plik jest kolejką poleceń ChatGPT MASTER → agent Android Studio.
 **Kryteria akceptacji:** PR uruchamia workflow; policy testy kończą się exit 0; walidator akceptuje WB-005 zgodnie z manifestem; diff PR zawiera tylko raport; PR zostaje zamknięty bez merge.
 
 **Instrukcja końcowa:** zachowaj branch i raport jako audit evidence. MASTER independently verifies every result.
+
+---
+## WB-006 — Pierwszy zewnętrzny worker: read-only poller kolejki
+
+**Status:** READY — jawnie autoryzowane przez ChatGPT MASTER 2026-11-08.
+
+**Cel:** Zbudować pierwszy uruchamialny element przyszłego workera 24/7. W tej fazie program tylko odczytuje i waliduje kolejkę Work Bridge. Nie wykonuje zadań, nie wywołuje modeli i nie zapisuje niczego do GitHub. To celowo bezpieczny fundament przed dodaniem lease, wykonawcy i sandboxa.
+
+**Decyzja architektoniczna:** ciągły wykonawca docelowo działa jako zewnętrzna usługa VPS/systemd, nie jako proces Android ani sesja IDE. Dokument: AUTONOMOUS_WORKER_ARCHITECTURE_0.6.150_PL.md, branch work/autonomous-worker-architecture-2026-11-08, commit 5c591d05ebca18c49746d09dfd0d0afa56804696.
+
+**Base branch:** bridge/work-bridge-bootstrap
+
+**Base commit:** HEAD tej gałęzi po opublikowaniu niniejszego zadania. Agent musi wykonać git fetch origin, zapisać dokładny SHA aktualnego origin/bridge/work-bridge-bootstrap i użyć go jako podstawy task brancha.
+
+**Branch zadaniowy:** bridge/task-WB-006-readonly-poller
+
+**Dozwolone pliki (dokładna allowlista):**
+- tools/autonomous_worker/poller.py
+- tools/autonomous_worker/test_poller.py
+- tools/autonomous_worker/README.md
+- AI_MASTER_BRIDGE/REPORTS/WB-006.md
+
+**Maszynowa autoryzacja WB_TASK_V1:**
+<!-- WB_TASK_V1
+{
+  "id": "WB-006",
+  "status": "READY",
+  "base_branch": "bridge/work-bridge-bootstrap",
+  "allowed_paths": [
+    "tools/autonomous_worker/poller.py",
+    "tools/autonomous_worker/test_poller.py",
+    "tools/autonomous_worker/README.md",
+    "AI_MASTER_BRIDGE/REPORTS/WB-006.md"
+  ]
+}
+-->
+
+**Zakres dozwolony:**
+1. Zbudować mały moduł Python oparty wyłącznie na bibliotece standardowej; bez zależności zewnętrznych.
+2. Poller pobiera wyłącznie publiczny plik AI_MASTER_BRIDGE/INBOX.md z repozytorium krzysztofchojnacki5-ship-it/aimaster_071_work, branch bridge/work-bridge-bootstrap, przez HTTP GET. URL i timeout muszą być konfigurowalne. Nie używać tokenu GitHub; repo jest publiczne.
+3. Dodać tryb jednorazowy --once i tryb ciągłego odczytu z domyślnym interwałem 30 s, minimalnym 5 s, backoffem dla błędów sieci/HTTP i poprawnym zakończeniem po Ctrl+C/SIGTERM.
+4. Parsować bloki WB_TASK_V1 fail-closed: dokładnie jeden poprawny blok na zadanie; poprawny JSON; unikalne ID; status jako string; base_branch jako string; allowlista jako lista niepustych ścieżek względnych. Odrzucać duplikaty ID, duplikaty ścieżek, ścieżki absolutne, .., wildcardy, niepoprawne typy i malformed/duplikowane bloki.
+5. Zwracać deterministyczny snapshot JSON: czas odczytu, SHA-256 pobranej treści INBOX, liczbę zadań READY oraz listę ID/status/base_branch/allowed_paths. Nie wypisywać pełnej treści INBOX ani żadnych sekretów.
+6. Poller jest wyłącznie read-only: nie tworzy branchy, nie zmienia statusów, nie claimuje zadań, nie uruchamia kodu projektu, nie wywołuje modeli i nie wykonuje komend shell.
+7. Testy offline przez wstrzyknięty fetch/mock transport; nie wykonywać realnych requestów sieciowych w testach.
+8. Dodać dokumentację uruchomienia i jawnie opisać, że poller nie jest jeszcze workerem wykonującym zadania.
+9. Uruchomić python3 -m py_compile tools/autonomous_worker/poller.py tools/autonomous_worker/test_poller.py oraz python3 -m unittest discover -s tools/autonomous_worker -p 'test_*.py' -v; zapisać rzeczywiste kody wyjścia i wyniki.
+10. Sprawdzić git diff --check, listę plików i skan sekretów. Jeśli brak dedykowanego skanera, wpisać NOT VERIFIED.
+
+**Zakazy:**
+- Nie zmieniać żadnych plików Kotlin/Android, Gradle, manifestu, providerów ani pamięci aplikacji.
+- Nie modyfikować INBOX, README Work Bridge, workflow ani walidatora WB-004.
+- Nie tworzyć żadnych tokenów, sekretów ani kluczy API.
+- Nie wykonywać modeli, testów projektu Android, builda APK, PR ani merge.
+- Nie rozszerzać zakresu poza cztery dozwolone ścieżki.
+- Nie deklarować PASS bez rzeczywistego uruchomienia poleceń i kodu wyjścia.
+
+**Kryteria akceptacji:**
+- Poller poprawnie pobiera INBOX i wyświetla READY tasks.
+- Błędne/niejednoznaczne manifesty są odrzucane fail-closed.
+- Testy jednostkowe offline przechodzą.
+- Tryb ciągły ma ograniczony interwał/backoff i kończy się bez utraty kontroli.
+- Zmiany ograniczone do allowlisty, branch zadaniowy od dokładnego base SHA, raport zawiera pełne SHA i wyniki.
+- Żadnego uruchamiania zadań i żadnych zapisów do GitHub.
+
+**Instrukcja końcowa:** wypchnij wyłącznie branch zadaniowy po weryfikacji diffu. Nie twórz PR ani merge. ChatGPT MASTER niezależnie zweryfikuje branch i raport.
