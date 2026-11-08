@@ -1,14 +1,22 @@
-# Rejestr Pakietów i Artefaktów (PACKAGE REGISTRY) — AI MASTER PRO
+# AI MASTER PRO — rejestr paczek i artefaktów
 
-Niniejszy rejestr dokumentuje artefakty aplikacyjne produkowane w ramach projektu AI MASTER PRO na gałęzi `build/WB-007-android-apk-pipeline`.
+Rejestr identyfikuje wydania aplikacji, paczki źródłowe i rzeczywiście utworzone artefakty. Numer paczki źródłowej nie oznacza automatycznie istnienia APK.
 
-## Informacje o Pakiecie
-- **Nazwa aplikacji:** AI MASTER PRO Android
-- **Application ID (Debug):** `pl.aimasterpro.app` (brak dodatkowego debug suffixu w domyślnej konfiguracji, lub domyślny debug)
-- **Wersja (VersionName):** `0.6.54`
-- **Kod wersji (VersionCode):** `80`
-- **Typ kompilacji:** Debug
-- **Ścieżka artefaktu:** `app/build/outputs/apk/debug/app-debug.apk`
+## Bieżący stan
 
-## Weryfikacja i Spójność
-Wszystkie pakiety budowane są przy użyciu oficjalnego Gradle Wrapper 8.13, JDK 17 oraz Android SDK API 36, zgodnie z wytycznymi zadania WB-007.
+- **Aplikacja:** AI MASTER PRO Android
+- **Application ID:** `pl.aimasterpro.app`
+- **Wersja źródeł aplikacji w aktualnej bazie:** `0.6.54`
+- **versionCode:** `80`
+- **Gradle Wrapper:** `8.13`
+- **AGP:** `8.13.2`
+- **Kotlin:** `2.0.21`
+- **Bieżący status builda:** patrz [BUILD_STATUS.md](BUILD_STATUS.md)
+- **Instrukcja budowania:** [BUILD_AND_INSTALL_APK_PL.md](BUILD_AND_INSTALL_APK_PL.md)
+
+## Zasady rejestru
+
+- Nie wpisywać APK jako utworzonego bez pliku z udanego `:app:assembleDebug`.
+- Dla każdego APK zapisać commit źródłowy, datę, wersję aplikacji, versionCode i SHA-256.
+- Testy jednostkowe i kompilację APK rejestrować oddzielnie.
+- Historyczne raporty buildów są w `docs/archive/build-status/`; nie są bieżącym źródłem statusu.
