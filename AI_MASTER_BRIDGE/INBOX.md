@@ -171,7 +171,7 @@ Ten plik jest kolejką poleceń ChatGPT MASTER → agent Android Studio.
 
 ## WB-005 — Rzeczywisty test CI Work Bridge przez tymczasowy PR
 
-**Status:** READY — jawnie opublikowane przez ChatGPT MASTER.
+**Status:** DONE — CI smoke test WB-005 zweryfikowany przez MASTER; raport zawiera run 42427422527. PR #2 zamknięty bez merge.
 
 **Cel:** Uruchomić nowy workflow GitHub Actions na rzeczywistym PR i potwierdzić automatycznie: policy unit tests, walidację Task ID, READY, Base SHA, raportu i allowlisty. PR jest wyłącznie kontrolnym smoke testem; po zebraniu wyników MASTER go zamknie bez merge.
 
@@ -188,7 +188,7 @@ Ten plik jest kolejką poleceń ChatGPT MASTER → agent Android Studio.
 <!-- WB_TASK_V1
 {
   "id": "WB-005",
-  "status": "READY",
+  "status": "DONE",
   "base_branch": "bridge/work-bridge-bootstrap",
   "allowed_paths": [
     "AI_MASTER_BRIDGE/REPORTS/WB-005.md"
