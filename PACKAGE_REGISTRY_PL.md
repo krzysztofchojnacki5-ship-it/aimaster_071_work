@@ -4,7 +4,7 @@ Rejestr rozróżnia paczkę źródłową od wersji aplikacji/APK. Numer paczki n
 
 | Identyfikator | Nazwa paczki / pliku | Wersja aplikacji | versionCode | Pochodzenie | Status walidacji |
 |---|---|---:|---:|---|---|
-| 0.6.54 | `AI_MASTER_PRO_0_6_54_UI_LIMITS_GROUPING_SOURCE.zip` | 0.6.54 | 80 | Paczka źródłowa przekazana 2026-11-05 | Gradle/JUnit NOT RUN; zmiany opisane w `BUILD_STATUS_0.6.54_PL.md` |
+| 0.6.54 | `AI_MASTER_PRO_0_6_54_UI_LIMITS_GROUPING_SOURCE.zip` | 0.6.54 | 80 | Paczka źródłowa przekazana 2026-11-05 | Gradle/JUnit NOT RUN; zmiany opisane w `docs/archive/build-status/BUILD_STATUS_0.6.54_PL.md` |
 | 0.6.55-SOURCE | `AI_MASTER_PRO_0_6_55_PKT4_DRAFT_HARDENING_SOURCE.zip` | 0.6.54 | 80 | Pochodna źródeł 0.6.54; zmiany wyłącznie w szkicu pkt 4 i dokumentacji | `kotlinc -Werror` PASS; custom harness 13/13 PASS; smoke 1000 wyścigów PASS; JUnit/Gradle/Android NOT RUN |
 | 0.6.56-SOURCE | `AI_MASTER_PRO_0_6_56_PKT4_INTEGRATION_REVIEW_SOURCE.zip` | 0.6.54 | 80 | Pochodna 0.6.55-SOURCE; audyt statyczny czterech komponentów Companion, kontrakt integracji i ryzyka R1–R6; bez zmian produkcyjnego kodu | Audyt statyczny PASS; nowe JUnit/Gradle/APK/Android Keystore/device NOT RUN |
 | 0.6.57-SOURCE | `AI_MASTER_PRO_0_6_57_COMPANION_ACCEPT_CONCURRENCY_SOURCE.zip` | 0.6.54 | 80 | Pochodna 0.6.56-SOURCE; poprawka współbieżności `SSLServerSocket.soTimeout` w `CompanionPinnedTlsProfile.accept()`, test JUnit loopback dodany | `kotlinc -Werror` PASS; niezależny loopback mTLS harness PASS; JUnit/Gradle/APK/Android Keystore/device NOT RUN |
