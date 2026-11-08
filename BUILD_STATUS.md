@@ -19,10 +19,10 @@ Plik `gradle/wrapper/gradle-wrapper.properties` jest jedynym źródłem wersji G
 ## Aktualny pipeline WB-007
 
 - Branch: `build/WB-007-android-apk-pipeline`
-- Ostatni commit: `47e5aae74957ad65d0d3f01a2bb1240b80644a83`
-- Poprawki w repo: weryfikacja SHA-256 Wrapper JAR, wyłączenie niezgodnej wbudowanej walidacji po zastąpieniu jej pinem SHA-256, usunięcie nieadekwatnej właściwości Gradle 9.4+, poprawienie skryptów Wrappera i prawa wykonywania `gradlew`.
-- Ostatni rzeczywisty CI: run `42466571680` na wcześniejszym commicie `25e09aa79a4eb1c0320936c7e7eb8a462ba31f08`; zakończony **FAILURE**: `./gradlew: Permission denied` (exit 126).
-- Ten błąd został poprawiony w późniejszym commicie `47e5aae...`, ale **nie ma jeszcze wyniku CI dla tego commita**.
+- Ostatni commit: `5c36b7b797f951c438b754cd298f542ba23c12f5`
+- Poprawki w repo: weryfikacja SHA-256 Wrapper JAR, wyłączenie niezgodnej wbudowanej walidacji po zastąpieniu jej pinem SHA-256, usunięcie nieadekwatnej właściwości Gradle 9.4+, poprawienie skryptów Wrappera i prawa wykonywania `gradlew`, bezpośredni host dystrybucji Gradle oraz timeout 120 s i trzy próby w kroku weryfikacji.
+- Ostatnie dwa rzeczywiste CI: run `42466571680` na commicie `25e09aa...` zakończył się **FAILURE** przez `./gradlew: Permission denied` (exit 126); run `42466639638` na commicie `47e5aae...` zakończył się **FAILURE** przez HTTP 504 podczas pobierania dystrybucji Gradle 8.13 z przekierowania GitHub. Oba problemy mają poprawki w repo.
+- Najnowsze poprawki pobierania dystrybucji znajdują się w commicie `5c36b7b...`; **nie ma jeszcze wyniku CI dla tego commita**.
 - Testy jednostkowe: **NOT RUN na aktualnym commicie**.
 - `:app:assembleDebug`: **NOT RUN na aktualnym commicie**.
 - APK i SHA-256 APK: **NOT GENERATED / NOT VERIFIED**.
