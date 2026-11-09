@@ -200,3 +200,21 @@ The Android package identity for the new product is now separated from the legac
 - compileSdk 36, minSdk 26, targetSdk 35 remain unchanged.
 
 This is a product identity/configuration change only; it does not establish a successful APK build. CI must compile, run tests and assemble the debug APK before package acceptance.
+
+
+## First verified AiFORTeca 0.0.1 debug build — 2026-11-09
+
+Android Build workflow run #51: https://github.com/krzysztofchojnacki5-ship-it/aimaster_071_work/actions/runs/42703408047
+- Source commit tested: 324a8cba7a0f404d27666b94dac45909cb8fe4e4
+- Gradle 9.9.0 wrapper verification: PASS
+- JDK 17 and Android SDK setup: PASS
+- Production Kotlin compilation: PASS
+- Unit tests: PASS — 928 tests across 98 XML test suites; 0 failures, 0 errors, 0 skipped (aggregated from uploaded JUnit XML reports)
+- assembleDebug: PASS
+- APK artifact upload: PASS
+- Artifact ID: 13712971373 (aiforteca-debug-apk; 1,876,059-byte ZIP containing app-debug.apk)
+- APK size: 1,888,669 bytes
+- APK SHA-256: 062817a7ca57bd363304b7e8452e12f645c30ed63cd8411c0a4e1383de21748e
+- APK extracted from the uploaded artifact and ZIP integrity verified locally in the working environment.
+
+This is the first verified CI debug APK for the AiFORTeca 0.0.1 foundation. It is a debug build, not a signed release APK. CI success proves compilation, unit tests, packaging, and artifact upload; it does not replace installation and runtime smoke testing on a physical Android device. The next gate is device installation/launch and targeted workflow tests, followed by the planned MASTER memory/reasoning integration and agent-manager UX completion.
