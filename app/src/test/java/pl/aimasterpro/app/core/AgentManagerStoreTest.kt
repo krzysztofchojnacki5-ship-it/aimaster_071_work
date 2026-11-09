@@ -1,12 +1,12 @@
 package pl.aimasterpro.app.core
 
-import androidx.test.core.app.ApplicationProvider
 import android.content.Context
 import org.junit.Assert.*
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
+import org.robolectric.RuntimeEnvironment
 import pl.aimasterpro.app.agents.AgentCatalog
 import pl.aimasterpro.app.agents.AgentSpec
 
@@ -15,7 +15,7 @@ class AgentManagerStoreTest {
     private lateinit var context: Context
 
     @Before fun setUp() {
-        context = ApplicationProvider.getApplicationContext()
+        context = RuntimeEnvironment.getApplication()
         context.getSharedPreferences("aiforteca_agent_manager_v1", Context.MODE_PRIVATE).edit().clear().commit()
         AgentManagerStore.resetStorageHealthForTests()
     }
