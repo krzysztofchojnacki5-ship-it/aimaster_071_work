@@ -2514,8 +2514,25 @@ class MainActivity : Activity() {
                     resp.text
                 }
             }
+            // Commit the response to the write-ahead archive first. Persistence can only
+            // pass the Quality Gate after this durable write has been confirmed.
+            val initialResponse = result.getOrNull()
+            var responseArchived = false
+            if (!initialResponse.isNullOrBlank()) {
+                responseArchived = runCatching {
+                    pl.aimasterpro.app.core.ChatResponseArchive.put(
+                        this, requestTaskId, chatId, chosenRole.name, initialResponse,
+                        actualProviderId, actualModel
+                    )
+                }.getOrDefault(false)
+                if (!responseArchived) android.util.Log.e(
+                    "AIMasterRecovery",
+                    "Odpowiedź $requestTaskId nie została potwierdzona w archiwum przed finalizacją UI."
+                )
+            }
+
             // Project-change tasks are not marked complete merely because the model answered.
-            // Evaluate all nine gates from exact host-scoped evidence before archiving the response.
+            // Evaluate all nine gates from exact host-scoped evidence after the initial archive write.
             val gateEvidence = masterEvidenceForQualityGate
             if (result.isSuccess && chosenRole == AgentRole.MASTER && gateEvidence?.selected != null) {
                 val selectedScope = gateEvidence.selected
@@ -2532,7 +2549,9 @@ class MainActivity : Activity() {
                 }
                 val safetyValidated = changeLedger.status == pl.aimasterpro.app.core.ChangeSetStore.LedgerStatus.VALID &&
                     activeChange != null
-                val persistenceVerified = scopedEvidence.valid && safetyValidated &&
+                val persistenceVerified = responseArchived &&
+                    pl.aimasterpro.app.core.ChatResponseArchive.isArchiveReadable(applicationContext) &&
+                    scopedEvidence.valid && safetyValidated &&
                     pl.aimasterpro.app.core.DecisionLedgerStore.snapshot(applicationContext).status ==
                         pl.aimasterpro.app.core.DecisionLedgerStore.ReadStatus.AVAILABLE &&
                     pl.aimasterpro.app.core.ErrorKnowledgeBaseStore.snapshot(applicationContext).status ==
@@ -2561,22 +2580,15 @@ class MainActivity : Activity() {
                 if (!gate.completionAllowed) {
                     val gateNote = "\n\n**Quality Gate: ${gate.overall}. Zmiana nie jest oznaczona jako ukończona.**\nBramki wymagające działania: $gateSummary"
                     result = Result.success(result.getOrNull().orEmpty() + gateNote)
-                }
-            }
-            // Commit a successful answer to a task-keyed archive before crossing onto
-            // the UI thread. A process death in the UI handoff window can then replay it.
-            val responseToArchive = result.getOrNull()
-            if (!responseToArchive.isNullOrBlank()) {
-                val responseArchived = runCatching {
-                    pl.aimasterpro.app.core.ChatResponseArchive.put(
-                        this, requestTaskId, chatId, chosenRole.name, responseToArchive,
+                    val updatedArchive = pl.aimasterpro.app.core.ChatResponseArchive.put(
+                        this, requestTaskId, chatId, chosenRole.name, result.getOrNull().orEmpty(),
                         actualProviderId, actualModel
                     )
-                }.getOrDefault(false)
-                if (!responseArchived) android.util.Log.e(
-                    "AIMasterRecovery",
-                    "Odpowiedź $requestTaskId nie została potwierdzona w archiwum przed finalizacją UI."
-                )
+                    if (!updatedArchive) android.util.Log.e(
+                        "AIMasterRecovery",
+                        "Nie udało się zaktualizować archiwum odpowiedzi o wynik Quality Gate."
+                    )
+                }
             }
             runOnUiThread {
                 if (gen != requestGen) {
