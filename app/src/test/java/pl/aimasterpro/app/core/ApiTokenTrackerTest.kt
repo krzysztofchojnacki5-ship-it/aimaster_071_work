@@ -150,7 +150,9 @@ class ApiTokenTrackerTest {
         )
 
         assertTrue(first.reservationId.isNotBlank())
-        assertTrue(second.reservationId.isNotBlank())
+        assertTrue("The second MAX_VALUE reservation must be rejected rather than overflowing the aggregate",
+            second.reservationId.isBlank())
+        assertTrue(second.blockedReasons.values.any { it.contains("zakres bezpiecznej wyceny") })
         val stats = ApiTokenTracker.activeReservationStats()
         assertEquals(Double.MAX_VALUE, stats.costPln, 0.0)
         assertTrue("Reservation cost diagnostics must never expose Infinity", stats.costPln.isFinite())
