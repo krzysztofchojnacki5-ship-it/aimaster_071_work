@@ -7,11 +7,11 @@ android {
     compileSdk = 36
 
     defaultConfig {
-        applicationId = "pl.aimasterpro.app"
+        applicationId = "pl.aiforteca.app"
         minSdk = 26
         targetSdk = 35
-        versionCode = 80
-        versionName = "0.6.54"
+        versionCode = 1
+        versionName = "0.0.1"
     }
 
     buildTypes {

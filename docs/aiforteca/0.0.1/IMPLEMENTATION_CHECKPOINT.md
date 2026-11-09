@@ -188,3 +188,15 @@ Current evidence:
 - Unit-test source compilation: FAIL on run #15 due to the listed test-source mismatches; corrections committed in e295990.
 - Unit tests execution: NOT YET CONFIRMED.
 - assembleDebug / APK: NOT YET RUN after test fixes.
+
+
+## AiFORTeca 0.0.1 application identity — 2026-11-09
+
+The Android package identity for the new product is now separated from the legacy AI Master Pro installation:
+- Display label: AiFORTeca.
+- Release applicationId: pl.aiforteca.app (debug suffix remains .debug).
+- namespace remains pl.aimasterpro.app to avoid a risky mass package rename of the inherited source tree.
+- versionCode: 1; versionName: 0.0.1.
+- compileSdk 36, minSdk 26, targetSdk 35 remain unchanged.
+
+This is a product identity/configuration change only; it does not establish a successful APK build. CI must compile, run tests and assemble the debug APK before package acceptance.
