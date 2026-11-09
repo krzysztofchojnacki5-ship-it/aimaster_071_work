@@ -1,0 +1,21 @@
+name: Gradle Wrapper Validation
+
+on:
+  push:
+    branches:
+      - work/aiforteca-0.0.1-foundation
+  pull_request:
+    branches:
+      - work/aiforteca-0.0.1-foundation
+
+permissions:
+  contents: read
+
+jobs:
+  validation:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+      - name: Validate Gradle Wrapper JAR
+        uses: gradle/actions/wrapper-validation@v4
