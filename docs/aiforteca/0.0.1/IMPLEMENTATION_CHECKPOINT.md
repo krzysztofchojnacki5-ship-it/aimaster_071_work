@@ -105,3 +105,28 @@ Latest hardening commits:
 - Test: `321ddaff8a23922b299d5a168cf9e2fb0029b66a`
 
 Still NOT RUN: Kotlin compilation, Robolectric tests, Android build, device tests. These are source-level changes only.
+
+
+## Gradle 9.9 / Android build baseline — 2026-11-09
+
+The missing Gradle Wrapper JAR has now been added to the AiFORTeca foundation branch.
+
+Pinned toolchain:
+- Gradle Wrapper distribution: `9.9.0` (latest stable as of 2026-11-09).
+- Android Gradle Plugin: `9.4.0`.
+- Kotlin Gradle Plugin: `2.4.10`.
+- JDK: `17`.
+- Android compile SDK: `36`; Android Build Tools: `36.0.0`.
+
+The wrapper JAR was taken from the official `gradle/gradle` repository tag `v9.9.0`; its blob SHA is `51cbd2a6f8121b2ce12daf979b128058fb9672ee`. The official published SHA-256 is recorded in `gradle/wrapper/gradle-wrapper.jar.sha256` as `621008afc4f5d59357fcf06ffa644dd5aade5e091bdc363742710445f73cdaf8`. The wrapper properties pin `gradle-9.9.0-bin.zip`, use URL validation, a 120-second timeout and three retries.
+
+Removed `org.gradle.tooling.parallel=true`; it is not part of the baseline because of prior IDE/Gradle instability in this project history.
+
+Added:
+- `.github/workflows/gradle-wrapper-validation.yml` using the official wrapper validation action.
+- `.github/workflows/android-build.yml` to run wrapper version check, unit tests, debug APK build, and upload the APK artifact only after success.
+- `docs/aiforteca/0.0.1/BUILD_BASELINE.md` with pinned versions and upgrade policy.
+
+Compatibility basis: Gradle 9.9.0 is the latest stable Gradle release on this date; AGP 9.4.0 requires Gradle 9.6.0 minimum and JDK 17. Kotlin plugin 2.4.10 follows the official AGP 9.4 setup example.
+
+**Verification status:** Wrapper JAR and source files are confirmed present on GitHub. The checksum is the official published Gradle checksum, with CI validation configured. No Gradle invocation has yet been executed in this environment. Android CI is configured but has not yet been confirmed green. Build, unit tests, and APK remain NOT RUN / UNVERIFIED until a workflow run succeeds.
