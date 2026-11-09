@@ -197,7 +197,7 @@ class TaskCheckpointStoreTest {
         })
         assertFalse(usageRecoveryCalled)
         assertEquals("INTERRUPTED", TaskCheckpointStore.latest(context).single().status)
-        assertTrue(TaskCheckpointStore.latest(context).single().detail.contains("trwały zapis wyniku"))
+        assertTrue(TaskCheckpointStore.latest(context).single().detail.contains("zapisu wyniku w archiwum"))
     }
 
     @Test fun unreadableResultArchivePreservesPendingCheckpointsForLaterRecovery() {
