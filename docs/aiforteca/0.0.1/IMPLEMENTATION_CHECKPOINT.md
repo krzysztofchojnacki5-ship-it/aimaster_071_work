@@ -218,3 +218,26 @@ Android Build workflow run #51: https://github.com/krzysztofchojnacki5-ship-it/a
 - APK extracted from the uploaded artifact and ZIP integrity verified locally in the working environment.
 
 This is the first verified CI debug APK for the AiFORTeca 0.0.1 foundation. It is a debug build, not a signed release APK. CI success proves compilation, unit tests, packaging, and artifact upload; it does not replace installation and runtime smoke testing on a physical Android device. The next gate is device installation/launch and targeted workflow tests, followed by the planned MASTER memory/reasoning integration and agent-manager UX completion.
+
+
+## MASTER decision-memory integration — 2026-11-09
+
+Commit: `774f85ffe50f7dac98e8f1848e4f8c7af8abd739`.
+
+The append-only DecisionLedgerStore is now wired into the actual MASTER chat flow:
+- Every MASTER routing choice (MASTER_ONLY / ONE_SPECIALIST / TEAM) is recorded with task ID, selected mode, deterministic routing rationale, assumptions, confidence label, risk impact and policy/task evidence references.
+- The ledger stores only compact decision metadata; it does not copy the raw user prompt, model response, attachment payload or API credentials.
+- Up to eight recent decisions (bounded to 1,800 characters) are injected into the next direct MASTER prompt, specialist shared context and final team synthesis.
+- If the ledger is unavailable or corrupt, MASTER receives an explicit unavailable-state notice; the application does not silently interpret it as an empty history.
+- Added Robolectric tests for decision-context rendering and unavailable-state signaling.
+
+Verification: Android Build workflow run #54 completed successfully on this exact commit:
+https://github.com/krzysztofchojnacki5-ship-it/aimaster_071_work/actions/runs/42705350305
+- Gradle 9.9.0 / AGP 9.4.0 / Kotlin 2.4.10 / JDK 17.
+- Unit tests: PASS — 930 tests across 98 suites; 0 failures, 0 errors, 0 skipped.
+- Debug APK assembly and artifact upload: PASS.
+- APK size: 1,890,841 bytes.
+- APK SHA-256: `f62be27c4403f880d9481170450014d30c986f03ee77a7f07250b2ddf8e16860`.
+- Artifact ID: `13713761895` (`aiforteca-debug-apk`).
+
+This confirms the first operational integration of decision history, but not yet full autonomous reasoning. The next implementation stage is a redacted error knowledge base connected to failure handling and retrieval, followed by evidence-backed Quality Gate integration. Device installation/runtime smoke testing remains pending.
