@@ -241,3 +241,27 @@ https://github.com/krzysztofchojnacki5-ship-it/aimaster_071_work/actions/runs/42
 - Artifact ID: `13713761895` (`aiforteca-debug-apk`).
 
 This confirms the first operational integration of decision history, but not yet full autonomous reasoning. The next implementation stage is a redacted error knowledge base connected to failure handling and retrieval, followed by evidence-backed Quality Gate integration. Device installation/runtime smoke testing remains pending.
+
+
+## Error Knowledge Base connected to MASTER — 2026-11-09
+
+Commit: `7015fce64114ae6f4579565b5dc1ecfd5c3cc5e9`.
+
+The append-only ErrorKnowledgeBaseStore is now connected to the actual chat execution flow:
+- A failed provider/chat request creates an OPEN incident record linked to its task.
+- The record uses an allowlist: error category and exception class only. Raw exception messages and provider response bodies remain in the visible chat error but are deliberately excluded from the knowledge base.
+- The record is explicitly marked redaction-confirmed because only the allowlisted diagnostic metadata is persisted.
+- Up to six recent incidents are injected into future MASTER prompts and team synthesis, with operation, status, safe diagnostic summary, and confirmed root cause/fix summary when present.
+- Unavailable/corrupt history is surfaced explicitly; it is never treated as an empty healthy knowledge base.
+- Added Robolectric tests for bounded safe context and unavailable-state reporting.
+
+Verification: Android Build workflow run #56 completed successfully on this exact commit:
+https://github.com/krzysztofchojnacki5-ship-it/aimaster_071_work/actions/runs/42706135195
+- Gradle 9.9.0 / AGP 9.4.0 / Kotlin 2.4.10 / JDK 17.
+- Unit tests: PASS — 932 tests across 98 suites; 0 failures, 0 errors, 0 skipped.
+- Debug APK assembly and artifact upload: PASS.
+- APK size: 1,890,841 bytes.
+- APK SHA-256: `903748481e16b893e9414d727be5d0ba981396a3860dee0255320778d44329bc`.
+- Artifact ID: `13714161446` (`aiforteca-debug-apk`).
+
+This establishes decision memory and safe incident memory in the actual MASTER request path. The next gate is to wire QualityGateEvaluator into project-change completion using host-owned verification evidence, then expose decision/error history in the Memory/Diagnostics UI. Physical-device installation and runtime smoke testing are still pending.
