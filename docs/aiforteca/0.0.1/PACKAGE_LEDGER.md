@@ -15,3 +15,5 @@ Status: initial ledger; no AiFORTeca APK/package has been produced.
 - Keep stable, experimental, and release artifacts distinct.
 
 | AIF-0.0.1-QUALITY-GATE | 2026-11-09 | work/aiforteca-0.0.1-foundation (source commit dbad8ad7c448b24d5f0f1a0590af9ef492f2c3d8) | Pure Kotlin quality-gate evaluator; missing evidence becomes NOT_RUN; PASS requires evidence; WAIVED requires explicit user approval and residual risk; unit tests | NOT RUN | NOT RUN | None | SOURCE COMMITTED; BUILD/TEST UNVERIFIED; EVALUATOR NOT YET WIRED TO MASTER FINALIZATION |
+
+| AIF-0.0.1-GRADLE-9.9 | 2026-11-09 | work/aiforteca-0.0.1-foundation | Gradle 9.9.0 wrapper JAR from official Gradle v9.9.0 source; official SHA-256 file; wrapper properties pinned to 9.9.0; AGP 9.4.0; Kotlin Gradle Plugin 2.4.10; JDK 17 baseline; wrapper validation and Android CI workflows | NOT RUN (CI pending) | NOT RUN (CI pending) | APK only as CI artifact after successful build | TOOLCHAIN SOURCE COMMITTED; BUILD/TEST NOT YET VERIFIED |
