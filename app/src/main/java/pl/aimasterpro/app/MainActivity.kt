@@ -1785,12 +1785,16 @@ class MainActivity : Activity() {
         showChat()
         val requestScope = client.beginRequestScope()
         activeRequestScope = requestScope
+        var masterEvidenceForQualityGate: pl.aimasterpro.app.core.MasterEvidenceContextBuilder.Result? = null
+        var masterResponseCheckPassed = false
+        var masterIndependentReviewCompleted = false
+        var masterQualityGateEvaluation: pl.aimasterpro.app.core.QualityGateEvaluator.Evaluation? = null
 
         executor.execute {
             if (gen != requestGen || Thread.currentThread().isInterrupted) return@execute
             activeWorkerThread = Thread.currentThread()
             activeWorkerGeneration = gen
-            val result = runCatching {
+            var result = runCatching {
                 if (chosenRole == AgentRole.MASTER) {
                     // Reconcile approved memory after any prior process interruption before composing context.
                     pl.aimasterpro.app.core.QualityLearningStore.syncApprovedAgentMemories(this)
@@ -1850,6 +1854,7 @@ class MainActivity : Activity() {
                         }
                         val memoryContext = pl.aimasterpro.app.core.AiMemoryStore.contextString(this, prompt, maxChars = 2_200)
                         val evidenceContext = buildMasterEvidenceContext(chatId)
+                        masterEvidenceForQualityGate = evidenceContext
                         logAgentForChat(chatId, "🧾 Dowody MASTER-a: ${evidenceContext.status} • rekordy=${evidenceContext.evidenceCount} • claims=${evidenceContext.agentClaimCount}.")
                         val directPrompt = buildString {
                             append(prompt)
@@ -1872,6 +1877,7 @@ class MainActivity : Activity() {
                         actualProviderId = resp.providerId.ifBlank { safeConfig.id }
                         actualModel = resp.model.ifBlank { safeConfig.model }
                         val check = pl.aimasterpro.app.core.MasterResponseCheck.evaluate(prompt, resp.text, evidenceContext.assessment)
+                        masterResponseCheckPassed = check.passed
                         if (check.warnings.isNotEmpty()) logAgentForChat(chatId, "🛡️ Kontrola MASTER-a: ${check.warnings.joinToString(" | ")}; bez dodatkowego wywołania API.")
                         else logAgentForChat(chatId, "🛡️ Kontrola MASTER-a: podstawowe kryteria kompletności zaliczone (lokalnie).")
                         resp.text + if (check.warnings.isNotEmpty()) "\n\n_Uwaga kontroli jakości: ${check.warnings.joinToString("; ")}_" else ""
@@ -2334,6 +2340,8 @@ class MainActivity : Activity() {
                             }
                         }
                     }
+                    // Report-level peer review is tracked separately from code review; it does not
+                    // satisfy the Quality Gate's independent code-review requirement.
                     val reviewUsageRows = pl.aimasterpro.app.core.ApiTokenTracker.loadAllRecordsFromStorage(this)
                     peerReviewResults.forEach { review ->
                         val reviewTarget = review.reviewOfAgentId.ifBlank { "nieustalony raport" }
@@ -2408,6 +2416,7 @@ class MainActivity : Activity() {
                         logAgentForChat(chatId, "🧠 Ochrona kontekstu syntezy: raporty poprawne=${reportPack.includedReports}, pominięte/nieudane=${reportPack.excludedReports}, skrócone=${reportPack.truncatedReports}, źródłowo=${reportPack.sourceChars} znaków, przekazano=${reportPack.text.length} znaków.")
                     }
                     val evidenceContext = buildMasterEvidenceContext(chatId)
+                    masterEvidenceForQualityGate = evidenceContext
                     logAgentForChat(chatId, "🧾 Dowody MASTER-a: ${evidenceContext.status} • rekordy=${evidenceContext.evidenceCount} • claims=${evidenceContext.agentClaimCount}.")
                     val autonomousSynthesisPrompt = """
                         Zadanie użytkownika:
@@ -2490,6 +2499,7 @@ class MainActivity : Activity() {
                     actualModel = resp.model.ifBlank { safeConfig.model }
                     logAgentDialogueForChat(chatId, "$actualProviderId / $actualModel", "MASTER", resp.text, "REPORT")
                     val check = pl.aimasterpro.app.core.MasterResponseCheck.evaluate(prompt, resp.text, evidenceContext.assessment)
+                    masterResponseCheckPassed = check.passed
                     if (check.warnings.isNotEmpty()) logAgentForChat(chatId, "🛡️ Kontrola MASTER-a: ${check.warnings.joinToString(" | ")}; odpowiedź nie została automatycznie ponownie wysłana, aby nie zużywać dodatkowych tokenów.")
                     else logAgentForChat(chatId, "🛡️ Kontrola MASTER-a: podstawowe kryteria kompletności zaliczone (kontrola lokalna, bez dodatkowego API).")
                     resp.text + if (check.warnings.isNotEmpty()) "\n\n_Uwaga kontroli jakości: ${check.warnings.joinToString("; ")}_" else ""
@@ -2502,6 +2512,55 @@ class MainActivity : Activity() {
                     actualProviderId = resp.providerId.ifBlank { safeConfig.id }
                     actualModel = resp.model.ifBlank { safeConfig.model }
                     resp.text
+                }
+            }
+            // Project-change tasks are not marked complete merely because the model answered.
+            // Evaluate all nine gates from exact host-scoped evidence before archiving the response.
+            val gateEvidence = masterEvidenceForQualityGate
+            if (result.isSuccess && chosenRole == AgentRole.MASTER && gateEvidence?.selected != null) {
+                val selectedScope = gateEvidence.selected
+                val evidenceStore = pl.aimasterpro.app.core.VerificationEvidenceStore(
+                    pl.aimasterpro.app.core.AndroidVerificationEvidenceBackend(applicationContext)
+                )
+                val scopedEvidence = evidenceStore.forScope(
+                    selectedScope.taskId, selectedScope.chatId, selectedScope.snapshotId
+                )
+                val changeLedger = pl.aimasterpro.app.core.ChangeSetStore.readResult(applicationContext)
+                val activeChange = changeLedger.items.firstOrNull {
+                    it.id == selectedScope.changeSetId && it.chatId == selectedScope.chatId &&
+                        it.snapshotId == selectedScope.snapshotId && it.status in setOf("APPLIED_UNVERIFIED", "APPLIED")
+                }
+                val safetyValidated = changeLedger.status == pl.aimasterpro.app.core.ChangeSetStore.LedgerStatus.VALID &&
+                    activeChange != null
+                val persistenceVerified = scopedEvidence.valid && safetyValidated &&
+                    pl.aimasterpro.app.core.DecisionLedgerStore.snapshot(applicationContext).status ==
+                        pl.aimasterpro.app.core.DecisionLedgerStore.ReadStatus.AVAILABLE &&
+                    pl.aimasterpro.app.core.ErrorKnowledgeBaseStore.snapshot(applicationContext).status ==
+                        pl.aimasterpro.app.core.ErrorKnowledgeBaseStore.ReadStatus.AVAILABLE &&
+                    pl.aimasterpro.app.core.TaskCheckpointStore.isJournalReadable(applicationContext) &&
+                    pl.aimasterpro.app.core.MasterWorkJournalStore.get(applicationContext, requestTaskId) != null
+                val gate = pl.aimasterpro.app.core.MasterQualityGateCoordinator.evaluate(
+                    pl.aimasterpro.app.core.MasterQualityGateCoordinator.Input(
+                        selected = selectedScope,
+                        evidenceRows = scopedEvidence.entries,
+                        evidenceLedgerValid = scopedEvidence.valid,
+                        safetyValidated = safetyValidated,
+                        persistenceVerified = persistenceVerified,
+                        independentReviewCompleted = masterIndependentReviewCompleted,
+                        responsePresent = !result.getOrNull().isNullOrBlank(),
+                        responseCheckPassed = masterResponseCheckPassed
+                    )
+                )
+                masterQualityGateEvaluation = gate
+                val unresolved = gate.results.filter {
+                    it.outcome != pl.aimasterpro.app.core.QualityGateEvaluator.Outcome.PASS &&
+                        it.outcome != pl.aimasterpro.app.core.QualityGateEvaluator.Outcome.WAIVED
+                }
+                val gateSummary = unresolved.joinToString("; ") { "${it.gate}=${it.outcome}" }
+                logAgentForChat(chatId, "🛡️ Quality Gate: ${gate.overall} • ukończenie=${gate.completionAllowed} • ${gateSummary.ifBlank { "wszystkie bramki PASS" }}")
+                if (!gate.completionAllowed) {
+                    val gateNote = "\n\n**Quality Gate: ${gate.overall}. Zmiana nie jest oznaczona jako ukończona.**\nBramki wymagające działania: $gateSummary"
+                    result = Result.success(result.getOrNull().orEmpty() + gateNote)
                 }
             }
             // Commit a successful answer to a task-keyed archive before crossing onto
@@ -2604,20 +2663,34 @@ class MainActivity : Activity() {
                     persistMessages()
                 } else appendToStoredChat(chatId, "assistant", reply, requestTaskId)
                 val hasMasterJournal = pl.aimasterpro.app.core.MasterWorkJournalStore.get(this, requestTaskId) != null
+                val qualityGateBlocked = masterQualityGateEvaluation?.completionAllowed == false
+                val blockedGateNames = masterQualityGateEvaluation?.results.orEmpty().filter {
+                    it.outcome != pl.aimasterpro.app.core.QualityGateEvaluator.Outcome.PASS &&
+                        it.outcome != pl.aimasterpro.app.core.QualityGateEvaluator.Outcome.WAIVED
+                }.map { "${it.gate}: ${it.outcome}" }
                 val journalFinalized = if (!hasMasterJournal) true else
                     pl.aimasterpro.app.core.MasterWorkJournalStore.updateActive(this, requestTaskId) { current ->
                         current.copy(
-                            status = if (ok && chatResultPersisted) "COMPLETED" else if (!chatResultPersisted) "PAUSED" else "BLOCKED",
+                            status = when {
+                                !chatResultPersisted -> "PAUSED"
+                                !ok || qualityGateBlocked -> "BLOCKED"
+                                else -> "COMPLETED"
+                            },
                             currentStep = when {
-                                ok && chatResultPersisted -> "Odpowiedź MASTER-a zapisana w historii czatu."
                                 !chatResultPersisted -> "Odpowiedź nie została trwale zapisana; wymaga odzyskania."
+                                qualityGateBlocked -> "Quality Gate ${masterQualityGateEvaluation?.overall}; odpowiedź dostarczona, ale zmiana wymaga dalszej weryfikacji."
+                                ok -> "Odpowiedź MASTER-a zapisana w historii czatu."
                                 else -> "Zadanie zakończone błędem; wymagane sprawdzenie checkpointów."
                             },
                             completedSteps = if (ok && chatResultPersisted)
                                 (current.completedSteps + "Końcowa synteza MASTER-a zapisana").distinct().take(40)
                             else current.completedSteps,
-                            nextSteps = if (ok && chatResultPersisted) emptyList()
-                                else listOf("Sprawdź historię czatu, checkpointy i archiwum przed ponownym uruchomieniem."),
+                            nextSteps = when {
+                                !chatResultPersisted -> listOf("Sprawdź historię czatu, checkpointy i archiwum przed ponownym uruchomieniem.")
+                                qualityGateBlocked -> blockedGateNames.ifEmpty { listOf("Uzupełnij brakujące dowody Quality Gate.") }.take(40)
+                                ok -> emptyList()
+                                else -> listOf("Sprawdź checkpointy i historię błędów przed ponownym uruchomieniem.")
+                            },
                             updatedAt = System.currentTimeMillis()
                         )
                     } != null
