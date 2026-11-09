@@ -98,7 +98,10 @@ object OllamaModelManager {
         var successSeen = false
         try {
             cancellation.ensureActive()
-            val requestBody = JSONObject().put("name", safeModel).put("stream", true).toString()
+            val requestJson = JSONObject()
+            requestJson.put("name", safeModel)
+            requestJson.put("stream", true)
+            val requestBody = requestJson.toString()
             connection.outputStream.use { output ->
                 output.write(requestBody.toByteArray(Charsets.UTF_8))
                 output.flush()
