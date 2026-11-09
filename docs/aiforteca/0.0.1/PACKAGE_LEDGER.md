@@ -5,7 +5,7 @@ Status: initial ledger; no AiFORTeca APK/package has been produced.
 | Package ID | Date (UTC) | Base branch/commit | Scope | Build | Tests | Artifact | Status |
 |---|---|---|---|---|---|---|---|
 | AIF-0.0.1-FOUNDATION | 2026-11-09 | work/autonomous-worker-architecture-2026-11-08 (exact base SHA not captured; intentionally not inferred) | Governance documents, read-only architecture inventory, DecisionLedgerStore and Robolectric regression tests | NOT RUN | NOT RUN | None | SOURCE COMMITTED; BUILD/TEST UNVERIFIED; NOT AN APK |
-| AIF-0.0.1-ERROR-KB | 2026-11-09 | work/aiforteca-0.0.1-foundation (continuation; source commit 93ae5c7fca72aff05b8880bbe9b19fdc93c1a51a) | ErrorKnowledgeBaseStore, append-only status history, redaction gate, transition validation, corruption-safe reads, Robolectric regression tests | NOT RUN | NOT RUN | None | SOURCE COMMITTED; BUILD/TEST UNVERIFIED; NOT AN APK |
+| AIF-0.0.1-ERROR-KB | 2026-11-09 | work/aiforteca-0.0.1-foundation (continuation; latest source/test hardening commit 321ddaff8a23922b299d5a168cf9e2fb0029b66a) | ErrorKnowledgeBaseStore, append-only status history, redaction gate, transition validation, corruption-safe reads, Robolectric regression tests | NOT RUN | NOT RUN | None | SOURCE COMMITTED; BUILD/TEST UNVERIFIED; NOT AN APK |
 
 ## Rules
 - Never reuse a package ID.
