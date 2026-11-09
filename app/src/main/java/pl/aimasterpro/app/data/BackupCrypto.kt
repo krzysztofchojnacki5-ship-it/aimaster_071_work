@@ -35,7 +35,7 @@ object BackupCrypto {
         require(password.size >= 8) { "Hasło musi mieć co najmniej 8 znaków." }
         require(plain.isNotBlank()) { "Tekst do zaszyfrowania nie może być pusty." }
         val plainBytes = plain.toByteArray(Charsets.UTF_8)
-        try {
+        return try {
             require(plainBytes.size <= MAX_PLAIN_BYTES) { "Kopia jest zbyt duża (limit 4 MiB)." }
             val salt = ByteArray(16).also { SecureRandom().nextBytes(it) }
             val iv = ByteArray(12).also { SecureRandom().nextBytes(it) }
@@ -113,7 +113,7 @@ object BackupCrypto {
         var salt: ByteArray? = null
         var iv: ByteArray? = null
         var data: ByteArray? = null
-        try {
+        return try {
             val decodedSalt = Base64.decode(saltBase64, Base64.NO_WRAP)
             salt = decodedSalt
             val decodedIv = Base64.decode(ivBase64, Base64.NO_WRAP)

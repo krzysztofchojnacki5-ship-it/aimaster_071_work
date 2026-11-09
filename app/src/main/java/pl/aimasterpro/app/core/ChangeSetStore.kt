@@ -30,7 +30,8 @@ object ChangeSetStore {
     @Synchronized fun readResult(
         context: Context,
         storage: StringPreferenceStore = AndroidStringPreferenceStore(context, PREFERENCES_NAME)
-    ): LedgerRead = try {
+    ): LedgerRead {
+        return try {
         if (SharedPreferencesWriteHealth.isUncertain(PREFERENCES_NAME)) {
             return LedgerRead(LedgerStatus.CORRUPT, error = "LEDGER_STORAGE_UNCERTAIN")
         }
@@ -69,7 +70,7 @@ object ChangeSetStore {
         LedgerRead(LedgerStatus.VALID, rows)
     } catch (error: Exception) {
         LedgerRead(LedgerStatus.CORRUPT, error = "LEDGER_READ_FAILED:${error.javaClass.simpleName}")
-    }
+    } }
 
     private fun readOrThrow(context: Context, storage: StringPreferenceStore): List<ChangeSet> {
         val result = readResult(context, storage)

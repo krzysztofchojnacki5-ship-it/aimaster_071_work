@@ -2924,7 +2924,7 @@ class MainActivity : Activity() {
             return false
         }
         persistedTitle?.let { chatTitles[currentChatId] = it }
-        true
+        return true
     }
 
     @Synchronized private fun persistAgentActivity() {
@@ -2973,7 +2973,7 @@ class MainActivity : Activity() {
             android.util.Log.e("AIMasterChat", "Nie udało się trwale zapisać identyfikatora bieżącego czatu.")
             return false
         }
-        true
+        return true
     }
 
     /** Dopisuje wiadomość do rozmowy zapisanej w pamięci, gdy użytkownik zdążył przejść do innej rozmowy. */
