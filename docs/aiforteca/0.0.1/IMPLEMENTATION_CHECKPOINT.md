@@ -169,3 +169,22 @@ Verification at this checkpoint:
 - First package artifact: NOT PRODUCED.
 
 Next: rerun unit tests and debug APK assembly against commit a61457c1fb3b38235d7f8c01b9ca829504098ec8; fix any subsequent compiler/test failures based on logs. Do not promote the package until both test and assemble steps succeed.
+
+
+## Kotlin production compile passed; test sources exposed stale contracts — 2026-11-09
+
+Android Build run #15 on commit a61457c1fb3b38235d7f8c01b9ca829504098ec8 successfully compiled all production Kotlin sources with Gradle 9.9.0 / AGP 9.4.0 / JDK 17. The five production-source compile errors from run #14 are resolved.
+
+The unit-test Kotlin compilation then exposed nine errors across existing tests:
+- TeamRunEngineNetworkTest: three callbacks still used the old five-argument onRequestStarting contract; production now supplies attemptCount as the sixth argument.
+- AiMemoryStoreTest: missing assertEquals import.
+- SecureStoreReplacementRecoveryTest and SecureStoreImportTest: trailing lambdas were binding to the later secretDecryptorForTests constructor parameter instead of commitEditor. SecureStore constructor parameters were reordered so commitEditor is again the final functional parameter, preserving the intended trailing-lambda test seam.
+- TaskCheckpointStoreTest: one Event omitted required providerId, model and attempts metadata.
+
+Corrections committed in e295990caac2fa98eceeb6e44e4371b7c7efe120. Test sources have been aligned; the next CI run must verify that they compile and execute. No unit-test PASS or APK build is claimed yet.
+
+Current evidence:
+- Production Kotlin compile: PASS (run #15).
+- Unit-test source compilation: FAIL on run #15 due to the listed test-source mismatches; corrections committed in e295990.
+- Unit tests execution: NOT YET CONFIRMED.
+- assembleDebug / APK: NOT YET RUN after test fixes.
