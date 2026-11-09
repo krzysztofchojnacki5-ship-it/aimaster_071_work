@@ -209,17 +209,17 @@ class ProjectWorkspaceStoreApplyTest {
 
 
     @Test fun manualRestoreCannotBypassPendingPatchReceiptButExplicitRollbackCan() {
-        val (store, _) = store("README.md" to "before\\n", "src/A.kt" to "old\\n")
-        val patch = preview(store, "src/A.kt", "old\\n", "--- a/src/A.kt\\n+++ b/src/A.kt\\n@@ -1 +1 @@\\n-old\\n+new\\n")
+        val (store, _) = store("README.md" to "before\n", "src/A.kt" to "old\n")
+        val patch = preview(store, "src/A.kt", "old\n", "--- a/src/A.kt\n+++ b/src/A.kt\n@@ -1 +1 @@\n-old\n+new\n")
         val applied = store.applyPreview(patch, changeSetId = "changeset-rollback", chatId = "chat-rollback")
 
         assertTrue(runCatching { store.restoreSnapshot(applied.snapshot.id) }.isFailure)
-        assertEquals("new\\n", store.readTextFile("src/A.kt").content)
+        assertEquals("new\n", store.readTextFile("src/A.kt").content)
 
         assertTrue(store.markPatchReceiptRollbackRequested("changeset-rollback", applied.transactionId))
         store.restoreSnapshotForPatchRollback(applied.snapshot.id, "changeset-rollback", applied.transactionId)
         assertTrue(store.markPatchReceiptRolledBack("changeset-rollback", applied.transactionId))
-        assertEquals("old\\n", store.readTextFile("src/A.kt").content)
+        assertEquals("old\n", store.readTextFile("src/A.kt").content)
         assertTrue(store.verifyCurrentWorkspace().valid)
         assertTrue(store.acknowledgePatchReceipt("changeset-rollback", applied.transactionId))
         assertFalse(store.hasPendingWorkspaceTransaction())
@@ -227,14 +227,14 @@ class ProjectWorkspaceStoreApplyTest {
 
 
     @Test fun authorizedRollbackRefusesAThirdWorkspaceIdentity() {
-        val (store, root) = store("README.md" to "before\\n", "src/A.kt" to "old\\n")
-        val patch = preview(store, "src/A.kt", "old\\n", "--- a/src/A.kt\\n+++ b/src/A.kt\\n@@ -1 +1 @@\\n-old\\n+new\\n")
+        val (store, root) = store("README.md" to "before\n", "src/A.kt" to "old\n")
+        val patch = preview(store, "src/A.kt", "old\n", "--- a/src/A.kt\n+++ b/src/A.kt\n@@ -1 +1 @@\n-old\n+new\n")
         val applied = store.applyPreview(patch, changeSetId = "changeset-third", chatId = "chat-third")
         assertTrue(store.markPatchReceiptRollbackRequested("changeset-third", applied.transactionId))
 
         val thirdRoot = Files.createTempDirectory("aimaster-third-workspace").toFile()
         ProjectWorkspaceStore(thirdRoot).importZip(
-            ByteArrayInputStream(zip("README.md" to "third workspace\\n")), "third.zip"
+            ByteArrayInputStream(zip("README.md" to "third workspace\n")), "third.zip"
         )
         Files.copy(
             File(thirdRoot, "current.manifest").toPath(),
@@ -249,17 +249,17 @@ class ProjectWorkspaceStoreApplyTest {
         }
 
         assertTrue("rollback must not overwrite a workspace with a third identity", result.isFailure)
-        assertEquals("new\\n", File(root, "current/src/A.kt").readText())
+        assertEquals("new\n", File(root, "current/src/A.kt").readText())
         assertTrue(store.hasPendingWorkspaceTransaction())
     }
 
 
     @Test fun authorizedRollbackRefusesTamperedFilesEvenWhenManifestIdentityMatches() {
-        val (store, root) = store("README.md" to "before\\n", "src/A.kt" to "old\\n")
-        val patch = preview(store, "src/A.kt", "old\\n", "--- a/src/A.kt\\n+++ b/src/A.kt\\n@@ -1 +1 @@\\n-old\\n+new\\n")
+        val (store, root) = store("README.md" to "before\n", "src/A.kt" to "old\n")
+        val patch = preview(store, "src/A.kt", "old\n", "--- a/src/A.kt\n+++ b/src/A.kt\n@@ -1 +1 @@\n-old\n+new\n")
         val applied = store.applyPreview(patch, changeSetId = "changeset-tampered", chatId = "chat-tampered")
         assertTrue(store.markPatchReceiptRollbackRequested("changeset-tampered", applied.transactionId))
-        File(root, "current/src/A.kt").writeText("external edit\\n")
+        File(root, "current/src/A.kt").writeText("external edit\n")
 
         assertEquals("manifest identity is unchanged", applied.workspaceIdentity, store.currentIdentity())
         val result = runCatching {
@@ -267,7 +267,7 @@ class ProjectWorkspaceStoreApplyTest {
         }
 
         assertTrue("rollback must not overwrite tampered workspace files", result.isFailure)
-        assertEquals("external edit\\n", File(root, "current/src/A.kt").readText())
+        assertEquals("external edit\n", File(root, "current/src/A.kt").readText())
         assertTrue(store.hasPendingWorkspaceTransaction())
     }
 
