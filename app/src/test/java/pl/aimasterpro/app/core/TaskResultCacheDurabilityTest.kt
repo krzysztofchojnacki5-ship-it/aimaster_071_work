@@ -29,6 +29,10 @@ class TaskResultCacheDurabilityTest {
                     override fun edit(): SharedPreferences.Editor {
                         val editor = delegate.edit()
                         return object : SharedPreferences.Editor by editor {
+                            override fun putString(key: String, value: String): SharedPreferences.Editor {
+                                editor.putString(key, value)
+                                return this
+                            }
                             override fun commit(): Boolean = false
                         }
                     }
