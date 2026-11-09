@@ -70,3 +70,24 @@ Commits:
 - Test alignment: `93ae5c7fca72aff05b8880bbe9b19fdc93c1a51a`
 
 Verification remains honest: source writes are confirmed on GitHub; Gradle build and Robolectric tests have NOT RUN. No APK exists yet.
+
+
+## Quality Gate evaluator — 2026-11-09
+
+Added `QualityGateEvaluator.kt` and `QualityGateEvaluatorTest.kt`.
+
+Policy implemented:
+- Nine mandatory gates: SCOPE, SAFETY, CORRECTNESS, REGRESSION, BUILD, INTEGRATION, PERSISTENCE, REVIEW, REPORT.
+- Missing gate outcomes become NOT_RUN; NOT_RUN cannot permit completion.
+- PASS without an evidence reference is downgraded to INCONCLUSIVE.
+- WAIVED requires both explicit user approval and a recorded residual risk; otherwise it becomes BLOCKED.
+- Duplicate gate records are rejected.
+- Overall status prioritizes FAIL, BLOCKED, NOT_RUN, INCONCLUSIVE, WAIVED, PASS.
+
+Important boundary: this is currently a deterministic policy component with unit tests added; it is NOT yet connected to the existing MainActivity / MasterWorkJournal finalization path. That integration must be done as a separately reviewed change so ordinary chat responses are not accidentally blocked by development-task gates.
+
+Commits:
+- Evaluator: `f2d91e89dd5dfbf1e792c337f16354e75c90f6b8`
+- Tests: `dbad8ad7c448b24d5f0f1a0590af9ef492f2c3d8`
+
+Build and tests remain NOT RUN; no APK/package artifact exists yet.
