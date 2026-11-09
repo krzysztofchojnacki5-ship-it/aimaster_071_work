@@ -34,3 +34,8 @@ dependencies {
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.robolectric:robolectric:4.11.1")
 }
+
+tasks.withType<org.gradle.api.tasks.testing.Test>().configureEach {
+    // TLS test fixtures inspect InetAddress internals on JDK 17; this is test JVM only.
+    jvmArgs("--add-opens=java.base/java.net=ALL-UNNAMED")
+}
