@@ -47,3 +47,26 @@ Added and extended `EXISTING_ARCHITECTURE_INVENTORY.md`, mapping MainActivity, T
 
 ## Next engineering task
 Implement `ErrorKnowledgeBaseStore` and its regression tests using the same corruption-safe, append-only pattern; then add package/build evidence records. After that, connect QualityGate to MASTER task finalization. Before claiming any implementation complete, run the Gradle build and focused Robolectric tests in Android Studio/CI.
+
+
+## Error Knowledge Base implementation — 2026-11-09
+
+Added `ErrorKnowledgeBaseStore.kt` and `ErrorKnowledgeBaseStoreTest.kt` on the foundation branch.
+
+Implemented behavior:
+- Bounded append-only incident records; every status change is a new record linked by `supersedesRecordId`.
+- Explicit AVAILABLE / UNAVAILABLE / CORRUPT read states; malformed history is not silently replaced with an empty ledger.
+- Mandatory explicit `redactionConfirmed`; the API documentation prohibits raw prompts, credentials, tokens, and unredacted provider payloads.
+- Duplicate record rejection, same-case supersession links, and constrained status transitions.
+- Promotion to FIXED_UNVERIFIED requires a fix summary and exact linked commit; VERIFIED additionally requires linked tests, evidence references, and a verification environment.
+- Strict JSON field/type/size validation and reuse of SharedPreferencesWriteHealth quarantine.
+
+Regression tests were added for append-only history, latest-record lookup, redaction, duplicate IDs, invalid links/transitions, corruption preservation, verification evidence, and quarantined storage.
+
+Commits:
+- Initial store: `4d7f7159ff3610e19fa32520dca98fd60b469bdf`
+- Tests: `3562277736275cd31a07b1887c44f09939afcc23`
+- Validation hardening: `7b61e7819bd3c8eb9f7398f894085b02ce5b3d2d`
+- Test alignment: `93ae5c7fca72aff05b8880bbe9b19fdc93c1a51a`
+
+Verification remains honest: source writes are confirmed on GitHub; Gradle build and Robolectric tests have NOT RUN. No APK exists yet.
