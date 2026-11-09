@@ -521,8 +521,10 @@ class ProviderClient(
                 ChatResponse(text, TokenUsageResult(finalInput, finalOutput, finalTotal, if (realUsage) reasoning!! else 0L, finalCached, status, finalCacheWrite, finalCacheWrite1h, realUsage && reasoningKnown), providerId = config.id, model = responseModel(result, config.model))
             } else {
                 // Native Gemini REST API
-                val encodedKey = java.net.URLEncoder.encode(config.apiKey, "UTF-8")
-                val endpoint = "$root/models/${config.model}:generateContent?key=$encodedKey"
+                val keyQuery = if (config.apiKey.isNotBlank()) {
+                    "?key=${java.net.URLEncoder.encode(config.apiKey, "UTF-8")}"
+                } else ""
+                val endpoint = "$root/models/${config.model}:generateContent$keyQuery"
                 val parts = JSONArray().put(JSONObject().put("text", "$systemPrompt\n\nUżytkownik: $userText"))
                 if (attachmentBase64.isNotBlank()) {
                     if (!(attachmentMime.startsWith("image/") || attachmentMime == "application/pdf")) throw ProviderException(null, "Gemini: obsługiwane załączniki to obrazy i PDF.", category = "UNSUPPORTED_ATTACHMENT")
@@ -645,8 +647,10 @@ class ProviderClient(
                             ProviderModelInfo(id, o.optString("name", id), o.optLong("context_length", -1L).takeIf { it > 0 })
                         }.sortedBy { it.id }
                     } else {
-                        val encodedKey = java.net.URLEncoder.encode(config.apiKey, "UTF-8")
-                        val json = requestWithRetry("$root/models?key=$encodedKey", "GET", "")
+                        val keyQuery = if (config.apiKey.isNotBlank()) {
+                            "?key=${java.net.URLEncoder.encode(config.apiKey, "UTF-8")}"
+                        } else ""
+                        val json = requestWithRetry("$root/models$keyQuery", "GET", "")
                         val arr = json.optJSONArray("models") ?: JSONArray()
                         (0 until arr.length()).mapNotNull { i ->
                             val o = arr.optJSONObject(i) ?: return@mapNotNull null
