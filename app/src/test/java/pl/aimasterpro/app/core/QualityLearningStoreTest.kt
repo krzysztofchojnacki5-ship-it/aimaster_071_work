@@ -56,7 +56,7 @@ class QualityLearningStoreTest {
         assertFalse(AiMemoryStore.getMemories(context).contains(memoryEntry))
         QualityLearningStore.syncApprovedAgentMemories(context)
         assertTrue(AiMemoryStore.getMemories(context).contains(memoryEntry))
-        assertTrue(AgentOperationalMemoryStore.all(context).any { "task-recovery" in it.sourceTaskIds })
+        assertTrue(AgentOperationalMemoryStore.all(context).any { "proposal:${proposal.id}" in it.sourceTaskIds })
     }
 
     @Test fun reconciliationRemovesRevokedMemoriesAfterInterruptedRejection() {
