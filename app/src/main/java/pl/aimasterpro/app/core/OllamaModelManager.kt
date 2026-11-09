@@ -93,15 +93,15 @@ object OllamaModelManager {
 
         var completed = 0L
         var total = 0L
+        val perDigestProgress = linkedMapOf<String, Pair<Long, Long>>()
         var events = 0
         var lastStatus = ""
         var successSeen = false
         try {
             cancellation.ensureActive()
-            val requestJson = JSONObject()
-            requestJson.put("name", safeModel)
-            requestJson.put("stream", true)
-            val requestBody = requestJson.toString()
+            // Model names are restricted to a conservative ASCII allow-list above,
+            // so this fixed JSON shape needs no general-purpose serializer.
+            val requestBody = """{"name":"$safeModel","stream":true}"""
             connection.outputStream.use { output ->
                 output.write(requestBody.toByteArray(Charsets.UTF_8))
                 output.flush()
@@ -122,8 +122,14 @@ object OllamaModelManager {
                     val digest = item.optString("digest").takeIf { it.isNotBlank() }
                     val itemCompleted = item.optLong("completed", -1L).takeIf { it >= 0L }
                     val itemTotal = item.optLong("total", -1L).takeIf { it > 0L }
-                    if (itemCompleted != null) completed = maxOf(completed, itemCompleted)
-                    if (itemTotal != null) total = maxOf(total, itemTotal)
+                    if (itemCompleted != null || itemTotal != null) {
+                        val progressKey = digest ?: "_default"
+                        val previous = perDigestProgress[progressKey] ?: (0L to 0L)
+                        perDigestProgress[progressKey] = maxOf(previous.first, itemCompleted ?: previous.first) to
+                            maxOf(previous.second, itemTotal ?: previous.second)
+                        completed = perDigestProgress.values.sumOf { it.first }
+                        total = perDigestProgress.values.sumOf { it.second }
+                    }
                     events++
                     val percent = if (total > 0L) ((completed * 100L) / total).toInt().coerceIn(0, 100) else null
                     onProgress(Progress(status, digest, completed.takeIf { total > 0L }, total.takeIf { it > 0L }, percent))
