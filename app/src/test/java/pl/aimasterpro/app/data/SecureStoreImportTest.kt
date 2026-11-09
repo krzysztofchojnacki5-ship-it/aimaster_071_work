@@ -7,6 +7,7 @@ import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
+import org.junit.Before
 import org.junit.Test
 import java.lang.reflect.Proxy
 import java.util.concurrent.CountDownLatch
@@ -19,6 +20,8 @@ import org.robolectric.annotation.Config
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [28])
 class SecureStoreImportTest {
+    @Before fun resetSecureStoreHealth() { SecureStoreHealth.resetForTests() }
+
     private fun seedExistingConfig(context: Context) {
         context.getSharedPreferences("secure_provider_store", Context.MODE_PRIVATE).edit()
             .putStringSet("provider_ids", setOf("existing"))
