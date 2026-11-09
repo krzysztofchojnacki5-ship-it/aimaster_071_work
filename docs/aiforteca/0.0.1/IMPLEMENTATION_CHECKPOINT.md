@@ -91,3 +91,17 @@ Commits:
 - Tests: `dbad8ad7c448b24d5f0f1a0590af9ef492f2c3d8`
 
 Build and tests remain NOT RUN; no APK/package artifact exists yet.
+
+
+### Error ledger integrity hardening
+
+Follow-up review tightened the Error Knowledge Base:
+- A status history is linear: two new records cannot supersede the same prior record and create a fork.
+- ROOT_CAUSE_CONFIRMED, FIXED_UNVERIFIED, and VERIFIED require a non-empty confirmed root cause.
+- Added a regression test for fork rejection.
+
+Latest hardening commits:
+- Store: `a8ab3a2f2adf4c31e431bfd41cbe53bc2bb9e629`
+- Test: `321ddaff8a23922b299d5a168cf9e2fb0029b66a`
+
+Still NOT RUN: Kotlin compilation, Robolectric tests, Android build, device tests. These are source-level changes only.
