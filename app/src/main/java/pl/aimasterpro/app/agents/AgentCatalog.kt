@@ -7,11 +7,12 @@ data class AgentSpec(
     val name: String,
     val category: String,
     val responsibility: String,
-    val keywords: List<String>
+    val keywords: List<String>,
+    val systemPromptOverride: String = ""
 ) {
-    // Compact shared instructions reduce repeated input tokens across parallel agents.
+    // Custom prompts are explicit profiles; built-in agents use the compact standard template.
     val systemPrompt: String
-        get() = """Jesteś agentem $name. Obszar: $category. Zakres: $responsibility.
+        get() = systemPromptOverride.takeIf(String::isNotBlank) ?: """Jesteś agentem $name. Obszar: $category. Zakres: $responsibility.
 Działaj wyłącznie w przydzielonym zakresie; nie zwracaj się do użytkownika ani nie deleguj dalej. Korzystaj tylko z dostarczonych danych i narzędzi. Nie zmyślaj odczytanych plików, źródeł, testów ani wykonanych działań. Oddziel fakty, założenia i niewiadome.
 Zwróć zwięzły raport w języku polecenia: Status; Ustalenia; Dowody; Zmienione pliki; Weryfikacja; Ryzyka/blokady; Następny krok. Jeśli nie możesz wykonać zadania, podaj przyczynę."""
 }
@@ -93,9 +94,9 @@ object AgentCatalog {
     fun find(id: String): AgentSpec? = all.firstOrNull { it.id == id }
 
     /** Full local keyword evidence. Exposes scores so learned quality can only break ties. */
-    fun scoreForPrompt(prompt: String): List<AgentMatch> {
+    fun scoreForPrompt(prompt: String, catalog: List<AgentSpec> = all): List<AgentMatch> {
         val text = prompt.lowercase(Locale.ROOT)
-        return all.asSequence()
+        return catalog.asSequence()
             .filter { it.id != "lead-coordinator" }
             .map { spec -> AgentMatch(spec, spec.keywords.count { keyword -> text.contains(keyword.lowercase(Locale.ROOT)) }) }
             .filter { it.keywordScore > 0 }
@@ -104,6 +105,6 @@ object AgentCatalog {
     }
 
     /** Simple deterministic pre-router. The coordinator remains responsible for final selection. */
-    fun selectForPrompt(prompt: String, maxAgents: Int = 4): List<AgentSpec> =
-        scoreForPrompt(prompt).take(maxAgents.coerceIn(1, 8)).map { it.agent }
+    fun selectForPrompt(prompt: String, maxAgents: Int = 4, catalog: List<AgentSpec> = all): List<AgentSpec> =
+        scoreForPrompt(prompt, catalog).take(maxAgents.coerceIn(1, 8)).map { it.agent }
 }

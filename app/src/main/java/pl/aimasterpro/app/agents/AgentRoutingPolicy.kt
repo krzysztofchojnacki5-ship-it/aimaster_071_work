@@ -45,7 +45,11 @@ object AgentRoutingPolicy {
         "architektura i implementacja", "audyt całego", "audyt calego"
     )
 
-    fun route(prompt: String, qualityScore: (agentId: String, category: String) -> Double? = { _, _ -> null }): Decision {
+    fun route(
+        prompt: String,
+        catalog: List<AgentSpec> = AgentCatalog.all,
+        qualityScore: (agentId: String, category: String) -> Double? = { _, _ -> null }
+    ): Decision {
         val text = prompt.lowercase(Locale.ROOT).trim()
         if (text.isBlank()) return masterOnly("Pusta wiadomość")
 
@@ -57,14 +61,14 @@ object AgentRoutingPolicy {
             return masterOnly("Zwykła rozmowa/pytanie — bez wywołań specjalistów")
         }
 
-        val rankedBase = AgentCatalog.scoreForPrompt(text)
+        val rankedBase = AgentCatalog.scoreForPrompt(text, catalog)
             .filter { it.agent.id != "lead-coordinator" && it.agent.id != "planning-lead" }
             // Learned quality is only a tie-breaker: it can never outrank a better keyword match.
             .sortedWith(compareByDescending<AgentCatalog.AgentMatch> { it.keywordScore }
                 .thenByDescending { qualityScore(it.agent.id, it.agent.category) ?: 0.5 }
                 .thenBy { it.agent.id })
             .map { it.agent }
-        val diagnosticsLead = AgentCatalog.find("diagnostics-lead")
+        val diagnosticsLead = catalog.firstOrNull { it.id == "diagnostics-lead" }
         val ranked = if (incident && diagnosticsLead != null && rankedBase.contains(diagnosticsLead)) {
             listOf(diagnosticsLead) + rankedBase.filterNot { it.id == diagnosticsLead.id }
         } else rankedBase
@@ -77,9 +81,10 @@ object AgentRoutingPolicy {
             // An explicit request for a team should mean more than one specialist,
             // even when the prompt contains only one narrow technical keyword.
             listOf("critical-reviewer", "source-verifier", "requirements-analyst").forEach { id ->
-                val helper = AgentCatalog.find(id)
+                val helper = catalog.firstOrNull { it.id == id }
                 if (team.size < 3 && helper != null && team.none { it.id == id }) team += helper
             }
+            if (team.size < 2) return masterOnly("Za mało aktywnych agentów do rzeczywistej pracy zespołowej")
             return Decision(Mode.TEAM, team.take(4), "Użytkownik jawnie zażądał pracy zespołowej")
         }
 

@@ -1802,21 +1802,31 @@ class MainActivity : Activity() {
                         .filter { it.targetType == "AGENT" && it.agentId.isNotBlank() }
                         .groupBy { it.agentId.lowercase(java.util.Locale.ROOT) }
                     val operationalEvidence = pl.aimasterpro.app.core.AgentEfficiencyTracker.load(this)
-                    val routing = pl.aimasterpro.app.agents.AgentRoutingPolicy.route(prompt) { agentId, category ->
-                        val humanQuality = pl.aimasterpro.app.core.QualityLearningStore.qualityScore(
-                            qualityEvidenceByAgent[agentId.lowercase(java.util.Locale.ROOT)].orEmpty(), agentId, category
-                        )
-                        val operationalReliability = pl.aimasterpro.app.core.AgentEfficiencyTracker.reliabilityScore(
-                            operationalEvidence, agentId
-                        )
-                        // Operational completion is not content quality. It contributes only 15% when
-                        // both signals exist; either signal alone remains a conservative tie-breaker.
-                        when {
-                            humanQuality != null && operationalReliability != null -> humanQuality * 0.85 + operationalReliability * 0.15
-                            humanQuality != null -> humanQuality
-                            else -> operationalReliability
-                        }
+                    val agentManagerState = pl.aimasterpro.app.core.AgentManagerStore.snapshot(this)
+                    val activeAgentCatalog = if (agentManagerState.status == pl.aimasterpro.app.core.AgentManagerStore.ReadStatus.AVAILABLE)
+                        pl.aimasterpro.app.core.AgentManagerStore.enabledCatalog(this) else emptyList()
+                    if (agentManagerState.status != pl.aimasterpro.app.core.AgentManagerStore.ReadStatus.AVAILABLE) {
+                        logAgentForChat(chatId, "⚠️ Menadżer agentów jest niedostępny (${agentManagerState.status}); routing specjalistów został bezpiecznie wyłączony.")
                     }
+                    val routing = pl.aimasterpro.app.agents.AgentRoutingPolicy.route(
+                        prompt,
+                        catalog = activeAgentCatalog,
+                        qualityScore = { agentId, category ->
+                            val humanQuality = pl.aimasterpro.app.core.QualityLearningStore.qualityScore(
+                                qualityEvidenceByAgent[agentId.lowercase(java.util.Locale.ROOT)].orEmpty(), agentId, category
+                            )
+                            val operationalReliability = pl.aimasterpro.app.core.AgentEfficiencyTracker.reliabilityScore(
+                                operationalEvidence, agentId
+                            )
+                            // Operational completion is not content quality. It contributes only 15% when
+                            // both signals exist; either signal alone remains a conservative tie-breaker.
+                            when {
+                                humanQuality != null && operationalReliability != null -> humanQuality * 0.85 + operationalReliability * 0.15
+                                humanQuality != null -> humanQuality
+                                else -> operationalReliability
+                            }
+                        }
+                    )
                     logAgentForChat(chatId, "MASTER ROUTING: ${routing.mode} • specjaliści=${routing.specialistCalls} • ${routing.reason}")
                     // Store the routing choice without copying the user prompt, response, attachment or credentials.
                     val routingDecisionSaved = pl.aimasterpro.app.core.DecisionLedgerStore.append(
@@ -5091,6 +5101,7 @@ class MainActivity : Activity() {
         }
         val reviewerIds = listOf("critical-reviewer", "integration-engineer", "repository-researcher")
         val assignments = reviewerIds.mapNotNull { id ->
+            if (!pl.aimasterpro.app.core.AgentManagerStore.isEnabled(this, id)) return@mapNotNull null
             val spec = AgentCatalog.find(id) ?: return@mapNotNull null
             val role = AgentProviderRouting.roleFor(spec)
             val configuredId = agentProviders[role.name] ?: return@mapNotNull null
