@@ -137,7 +137,9 @@ object ErrorKnowledgeBaseStore {
         r.redactedErrorOutput.length <= 8_000 && r.reproductionSteps.length <= 3_000 &&
         r.reproducibility in setOf("REPRODUCED", "DOCUMENTED", "NOT_REPRODUCED", "UNKNOWN") &&
         listValid(r.observedFacts) && listValid(r.hypotheses) &&
-        r.confirmedRootCause.length <= 3_000 && listValid(r.attemptedFixes) &&
+        r.confirmedRootCause.length <= 3_000 &&
+        (r.status != CaseStatus.ROOT_CAUSE_CONFIRMED || r.confirmedRootCause.isNotBlank()) &&
+        listValid(r.attemptedFixes) &&
         listValid(r.linkedTaskIds) && listValid(r.linkedCommits) &&
         listValid(r.linkedTests) && listValid(r.evidenceRefs) &&
         r.fixSummary.length <= 3_000 && r.verificationEnvironment.length <= 1_000 &&
@@ -171,7 +173,7 @@ object ErrorKnowledgeBaseStore {
                 return (v as Number).toLong()
             }
             fun strings(key: String): List<String> {
-                val a = o.optJSONArray(key) ?: JSONArray()
+                val a = o.optJSONArray(key) ?: error("Error record field '$key' is not an array.")
                 require(a.length() <= MAX_LIST)
                 return (0 until a.length()).map { i ->
                     val v = a.opt(i)
