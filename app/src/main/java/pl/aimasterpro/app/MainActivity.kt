@@ -4617,7 +4617,7 @@ class MainActivity : Activity() {
 
         val search = EditText(this).apply {
             hint = "Szukaj po nazwie, kategorii, roli lub zadaniu"
-            singleLine = true
+            isSingleLine = true
             setTextColor(white)
         }
         val summary = TextView(this).apply { setTextColor(muted); textSize = 12f; setPadding(0, 8, 0, 10) }
@@ -4734,7 +4734,7 @@ class MainActivity : Activity() {
                 maxLines = 5
                 inputType = android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_FLAG_MULTI_LINE
             } else {
-                singleLine = true
+                isSingleLine = true
             }
         }
         val name = field("Nazwa agenta")
