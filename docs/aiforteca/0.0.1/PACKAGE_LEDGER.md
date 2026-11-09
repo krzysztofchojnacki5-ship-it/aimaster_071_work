@@ -13,3 +13,5 @@ Status: initial ledger; no AiFORTeca APK/package has been produced.
 - A source commit is not an APK package.
 - Never mark build/test PASS without execution evidence.
 - Keep stable, experimental, and release artifacts distinct.
+
+| AIF-0.0.1-QUALITY-GATE | 2026-11-09 | work/aiforteca-0.0.1-foundation (source commit dbad8ad7c448b24d5f0f1a0590af9ef492f2c3d8) | Pure Kotlin quality-gate evaluator; missing evidence becomes NOT_RUN; PASS requires evidence; WAIVED requires explicit user approval and residual risk; unit tests | NOT RUN | NOT RUN | None | SOURCE COMMITTED; BUILD/TEST UNVERIFIED; EVALUATOR NOT YET WIRED TO MASTER FINALIZATION |
