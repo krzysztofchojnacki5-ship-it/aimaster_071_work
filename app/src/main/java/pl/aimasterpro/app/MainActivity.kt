@@ -4519,12 +4519,18 @@ class MainActivity : Activity() {
             }
         }
         val catalogCard = card("Biblioteka specjalizacji", "Definicje ról i zadań nie wymagają osobnych kluczy API. Wykonanie każdej roli korzysta z profilu modelu przypisanego poniżej.")
-        action("Pokaż pełny katalog agentów", catalogCard) {
-            val rows = AgentCatalog.all.mapIndexed { index, agent ->
-                "%02d. %s\\n%s\\n%s".format(index + 1, agent.name, agent.category, agent.responsibility)
-            }.toTypedArray()
-            AlertDialog.Builder(this).setTitle("Katalog agentów (${AgentCatalog.all.size})")
-                .setItems(rows, null).setPositiveButton("Zamknij", null).show()
+        val agentManagerSnapshot = pl.aimasterpro.app.core.AgentManagerStore.snapshot(this)
+        val totalManagedAgents = AgentCatalog.all.size + agentManagerSnapshot.customAgents.size
+        val enabledManagedAgents = if (agentManagerSnapshot.status == pl.aimasterpro.app.core.AgentManagerStore.ReadStatus.AVAILABLE)
+            totalManagedAgents - agentManagerSnapshot.disabledIds.size else 0
+        action("Otwórz menadżer agentów ($enabledManagedAgents/$totalManagedAgents aktywnych)", catalogCard) {
+            showAgentCatalogManager()
+        }
+        if (agentManagerSnapshot.status != pl.aimasterpro.app.core.AgentManagerStore.ReadStatus.AVAILABLE) {
+            catalogCard.addView(TextView(this).apply {
+                text = "⚠️ Stan katalogu agentów: ${agentManagerSnapshot.status}. Routing specjalistów jest bezpiecznie wyłączony do czasu naprawy magazynu."
+                setTextColor(Color.RED); textSize = 12f; setPadding(0, 8, 0, 0)
+            })
         }
         val configs = store.allConfigs().mapNotNull { j -> runCatching { loadProvider(j.optString("id")) }.getOrNull() }.filter { providerReady(it) && isModelPresentInCatalog(it) }
         if (configs.isEmpty()) {
@@ -4590,6 +4596,206 @@ class MainActivity : Activity() {
         if (agentScreenActivityRows.isEmpty()) logCard.addView(TextView(this).apply { text = "Brak zarejestrowanych rozmów agentów."; setTextColor(muted); setPadding(0, 8, 0, 0) })
         agentScreenActivityRows.asReversed().take(30).forEach { line -> logCard.addView(TextView(this).apply { text = "• $line"; setTextColor(white); textSize = 13f; setPadding(0, 7, 0, 0); setTextIsSelectable(true) }) }
         action("Kopiuj dziennik rozmów agentów", logCard) { copyText(agentActivitySnapshot().joinToString("\n")) }
+    }
+
+    private fun showAgentCatalogManager() {
+        showShell("Agenci")
+        val header = card(
+            "Menadżer agentów",
+            "Włączaj i wyłączaj specjalistów, przeglądaj ich zakresy oraz dodawaj własne profile. Wyłączeni agenci nie są wybierani przez routing ani recenzję patchy."
+        )
+        action("← Wróć do zespołu i przypisań modeli", header) { showShell("Agenci"); showAgents() }
+
+        val initial = pl.aimasterpro.app.core.AgentManagerStore.snapshot(this)
+        if (initial.status != pl.aimasterpro.app.core.AgentManagerStore.ReadStatus.AVAILABLE) {
+            header.addView(TextView(this).apply {
+                text = "Magazyn menadżera agentów: ${initial.status} • ${initial.errorCode}. Nie włączam automatycznie wszystkich agentów."
+                setTextColor(Color.RED); textSize = 13f; setPadding(0, 10, 0, 0)
+            })
+            return
+        }
+
+        val search = EditText(this).apply {
+            hint = "Szukaj po nazwie, kategorii, roli lub zadaniu"
+            singleLine = true
+            setTextColor(white)
+        }
+        val summary = TextView(this).apply { setTextColor(muted); textSize = 12f; setPadding(0, 8, 0, 10) }
+        val list = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        header.addView(search)
+        header.addView(summary)
+        header.addView(list)
+        action("＋ Dodaj własnego agenta", header) { showCreateCustomAgentDialog() }
+
+        fun render(filterText: String) {
+            val state = pl.aimasterpro.app.core.AgentManagerStore.snapshot(this)
+            list.removeAllViews()
+            if (state.status != pl.aimasterpro.app.core.AgentManagerStore.ReadStatus.AVAILABLE) {
+                summary.text = "Katalog niedostępny: ${state.status}."
+                return
+            }
+            val allAgents = AgentCatalog.all + state.customAgents
+            val query = filterText.trim().lowercase(java.util.Locale.ROOT)
+            val filtered = allAgents.filter { agent ->
+                query.isBlank() || listOf(agent.name, agent.category, agent.responsibility, agent.id,
+                    pl.aimasterpro.app.agents.AgentProviderRouting.roleFor(agent).label,
+                    agent.keywords.joinToString(" ")).any { it.lowercase(java.util.Locale.ROOT).contains(query) }
+            }
+            val activeCount = allAgents.count { it.id !in state.disabledIds }
+            summary.text = "Aktywni: $activeCount/${allAgents.size} • Wyświetlono: ${filtered.size}. Zmiany są zapisywane lokalnie."
+            filtered.forEach { agent ->
+                val row = LinearLayout(this).apply {
+                    orientation = LinearLayout.HORIZONTAL
+                    gravity = Gravity.CENTER_VERTICAL
+                    setPadding(0, dp(10), 0, dp(10))
+                }
+                val details = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+                details.addView(TextView(this).apply {
+                    text = agent.name
+                    setTextColor(white); textSize = 15f; setTypeface(null, android.graphics.Typeface.BOLD)
+                })
+                details.addView(TextView(this).apply {
+                    text = "${agent.category} • rola: ${pl.aimasterpro.app.agents.AgentProviderRouting.roleFor(agent).label}"
+                    setTextColor(orange); textSize = 11f; setPadding(0, 2, 0, 2)
+                })
+                details.addView(TextView(this).apply {
+                    text = agent.responsibility
+                    setTextColor(muted); textSize = 12f
+                })
+                row.addView(details, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+                val toggle = Switch(this).apply {
+                    text = "Aktywny"
+                    isChecked = agent.id !in state.disabledIds
+                }
+                var restoringToggle = false
+                toggle.setOnCheckedChangeListener { button, checked ->
+                    if (restoringToggle) return@setOnCheckedChangeListener
+                    val saved = pl.aimasterpro.app.core.AgentManagerStore.setEnabled(this, agent.id, checked)
+                    if (!saved) {
+                        restoringToggle = true
+                        button.isChecked = !checked
+                        restoringToggle = false
+                        toast("Nie zapisano zmiany. Sprawdź stan magazynu menadżera agentów.")
+                    } else {
+                        logAgent("Menadżer agentów: ${agent.id} ${if (checked) "WŁĄCZONY" else "WYŁĄCZONY"}")
+                        val fresh = pl.aimasterpro.app.core.AgentManagerStore.snapshot(this)
+                        if (fresh.status == pl.aimasterpro.app.core.AgentManagerStore.ReadStatus.AVAILABLE) {
+                            val total = AgentCatalog.all.size + fresh.customAgents.size
+                            summary.text = "Aktywni: ${total - fresh.disabledIds.size}/$total • Wyświetlono: ${filtered.size}. Zmiany zapisane."
+                        }
+                    }
+                }
+                row.addView(toggle)
+                if (agent.id.startsWith("custom-")) {
+                    val remove = TextView(this).apply {
+                        text = "Usuń"
+                        setTextColor(Color.RED); textSize = 12f; setPadding(dp(8), 0, 0, 0)
+                        setOnClickListener {
+                            AlertDialog.Builder(this@MainActivity)
+                                .setTitle("Usunąć własnego agenta?")
+                                .setMessage("Profil ${agent.name} zostanie usunięty z lokalnego katalogu.")
+                                .setPositiveButton("Usuń") { _, _ ->
+                                    if (pl.aimasterpro.app.core.AgentManagerStore.removeCustomAgent(this@MainActivity, agent.id)) {
+                                        logAgent("Menadżer agentów: usunięto profil ${agent.id}")
+                                        showAgentCatalogManager()
+                                    } else toast("Nie udało się usunąć profilu agenta.")
+                                }
+                                .setNegativeButton("Anuluj", null).show()
+                        }
+                    }
+                    row.addView(remove)
+                }
+                list.addView(row)
+                list.addView(View(this).apply {
+                    setBackgroundColor(muted)
+                    layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(1))
+                })
+            }
+        }
+
+        search.addTextChangedListener(object : android.text.TextWatcher {
+            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) = Unit
+            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) = render(s?.toString().orEmpty())
+            override fun afterTextChanged(s: android.text.Editable?) = Unit
+        })
+        render("")
+    }
+
+    private fun showCreateCustomAgentDialog() {
+        val root = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(16), dp(12), dp(16), dp(8))
+        }
+        fun field(hintText: String, multiline: Boolean = false) = EditText(this).apply {
+            hint = hintText
+            setTextColor(white)
+            if (multiline) {
+                minLines = 2
+                maxLines = 5
+                inputType = android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_FLAG_MULTI_LINE
+            } else {
+                singleLine = true
+            }
+        }
+        val name = field("Nazwa agenta")
+        val responsibility = field("Zakres odpowiedzialności", true)
+        val keywords = field("Słowa kluczowe, oddzielone przecinkami")
+        val prompt = field("Dodatkowe instrukcje systemowe (bez kluczy API i haseł)", true)
+        val categories = AgentCatalog.all.map { it.category }.distinct().sorted()
+        val category = Spinner(this).apply {
+            adapter = ArrayAdapter(this@MainActivity, android.R.layout.simple_spinner_dropdown_item, categories)
+        }
+        root.addView(TextView(this).apply { text = "Nazwa"; setTextColor(white) })
+        root.addView(name)
+        root.addView(TextView(this).apply { text = "Specjalizacja"; setTextColor(white); setPadding(0, dp(8), 0, 0) })
+        root.addView(category)
+        root.addView(TextView(this).apply { text = "Zakres"; setTextColor(white); setPadding(0, dp(8), 0, 0) })
+        root.addView(responsibility)
+        root.addView(TextView(this).apply { text = "Słowa kluczowe"; setTextColor(white); setPadding(0, dp(8), 0, 0) })
+        root.addView(keywords)
+        root.addView(TextView(this).apply { text = "Instrukcje agenta"; setTextColor(white); setPadding(0, dp(8), 0, 0) })
+        root.addView(prompt)
+        root.addView(TextView(this).apply {
+            text = "Profil korzysta z modelu przypisanego do swojej roli. Własny prompt jest dodatkiem do wspólnych reguł bezpieczeństwa MASTER-a."
+            setTextColor(muted); textSize = 11f; setPadding(0, dp(8), 0, 0)
+        })
+
+        val dialog = AlertDialog.Builder(this)
+            .setTitle("Dodaj własnego agenta")
+            .setView(root)
+            .setPositiveButton("Zapisz", null)
+            .setNegativeButton("Anuluj", null)
+            .create()
+        dialog.setOnShowListener {
+            dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
+                val agentName = name.text.toString().trim()
+                val agentResponsibility = responsibility.text.toString().trim()
+                val agentKeywords = keywords.text.toString().split(",").map { it.trim() }.filter { it.isNotBlank() }.distinct().take(20)
+                if (agentName.isBlank() || agentResponsibility.isBlank() || agentKeywords.isEmpty()) {
+                    toast("Podaj nazwę, zakres odpowiedzialności i co najmniej jedno słowo kluczowe.")
+                    return@setOnClickListener
+                }
+                val customPrompt = prompt.text.toString().trim().ifBlank {
+                    "Jesteś agentem $agentName. Twoja odpowiedzialność: $agentResponsibility. Nie zmyślaj dowodów i nie ujawniaj sekretów."
+                }
+                val agent = pl.aimasterpro.app.agents.AgentSpec(
+                    id = "custom-${java.util.UUID.randomUUID().toString().take(8)}",
+                    name = agentName,
+                    category = categories.getOrElse(category.selectedItemPosition) { categories.first() },
+                    responsibility = agentResponsibility,
+                    keywords = agentKeywords,
+                    systemPromptOverride = customPrompt
+                )
+                if (!pl.aimasterpro.app.core.AgentManagerStore.addCustomAgent(this, agent)) {
+                    toast("Nie udało się zapisać profilu. Sprawdź limit 24 profili i stan magazynu.")
+                    return@setOnClickListener
+                }
+                logAgent("Menadżer agentów: dodano własny profil ${agent.id}")
+                dialog.dismiss()
+                showAgentCatalogManager()
+            }
+        }
+        dialog.show()
     }
 
     private fun applyRecommendedModel(role: AgentRole) {

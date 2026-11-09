@@ -34,6 +34,18 @@ class AgentRoutingPolicyTest {
         assertEquals(AgentRoutingPolicy.Mode.TEAM, result.mode)
         assertTrue(result.agents.size in 2..3)
     }
+    @Test fun disabledCatalogAgentCannotBeSelectedByRouter() {
+        val enabled = AgentCatalog.all.filterNot { it.id == "mobile-engineer" }
+        val result = AgentRoutingPolicy.route("Sprawdź aplikację Android i popraw błąd", catalog = enabled)
+        assertTrue(result.agents.none { it.id == "mobile-engineer" })
+    }
+
+    @Test fun explicitTeamFallsBackWhenTooFewAgentsAreEnabled() {
+        val onlyOne = AgentCatalog.all.filter { it.id == "critical-reviewer" }
+        val result = AgentRoutingPolicy.route("Uruchom cały zespół i przygotuj niezależne opinie", catalog = onlyOne)
+        assertEquals(AgentRoutingPolicy.Mode.MASTER_ONLY, result.mode)
+    }
+
     @Test fun learnedQualityBreaksOnlyEqualKeywordMatches() {
         val result = AgentRoutingPolicy.route("zoptymalizuj model") { agentId, _ ->
             when (agentId) {

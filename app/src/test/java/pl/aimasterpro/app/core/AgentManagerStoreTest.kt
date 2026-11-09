@@ -49,7 +49,10 @@ class AgentManagerStoreTest {
         val agent = custom()
         assertTrue(AgentManagerStore.addCustomAgent(context, agent))
         assertTrue(AgentManagerStore.enabledCatalog(context).any { it.id == agent.id })
-        assertEquals(agent.systemPromptOverride, AgentManagerStore.enabledCatalog(context).first { it.id == agent.id }.systemPrompt)
+        val routedPrompt = AgentManagerStore.enabledCatalog(context).first { it.id == agent.id }.systemPrompt
+        assertTrue(routedPrompt.contains(agent.systemPromptOverride))
+        assertTrue(routedPrompt.contains("Nie zmyślaj odczytanych plików"))
+        assertTrue(routedPrompt.contains("Nie ujawniaj kluczy API"))
         assertTrue(AgentManagerStore.removeCustomAgent(context, agent.id))
         assertFalse(AgentManagerStore.enabledCatalog(context).any { it.id == agent.id })
     }

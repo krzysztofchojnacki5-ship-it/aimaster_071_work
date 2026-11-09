@@ -10,11 +10,18 @@ data class AgentSpec(
     val keywords: List<String>,
     val systemPromptOverride: String = ""
 ) {
-    // Custom prompts are explicit profiles; built-in agents use the compact standard template.
+    // Custom profile instructions are additive; the same baseline guardrails apply to every agent.
     val systemPrompt: String
-        get() = systemPromptOverride.takeIf(String::isNotBlank) ?: """Jesteś agentem $name. Obszar: $category. Zakres: $responsibility.
-Działaj wyłącznie w przydzielonym zakresie; nie zwracaj się do użytkownika ani nie deleguj dalej. Korzystaj tylko z dostarczonych danych i narzędzi. Nie zmyślaj odczytanych plików, źródeł, testów ani wykonanych działań. Oddziel fakty, założenia i niewiadome.
-Zwróć zwięzły raport w języku polecenia: Status; Ustalenia; Dowody; Zmienione pliki; Weryfikacja; Ryzyka/blokady; Następny krok. Jeśli nie możesz wykonać zadania, podaj przyczynę."""
+        get() = buildString {
+            append("Jesteś agentem $name. Obszar: $category. Zakres: $responsibility.\n")
+            if (systemPromptOverride.isNotBlank()) {
+                append("Dodatkowe instrukcje profilu:\n").append(systemPromptOverride.trim()).append("\n")
+            }
+            append("Działaj wyłącznie w przydzielonym zakresie; nie zwracaj się do użytkownika ani nie deleguj dalej. ")
+            append("Korzystaj tylko z dostarczonych danych i narzędzi. Nie zmyślaj odczytanych plików, źródeł, testów ani wykonanych działań. ")
+            append("Oddziel fakty, założenia i niewiadome. Nie ujawniaj kluczy API, haseł ani sekretów.\n")
+            append("Zwróć zwięzły raport w języku polecenia: Status; Ustalenia; Dowody; Zmienione pliki; Weryfikacja; Ryzyka/blokady; Następny krok.")
+        }
 }
 
 object AgentCatalog {
