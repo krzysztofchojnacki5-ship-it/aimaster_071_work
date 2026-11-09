@@ -37,15 +37,15 @@ class SecureStoreImportTest {
         val saveResult = AtomicReference<Boolean>()
         val saveStarted = CountDownLatch(1)
         val saveFinished = CountDownLatch(1)
-        val importingStore = SecureStore(context) { editor ->
+        val importingStore = SecureStore(context, commitEditor = { editor ->
             commitEntered.countDown()
             check(releaseCommit.await(5, TimeUnit.SECONDS)) { "Timed out waiting to release import commit." }
             editor.commit()
-        }
-        val writerStore = SecureStore(context) { editor ->
+        })
+        val writerStore = SecureStore(context, commitEditor = { editor ->
             writerCommitEntered.countDown()
             editor.commit()
-        }
+        })
         val importThread = Thread {
             importResult.set(importingStore.replaceAllConfigs(listOf(validConfig("imported"))))
         }
@@ -85,12 +85,12 @@ class SecureStoreImportTest {
 
     @Test fun failedPreferencesCommitPoisonsAllStoreInstances() {
         val context = org.robolectric.RuntimeEnvironment.getApplication()
-        val failingStore = SecureStore(context) { editor ->
+        val failingStore = SecureStore(context, commitEditor = { editor ->
             // SharedPreferences.apply() mutates the in-memory map immediately; report the
             // simulated disk failure to exercise the same fail-closed policy as commit() == false.
             editor.apply()
             false
-        }
+        })
         val otherStore = SecureStore(context)
         try {
             assertFalse(failingStore.saveConfig(validConfig("commit_failure")))
@@ -115,7 +115,7 @@ class SecureStoreImportTest {
             .putStringSet("provider_ids", setOf("old_provider"))
             .putString("config_old_provider", validConfig("old_provider").toString())
             .commit()
-        val failingStore = SecureStore(context) { editor ->
+        val failingStore = SecureStore(context, commitEditor = { editor ->
             // Simulate commit() returning false after SharedPreferences has exposed the new
             // in-memory snapshot. The durable outcome is ambiguous, so callers must fail closed.
             editor.apply()
@@ -145,11 +145,11 @@ class SecureStoreImportTest {
 
     @Test fun thrownPreferencesCommitPoisonsAllStoreInstances() {
         val context = org.robolectric.RuntimeEnvironment.getApplication()
-        val throwingStore = SecureStore(context) { editor ->
+        val throwingStore = SecureStore(context, commitEditor = { editor ->
             // Model a runtime failure after the in-memory SharedPreferences map has been updated.
             editor.apply()
             throw IllegalStateException("simulated commit failure")
-        }
+        })
         val otherStore = SecureStore(context)
         try {
             assertFalse(throwingStore.saveConfig(validConfig("commit_exception")))
