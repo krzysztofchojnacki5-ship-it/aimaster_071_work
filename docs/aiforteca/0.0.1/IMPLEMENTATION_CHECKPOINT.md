@@ -146,3 +146,26 @@ Observed GitHub Actions state at checkpoint update:
 - Earlier Android Build attempts failed during SDK provisioning only; they do not establish a Kotlin or Gradle compilation failure because Gradle had not started.
 
 Do not mark the Android build green until run #7 (or a later run) reports success and its test/build steps are completed.
+
+
+## First real Gradle 9.9 compile — 2026-11-09
+
+Latest observed Android Build run #14 (42685769371) reached Gradle 9.9.0 successfully. JDK 17 setup, Android SDK setup, SDK component installation, Gradle setup, wrapper execution, and wrapper version verification all completed successfully. Gradle reported version 9.9.0 and launched :app:compileDebugKotlin.
+
+The first actual Kotlin compile exposed five source errors:
+- MainActivity.kt: missing explicit return in persistMessages() and saveCurrentId().
+- ChangeSetStore.kt: non-local return used inside an expression-body function.
+- BackupCrypto.kt: missing explicit return in encrypt() and decrypt().
+
+These were corrected in commit a61457c1fb3b38235d7f8c01b9ca829504098ec8 on work/aiforteca-0.0.1-foundation. The fix changes only return semantics / function body form; it does not suppress compiler checks or disable tests.
+
+Verification at this checkpoint:
+- Gradle 9.9.0 wrapper execution: PASS (observed in run #14).
+- Gradle Wrapper Validation: PASS (run #15, commit 839d0da9021189389b3d91b7cf5de0a3c8761e3a).
+- Android SDK/JDK setup: PASS (run #14).
+- Kotlin compilation after the corrective commit: NOT YET RUN.
+- Unit tests: NOT YET PASS; run #14 failed at Kotlin compilation before tests could execute.
+- Debug APK: NOT BUILT.
+- First package artifact: NOT PRODUCED.
+
+Next: rerun unit tests and debug APK assembly against commit a61457c1fb3b38235d7f8c01b9ca829504098ec8; fix any subsequent compiler/test failures based on logs. Do not promote the package until both test and assemble steps succeed.
