@@ -204,9 +204,9 @@ class AgentProviderAssignmentStoreTest {
             failing, defaults, setOf("gemini", "groq"), "gemini"
         ))
         assertTrue(runCatching { AgentProviderAssignmentStore.read(context, defaults) }.isFailure)
-        assertEquals("old-master", prefs.getString("agent_provider_MASTER", null))
-        assertEquals("old-master", prefs.getString("selected_provider", null))
-        assertEquals("old-coder", prefs.getString("agent_provider_CODER", null))
+        assertEquals("gemini", prefs.getString("agent_provider_MASTER", null))
+        assertEquals("gemini", prefs.getString("selected_provider", null))
+        assertEquals("groq", prefs.getString("agent_provider_CODER", null))
     }
 
 
@@ -263,11 +263,11 @@ class AgentProviderAssignmentStoreTest {
 
         assertNotNull(recovered)
         assertEquals("new-master", recovered!!["MASTER"])
-        assertEquals("new-coder", recovered["CODER"])
+        assertEquals("new-master", recovered["CODER"])
         assertEquals("new-master", recovered["RESEARCHER"])
         assertEquals("new-master", prefs.getString("agent_provider_MASTER", null))
         assertEquals("new-master", prefs.getString("selected_provider", null))
-        assertEquals("new-coder", prefs.getString("agent_provider_CODER", null))
+        assertEquals("new-master", prefs.getString("agent_provider_CODER", null))
         assertEquals("new-master", prefs.getString("agent_provider_RESEARCHER", null))
     }
 
@@ -323,10 +323,10 @@ class AgentProviderAssignmentStoreTest {
 
         assertNotNull(recovered)
         assertTrue(recovered!!.values.all { it in recoveredCatalog })
-        assertEquals("gemini", recovered["MASTER"]) // startup-seeded default; intended import preference was not durable
+        assertEquals("groq", recovered["MASTER"]) // role default is Groq; intended import preference was not durable
         assertEquals("groq", recovered["CODER"])
         assertEquals("groq", recovered["RESEARCHER"])
-        assertEquals("gemini", prefs.getString("selected_provider", null))
+        assertEquals("groq", prefs.getString("selected_provider", null))
     }
 
 }
