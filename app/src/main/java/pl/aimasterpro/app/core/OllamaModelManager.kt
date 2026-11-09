@@ -143,7 +143,7 @@ object OllamaModelManager {
     }
 
     private fun sanitizeError(value: String): String = value
-        .replace(Regex("(?i)(api[_-]?key|authorization|token|password)\\s*[:=]\\s*[^,\\s]+"), "\\$1=[REDACTED]")
+        .replace(Regex("(?i)(api[_-]?key|authorization|token|password)\\s*[:=]\\s*[^,\\s]+"), "\$1=[REDACTED]")
         .replace(Regex("[\\r\\n]+"), " ")
         .take(400)
 }
