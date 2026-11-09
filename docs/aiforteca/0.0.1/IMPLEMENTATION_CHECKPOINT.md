@@ -265,3 +265,28 @@ https://github.com/krzysztofchojnacki5-ship-it/aimaster_071_work/actions/runs/42
 - Artifact ID: `13714161446` (`aiforteca-debug-apk`).
 
 This establishes decision memory and safe incident memory in the actual MASTER request path. The next gate is to wire QualityGateEvaluator into project-change completion using host-owned verification evidence, then expose decision/error history in the Memory/Diagnostics UI. Physical-device installation and runtime smoke testing are still pending.
+
+
+## Evidence-backed Quality Gate integrated — 2026-11-09
+
+Commit: `26e219111f3540028a6cf822be45f377c0c9eefb`.
+
+The Quality Gate is now connected to MASTER project-change finalization, and the review gate is backed by the real patch-review flow:
+- Quality Gate runs only when an exact host-owned active ChangeSet scope exists; ordinary chat is not forced through a code-change gate.
+- Nine outcomes are computed from exact task/chat/snapshot evidence: scope, safety, correctness, regression, build, integration, persistence, independent review, and report.
+- Missing evidence remains NOT_RUN; agent claims cannot satisfy test/build/review gates.
+- The patch workflow now persists a host-generated CODE_REVIEW verification record only after PatchPeerReviewEngine reaches READY_FOR_HUMAN_APPROVAL with two distinct reviewer profiles. The record is linked to the exact task, chat and resulting workspace snapshot.
+- The separate human confirmation is still required before applying a patch. Peer review does not authorize file changes.
+- Persistence PASS requires a readable response archive, decision ledger, error knowledge base, task checkpoint journal, active ChangeSet ledger and MASTER work journal.
+- If any required gate is not PASS/approved WAIVED, the response states the gate result and the MASTER work journal remains BLOCKED rather than COMPLETED.
+
+Verification: Android Build workflow run #60 completed successfully on this exact commit:
+https://github.com/krzysztofchojnacki5-ship-it/aimaster_071_work/actions/runs/42707794487
+- Gradle 9.9.0 / AGP 9.4.0 / Kotlin 2.4.10 / JDK 17.
+- Unit tests: PASS — 938 tests across 99 suites; 0 failures, 0 errors, 0 skipped.
+- Debug APK assembly and artifact upload: PASS.
+- APK size: 1,902,209 bytes.
+- APK SHA-256: `5030a96dd236ccf6f6f4343745e2f9625b5c2d9b68c7091b439c3a2a0588cff5`.
+- Artifact ID: `13715580338` (`aiforteca-debug-apk`).
+
+This is the latest verified debug APK for the decision-memory, error-memory and evidence-backed Quality Gate integration. Physical-device install/runtime testing is still pending. The next workstream is the interactive Agent Manager (enable/disable and custom agent profiles) plus true local Ollama model pulling; cloud-provider model discovery must remain clearly distinguished from downloading model weights.
