@@ -32,6 +32,12 @@ Added and extended `EXISTING_ARCHITECTURE_INVENTORY.md`, mapping MainActivity, T
 - No Gradle build, JUnit/Robolectric test, instrumentation test, or APK build was run. All new tests remain NOT RUN.
 - No APK/package artifact was produced.
 
+## Build infrastructure check
+- `gradlew` and `gradlew.bat`: present.
+- `gradle/wrapper/gradle-wrapper.jar`: absent (GitHub returned 404 for the exact path).
+- `.github/workflows/android.yml` and `.github/workflows/ci.yml`: absent at those exact paths.
+- Therefore the checked-in wrapper cannot currently be assumed runnable from a clean checkout, and no CI result exists from those workflows.
+
 ## Verification status
 - Git branch creation: CONFIRMED.
 - GitHub file writes: CONFIRMED (individual commit SHAs returned).
