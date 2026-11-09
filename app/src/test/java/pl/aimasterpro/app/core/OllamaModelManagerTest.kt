@@ -65,7 +65,7 @@ class OllamaModelManagerTest {
             """{"status":"downloading","digest":"sha256:layer-a","total":100,"completed":100}""",
             """{"status":"downloading","digest":"sha256:layer-b","total":100,"completed":50}""",
             """{"status":"success"}"""
-        ).joinToString("\\n", postfix = "\\n")
+        ).joinToString("\n", postfix = "\n")
         val server = TestHttpServer { _, _ -> 200 to response }
         try {
             val progress = mutableListOf<OllamaModelManager.Progress>()
