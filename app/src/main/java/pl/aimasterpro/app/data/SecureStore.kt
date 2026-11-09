@@ -37,8 +37,8 @@ internal fun canReplaceUnreadableSecret(aliasExists: Boolean, keyIsSecretKey: Bo
 
 class SecureStore internal constructor(
     context: Context,
-    private val commitEditor: (android.content.SharedPreferences.Editor) -> Boolean = { it.commit() },
-    private val secretDecryptorForTests: ((String) -> String?)? = null
+    private val secretDecryptorForTests: ((String) -> String?)? = null,
+    private val commitEditor: (android.content.SharedPreferences.Editor) -> Boolean = { it.commit() }
 ) {
     private val prefs = context.getSharedPreferences("secure_provider_store", Context.MODE_PRIVATE)
     private val alias = "ai_master_provider_key_v1"

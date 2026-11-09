@@ -316,7 +316,8 @@ class TaskCheckpointStoreTest {
         )))
         assertTrue(TaskCheckpointStore.record(context, TaskCheckpointStore.Event(
             taskId = taskId, agentId = "RESEARCHER", status = "USAGE_PENDING",
-            detail = "usage persistence failed", timestamp = 200L
+            detail = "usage persistence failed", timestamp = 200L,
+            providerId = "openai", model = "gpt-4o-mini", attempts = 1
         )))
         val pending = TaskCheckpointStore.latest(context).single()
         assertEquals("USAGE_PENDING", pending.status)

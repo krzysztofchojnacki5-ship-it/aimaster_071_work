@@ -98,7 +98,7 @@ class TeamRunEngineNetworkTest {
                 agentProvidersMap = mapOf("qa-architect" to config),
                 isFreeProvider = { true },
                 mode = WorkMode.PLANNING,
-                onRequestStarting = { task, actual, input, output, key ->
+                onRequestStarting = { task, actual, input, output, key, _ ->
                     lifecycle.add("checkpoint")
                     assertEquals("checkpoint-task", task.id)
                     assertEquals(config.id, actual.id)
@@ -120,7 +120,7 @@ class TeamRunEngineNetworkTest {
                 agentProvidersMap = mapOf("qa-architect" to config),
                 isFreeProvider = { true },
                 mode = WorkMode.PLANNING,
-                onRequestStarting = { _, _, _, _, _ -> false }
+                onRequestStarting = { _, _, _, _, _, _ -> false }
             ).single()
             assertEquals(TeamTaskResult.Status.FAILED, blocked.status)
             assertEquals("Failed checkpoint persistence must prevent HTTP", 1, server.requestCount.get())
@@ -142,7 +142,7 @@ class TeamRunEngineNetworkTest {
                     fallbackProviders = listOf(fallback),
                     isFreeProvider = { true },
                     mode = WorkMode.PLANNING,
-                    onRequestStarting = { _, _, _, _, _ -> false }
+                    onRequestStarting = { _, _, _, _, _, _ -> false }
                 ).single()
                 assertEquals(TeamTaskResult.Status.FAILED, blockedWithFallback.status)
                 assertEquals("A failed pre-request checkpoint must block every fallback POST", 0, fallbackServer.requestCount.get())
