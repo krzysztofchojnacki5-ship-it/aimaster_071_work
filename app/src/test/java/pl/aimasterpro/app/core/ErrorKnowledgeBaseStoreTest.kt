@@ -126,6 +126,22 @@ class ErrorKnowledgeBaseStoreTest {
         assertEquals("r5", ErrorKnowledgeBaseStore.latestForError(context, "error-1")?.recordId)
     }
 
+    @Test fun contextStringReturnsOnlyRedactedIncidentFacts() {
+        assertTrue(ErrorKnowledgeBaseStore.append(context, record("r1")))
+        val rendered = ErrorKnowledgeBaseStore.contextString(context)
+        assertTrue(rendered.contains("compileDebugKotlin"))
+        assertTrue(rendered.contains("e: unresolved reference: sample"))
+        assertFalse(rendered.contains("api_key"))
+    }
+
+    @Test fun contextStringReportsUnavailableHistoryExplicitly() {
+        SharedPreferencesWriteHealth.commit("aiforteca_error_knowledge_v1",
+            object : android.content.SharedPreferences.Editor by prefs.edit() {
+                override fun commit(): Boolean = false
+            })
+        assertTrue(ErrorKnowledgeBaseStore.contextString(context).contains("UNAVAILABLE"))
+    }
+
     @Test fun quarantinedStorageIsUnavailableNotEmpty() {
         SharedPreferencesWriteHealth.commit("aiforteca_error_knowledge_v1",
             object : android.content.SharedPreferences.Editor by prefs.edit() {

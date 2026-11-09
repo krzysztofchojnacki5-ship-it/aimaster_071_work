@@ -1840,6 +1840,7 @@ class MainActivity : Activity() {
                     )
                     if (!routingDecisionSaved) logAgentForChat(chatId, "⚠️ Rejestr decyzji MASTER-a nie potwierdził zapisu; nie traktuję historii jako kompletnej.")
                     val decisionContext = pl.aimasterpro.app.core.DecisionLedgerStore.contextString(this, maxEntries = 8, maxChars = 1_800)
+                    val errorContext = pl.aimasterpro.app.core.ErrorKnowledgeBaseStore.contextString(this, maxRecords = 6, maxChars = 1_500)
                     if (routing.mode == pl.aimasterpro.app.agents.AgentRoutingPolicy.Mode.MASTER_ONLY) {
                         runOnUiThread {
                             if (gen == requestGen) {
@@ -1854,6 +1855,7 @@ class MainActivity : Activity() {
                             append(prompt)
                             if (memoryContext.isNotBlank()) append("\n\nPamięć ciągła:\n").append(memoryContext)
                             if (decisionContext.isNotBlank()) append("\n\nHistoria decyzji MASTER-a:\n").append(decisionContext)
+                            if (errorContext.isNotBlank()) append("\n\nZnane incydenty i błędy:\n").append(errorContext)
                             append("\n\n").append(evidenceContext.contextText)
                         }
                         val resp = chatWithFallback(
@@ -1877,7 +1879,8 @@ class MainActivity : Activity() {
                     val selectedSpecs = routing.agents
                     val sharedLearningContext = listOf(
                         pl.aimasterpro.app.core.AiMemoryStore.contextString(this, prompt, maxChars = 1_800),
-                        decisionContext
+                        decisionContext,
+                        errorContext
                     ).filter(String::isNotBlank).joinToString("\n\n")
                     val tasks = selectedSpecs.mapIndexed { index, spec ->
                         val agentMemory = pl.aimasterpro.app.core.AgentOperationalMemoryStore.contextString(
@@ -2384,7 +2387,8 @@ class MainActivity : Activity() {
                     }
                     val memoryContext = listOf(
                         pl.aimasterpro.app.core.AiMemoryStore.contextString(this, prompt, maxChars = 2_200),
-                        pl.aimasterpro.app.core.DecisionLedgerStore.contextString(this, maxEntries = 8, maxChars = 1_800)
+                        pl.aimasterpro.app.core.DecisionLedgerStore.contextString(this, maxEntries = 8, maxChars = 1_800),
+                        pl.aimasterpro.app.core.ErrorKnowledgeBaseStore.contextString(this, maxRecords = 6, maxChars = 1_500)
                     ).filter(String::isNotBlank).joinToString("\n\n")
                     val reportPack = pl.aimasterpro.app.agents.SynthesisContextBuilder.build(synthesisResults, maxPerReportChars = 6_000, maxTotalChars = 18_000)
                     val reports = reportPack.text
@@ -2556,6 +2560,41 @@ class MainActivity : Activity() {
                 } else {
                     val e = result.exceptionOrNull()
                     val detail = if (e is ProviderException) "${e.message}\n${e.responseBody}" else (e?.message ?: "Nieznany błąd")
+                    // Persist only allowlisted diagnostic metadata. Raw exception messages and
+                    // provider response bodies are deliberately excluded from the knowledge base.
+                    val safeCategory = pl.aimasterpro.app.core.CommunicationLogSanitizer.sanitize(
+                        (e as? ProviderException)?.category ?: e?.javaClass?.simpleName ?: "unknown_error"
+                    ).take(120).ifBlank { "unknown_error" }
+                    val safeExceptionType = (e?.javaClass?.simpleName ?: "UnknownException").take(120)
+                    val incidentSaved = pl.aimasterpro.app.core.ErrorKnowledgeBaseStore.append(
+                        this,
+                        pl.aimasterpro.app.core.ErrorKnowledgeBaseStore.Record(
+                            recordId = pl.aimasterpro.app.core.ErrorKnowledgeBaseStore.newRecordId(),
+                            errorId = requestTaskId,
+                            timestampUtc = System.currentTimeMillis(),
+                            project = "AiFORTeca",
+                            repository = "",
+                            branch = "",
+                            commit = "",
+                            environment = "Android runtime",
+                            operation = "Chat request",
+                            exactCommand = "",
+                            redactedErrorOutput = "Request failed; category=$safeCategory; exception=$safeExceptionType",
+                            reproductionSteps = "Failure observed during task $requestTaskId; retry only after checking provider configuration and current limits.",
+                            reproducibility = "UNKNOWN",
+                            observedFacts = listOf("Chat request failed.", "Category: $safeCategory", "Exception type: $safeExceptionType"),
+                            hypotheses = emptyList(),
+                            confirmedRootCause = "",
+                            attemptedFixes = emptyList(),
+                            linkedTaskIds = listOf(requestTaskId),
+                            linkedCommits = emptyList(),
+                            linkedTests = emptyList(),
+                            evidenceRefs = listOf("task:$requestTaskId"),
+                            status = pl.aimasterpro.app.core.ErrorKnowledgeBaseStore.CaseStatus.OPEN,
+                            redactionConfirmed = true
+                        )
+                    )
+                    if (!incidentSaved) logAgentForChat(chatId, "⚠️ Nie udało się zapisać bezpiecznego rekordu incydentu w bazie błędów.")
                     reply = "Nie udało się uzyskać odpowiedzi.\n\n$detail\n\nSprawdź adres, model, klucz API i limit dostawcy."
                     logAgentForChat(chatId, "${chosenRole.label}: błąd dostawcy • $detail")
                 }

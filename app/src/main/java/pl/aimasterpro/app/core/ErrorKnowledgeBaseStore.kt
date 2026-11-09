@@ -110,6 +110,30 @@ object ErrorKnowledgeBaseStore {
         return result.records.firstOrNull { it.recordId in ids && it.recordId !in superseded }
     }
 
+    /**
+     * Bounded incident context for MASTER. Only allowlisted/redacted diagnostic fields are
+     * rendered; unavailable history is surfaced explicitly rather than treated as empty.
+     */
+    fun contextString(context: Context, maxRecords: Int = 6, maxChars: Int = 1_500): String {
+        require(maxRecords in 1..20 && maxChars in 200..8_000)
+        val state = snapshot(context)
+        if (state.status != ReadStatus.AVAILABLE) {
+            return "Baza znanych błędów MASTER-a: ${state.status.name}. Historia jest niedostępna; " +
+                "nie zakładaj, że brak wpisów oznacza brak wcześniejszych incydentów."
+        }
+        if (state.records.isEmpty()) return ""
+        val rendered = buildString {
+            append("Historia incydentów (najnowsze pierwsze; statusy opisują stan diagnozy, nie automatyczne rozwiązanie):")
+            state.records.take(maxRecords).forEach { record ->
+                append("\n- [").append(record.status.name).append("] ")
+                    .append(record.operation).append(": ").append(record.redactedErrorOutput)
+                if (record.confirmedRootCause.isNotBlank()) append("; przyczyna=").append(record.confirmedRootCause)
+                if (record.fixSummary.isNotBlank()) append("; poprawka=").append(record.fixSummary)
+            }
+        }
+        return if (rendered.length <= maxChars) rendered else rendered.take(maxChars - 1).trimEnd() + "…"
+    }
+
     internal fun resetStorageHealthForTests() {
         SharedPreferencesWriteHealth.resetForTests(PREFS)
     }
