@@ -3,7 +3,7 @@ Date: 2026-11-09
 Repository: `krzysztofchojnacki5-ship-it/aimaster_071_work`
 Working branch: `work/aiforteca-0.0.1-foundation`
 Base branch: `work/autonomous-worker-architecture-2026-11-08`
-Latest documentation/inventory commit: `9a3bc6fe034a30def7421b1cf9af26f5a806a605`
+Latest documentation/inventory commit: `9530b44d986917994d25d261003054a72a21ddc4`
 
 ## Scope completed
 Created the first governance/documentation baseline under `docs/aiforteca/0.0.1/`:
@@ -20,7 +20,7 @@ Created the first governance/documentation baseline under `docs/aiforteca/0.0.1/
 All nine files were read back from the new branch after creation.
 
 ## Additional read-only architecture inventory
-Added `EXISTING_ARCHITECTURE_INVENTORY.md`, mapping the current MainActivity, TeamRunEngine, work/checkpoint journals, result archives, quality learning, token tracking, secure provider storage, and provider transport. It identifies migration seams and explicitly unverified write-scope enforcement.
+Added and extended `EXISTING_ARCHITECTURE_INVENTORY.md`, mapping MainActivity, TeamRunEngine, work/checkpoint journals, result archives, shared and agent-scoped memory, model health, token tracking, workspace/patch review, secure provider storage, and provider transport. It identifies migration seams and explicitly unverified write-scope enforcement.
 
 ## Explicitly not completed
 - No Kotlin/Android runtime implementation was changed.
