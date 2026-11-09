@@ -123,7 +123,7 @@ class ProviderClientNetworkTest {
                 throw AssertionError("Expected oversized response rejection")
             } catch (e: ProviderException) {
                 assertEquals("RESPONSE_TOO_LARGE", e.category)
-                assertEquals("READ_RESPONSE", e.phase)
+                assertEquals("WAIT_RESPONSE", e.phase)
                 assertTrue("A successful POST response that cannot be read may still be billable", e.requestMayHaveBeenProcessed)
             }
             assertEquals(1, count.get())
@@ -217,7 +217,7 @@ class ProviderClientNetworkTest {
             throw AssertionError("Expected DNS failure")
         } catch (e: ProviderException) {
             assertEquals("DNS_ERROR", e.category)
-            assertEquals("CONNECT", e.phase)
+            assertEquals("WAIT_RESPONSE", e.phase)
             assertTrue("DNS failure occurs before a billable POST can reach the provider", !e.requestMayHaveBeenProcessed)
             assertTrue(e.message.orEmpty().contains("this-host-must-not-exist.invalid"))
         }
