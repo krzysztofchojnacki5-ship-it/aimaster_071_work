@@ -146,7 +146,12 @@ class ApiTokenTrackerTest {
             context, emptyList(), globalReserveCostPln = Double.MAX_VALUE
         )
         val second = ApiTokenTracker.planBatch(
-            context, emptyList(), globalReserveCostPln = Double.MAX_VALUE
+            context,
+            listOf(BudgetRequest(
+                "overflow-reservation-task", "MASTER", "openai",
+                "https://api.openai.com/v1", "gpt-4o-mini", 1L, 0L
+            )),
+            globalReserveCostPln = Double.MAX_VALUE
         )
 
         assertTrue(first.reservationId.isNotBlank())
