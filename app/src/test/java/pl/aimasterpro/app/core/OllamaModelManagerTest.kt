@@ -60,6 +60,28 @@ class OllamaModelManagerTest {
         }
     }
 
+    @Test fun progressAggregatesMultipleModelLayersInsteadOfShowingOnlyLargestLayer() {
+        val response = listOf(
+            """{"status":"downloading","digest":"sha256:layer-a","total":100,"completed":100}""",
+            """{"status":"downloading","digest":"sha256:layer-b","total":100,"completed":50}""",
+            """{"status":"success"}"""
+        ).joinToString("\\n", postfix = "\\n")
+        val server = TestHttpServer { _, _ -> 200 to response }
+        try {
+            val progress = mutableListOf<OllamaModelManager.Progress>()
+            val result = OllamaModelManager.pull(
+                "http://127.0.0.1:${server.port}/v1",
+                "llama3:8b",
+                onProgress = progress::add
+            )
+            assertEquals(200L, result.totalBytes)
+            assertEquals(150L, result.completedBytes)
+            assertEquals(75, progress[1].percent)
+        } finally {
+            server.stop()
+        }
+    }
+
     @Test fun serverErrorIsReportedWithoutTreatingItAsSuccess() {
         val server = TestHttpServer { _, _ -> 200 to """{"error":"model not found"}""" }
         try {
