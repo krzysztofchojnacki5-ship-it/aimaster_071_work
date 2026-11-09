@@ -31,8 +31,8 @@ object AgentOperationalMemoryStore {
     @Synchronized fun addApproved(
         context: Context, agentId: String, text: String, category: String = "",
         sourceTaskIds: List<String> = emptyList(), confidence: String = "zatwierdzona"
-    ): Entry? {
-        return SharedPreferencesWriteHealth.withHealthyAccess(PREFS) {
+    ): Entry? = runCatching {
+        SharedPreferencesWriteHealth.withHealthyAccess(PREFS) {
 
         val agent = agentId.trim().take(100)
         val clean = text.trim().replace(Regex("[\\t ]+"), " ").take(MAX_ENTRY_CHARS)
@@ -55,10 +55,10 @@ object AgentOperationalMemoryStore {
         return@withHealthyAccess if (write(context, entries.take(MAX_ENTRIES))) item else null
     
         }
-    }
+    }.getOrNull()
 
-    @Synchronized fun remove(context: Context, id: String): Boolean {
-        return SharedPreferencesWriteHealth.withHealthyAccess(PREFS) {
+    @Synchronized fun remove(context: Context, id: String): Boolean = runCatching {
+        SharedPreferencesWriteHealth.withHealthyAccess(PREFS) {
 
         val entries = read(context) ?: return@withHealthyAccess false
         val remaining = entries.filterNot { it.id == id }
@@ -66,10 +66,10 @@ object AgentOperationalMemoryStore {
         return@withHealthyAccess write(context, remaining)
     
         }
-    }
+    }.getOrDefault(false)
 
-    @Synchronized fun removeBySource(context: Context, sourceTaskId: String): Boolean {
-        return SharedPreferencesWriteHealth.withHealthyAccess(PREFS) {
+    @Synchronized fun removeBySource(context: Context, sourceTaskId: String): Boolean = runCatching {
+        SharedPreferencesWriteHealth.withHealthyAccess(PREFS) {
 
         if (sourceTaskId.isBlank()) return@withHealthyAccess false
         val entries = read(context) ?: return@withHealthyAccess false
@@ -82,7 +82,7 @@ object AgentOperationalMemoryStore {
         return@withHealthyAccess if (updated == entries) true else write(context, updated)
     
         }
-    }
+    }.getOrDefault(false)
 
     /** Bounded relevance retrieval for one agent; never mixes another agent's private lessons. */
     fun contextString(context: Context, agentId: String, query: String, maxChars: Int = 900, maxItems: Int = 4): String {
