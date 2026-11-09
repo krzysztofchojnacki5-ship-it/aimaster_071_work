@@ -69,6 +69,7 @@ object ErrorKnowledgeBaseStore {
                     if (record.status != CaseStatus.OPEN &&
                         record.status != CaseStatus.INVESTIGATING) return@withHealthyAccess false
                 } else {
+                    if (current.any { it.supersedesRecordId == record.supersedesRecordId }) return@withHealthyAccess false
                     val previous = current.firstOrNull {
                         it.recordId == record.supersedesRecordId
                     } ?: return@withHealthyAccess false
