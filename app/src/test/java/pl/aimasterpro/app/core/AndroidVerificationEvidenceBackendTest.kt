@@ -33,8 +33,14 @@ class AndroidVerificationEvidenceBackendTest {
     }
 
     @Test fun ambiguousAndroidBackendCommitQuarantinesReadsAndFurtherWrites() {
-        val prefs = context.getSharedPreferences("verification_evidence_v1", Context.MODE_PRIVATE)
-        assertTrue(prefs.edit().putString("ledger", "original-ledger").commit())
+        // Seed a valid ledger first; otherwise appendAll correctly rejects corrupt input
+        // before reaching commit(), and the ambiguous-commit adapter is never exercised.
+        val seedStore = VerificationEvidenceStore(AndroidVerificationEvidenceBackend(context))
+        val seed = VerificationEvidence.runtimeCheck(
+            "task-ambiguous-seed", VerificationEvidenceKind.UNIT_TESTS,
+            VerificationEvidenceStatus.PASS, "valid baseline before ambiguous commit", 150L
+        )
+        assertTrue(seedStore.appendAll(listOf(seed)))
         val ambiguousPreferences = AmbiguousCommitContext(context, "verification_evidence_v1")
         // Keep the wrapper visible through applicationContext so the backend exercises the
         // same failing SharedPreferences adapter rather than bypassing it via the base context.
