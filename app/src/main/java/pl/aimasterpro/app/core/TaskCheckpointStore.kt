@@ -188,8 +188,10 @@ object TaskCheckpointStore {
         // Recovery must not downgrade a possibly archived report to INTERRUPTED when the
         // archive itself cannot be read. Preserve every checkpoint until archive evidence is
         // available; the next process start can retry the complete reconciliation safely.
-        if (!TaskResultArchive.isArchiveReadable(context) ||
-            !ChatResponseArchive.isArchiveReadable(context)) {
+        val archivesReadable = runCatching {
+            TaskResultArchive.isArchiveReadable(context) && ChatResponseArchive.isArchiveReadable(context)
+        }.getOrDefault(false)
+        if (!archivesReadable) {
             android.util.Log.e("AIMasterRecovery", "Odzyskiwanie checkpointów wstrzymane: archiwum raportów lub odpowiedzi czatu jest niedostępne albo uszkodzone.")
             return 0
         }
@@ -281,9 +283,11 @@ object TaskCheckpointStore {
     @Synchronized
     fun clear(context: Context): Boolean {
         if (SharedPreferencesWriteHealth.isUncertain(PREFS)) return false
-        return SharedPreferencesWriteHealth.commit(
-            PREFS, context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().remove(KEY)
-        )
+        return runCatching {
+            SharedPreferencesWriteHealth.commit(
+                PREFS, context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().remove(KEY)
+            )
+        }.getOrDefault(false)
     }
 
     private fun save(context: Context, rows: List<Event>): Boolean {
