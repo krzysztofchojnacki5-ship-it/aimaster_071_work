@@ -29,7 +29,7 @@ class TaskResultCacheDurabilityTest {
                 return object : SharedPreferences by delegate {
                     override fun edit(): SharedPreferences.Editor {
                         val editor = delegate.edit()
-                        Proxy.newProxyInstance(
+                        return Proxy.newProxyInstance(
                             SharedPreferences.Editor::class.java.classLoader,
                             arrayOf(SharedPreferences.Editor::class.java)
                         ) { proxy, method, args ->
