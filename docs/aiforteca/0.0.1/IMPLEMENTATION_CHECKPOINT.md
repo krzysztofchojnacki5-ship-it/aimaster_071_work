@@ -130,3 +130,19 @@ Added:
 Compatibility basis: Gradle 9.9.0 is the latest stable Gradle release on this date; AGP 9.4.0 requires Gradle 9.6.0 minimum and JDK 17. Kotlin plugin 2.4.10 follows the official AGP 9.4 setup example.
 
 **Verification status:** Wrapper JAR and source files are confirmed present on GitHub. The checksum is the official published Gradle checksum, with CI validation configured. No Gradle invocation has yet been executed in this environment. Android CI is configured but has not yet been confirmed green. Build, unit tests, and APK remain NOT RUN / UNVERIFIED until a workflow run succeeds.
+
+
+### CI diagnosis and correction — 2026-11-09
+
+The first Android CI attempts failed before Gradle was invoked:
+- Initial setup action defaulted to installing the removed Android SDK `tools` package. Logs show `Failed to find package 'tools'`.
+- The interim manual SDK-manager discovery step then failed because the hosted runner did not have the expected SDK manager on PATH / at the assumed preinstalled location.
+
+The workflow has since been changed to the current `android-actions/setup-android@v4` action with `packages: 'platform-tools'`, explicitly avoiding the removed `tools` package. Android SDK platform 36 and Build Tools 36.0.0 are installed in the next step.
+
+Observed GitHub Actions state at checkpoint update:
+- Gradle Wrapper Validation on the current branch has repeatedly completed SUCCESS, including run #8 on commit `4a858892bfaa0c7fa254497f6070ba7957192721`.
+- Android Build run #7 on commit `4a858892bfaa0c7fa254497f6070ba7957192721` was IN_PROGRESS at the time of inspection. It had completed checkout and JDK 17 setup and was executing Android SDK setup; Gradle version check, tests and APK assembly were still pending.
+- Earlier Android Build attempts failed during SDK provisioning only; they do not establish a Kotlin or Gradle compilation failure because Gradle had not started.
+
+Do not mark the Android build green until run #7 (or a later run) reports success and its test/build steps are completed.
