@@ -2,7 +2,10 @@ package pl.aimasterpro.app.core
 
 import org.junit.Assert.*
 import org.junit.Test
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
 
+@RunWith(RobolectricTestRunner::class)
 class LegacyChatHistoryImporterTest {
     @Test fun missingOrBlankLegacyMirrorIsAValidEmptyHistory() {
         assertEquals(emptyList<LegacyChatHistoryImporter.Message>(), LegacyChatHistoryImporter.parse(null))
