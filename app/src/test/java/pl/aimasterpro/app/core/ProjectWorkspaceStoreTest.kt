@@ -365,7 +365,7 @@ class ProjectWorkspaceStoreTest {
             }
 
             assertTrue("receipt mismatch must block startup recovery",
-                runCatching { ProjectWorkspaceStore(root) }.isFailure)
+                runCatching { ProjectWorkspaceStore(root).currentInfo() }.isFailure)
             assertTrue("journal is retained for diagnosis/retry", File(root, "workspace.swap.journal").isFile)
             assertTrue("previous workspace is retained until receipt reconciliation", previous.isDirectory)
             assertTrue(File(root, ".previous-$transactionId.manifest").isFile)
