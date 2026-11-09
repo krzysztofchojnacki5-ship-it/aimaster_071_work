@@ -28,7 +28,6 @@ class MasterQualityGateCoordinatorTest {
         ledgerValid: Boolean = true,
         safety: Boolean = true,
         persistence: Boolean = true,
-        review: Boolean = true,
         response: Boolean = true,
         responseCheck: Boolean = true
     ) = MasterQualityGateCoordinator.Input(
@@ -37,7 +36,6 @@ class MasterQualityGateCoordinatorTest {
         evidenceLedgerValid = ledgerValid,
         safetyValidated = safety,
         persistenceVerified = persistence,
-        independentReviewCompleted = review,
         responsePresent = response,
         responseCheckPassed = responseCheck
     )
@@ -48,7 +46,8 @@ class MasterQualityGateCoordinatorTest {
             evidence(VerificationEvidenceKind.PROJECT_TESTS, VerificationEvidenceStatus.PASS),
             evidence(VerificationEvidenceKind.UNIT_TESTS, VerificationEvidenceStatus.PASS),
             evidence(VerificationEvidenceKind.ANDROID_BUILD, VerificationEvidenceStatus.PASS),
-            evidence(VerificationEvidenceKind.INTEGRATION_TESTS, VerificationEvidenceStatus.PASS)
+            evidence(VerificationEvidenceKind.INTEGRATION_TESTS, VerificationEvidenceStatus.PASS),
+            evidence(VerificationEvidenceKind.CODE_REVIEW, VerificationEvidenceStatus.PASS)
         )
         val result = MasterQualityGateCoordinator.evaluate(input(rows))
         assertEquals(QualityGateEvaluator.Outcome.PASS, result.overall)

@@ -29,7 +29,8 @@ enum class VerificationEvidenceKind {
     ROBOLECTRIC,
     ANDROID_BUILD,
     DEVICE_TEST,
-    OTHER
+    OTHER,
+    CODE_REVIEW
 }
 
 data class VerificationEvidence(

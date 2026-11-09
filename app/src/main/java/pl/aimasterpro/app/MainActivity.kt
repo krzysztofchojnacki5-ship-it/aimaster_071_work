@@ -1787,7 +1787,6 @@ class MainActivity : Activity() {
         activeRequestScope = requestScope
         var masterEvidenceForQualityGate: pl.aimasterpro.app.core.MasterEvidenceContextBuilder.Result? = null
         var masterResponseCheckPassed = false
-        var masterIndependentReviewCompleted = false
         var masterQualityGateEvaluation: pl.aimasterpro.app.core.QualityGateEvaluator.Evaluation? = null
 
         executor.execute {
@@ -2565,7 +2564,6 @@ class MainActivity : Activity() {
                         evidenceLedgerValid = scopedEvidence.valid,
                         safetyValidated = safetyValidated,
                         persistenceVerified = persistenceVerified,
-                        independentReviewCompleted = masterIndependentReviewCompleted,
                         responsePresent = !result.getOrNull().isNullOrBlank(),
                         responseCheckPassed = masterResponseCheckPassed
                     )
@@ -4923,6 +4921,24 @@ class MainActivity : Activity() {
                             "Patch zastosowano, ale nie udało się powiązać snapshotu z rejestrem zmian."
                         }
                         snapshotRecorded = true
+                        val reviewSummary = "PatchPeerReviewEngine: READY_FOR_HUMAN_APPROVAL; " +
+                            decision.parsedVerdicts.entries.joinToString { "${it.key}=${it.value}" } +
+                            "; issues=${decision.issues.size}"
+                        val reviewEvidence = pl.aimasterpro.app.core.VerificationEvidence.runtimeCheck(
+                            taskId = changeSet.taskId,
+                            kind = pl.aimasterpro.app.core.VerificationEvidenceKind.CODE_REVIEW,
+                            status = pl.aimasterpro.app.core.VerificationEvidenceStatus.PASS,
+                            summary = reviewSummary.take(500),
+                            observedAtEpochMs = System.currentTimeMillis(),
+                            chatId = chatId,
+                            snapshotId = applied!!.snapshot.id
+                        )
+                        val reviewEvidenceSaved = pl.aimasterpro.app.core.VerificationEvidenceStore(
+                            pl.aimasterpro.app.core.AndroidVerificationEvidenceBackend(applicationContext)
+                        ).appendAll(listOf(reviewEvidence))
+                        check(reviewEvidenceSaved) {
+                            "Patch zastosowano, ale nie udało się trwale zapisać dowodu dwóch niezależnych recenzji."
+                        }
                         check(pl.aimasterpro.app.core.ChangeSetStore.transition(this, changeSetId, "APPLIED_UNVERIFIED")) {
                             "Patch zastosowano, ale nie udało się zaktualizować statusu rejestru zmian."
                         }

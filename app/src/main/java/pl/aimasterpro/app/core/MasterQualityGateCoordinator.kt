@@ -12,7 +12,6 @@ object MasterQualityGateCoordinator {
         val evidenceLedgerValid: Boolean,
         val safetyValidated: Boolean,
         val persistenceVerified: Boolean,
-        val independentReviewCompleted: Boolean,
         val responsePresent: Boolean,
         val responseCheckPassed: Boolean
     )
@@ -69,6 +68,14 @@ object MasterQualityGateCoordinator {
             else -> QualityGateEvaluator.Outcome.NOT_RUN
         }
         val integrationEvidence = integrationRows.firstOrNull { it.status == VerificationEvidenceStatus.PASS }
+        val reviewEvidence = latest[VerificationEvidenceKind.CODE_REVIEW]
+        val reviewOutcome = when {
+            !input.evidenceLedgerValid || reviewEvidence == null -> QualityGateEvaluator.Outcome.NOT_RUN
+            reviewEvidence.status == VerificationEvidenceStatus.PASS -> QualityGateEvaluator.Outcome.PASS
+            reviewEvidence.status == VerificationEvidenceStatus.FAIL -> QualityGateEvaluator.Outcome.FAIL
+            reviewEvidence.status == VerificationEvidenceStatus.CLAIM_ONLY -> QualityGateEvaluator.Outcome.INCONCLUSIVE
+            else -> QualityGateEvaluator.Outcome.NOT_RUN
+        }
 
         val results = listOf(
             evidenceResult(VerificationEvidenceKind.PATCH_SCOPE),
@@ -97,10 +104,9 @@ object MasterQualityGateCoordinator {
             ),
             QualityGateEvaluator.GateResult(
                 gate = QualityGateEvaluator.Gate.REVIEW,
-                outcome = if (input.independentReviewCompleted) QualityGateEvaluator.Outcome.PASS else QualityGateEvaluator.Outcome.NOT_RUN,
-                evidenceRef = if (input.independentReviewCompleted) "task:${scope.taskId}:independent-review" else "",
-                detail = if (input.independentReviewCompleted) "Niezależna recenzja kodu została potwierdzona."
-                    else "Brak niezależnego dowodu recenzji kodu; sama recenzja raportów agentów nie wystarcza."
+                outcome = reviewOutcome,
+                evidenceRef = if (reviewOutcome == QualityGateEvaluator.Outcome.PASS) "verification:${reviewEvidence!!.id}" else "",
+                detail = reviewEvidence?.summary ?: "Brak hostowego dowodu dwóch niezależnych recenzji kodu."
             ),
             QualityGateEvaluator.GateResult(
                 gate = QualityGateEvaluator.Gate.REPORT,
