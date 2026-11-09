@@ -416,7 +416,7 @@ class ChatHistoryStoreTest {
     @Test fun ambiguousCurrentChatCommitNeverSplitsCanonicalIdFromNavigationMirror() {
         assertTrue(prefs.edit().putString("last_user_chat_id", "previous-user-chat").commit())
         val failing = AmbiguousCommitContext(context, "chat_state", applyBeforeFailure = true)
-        assertFalse(ChatHistoryStore.updateRootAndLastUserChatId(failingContext, "new-user-chat") { root ->
+        assertFalse(ChatHistoryStore.updateRootAndLastUserChatId(failing, "new-user-chat") { root ->
             root.put("currentId", "new-user-chat")
             if (!root.has("chats")) root.put("chats", JSONObject())
             true
