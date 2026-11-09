@@ -1815,6 +1815,31 @@ class MainActivity : Activity() {
                         }
                     }
                     logAgentForChat(chatId, "MASTER ROUTING: ${routing.mode} • specjaliści=${routing.specialistCalls} • ${routing.reason}")
+                    // Store the routing choice without copying the user prompt, response, attachment or credentials.
+                    val routingDecisionSaved = pl.aimasterpro.app.core.DecisionLedgerStore.append(
+                        this,
+                        pl.aimasterpro.app.core.DecisionLedgerStore.Entry(
+                            decisionId = pl.aimasterpro.app.core.DecisionLedgerStore.newEntryId(),
+                            taskId = requestTaskId,
+                            timestampUtc = System.currentTimeMillis(),
+                            actor = "MASTER",
+                            context = "Wybór trybu obsługi wiadomości",
+                            objective = "Wybrać samodzielną odpowiedź MASTER-a albo konsultację specjalistów.",
+                            optionsConsidered = pl.aimasterpro.app.agents.AgentRoutingPolicy.Mode.entries.map { it.name },
+                            selectedOption = routing.mode.name,
+                            rationale = routing.reason,
+                            evidenceRefs = listOf("task:$requestTaskId", "policy:AgentRoutingPolicy"),
+                            assumptions = "Routing jest heurystyczny i może wymagać korekty po ocenie odpowiedzi.",
+                            confidence = "POLICY_HEURISTIC",
+                            riskImpact = "Niedopasowany tryb może ograniczyć zakres analizy; nie modyfikuje plików.",
+                            approvalRequired = false,
+                            approvalReference = "",
+                            outcome = "IMPLEMENTED",
+                            reviewTrigger = "Po negatywnej ocenie odpowiedzi lub zmianie polityki routingu."
+                        )
+                    )
+                    if (!routingDecisionSaved) logAgentForChat(chatId, "⚠️ Rejestr decyzji MASTER-a nie potwierdził zapisu; nie traktuję historii jako kompletnej.")
+                    val decisionContext = pl.aimasterpro.app.core.DecisionLedgerStore.contextString(this, maxEntries = 8, maxChars = 1_800)
                     if (routing.mode == pl.aimasterpro.app.agents.AgentRoutingPolicy.Mode.MASTER_ONLY) {
                         runOnUiThread {
                             if (gen == requestGen) {
@@ -1828,6 +1853,7 @@ class MainActivity : Activity() {
                         val directPrompt = buildString {
                             append(prompt)
                             if (memoryContext.isNotBlank()) append("\n\nPamięć ciągła:\n").append(memoryContext)
+                            if (decisionContext.isNotBlank()) append("\n\nHistoria decyzji MASTER-a:\n").append(decisionContext)
                             append("\n\n").append(evidenceContext.contextText)
                         }
                         val resp = chatWithFallback(
@@ -1849,7 +1875,10 @@ class MainActivity : Activity() {
                         resp.text + if (check.warnings.isNotEmpty()) "\n\n_Uwaga kontroli jakości: ${check.warnings.joinToString("; ")}_" else ""
                     } else {
                     val selectedSpecs = routing.agents
-                    val sharedLearningContext = pl.aimasterpro.app.core.AiMemoryStore.contextString(this, prompt, maxChars = 1_800)
+                    val sharedLearningContext = listOf(
+                        pl.aimasterpro.app.core.AiMemoryStore.contextString(this, prompt, maxChars = 1_800),
+                        decisionContext
+                    ).filter(String::isNotBlank).joinToString("\n\n")
                     val tasks = selectedSpecs.mapIndexed { index, spec ->
                         val agentMemory = pl.aimasterpro.app.core.AgentOperationalMemoryStore.contextString(
                             this, spec.id, prompt, maxChars = 900, maxItems = 4
@@ -2353,7 +2382,10 @@ class MainActivity : Activity() {
                             thinkingText?.text = thinkingLabel
                         }
                     }
-                    val memoryContext = pl.aimasterpro.app.core.AiMemoryStore.contextString(this, prompt, maxChars = 2_200)
+                    val memoryContext = listOf(
+                        pl.aimasterpro.app.core.AiMemoryStore.contextString(this, prompt, maxChars = 2_200),
+                        pl.aimasterpro.app.core.DecisionLedgerStore.contextString(this, maxEntries = 8, maxChars = 1_800)
+                    ).filter(String::isNotBlank).joinToString("\n\n")
                     val reportPack = pl.aimasterpro.app.agents.SynthesisContextBuilder.build(synthesisResults, maxPerReportChars = 6_000, maxTotalChars = 18_000)
                     val reports = reportPack.text
                     // Numeric conflict detection compares independent specialist findings only.

@@ -71,6 +71,22 @@ class DecisionLedgerStoreTest {
         assertEquals(raw, prefs.getString("entries", null))
     }
 
+    @Test fun contextStringReturnsRecentDecisionMetadataWithoutPromptContent() {
+        assertTrue(DecisionLedgerStore.append(context, entry("d-1")))
+        val rendered = DecisionLedgerStore.contextString(context)
+        assertTrue(rendered.contains("Dodać trwały rejestr decyzji"))
+        assertTrue(rendered.contains("SharedPreferences"))
+        assertFalse(rendered.contains("raw prompt"))
+    }
+
+    @Test fun contextStringReportsUnavailableLedgerInsteadOfPretendingItIsEmpty() {
+        SharedPreferencesWriteHealth.commit("aiforteca_decision_ledger_v1", object : android.content.SharedPreferences.Editor by prefs.edit() {
+            override fun commit(): Boolean = false
+        })
+        val rendered = DecisionLedgerStore.contextString(context)
+        assertTrue(rendered.contains("UNAVAILABLE"))
+    }
+
     @Test fun rejectsInvalidDecisionBeforeWriting() {
         val invalid = entry("d-1").copy(objective = "")
         assertFalse(DecisionLedgerStore.append(context, invalid))

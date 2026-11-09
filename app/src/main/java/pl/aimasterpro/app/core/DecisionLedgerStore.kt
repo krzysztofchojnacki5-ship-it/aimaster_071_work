@@ -84,6 +84,31 @@ object DecisionLedgerStore {
         snapshot(context).takeIf { it.status == ReadStatus.AVAILABLE }
             ?.entries?.firstOrNull { it.decisionId == decisionId }
 
+    /**
+     * Compact, bounded context for MASTER. It exposes only decision metadata, never raw prompts,
+     * model responses, credentials or attachments. An unreadable ledger is reported explicitly.
+     */
+    fun contextString(context: Context, maxEntries: Int = 8, maxChars: Int = 1_800): String {
+        require(maxEntries in 1..20 && maxChars in 200..8_000)
+        val state = snapshot(context)
+        if (state.status != ReadStatus.AVAILABLE) {
+            return "Rejestr decyzji MASTER-a: ${state.status.name}. Historia jest niedostępna; " +
+                "nie zakładaj, że brak wpisów oznacza brak wcześniejszych decyzji."
+        }
+        if (state.entries.isEmpty()) return ""
+        val rendered = buildString {
+            append("Historia decyzji MASTER-a (najnowsze pierwsze; to zapis wcześniejszych wyborów, nie dowód aktualnej prawdziwości):")
+            state.entries.take(maxEntries).forEach { entry ->
+                append("\n- [").append(entry.outcome).append("] ")
+                    .append(entry.objective).append("; wybór=").append(entry.selectedOption)
+                    .append("; uzasadnienie=").append(entry.rationale)
+                    .append("; pewność=").append(entry.confidence)
+                    .append("; ryzyko=").append(entry.riskImpact)
+            }
+        }
+        return if (rendered.length <= maxChars) rendered else rendered.take(maxChars - 1).trimEnd() + "…"
+    }
+
     internal fun resetStorageHealthForTests() {
         SharedPreferencesWriteHealth.resetForTests(PREFS)
     }
