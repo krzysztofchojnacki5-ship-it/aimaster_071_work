@@ -85,7 +85,7 @@ object MasterWorkJournalStore {
                 nextSteps = (current.nextSteps + "Sprawdź checkpointy i zdecyduj o wznowieniu.").distinct().take(MAX_STEPS),
                 updatedAt = now.coerceAtLeast(0L)
             )
-        }
+        } ?: get(context, taskId)?.takeIf { it.status in setOf("PAUSED", "BLOCKED", "COMPLETED") }
 
     /** Marks work left ACTIVE by a previous process as interrupted; never claims it resumed. */
     fun pauseActive(context: Context, now: Long = System.currentTimeMillis()): Int =
