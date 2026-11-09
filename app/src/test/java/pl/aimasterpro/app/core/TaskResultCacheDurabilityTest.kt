@@ -9,6 +9,7 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
+import java.lang.reflect.Proxy
 
 @RunWith(RobolectricTestRunner::class)
 class TaskResultCacheDurabilityTest {
@@ -28,13 +29,19 @@ class TaskResultCacheDurabilityTest {
                 return object : SharedPreferences by delegate {
                     override fun edit(): SharedPreferences.Editor {
                         val editor = delegate.edit()
-                        return object : SharedPreferences.Editor by editor {
-                            override fun putString(key: String, value: String): SharedPreferences.Editor {
-                                editor.putString(key, value)
-                                return this
+                        Proxy.newProxyInstance(
+                            SharedPreferences.Editor::class.java.classLoader,
+                            arrayOf(SharedPreferences.Editor::class.java)
+                        ) { proxy, method, args ->
+                            when (method.name) {
+                                "commit" -> false
+                                "putString" -> {
+                                    editor.putString(args!![0] as String, args[1] as String)
+                                    proxy
+                                }
+                                else -> method.invoke(editor, *(args ?: emptyArray()))
                             }
-                            override fun commit(): Boolean = false
-                        }
+                        } as SharedPreferences.Editor
                     }
                 }
             }
