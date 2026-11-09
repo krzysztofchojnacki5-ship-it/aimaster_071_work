@@ -156,8 +156,7 @@ object ApiTokenTracker {
         }
         val stableQueryId = idempotencyKey.trim().ifBlank { UUID.randomUUID().toString() }
         val persistedBefore = readPersistedRecords(context)
-            ?: throw IllegalStateException("Rejestr użycia API jest uszkodzony; księgowanie idempotentne zostało wstrzymane.")
-        val existing = (persistedBefore + sessionRecords).firstOrNull { it.queryId == stableQueryId }
+        val existing = (persistedBefore.orEmpty() + sessionRecords).firstOrNull { it.queryId == stableQueryId }
         if (existing != null) {
             require(existing.providerId == providerId &&
                 existing.agentId == agentId && existing.taskId == taskId) {
@@ -213,6 +212,9 @@ object ApiTokenTracker {
                 adjustActiveReservationForUsageUpgrade(existing, upgraded, reservationId, baseUrl)
                 return upgraded
             }
+            if (persistedBefore == null) {
+                throw IllegalStateException("Rejestr użycia API jest uszkodzony; księgowanie idempotentne zostało wstrzymane.")
+            }
             if (persistedBefore.none { it.queryId == stableQueryId }) {
                 check(saveRecordToStorage(context, existing)) {
                     "Nie udało się trwale odtworzyć istniejącego rekordu użycia API."
@@ -253,8 +255,11 @@ object ApiTokenTracker {
 
         // Keep the usage visible and charged against the in-process reservation even if disk
         // persistence fails. The caller receives an exception and must report the accounting gap.
-        val persisted = runCatching { saveRecordToStorage(context, record) }.getOrDefault(false)
-        sessionRecords.add(0, record)
+        val persisted = persistedBefore != null &&
+            runCatching { saveRecordToStorage(context, record) }.getOrDefault(false)
+        // Keep a billable in-process record even when the persisted ledger is corrupt or a
+        // durable write fails. Mark it UNAVAILABLE so diagnostics never imply durable accounting.
+        sessionRecords.add(0, if (persisted) record else record.copy(status = "UNAVAILABLE"))
         if (sessionRecords.size > 2000) sessionRecords.removeAt(sessionRecords.lastIndex)
         consumeActiveReservation(record, reservationId, baseUrl)
         check(persisted) { "Nie udało się trwale zapisać rejestru użycia API." }
@@ -740,7 +745,7 @@ object ApiTokenTracker {
                     it.estimatedInputTokens < 0L || it.estimatedOutputTokens < 0L ||
                     runCatching { Math.addExact(it.estimatedInputTokens, it.estimatedOutputTokens) }.isFailure
             } || requests.map { it.taskId }.distinct().size != requests.size) {
-            val reason = "Wstrzymano: nieprawidłowa konfiguracja limitów lub danych zadań (identyfikatory, provider, tokeny albo rezerwa globalna)."
+            val reason = "Wstrzymano: identyfikatory zadań muszą być niepuste i unikalne; provider, tokeny, limity lub rezerwa globalna są nieprawidłowe."
             return BatchBudgetPlan(emptySet(), requests.associate { it.taskId to reason }, 0L, 0.0)
         }
         val all = (persisted + sessionRecords).distinctBy { it.queryId }
