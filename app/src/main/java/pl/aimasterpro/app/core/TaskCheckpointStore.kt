@@ -241,7 +241,7 @@ object TaskCheckpointStore {
                 needsUsageRecovery ->
                     "Proces zakończył się po rozpoczęciu żądania; nieznane zużycie API zabezpieczono jako UNAVAILABLE."
                 event.status == "RESULT_PERSIST_PENDING" ->
-                    "Proces zakończył się po odebraniu raportu; nie znaleziono potwierdzonego zapisu w archiwum wyników."
+                    "Proces zakończył się po odebraniu raportu; nie znaleziono potwierdzenia trwałego zapisu wyniku w archiwum."
                 else -> "Proces aplikacji zakończył się przed zapisaniem wyniku."
             }
             val saved = record(context, event.copy(
