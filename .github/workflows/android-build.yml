@@ -1,0 +1,44 @@
+name: AiFORTeca Android Build
+
+on:
+  push:
+    branches:
+      - work/aiforteca-0.0.1-foundation
+  pull_request:
+    branches:
+      - work/aiforteca-0.0.1-foundation
+
+permissions:
+  contents: read
+
+jobs:
+  android:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+      - name: Install Android SDK components
+        run: sdkmanager "platform-tools" "platforms;android-36" "build-tools;36.0.0"
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+      - name: Verify wrapper version
+        run: ./gradlew --version
+      - name: Run unit tests
+        run: ./gradlew --no-daemon testDebugUnitTest
+      - name: Assemble debug APK
+        run: ./gradlew --no-daemon assembleDebug
+      - name: Upload debug APK
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: aiforteca-debug-apk
+          path: app/build/outputs/apk/debug/*.apk
+          if-no-files-found: error
