@@ -79,6 +79,17 @@ class ErrorKnowledgeBaseStoreTest {
         assertFalse(ErrorKnowledgeBaseStore.append(context, otherCase))
     }
 
+
+    @Test fun rejectsForkedStatusHistory() {
+        assertTrue(ErrorKnowledgeBaseStore.append(context, record("r1")))
+        assertTrue(ErrorKnowledgeBaseStore.append(context, record(
+            "r2", ErrorKnowledgeBaseStore.CaseStatus.INVESTIGATING, "r1"
+        )))
+        assertFalse(ErrorKnowledgeBaseStore.append(context, record(
+            "r3", ErrorKnowledgeBaseStore.CaseStatus.INVESTIGATING, "r1"
+        )))
+    }
+
     @Test fun rejectsIllegalTransitionsAndUnverifiedVerifiedClaims() {
         assertTrue(ErrorKnowledgeBaseStore.append(context, record("r1")))
         assertFalse(ErrorKnowledgeBaseStore.append(context, record(
