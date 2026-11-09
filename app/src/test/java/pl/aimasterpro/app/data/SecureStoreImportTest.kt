@@ -123,7 +123,7 @@ class SecureStoreImportTest {
             // in-memory snapshot. The durable outcome is ambiguous, so callers must fail closed.
             editor.apply()
             false
-        }
+        })
         val otherStore = SecureStore(context)
 
         try {
