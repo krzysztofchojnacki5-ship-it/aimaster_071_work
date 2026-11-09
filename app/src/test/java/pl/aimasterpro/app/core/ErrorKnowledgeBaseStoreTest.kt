@@ -31,7 +31,9 @@ class ErrorKnowledgeBaseStoreTest {
         redactedErrorOutput = "e: unresolved reference: sample",
         reproductionSteps = "Run the documented build command",
         reproducibility = "DOCUMENTED", observedFacts = listOf("Compiler reports unresolved reference"),
-        hypotheses = listOf("Missing import"), confirmedRootCause = "",
+        hypotheses = listOf("Missing import"), confirmedRootCause = if (status == ErrorKnowledgeBaseStore.CaseStatus.ROOT_CAUSE_CONFIRMED ||
+            status == ErrorKnowledgeBaseStore.CaseStatus.FIXED_UNVERIFIED ||
+            status == ErrorKnowledgeBaseStore.CaseStatus.VERIFIED) "Missing declaration in source set" else "",
         attemptedFixes = emptyList(), linkedTaskIds = listOf("task-1"),
         linkedCommits = emptyList(), linkedTests = emptyList(), evidenceRefs = listOf("log:build-1"),
         status = status, redactionConfirmed = redacted,
