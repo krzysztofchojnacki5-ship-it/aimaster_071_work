@@ -138,7 +138,8 @@ object ErrorKnowledgeBaseStore {
         r.reproducibility in setOf("REPRODUCED", "DOCUMENTED", "NOT_REPRODUCED", "UNKNOWN") &&
         listValid(r.observedFacts) && listValid(r.hypotheses) &&
         r.confirmedRootCause.length <= 3_000 &&
-        (r.status != CaseStatus.ROOT_CAUSE_CONFIRMED || r.confirmedRootCause.isNotBlank()) &&
+        (r.status !in setOf(CaseStatus.ROOT_CAUSE_CONFIRMED, CaseStatus.FIXED_UNVERIFIED, CaseStatus.VERIFIED) ||
+            r.confirmedRootCause.isNotBlank()) &&
         listValid(r.attemptedFixes) &&
         listValid(r.linkedTaskIds) && listValid(r.linkedCommits) &&
         listValid(r.linkedTests) && listValid(r.evidenceRefs) &&
