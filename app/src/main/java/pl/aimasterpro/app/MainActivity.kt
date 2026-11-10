@@ -317,6 +317,7 @@ class MainActivity : Activity() {
             "Rozmowy" -> showAgentCollaborationScreen()
             "Monitor API" -> showApiMonitoringScreen()
             "Diagnostyka" -> showDiagnostics()
+            "Ustawienia" -> showSettings()
             "Modele" -> showProviders()
             "Agenci" -> showAgents()
             else -> showHelp()
@@ -458,6 +459,7 @@ class MainActivity : Activity() {
             Triple("⇄", "Komunikacja", "Rozmowy"),
             Triple("◇", "Dostawcy", "Modele"),
             Triple("⌁", "Diagnostyka", "Diagnostyka"),
+            Triple("⚙", "Ustawienia", "Ustawienia"),
             Triple("✉", "Czat", "Czat")
         )
         val hs = HorizontalScrollView(this)
@@ -721,6 +723,7 @@ class MainActivity : Activity() {
         d.addView(drawerRow("Zadania i kolejka", R.drawable.ic_menu) { closeDrawer(); navigate("Zadania") })
         d.addView(drawerRow("Pamięć systemu", R.drawable.ic_copy) { closeDrawer(); navigate("Pamięć") })
         d.addView(drawerRow("Komunikacja agentów", R.drawable.ic_menu) { closeDrawer(); navigate("Rozmowy") })
+        d.addView(drawerRow("Ustawienia systemu", R.drawable.ic_menu) { closeDrawer(); navigate("Ustawienia") })
         val ver = TextView(this)
         ver.text = "AiFORTeca • wersja 0.2"
         ver.textSize = 11f
@@ -6244,6 +6247,16 @@ class MainActivity : Activity() {
                 toast(message)
                 showShell("Diagnostyka"); showDiagnostics()
             }.show()
+    }
+
+    private fun showSettings() {
+        card("USTAWIENIA AIFORTECA", "Centralne wejście do konfiguracji systemu. Zmiany w dostawcach, przypisaniach agentów i pamięci pozostają w swoich działach, z zachowaniem istniejących danych.")
+        card("Ochrona danych", "Nie wykonuj masowego resetu ani automatycznego czyszczenia. Klucze API, profile dostawców, rozmowy, zadania, definicje agentów i pamięć są danymi trwałymi. Operacje o skutkach nieodwracalnych wymagają osobnego potwierdzenia.")
+        action("Dostawcy i modele", onClick = { navigate("Modele") })
+        action("Zespół agentów", onClick = { navigate("Agenci") })
+        action("Pamięć wspólna", onClick = { navigate("Pamięć") })
+        action("Diagnostyka i limity", onClick = { navigate("Diagnostyka") })
+        card("Stan wdrożenia kontroli zmian", "Panel ustawień jest punktem wejścia. Audytowalny rejestr operacji zapisu, aktualizacji i usuwania oraz system uprawnień agentów są osobnym wymaganiem wdrożeniowym — nie oznaczamy ich jako ukończonych, dopóki nie obejmą wszystkich magazynów danych.")
     }
 
     private fun showDiagnostics() {
