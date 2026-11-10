@@ -91,7 +91,7 @@ object MasterTaskQueueStore {
             val current = tasks.firstOrNull { it.id == taskId } ?: return@mutate null
             if (current.status !in setOf(Status.QUEUED, Status.PAUSED) || agentIds.isEmpty() ||
                 agentIds.size > 8 || agentIds.distinct().size != agentIds.size || now < 0L ||
-                agentIds.any { !AgentManagerStore.isEnabled(context, it) } ||
+                agentIds.any { !AgentManagerStore.isEnabled(context, it) || pl.aimasterpro.app.agents.AgentCatalog.find(it) == null } ||
                 current.dependencies.any { dep -> tasks.none { it.id == dep && it.status == Status.COMPLETED } }) return@mutate null
             val next = current.copy(assignedAgentIds = agentIds, status = Status.ASSIGNED,
                 currentStep = "Przydzielono: ${agentIds.joinToString(", ")}", updatedAt = now)
