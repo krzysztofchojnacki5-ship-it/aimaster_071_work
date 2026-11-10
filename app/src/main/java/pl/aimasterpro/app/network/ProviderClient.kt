@@ -92,6 +92,7 @@ class ProviderClient(
 
     private val cancellationEpoch = AtomicLong(0L)
     private val requestScopeLocal = ThreadLocal<RequestScope?>()
+    private val allowInsecureLanOllamaLocal = ThreadLocal<Boolean>()
     private val activeConnections = ConcurrentHashMap<HttpURLConnection, ActiveRequest>()
     private val unscopedEpoch = Long.MIN_VALUE
 
@@ -161,7 +162,7 @@ class ProviderClient(
         val scope = requestScopeLocal.get()
         val epoch = scope?.epoch ?: unscopedEpoch
         if (isCancelled(scope)) throw cancelledException()
-        val endpoint = ProviderEndpointPolicy.validate(url, apiKey)
+        val endpoint = ProviderEndpointPolicy.validate(url, apiKey, allowInsecureLanOllamaLocal.get() == true)
         if (!endpoint.allowed) throw ProviderException(null, endpoint.message, category = endpoint.category)
         val parsedUrl = endpoint.url ?: throw ProviderException(null, "Nie udało się zweryfikować endpointu.", category = "INVALID_ENDPOINT")
         val conn = (parsedUrl.openConnection() as HttpURLConnection).apply {
@@ -292,6 +293,7 @@ class ProviderClient(
         val requestScope = scope
         if (isCancelled(requestScope)) throw cancelledException()
         requestScopeLocal.set(requestScope)
+        allowInsecureLanOllamaLocal.set(config.allowInsecureLanOllama)
         return try {
             if (isCancelled(scope)) throw cancelledException()
             chatInternal(config, systemPrompt, userText, attachmentMime, attachmentBase64)
@@ -307,6 +309,7 @@ class ProviderClient(
             throw e
         } finally {
             requestScopeLocal.remove()
+            allowInsecureLanOllamaLocal.remove()
         }
     }
 
@@ -567,7 +570,9 @@ class ProviderClient(
     ): List<ProviderModelInfo> {
         if (isCancelled(scope)) throw cancelledException()
         val previousScope = requestScopeLocal.get()
+        val previousLanOptIn = allowInsecureLanOllamaLocal.get()
         requestScopeLocal.set(scope)
+        allowInsecureLanOllamaLocal.set(config.allowInsecureLanOllama)
         return try {
             when (config.kind) {
                 ProviderKind.ANTHROPIC -> {
@@ -662,6 +667,7 @@ class ProviderClient(
             }
         } finally {
             if (previousScope == null) requestScopeLocal.remove() else requestScopeLocal.set(previousScope)
+            if (previousLanOptIn == null) allowInsecureLanOllamaLocal.remove() else allowInsecureLanOllamaLocal.set(previousLanOptIn)
         }
     }
 
