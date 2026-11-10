@@ -62,7 +62,7 @@ class ProviderCatalogSyncRunnerTest {
         val discovered = mutableListOf<String>()
         val report = ProviderCatalogSyncRunner.synchronize(
             providers = listOf("first", "second", "third"),
-            isCancelled = { ++checks >= 2 },
+            isCancelled = { ++checks >= 3 },
             discover = { provider -> discovered += provider; listOf("model") },
             save = { _, _ -> }
         )
