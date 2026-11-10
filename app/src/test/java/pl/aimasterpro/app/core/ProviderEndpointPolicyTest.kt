@@ -27,6 +27,9 @@ class ProviderEndpointPolicyTest {
         val endpoint = "http://192.168.1.50:11434/v1"
         assertEquals("SECURITY_HTTP", ProviderEndpointPolicy.validate(endpoint, "").category)
         assertTrue(ProviderEndpointPolicy.validate(endpoint, "", allowInsecureLanOllama = true).allowed)
+        assertTrue(ProviderEndpointPolicy.validate("http://192.168.1.50:11434/v1/models", "", true).allowed)
+        assertTrue(ProviderEndpointPolicy.validate("http://192.168.1.50:11434/v1/chat/completions", "", true).allowed)
+        assertEquals("SECURITY_HTTP", ProviderEndpointPolicy.validate("http://192.168.1.50:11434/v1/admin", "", true).category)
         assertEquals("SECURITY_HTTP", ProviderEndpointPolicy.validate(endpoint, "secret", allowInsecureLanOllama = true).category)
         assertEquals("SECURITY_HTTP", ProviderEndpointPolicy.validate("http://192.168.1.50:11435/v1", "", true).category)
         assertEquals("SECURITY_HTTP", ProviderEndpointPolicy.validate("http://8.8.8.8:11434/v1", "", true).category)
