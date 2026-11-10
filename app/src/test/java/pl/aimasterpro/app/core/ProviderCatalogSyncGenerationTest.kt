@@ -4,6 +4,9 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicReference
 
 class ProviderCatalogSyncGenerationTest {
     @Test
@@ -41,5 +44,37 @@ class ProviderCatalogSyncGenerationTest {
 
         assertFalse(gate.isCurrent(oldSnapshot))
         assertTrue(gate.isCurrent(newSnapshot))
+    }
+
+    @Test
+    fun snapshotCannotObserveGenerationUntilProviderSwapActionCompletes() {
+        val gate = ProviderCatalogSyncGeneration()
+        val enteredSwap = CountDownLatch(1)
+        val releaseSwap = CountDownLatch(1)
+        val snapshotFinished = CountDownLatch(1)
+        val snapshotResult = AtomicReference<Long>()
+
+        val swapThread = Thread {
+            gate.invalidateAndRun {
+                enteredSwap.countDown()
+                check(releaseSwap.await(2, TimeUnit.SECONDS))
+            }
+        }
+        swapThread.start()
+        assertTrue(enteredSwap.await(2, TimeUnit.SECONDS))
+
+        val snapshotThread = Thread {
+            snapshotResult.set(gate.snapshot())
+            snapshotFinished.countDown()
+        }
+        snapshotThread.start()
+
+        assertFalse(snapshotFinished.await(100, TimeUnit.MILLISECONDS))
+        releaseSwap.countDown()
+        assertTrue(snapshotFinished.await(2, TimeUnit.SECONDS))
+        swapThread.join(2_000)
+        snapshotThread.join(2_000)
+
+        assertEquals(1L, snapshotResult.get())
     }
 }
