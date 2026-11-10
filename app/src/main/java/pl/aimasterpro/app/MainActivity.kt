@@ -716,7 +716,11 @@ class MainActivity : Activity() {
         d.addView(divider, LinearLayout.LayoutParams(-1, 1).apply { topMargin = dp(6); bottomMargin = dp(4) })
         d.addView(drawerRow("Biblioteka plików", R.drawable.ic_copy) { closeDrawer(); showLibrary() })
         d.addView(drawerRow("Dostawcy i modele", R.drawable.ic_expand) { closeDrawer(); navigate("Modele") })
-        d.addView(drawerRow("Centrum MASTER", R.drawable.ic_menu) { closeDrawer(); navigate("Centrum") })\n        d.addView(drawerRow("Zespół agentów", R.drawable.ic_menu) { closeDrawer(); navigate("Agenci") })\n        d.addView(drawerRow("Zadania i kolejka", R.drawable.ic_menu) { closeDrawer(); navigate("Zadania") })\n        d.addView(drawerRow("Pamięć systemu", R.drawable.ic_copy) { closeDrawer(); navigate("Pamięć") })\n        d.addView(drawerRow("Komunikacja agentów", R.drawable.ic_menu) { closeDrawer(); navigate("Rozmowy") })
+        d.addView(drawerRow("Centrum MASTER", R.drawable.ic_menu) { closeDrawer(); navigate("Centrum") })
+        d.addView(drawerRow("Zespół agentów", R.drawable.ic_menu) { closeDrawer(); navigate("Agenci") })
+        d.addView(drawerRow("Zadania i kolejka", R.drawable.ic_menu) { closeDrawer(); navigate("Zadania") })
+        d.addView(drawerRow("Pamięć systemu", R.drawable.ic_copy) { closeDrawer(); navigate("Pamięć") })
+        d.addView(drawerRow("Komunikacja agentów", R.drawable.ic_menu) { closeDrawer(); navigate("Rozmowy") })
         val ver = TextView(this)
         ver.text = "AiFORTeca • wersja 0.2"
         ver.textSize = 11f
