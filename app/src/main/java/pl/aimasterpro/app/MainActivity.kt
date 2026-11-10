@@ -4376,26 +4376,16 @@ class MainActivity : Activity() {
                         return@execute
                     }
 
-                    var success = 0
-                    val failures = mutableListOf<String>()
-                    providers.forEach { provider ->
-                        if (store.isStorageUncertain()) return@forEach
-                        // Each provider is an independent failure boundary: a bad endpoint,
-                        // malformed response or local pricing-store error must not abort others.
-                        val result = runCatching {
-                            client.discoverModelDetails(provider).also { discovered ->
-                                require(discovered.isNotEmpty()) {
-                                    "API zwróciło pustą listę; zachowano poprzedni katalog"
-                                }
-                                check(!store.isStorageUncertain()) { "Magazyn konfiguracji wymaga ponownego uruchomienia" }
-                                saveModelCatalogForProvider(provider, discovered)
-                            }
-                        }
-                        if (result.isSuccess) success++
-                        else failures.add("${provider.name}: ${result.exceptionOrNull()?.message ?: "błąd synchronizacji"}")
-                    }
+                    val report = pl.aimasterpro.app.core.ProviderCatalogSyncRunner.synchronize(
+                        providers = providers,
+                        isCancelled = { store.isStorageUncertain() },
+                        discover = { provider -> client.discoverModelDetails(provider) },
+                        save = { provider, discovered -> saveModelCatalogForProvider(provider, discovered) }
+                    )
+                    val success = report.successCount
+                    val failures = report.failures.map { "${it.provider.name}: ${it.message}" }
 
-                    if (store.isStorageUncertain()) {
+                    if (report.stopped || store.isStorageUncertain()) {
                         runOnUiThread {
                             status.text = "Synchronizacja przerwana: magazyn konfiguracji wymaga ponownego uruchomienia"
                             if (showToast) toast("Nie zapisano wyników synchronizacji.")
