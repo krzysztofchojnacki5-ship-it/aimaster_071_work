@@ -114,6 +114,21 @@ class MasterTaskQueueStoreTest {
             MasterTaskQueueStore.snapshot(context).tasks.single().status)
     }
 
+    @Test fun assignedAgentProgressUpdatesCurrentStepAndAuditWithoutClosingTask() {
+        assertTrue(MasterTaskQueueStore.enqueue(context, "task-011", "Postęp", "Sprawdź status.", now = 100L))
+        assertTrue(MasterTaskQueueStore.assign(context, "task-011", listOf("critical-reviewer"), now = 101L))
+        assertTrue(MasterTaskQueueStore.transition(context, "task-011", "MASTER",
+            MasterTaskQueueStore.Status.RUNNING, "Start.", 102L))
+        assertTrue(MasterTaskQueueStore.recordAgentProgress(context, "task-011", "critical-reviewer",
+            "REQUESTING", "Wysyłam zapytanie.", "provider-free", "model-free", 1, 103L))
+        val state = MasterTaskQueueStore.snapshot(context)
+        assertEquals(MasterTaskQueueStore.Status.RUNNING, state.tasks.single().status)
+        assertTrue(state.tasks.single().currentStep.contains("REQUESTING"))
+        assertEquals("AGENT_PROGRESS", state.events.last().operation)
+        assertFalse(MasterTaskQueueStore.recordAgentProgress(context, "task-011", "unit-test-engineer",
+            "RUNNING", "Obcy agent.", now = 104L))
+    }
+
     @Test fun interruptedRunningTasksRecoverAsBlockedWithoutAutomaticReplay() {
         assertTrue(MasterTaskQueueStore.enqueue(context, "task-010", "Przerwane", "Sprawdź wynik.", now = 80L))
         assertTrue(MasterTaskQueueStore.assign(context, "task-010", listOf("critical-reviewer"), now = 81L))
