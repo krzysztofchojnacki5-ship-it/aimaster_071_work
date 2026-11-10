@@ -97,6 +97,8 @@ object OllamaModelManager {
         var events = 0
         var lastStatus = ""
         var successSeen = false
+        var responseLinesRead = 0
+        var responseCharactersRead = 0
         try {
             cancellation.ensureActive()
             // Model names are restricted to a conservative ASCII allow-list above,
@@ -111,6 +113,8 @@ object OllamaModelManager {
             if (responseStream == null) throw IOException("OLLAMA_HTTP_$responseCode")
             responseStream.bufferedReader(Charsets.UTF_8).useLines { lines ->
                 lines.forEach { rawLine ->
+                    responseLinesRead++
+                    responseCharactersRead += rawLine.length
                     cancellation.ensureActive()
                     if (rawLine.isBlank()) return@forEach
                     val item = runCatching { JSONObject(rawLine) }
@@ -138,7 +142,7 @@ object OllamaModelManager {
             }
             cancellation.ensureActive()
             if (responseCode !in 200..299) throw IOException("OLLAMA_HTTP_$responseCode")
-            if (!successSeen) throw IOException("OLLAMA_STREAM_ENDED_WITHOUT_SUCCESS")
+            if (!successSeen) throw IOException("OLLAMA_STREAM_ENDED_WITHOUT_SUCCESS: http=$responseCode, lines=$responseLinesRead, chars=$responseCharactersRead, contentType=${connection.contentType}")
             return PullResult(safeModel, completed, total, events, lastStatus)
         } catch (error: Exception) {
             if (cancellation.isCancelled) {
