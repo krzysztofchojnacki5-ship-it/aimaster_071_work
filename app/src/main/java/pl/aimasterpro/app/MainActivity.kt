@@ -4277,7 +4277,16 @@ class MainActivity : Activity() {
     )
 
     private fun readModelCatalogEntries(): List<CatalogEntry> {
-        val raw = modelCatalogPrefs.getString("models_json", "[]") ?: "[]"
+        // A provider ID can be reused by an imported backup. Never expose cached models
+        // from the previous endpoint under the newly imported provider identity.
+        if (store.isStorageUncertain()) return emptyList()
+        val raw = runCatching { modelCatalogPrefs.getString("models_json", "[]") }.getOrNull()
+            ?: return emptyList()
+        val currentProviderBaseUrls = runCatching {
+            store.allConfigs().associate { config ->
+                config.optString("id") to config.optString("baseUrl")
+            }
+        }.getOrElse { return emptyList() }
         val arr = runCatching { JSONArray(raw) }.getOrDefault(JSONArray())
         val out = mutableListOf<CatalogEntry>()
         for (i in 0 until arr.length()) {
@@ -4296,7 +4305,15 @@ class MainActivity : Activity() {
                 prompt, completion, free, o.optString("description"), cachedPrompt, cachedPromptWrite, cachedPromptWrite1h, internalReasoning
             )))
         }
-        return out.distinctBy { "${it.providerId}:${it.info.id}" }.sortedWith(compareBy({ it.providerName.lowercase() }, { it.info.id.lowercase() }))
+        return out.asSequence()
+            .filter { entry ->
+                pl.aimasterpro.app.core.ProviderCatalogCachePolicy.isEntryCurrent(
+                    entry.providerId, entry.baseUrl, currentProviderBaseUrls
+                )
+            }
+            .distinctBy { "${it.providerId}:${it.info.id}" }
+            .sortedWith(compareBy({ it.providerName.lowercase() }, { it.info.id.lowercase() }))
+            .toList()
     }
 
     private fun saveModelCatalogForProvider(provider: ProviderConfig, models: List<ProviderModelInfo>) {
