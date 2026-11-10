@@ -6398,8 +6398,7 @@ class MainActivity : Activity() {
                                 showShell("Zadania"); showTasksCenter()
                             } else toast("Nie udało się odblokować zadania.")
                         }
-                    pl.aimasterpro.app.core.MasterTaskQueueStore.Status.RUNNING,
-                    pl.aimasterpro.app.core.MasterTaskQueueStore.Status.ASSIGNED ->
+                    pl.aimasterpro.app.core.MasterTaskQueueStore.Status.RUNNING ->
                         action("Ⅱ WSTRZYMAJ ZADANIE", box) {
                             if (queueStore.transition(this, task.id, "USER",
                                     pl.aimasterpro.app.core.MasterTaskQueueStore.Status.PAUSED, "Wstrzymano z poziomu centrum zadań.")) {
