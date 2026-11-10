@@ -52,6 +52,17 @@ jobs:
           if-no-files-found: warn
       - name: Assemble debug APK
         run: ./gradlew --no-daemon assembleDebug
+      - name: Package source project
+        run: |
+          zip -r aiforteca-source-project.zip . \
+            -x ".git/*" "app/build/*" ".gradle/*" "aiforteca-source-project.zip"
+      - name: Upload source project
+        uses: actions/upload-artifact@v4
+        with:
+          name: aiforteca-source-project
+          path: aiforteca-source-project.zip
+          if-no-files-found: error
+          retention-days: 90
       - name: Upload debug APK
         if: success()
         uses: actions/upload-artifact@v4
