@@ -52,7 +52,7 @@ class OllamaModelManagerTest {
                 )
             } catch (error: Exception) {
                 throw AssertionError(
-                    "pull failed; requests=${server.requestCount.get()}; failure=${server.lastFailure}; body=${server.lastRequestBody}",
+                    "pull failed; requests=${server.requestCount.get()}; failure=${server.lastFailure}; body=${server.lastRequestBody}; responseStatus=${server.lastResponseStatus}; responseBytes=${server.lastResponseBytes}; responseWritten=${server.responseWriteCompleted}; responseText=${server.lastResponseText}; responseStatus=${server.lastResponseStatus}; responseBytes=${server.lastResponseBytes}; responseWritten=${server.responseWriteCompleted}; responseText=${server.lastResponseText}",
                     error
                 )
             }
@@ -84,7 +84,7 @@ class OllamaModelManagerTest {
                 )
             } catch (error: Exception) {
                 throw AssertionError(
-                    "pull failed; requests=${server.requestCount.get()}; failure=${server.lastFailure}; body=${server.lastRequestBody}",
+                    "pull failed; requests=${server.requestCount.get()}; failure=${server.lastFailure}; body=${server.lastRequestBody}; responseStatus=${server.lastResponseStatus}; responseBytes=${server.lastResponseBytes}; responseWritten=${server.responseWriteCompleted}; responseText=${server.lastResponseText}; responseStatus=${server.lastResponseStatus}; responseBytes=${server.lastResponseBytes}; responseWritten=${server.responseWriteCompleted}; responseText=${server.lastResponseText}",
                     error
                 )
             }
@@ -103,7 +103,7 @@ class OllamaModelManagerTest {
                 OllamaModelManager.pull("http://127.0.0.1:${server.port}/v1", "missing:model")
             }
             assertTrue(
-                "unexpected error=${error.message}; requests=${server.requestCount.get()}; failure=${server.lastFailure}; body=${server.lastRequestBody}",
+                "unexpected error=${error.message}; requests=${server.requestCount.get()}; failure=${server.lastFailure}; body=${server.lastRequestBody}; responseStatus=${server.lastResponseStatus}; responseBytes=${server.lastResponseBytes}; responseWritten=${server.responseWriteCompleted}; responseText=${server.lastResponseText}; responseStatus=${server.lastResponseStatus}; responseBytes=${server.lastResponseBytes}; responseWritten=${server.responseWriteCompleted}; responseText=${server.lastResponseText}",
                 error.message.orEmpty().contains("OLLAMA_PULL_ERROR")
             )
         } finally {
