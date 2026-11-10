@@ -77,6 +77,8 @@ class MasterTaskQueueStoreTest {
             listOf("critical-reviewer", "unit-test-engineer"), now = 61L))
         assertTrue(MasterTaskQueueStore.transition(context, "task-008", "MASTER",
             MasterTaskQueueStore.Status.RUNNING, "TeamRunEngine start.", 62L))
+        assertTrue(MasterTaskQueueStore.recordAgentMessage(context, "task-008",
+            "critical-reviewer", "MASTER", "REPORT", "Analiza zakończona.", 62L))
 
         assertTrue(MasterTaskQueueStore.recordAgentResult(context, "task-008", "critical-reviewer",
             MasterTaskQueueStore.Status.COMPLETED, "Recenzja gotowa.", 63L))
@@ -92,6 +94,8 @@ class MasterTaskQueueStoreTest {
         val state = MasterTaskQueueStore.snapshot(context)
         assertEquals(MasterTaskQueueStore.Status.COMPLETED, state.tasks.single().status)
         assertEquals(2, state.events.count { it.operation == "AGENT_RESULT" })
+        assertEquals(1, state.events.count { it.operation == "AGENT_MESSAGE" })
+        assertEquals("critical-reviewer", state.events.first { it.operation == "AGENT_MESSAGE" }.actor)
     }
 
     @Test fun failedAgentMakesMultiAgentTaskFailedAfterAllReports() {
