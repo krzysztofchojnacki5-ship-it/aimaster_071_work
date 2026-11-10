@@ -6311,26 +6311,132 @@ class MainActivity : Activity() {
     private fun showTasksCenter() {
         val col = content
         col.setPadding(dp(16), dp(14), dp(16), dp(24))
+        val queueStore = pl.aimasterpro.app.core.MasterTaskQueueStore
+        val queue = queueStore.snapshot(this)
         val work = pl.aimasterpro.app.core.MasterWorkJournalStore.latest(this, 40)
         val checkpoints = pl.aimasterpro.app.core.TaskCheckpointStore.latest(this)
         val latestByTask = checkpoints.distinctBy { it.taskId }
+
+        card("CENTRUM ZADAŃ • MASTER", "Kolejka operacyjna, przydziały agentów, zależności i historia zmian statusu. Zadania z tej kolejki są trwałe i oddzielone od planów oraz checkpointów starszego dziennika.")
+        if (queue.status != pl.aimasterpro.app.core.MasterTaskQueueStore.ReadStatus.AVAILABLE) {
+            card("KOLEJKA NIEDOSTĘPNA", "Stan magazynu: ${queue.status}\nKod: ${queue.errorCode}\nZapis i przydzielanie są zablokowane. Dane nie zostaną automatycznie nadpisane.")
+        } else {
+            val counts = pl.aimasterpro.app.core.MasterTaskQueueStore.Status.values().associateWith { status ->
+                queue.tasks.count { it.status == status }
+            }
+            card("STAN WORKSPACE", "Wszystkie: ${queue.tasks.size} • oczekujące: ${counts[pl.aimasterpro.app.core.MasterTaskQueueStore.Status.QUEUED]} • przydzielone: ${counts[pl.aimasterpro.app.core.MasterTaskQueueStore.Status.ASSIGNED]}\nW toku: ${counts[pl.aimasterpro.app.core.MasterTaskQueueStore.Status.RUNNING]} • wstrzymane: ${counts[pl.aimasterpro.app.core.MasterTaskQueueStore.Status.PAUSED]} • zablokowane: ${counts[pl.aimasterpro.app.core.MasterTaskQueueStore.Status.BLOCKED]}\nUkończone: ${counts[pl.aimasterpro.app.core.MasterTaskQueueStore.Status.COMPLETED]} • błędne: ${counts[pl.aimasterpro.app.core.MasterTaskQueueStore.Status.FAILED]} • anulowane: ${counts[pl.aimasterpro.app.core.MasterTaskQueueStore.Status.CANCELLED]}\nZdarzenia audytu: ${queue.events.size}")
+            action("＋ UTWÓRZ ZADANIE MASTER-A") {
+                val titleInput = field("Nazwa zadania")
+                val objectiveInput = field("Cel i kryteria wykonania")
+                objectiveInput.setSingleLine(false)
+                objectiveInput.minLines = 3
+                objectiveInput.maxLines = 5
+                val form = LinearLayout(this).apply {
+                    orientation = LinearLayout.VERTICAL
+                    setPadding(dp(20), dp(8), dp(20), 0)
+                    addView(titleInput)
+                    addView(objectiveInput, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(8) })
+                }
+                AlertDialog.Builder(this).setTitle("Nowe zadanie w kolejce")
+                    .setView(form)
+                    .setNegativeButton("Anuluj", null)
+                    .setPositiveButton("Dodaj do kolejki") { _, _ ->
+                        val taskTitle = titleInput.text.toString().trim()
+                        val objective = objectiveInput.text.toString().trim()
+                        if (queueStore.enqueue(this, "task-" + java.util.UUID.randomUUID().toString(),
+                                taskTitle, objective)) {
+                            toast("Zadanie zapisane. MASTER może teraz przydzielić agentów.")
+                            showShell("Zadania"); showTasksCenter()
+                        } else toast("Nie zapisano zadania. Sprawdź nazwę, cel i stan magazynu.")
+                    }.show()
+            }
+            action("↻ ODŚWIEŻ WORKSPACE", onClick = { showShell("Zadania"); showTasksCenter() })
+
+            if (queue.tasks.isEmpty()) {
+                card("KOLEJKA JEST PUSTA", "Dodaj zadanie. Następnie MASTER może przypisać jednego lub kilku aktywnych agentów.")
+            }
+            queue.tasks.sortedWith(compareBy<pl.aimasterpro.app.core.MasterTaskQueueStore.Task> { it.status.ordinal }
+                .thenBy { it.priority }.thenByDescending { it.updatedAt }).forEach { task ->
+                val assigned = task.assignedAgentIds.ifEmpty { listOf("brak") }.joinToString(", ")
+                val deps = task.dependencies.ifEmpty { listOf("brak") }.joinToString(", ")
+                val stamp = java.text.SimpleDateFormat("dd.MM.yyyy HH:mm", java.util.Locale.getDefault())
+                    .format(java.util.Date(task.updatedAt))
+                val relatedEvents = queue.events.filter { it.taskId == task.id }.takeLast(5).asReversed()
+                    .joinToString("\n") { "${it.actor} • ${it.fromStatus.ifBlank { "—" }} → ${it.toStatus} • ${it.detail}" }
+                val box = card("${task.title}  •  P${task.priority}", "Status: ${task.status}\nID: ${task.id}\nCel: ${task.objective}\nAgenci: $assigned\nZależności: $deps\nBieżący krok: ${task.currentStep}\nAktualizacja: $stamp")
+                if (task.status in setOf(pl.aimasterpro.app.core.MasterTaskQueueStore.Status.QUEUED,
+                        pl.aimasterpro.app.core.MasterTaskQueueStore.Status.PAUSED)) {
+                    action("PRZYDZIEL AGENTÓW", box) {
+                        val catalog = pl.aimasterpro.app.core.AgentManagerStore.enabledCatalog(this)
+                        if (catalog.isEmpty()) { toast("Brak aktywnych agentów albo magazyn katalogu jest niedostępny."); return@action }
+                        val selected = BooleanArray(catalog.size) { catalog[it].id in task.assignedAgentIds }
+                        AlertDialog.Builder(this).setTitle("Przydział: ${task.title}")
+                            .setMultiChoiceItems(catalog.map { "${it.name} — ${it.category}" }.toTypedArray(), selected) { _, which, checked ->
+                                selected[which] = checked
+                            }.setNegativeButton("Anuluj", null)
+                            .setPositiveButton("Zapisz przydział") { _, _ ->
+                                val ids = catalog.indices.filter { selected[it] }.map { catalog[it].id }
+                                if (queueStore.assign(this, task.id, ids)) {
+                                    toast("Zapisano przydział: ${ids.size} agentów.")
+                                    showShell("Zadania"); showTasksCenter()
+                                } else toast("Przydział odrzucony. Sprawdź status zadania i aktywność agentów.")
+                            }.show()
+                    }
+                }
+                when (task.status) {
+                    pl.aimasterpro.app.core.MasterTaskQueueStore.Status.ASSIGNED ->
+                        action("▶ ROZPOCZNIJ PRZEBIEG", box) {
+                            if (queueStore.transition(this, task.id, "MASTER",
+                                    pl.aimasterpro.app.core.MasterTaskQueueStore.Status.RUNNING, "MASTER oznaczył zadanie jako uruchomione.")) {
+                                showShell("Zadania"); showTasksCenter()
+                            } else toast("Nie udało się zmienić statusu.")
+                        }
+                    pl.aimasterpro.app.core.MasterTaskQueueStore.Status.BLOCKED ->
+                        action("ODBLOCKUJ → KOLEJKA", box) {
+                            if (queueStore.transition(this, task.id, "MASTER",
+                                    pl.aimasterpro.app.core.MasterTaskQueueStore.Status.QUEUED, "MASTER przywrócił zadanie do kolejki.")) {
+                                showShell("Zadania"); showTasksCenter()
+                            } else toast("Nie udało się odblokować zadania.")
+                        }
+                    pl.aimasterpro.app.core.MasterTaskQueueStore.Status.RUNNING,
+                    pl.aimasterpro.app.core.MasterTaskQueueStore.Status.ASSIGNED ->
+                        action("Ⅱ WSTRZYMAJ ZADANIE", box) {
+                            if (queueStore.transition(this, task.id, "USER",
+                                    pl.aimasterpro.app.core.MasterTaskQueueStore.Status.PAUSED, "Wstrzymano z poziomu centrum zadań.")) {
+                                showShell("Zadania"); showTasksCenter()
+                            } else toast("Nie udało się wstrzymać zadania.")
+                        }
+                    else -> Unit
+                }
+                if (task.status !in setOf(pl.aimasterpro.app.core.MasterTaskQueueStore.Status.COMPLETED,
+                        pl.aimasterpro.app.core.MasterTaskQueueStore.Status.FAILED,
+                        pl.aimasterpro.app.core.MasterTaskQueueStore.Status.CANCELLED)) {
+                    action("ANULUJ ZADANIE", box) {
+                        AlertDialog.Builder(this).setTitle("Anulować zadanie?")
+                            .setMessage("Zadanie pozostanie w historii. Nie usuwam jego danych ani audytu.")
+                            .setNegativeButton("Wróć", null)
+                            .setPositiveButton("Anuluj zadanie") { _, _ ->
+                                if (queueStore.transition(this, task.id, "USER",
+                                        pl.aimasterpro.app.core.MasterTaskQueueStore.Status.CANCELLED, "Anulowano przez użytkownika.")) {
+                                    showShell("Zadania"); showTasksCenter()
+                                } else toast("Nie udało się anulować zadania.")
+                            }.show()
+                    }
+                }
+                if (relatedEvents.isNotBlank()) card("Historia • ${task.title}", relatedEvents)
+            }
+        }
+
         val active = work.count { it.status == "ACTIVE" }
         val blocked = work.count { it.status == "BLOCKED" }
         val paused = work.count { it.status == "PAUSED" }
-        card("ZADANIA MASTER-A", "Trwałe plany pracy koordynatora, checkpointy i statusy. Ten ekran odczytuje lokalne dzienniki — nie uruchamia zapytań API.")
-        card("Kolejka i stan", "Plany zapisane: ${work.size}\nAktywne: $active • wstrzymane: $paused • zablokowane: $blocked\nCheckpointy zadań: ${latestByTask.size}")
-        action("↻ ODŚWIEŻ ZADANIA", onClick = { showShell("Zadania"); showTasksCenter() })
-        if (work.isEmpty() && latestByTask.isEmpty()) {
-            card("Brak zapisanych zadań", "Gdy MASTER rozpocznie pracę zespołową, plan i postęp pojawią się tutaj.")
-        }
-        work.forEach { record ->
-            val stamp = java.text.SimpleDateFormat("dd.MM.yyyy HH:mm", java.util.Locale.getDefault())
-                .format(java.util.Date(record.updatedAt))
+        card("DZIENNIK PLANÓW MASTER-A", "Starsze plany: ${work.size} • aktywne: $active • wstrzymane: $paused • zablokowane: $blocked\nCheckpointy: ${latestByTask.size}. Dziennik pozostaje zachowany i nie jest automatycznie migrowany do nowej kolejki.")
+        work.take(20).forEach { record ->
             val related = latestByTask.firstOrNull { it.taskId == record.taskId }
-            card(record.title, "Status: ${record.status}\nCel: ${record.objective}\nBieżący krok: ${record.currentStep}\nOstatnia aktualizacja: $stamp\nCheckpoint: ${related?.status ?: "brak"}\nNastępne kroki: ${record.nextSteps.take(4).joinToString(" • ").ifBlank { "nie określono" }}")
+            card(record.title, "Status: ${record.status}\nCel: ${record.objective}\nBieżący krok: ${record.currentStep}\nCheckpoint: ${related?.status ?: "brak"}\nNastępne kroki: ${record.nextSteps.take(4).joinToString(" • ").ifBlank { "nie określono" }}")
         }
         if (latestByTask.isNotEmpty()) {
-            card("Ostatnie checkpointy", latestByTask.take(20).joinToString("\n") { event ->
+            card("OSTATNIE CHECKPOINTY", latestByTask.take(20).joinToString("\n") { event ->
                 "${event.agentId} • ${event.status} • ${event.detail.take(110)}"
             })
         }
