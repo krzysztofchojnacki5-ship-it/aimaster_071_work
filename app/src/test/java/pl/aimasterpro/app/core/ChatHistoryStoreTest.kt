@@ -451,4 +451,35 @@ class ChatHistoryStoreTest {
         assertNull(ChatHistoryStore.readLastUserChatId(context))
     }
 
+
+    @Test fun selectingChatCommitsCanonicalAndUserNavigationTogether() {
+        val first = "first-chat"
+        val second = "second-chat"
+        assertTrue(ChatHistoryStore.selectChat(context, first))
+        assertTrue(ChatHistoryStore.selectChat(context, second))
+
+        val root = ChatHistoryStore.readRoot(context)!!
+        assertEquals(second, root.optString("currentId"))
+        assertEquals(second, ChatHistoryStore.readLastUserChatId(context))
+        assertTrue(root.getJSONObject("chats").has(first))
+        assertTrue(root.getJSONObject("chats").has(second))
+    }
+
+    @Test fun selectingAssistantChatDoesNotOverwriteLastUserNavigation() {
+        assertTrue(ChatHistoryStore.selectChat(context, "user-chat"))
+        assertTrue(ChatHistoryStore.selectChat(context, "assistant-dedicated"))
+        val root = ChatHistoryStore.readRoot(context)!!
+        assertEquals("assistant-dedicated", root.optString("currentId"))
+        assertEquals("user-chat", ChatHistoryStore.readLastUserChatId(context))
+    }
+
+    @Test fun failedChatSelectionDoesNotChangeEitherNavigationPointer() {
+        assertTrue(ChatHistoryStore.selectChat(context, "before"))
+        val corrupt = """{"chats":{"broken":""".trimIndent()
+        assertTrue(prefs.edit().putString("chats_v2", corrupt).commit())
+        assertFalse(ChatHistoryStore.selectChat(context, "after"))
+        assertEquals(corrupt, prefs.getString("chats_v2", null))
+        assertEquals("before", prefs.getString("last_user_chat_id", null))
+    }
+
 }
