@@ -3053,26 +3053,12 @@ class MainActivity : Activity() {
             toast("Nie można bezpiecznie unieważnić aktywnego zakresu dowodów. Zmiana czatu została zablokowana.")
             return
         }
-        val r = pl.aimasterpro.app.core.ChatHistoryStore.readRoot(this)
-            ?: run { toast("Historia rozmów jest uszkodzona; otwarcie czatu zostało zablokowane."); return }
-        currentChatId = id
-        messages.clear()
-        assistantTaskIds.clear()
-        agentActivity.clear()
+        if (!restoreMessagesForCurrentChat(id)) return
         draft = ""
-        val chatObj = r.optJSONObject("chats")?.optJSONObject(id)
-        val arr = chatObj?.optJSONArray("messages") ?: JSONArray()
-        for (i in 0 until arr.length()) { val item = arr.getJSONObject(i); messages.add(item.optString("role") to item.optString("text")) }
-        val taskIds = chatObj?.optJSONArray("assistantTaskIds") ?: JSONArray()
-        for (i in 0 until taskIds.length()) assistantTaskIds.add(taskIds.optString(i))
-        alignAssistantTaskIds()
-        val actArr = chatObj?.optJSONArray("agentActivity") ?: JSONArray()
-        for (i in 0 until actArr.length()) { agentActivity.add(actArr.getString(i)) }
-        saveCurrentId()
         if (isAssistantChatId(id)) {
             selectedAgent = AgentRole.ASSISTANT
             showShell("Asystent")
-            showChat()
+            showChat(snapshotAlreadyRestored = true)
         } else {
             navigate("Czat")
         }
@@ -3281,6 +3267,13 @@ class MainActivity : Activity() {
 
         // Parse the complete snapshot before touching live UI state. A failed read/parse must
         // not leave messages, task IDs, and agent activity belonging to different conversations.
+        // Persist the target first. If commit is ambiguous, keep the previous live conversation.
+        if (!pl.aimasterpro.app.core.ChatHistoryStore.selectChat(this, chatId)) {
+            android.util.Log.e("AIMasterChat", "Nie udało się trwale zatwierdzić wyboru rozmowy $chatId.")
+            toast("Nie udało się trwale otworzyć rozmowy. Pozostawiono poprzedni widok.")
+            return false
+        }
+
         messages.clear()
         messages.addAll(snapshot.messages)
         assistantTaskIds.clear()
