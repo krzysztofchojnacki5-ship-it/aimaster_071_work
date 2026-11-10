@@ -60,7 +60,7 @@ object OllamaModelManager {
     }
 
     /** Converts OpenAI-compatible Ollama base URL (/v1) to the native API root. */
-    fun nativeBaseUrl(baseUrl: String): String {
+    fun nativeBaseUrl(baseUrl: String, allowInsecureLanOllama: Boolean = false): String {
         val uri = URI(baseUrl.trim())
         require(uri.scheme.equals("http", true) || uri.scheme.equals("https", true)) {
             "OLLAMA_URL_SCHEME_UNSUPPORTED"
@@ -69,6 +69,8 @@ object OllamaModelManager {
             uri.rawQuery == null && uri.rawFragment == null) { "OLLAMA_URL_INVALID" }
         val path = uri.path.orEmpty().trimEnd('/')
         require(path.isBlank() || path == "/v1") { "OLLAMA_URL_PATH_UNSUPPORTED" }
+        val endpointDecision = ProviderEndpointPolicy.validate(baseUrl.trim(), "", allowInsecureLanOllama)
+        require(endpointDecision.allowed) { endpointDecision.category }
         return URI(uri.scheme, null, uri.host, uri.port, "", null, null).toASCIIString().trimEnd('/')
     }
 
@@ -76,12 +78,13 @@ object OllamaModelManager {
         baseUrl: String,
         model: String,
         cancellation: Cancellation = Cancellation(),
+        allowInsecureLanOllama: Boolean = false,
         onProgress: (Progress) -> Unit = {}
     ): PullResult {
         val safeModel = model.trim()
         require(modelNamePattern.matches(safeModel)) { "OLLAMA_MODEL_NAME_INVALID" }
         cancellation.ensureActive()
-        val endpoint = URL("${nativeBaseUrl(baseUrl)}/api/pull")
+        val endpoint = URL("${nativeBaseUrl(baseUrl, allowInsecureLanOllama)}/api/pull")
         val connection = endpoint.openConnection() as HttpURLConnection
         connection.connectTimeout = 15_000
         connection.readTimeout = 120_000
