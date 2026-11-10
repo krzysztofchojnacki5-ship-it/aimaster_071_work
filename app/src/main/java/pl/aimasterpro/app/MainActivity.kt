@@ -4063,6 +4063,9 @@ class MainActivity : Activity() {
                 box.addView(b, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(5) })
             }
             providerButton("POBIERZ / ODŚWIEŻ MODELE") { discover(p) }
+            if (pl.aimasterpro.app.core.OllamaModelManager.isOllamaProvider(p)) {
+                providerButton("⬇ POBIERZ MODEL LOKALNY (OLLAMA)") { showOllamaModelPullDialog(p) }
+            }
             providerButton("TESTUJ AKTUALNY MODEL") { if (p.model.isBlank()) toast("Najpierw wybierz model w katalogu.") else testProvider(p) }
             providerButton("EDYTUJ DOSTAWCĘ / KLUCZ") { providerDialog(p) }
             providerButton("RESETUJ LICZNIK TOKENÓW") { TokenTracker.resetUsage(this, p.id); showShell("Modele"); showProviders() }
@@ -4094,6 +4097,124 @@ class MainActivity : Activity() {
         if (lastAttempt == 0L || System.currentTimeMillis() - lastAttempt > 6 * 60 * 60 * 1000L) {
             refreshAllModelCatalogs(showToast = false)
         }
+    }
+
+    /** Opens the native Ollama pull workflow; cloud-provider catalog discovery never downloads model weights. */
+    private fun showOllamaModelPullDialog(provider: ProviderConfig) {
+        if (!pl.aimasterpro.app.core.OllamaModelManager.isOllamaProvider(provider)) {
+            toast("Pobieranie wag jest dostępne wyłącznie dla lokalnego Ollama.")
+            return
+        }
+        if (provider.baseUrl.isBlank()) {
+            toast("Najpierw ustaw adres lokalnego serwera Ollama.")
+            providerDialog(provider)
+            return
+        }
+
+        val modelInput = EditText(this).apply {
+            hint = "np. qwen2.5-coder:7b"
+            setText(provider.model.takeIf { it.isNotBlank() }.orEmpty())
+            setTextColor(white)
+            isSingleLine = true
+            inputType = android.text.InputType.TYPE_CLASS_TEXT
+        }
+        val contentView = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(20), dp(8), dp(20), dp(4))
+            addView(TextView(this@MainActivity).apply {
+                text = "Podaj identyfikator modelu z biblioteki Ollama. Model zostanie pobrany na komputer/serwer, na którym działa Ollama — nie do pamięci telefonu."
+                setTextColor(muted)
+                textSize = 12f
+            })
+            addView(modelInput)
+            addView(TextView(this@MainActivity).apply {
+                text = "Serwer: ${provider.baseUrl}\nWymagane połączenie sieciowe z urządzenia do serwera Ollama."
+                setTextColor(muted)
+                textSize = 11f
+                setPadding(0, dp(8), 0, 0)
+            })
+        }
+        val dialog = AlertDialog.Builder(this)
+            .setTitle("Pobierz model lokalny")
+            .setView(contentView)
+            .setPositiveButton("Pobierz", null)
+            .setNegativeButton("Anuluj", null)
+            .create()
+        dialog.setOnShowListener {
+            dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
+                val model = modelInput.text.toString().trim()
+                if (!Regex("[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}").matches(model)) {
+                    modelInput.error = "Nieprawidłowy identyfikator modelu"
+                    return@setOnClickListener
+                }
+                val cancellation = pl.aimasterpro.app.core.OllamaModelManager.Cancellation()
+                val progress = android.app.ProgressDialog(this).apply {
+                    setTitle("Pobieranie: $model")
+                    setMessage("Łączenie z lokalnym Ollama…")
+                    setProgressStyle(android.app.ProgressDialog.STYLE_HORIZONTAL)
+                    max = 100
+                    progress = 0
+                    setCancelable(true)
+                    setCanceledOnTouchOutside(false)
+                    setOnCancelListener { cancellation.cancel() }
+                }
+                dialog.dismiss()
+                progress.show()
+                executor.execute {
+                    val result = runCatching {
+                        pl.aimasterpro.app.core.OllamaModelManager.pull(provider.baseUrl, model, cancellation) { update ->
+                            val detail = buildString {
+                                append(update.status.ifBlank { "Pobieranie" })
+                                update.percent?.let { append(" • $it%") }
+                                if (update.totalBytes != null && update.completedBytes != null) {
+                                    append(" • ")
+                                    append("%.1f".format(java.util.Locale.US, update.completedBytes / 1_048_576.0))
+                                    append("/")
+                                    append("%.1f".format(java.util.Locale.US, update.totalBytes / 1_048_576.0))
+                                    append(" MiB")
+                                }
+                            }
+                            runOnUiThread {
+                                if (progress.isShowing) {
+                                    update.percent?.let { progress.progress = it }
+                                    progress.setMessage(detail)
+                                }
+                            }
+                        }
+                    }
+                    runOnUiThread {
+                        if (progress.isShowing) progress.dismiss()
+                        if (isFinishing || isDestroyed) return@runOnUiThread
+                        if (result.isSuccess) {
+                            val pulled = result.getOrThrow()
+                            AlertDialog.Builder(this)
+                                .setTitle("Model pobrany")
+                                .setMessage(
+                                    "Model: ${pulled.model}\nStatus: ${pulled.finalStatus}\n" +
+                                        "Pobrano: ${pulled.completedBytes} B / ${pulled.totalBytes} B\n" +
+                                        "Zdarzenia postępu: ${pulled.progressEvents}\n\n" +
+                                        "Teraz odświeżę katalog modeli Ollama."
+                                )
+                                .setPositiveButton("Odśwież katalog") { _, _ -> discover(provider) }
+                                .setNegativeButton("Zamknij", null)
+                                .show()
+                        } else {
+                            val error = result.exceptionOrNull()
+                            if (error is java.util.concurrent.CancellationException || cancellation.isCancelled) {
+                                toast("Pobieranie modelu anulowane.")
+                            } else {
+                                AlertDialog.Builder(this)
+                                    .setTitle("Nie udało się pobrać modelu")
+                                    .setMessage(error?.message ?: "Nieznany błąd Ollama.")
+                                    .setPositiveButton("OK", null)
+                                    .show()
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        dialog.show()
     }
 
     private data class CatalogEntry(
