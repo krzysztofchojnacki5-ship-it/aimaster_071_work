@@ -23,6 +23,18 @@ class ProviderEndpointPolicyTest {
         assertEquals("INVALID_ENDPOINT", ProviderEndpointPolicy.validate("https://example.test:0/v1", "").category)
     }
 
+    @Test fun privateLanOllamaRequiresExplicitOptInAndNeverAllowsCredentials() {
+        val endpoint = "http://192.168.1.50:11434/v1"
+        assertEquals("SECURITY_HTTP", ProviderEndpointPolicy.validate(endpoint, "").category)
+        assertTrue(ProviderEndpointPolicy.validate(endpoint, "", allowInsecureLanOllama = true).allowed)
+        assertEquals("SECURITY_HTTP", ProviderEndpointPolicy.validate(endpoint, "secret", allowInsecureLanOllama = true).category)
+        assertEquals("SECURITY_HTTP", ProviderEndpointPolicy.validate("http://192.168.1.50:11435/v1", "", true).category)
+        assertEquals("SECURITY_HTTP", ProviderEndpointPolicy.validate("http://8.8.8.8:11434/v1", "", true).category)
+        assertEquals("SECURITY_HTTP", ProviderEndpointPolicy.validate("http://172.15.0.2:11434/v1", "", true).category)
+        assertTrue(ProviderEndpointPolicy.validate("http://172.16.0.2:11434/v1", "", true).allowed)
+        assertTrue(ProviderEndpointPolicy.validate("http://10.1.2.3:11434/v1", "", true).allowed)
+    }
+
     @Test fun rejectsUrlCredentialsAndAllCredentialBearingCleartextEndpoints() {
         assertEquals("URL_CREDENTIALS_NOT_ALLOWED", ProviderEndpointPolicy.validate("https://user:pass@example.test/v1", "").category)
         assertEquals("URL_CREDENTIALS_NOT_ALLOWED", ProviderEndpointPolicy.validate("http://user:pass@localhost/v1", "").category)
