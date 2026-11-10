@@ -6431,7 +6431,16 @@ class MainActivity : Activity() {
         card("DZIENNIK PLANÓW MASTER-A", "Starsze plany: ${work.size} • aktywne: $active • wstrzymane: $paused • zablokowane: $blocked\nCheckpointy: ${latestByTask.size}. Dziennik pozostaje zachowany i nie jest automatycznie migrowany do nowej kolejki.")
         work.take(20).forEach { record ->
             val related = latestByTask.firstOrNull { it.taskId == record.taskId }
-            card(record.title, "Status: ${record.status}\nCel: ${record.objective}\nBieżący krok: ${record.currentStep}\nCheckpoint: ${related?.status ?: "brak"}\nNastępne kroki: ${record.nextSteps.take(4).joinToString(" • ").ifBlank { "nie     /**
+            card(record.title, "Status: ${record.status}\nCel: ${record.objective}\nBieżący krok: ${record.currentStep}\nCheckpoint: ${related?.status ?: "brak"}\nNastępne kroki: ${record.nextSteps.take(4).joinToString(" • ").ifBlank { "nie określono" }}")
+        }
+        if (latestByTask.isNotEmpty()) {
+            card("OSTATNIE CHECKPOINTY", latestByTask.take(20).joinToString("\n") { event ->
+                "${event.agentId} • ${event.status} • ${event.detail.take(110)}"
+            })
+        }
+    }
+
+    /**
      * Executes a durable queue item through the same provider routing, free-model guard,
      * Smart Budget, usage ledger, checkpoints and result archive used by MASTER chat.
      */
@@ -6652,16 +6661,6 @@ class MainActivity : Activity() {
             }
         }
     }
-
-określono" }}")
-        }
-        if (latestByTask.isNotEmpty()) {
-            card("OSTATNIE CHECKPOINTY", latestByTask.take(20).joinToString("\n") { event ->
-                "${event.agentId} • ${event.status} • ${event.detail.take(110)}"
-            })
-        }
-    }
-
     private fun showMemory() {
         pl.aimasterpro.app.core.QualityLearningStore.syncApprovedAgentMemories(this)
         val memories = pl.aimasterpro.app.core.AiMemoryStore.getMemories(this)
