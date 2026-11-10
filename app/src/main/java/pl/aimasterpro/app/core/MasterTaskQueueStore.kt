@@ -78,7 +78,10 @@ object MasterTaskQueueStore {
             priority !in 0..4 || now < 0L || dependencies.size > 20 ||
             dependencies.distinct().size != dependencies.size || id in dependencies ||
             dependencies.any { dep -> tasks.none { it.id == dep && it.status == Status.COMPLETED } }) return@mutate null
-        val task = Task(id, title.trim(), objective.trim(), emptyList(), dependencies, priority,
+        val safeTitle = CommunicationLogSanitizer.sanitize(title.trim()).take(180)
+        val safeObjective = CommunicationLogSanitizer.sanitize(objective.trim()).take(1200)
+        if (safeTitle.isBlank() || safeObjective.isBlank()) return@mutate null
+        val task = Task(id, safeTitle, safeObjective, emptyList(), dependencies, priority,
             Status.QUEUED, "Oczekuje na decyzję MASTER-a.", now, now)
         Triple(tasks + task, events + event(id, "MASTER", "CREATE", "", Status.QUEUED.name,
             "Utworzono zadanie w kolejce.", now), true)
@@ -175,7 +178,8 @@ object MasterTaskQueueStore {
 
     private fun event(taskId: String, actor: String, operation: String, from: String,
                       to: String, detail: String, now: Long) =
-        Event(UUID.randomUUID().toString(), taskId, actor, operation, from, to, detail.take(500), now)
+        Event(UUID.randomUUID().toString(), taskId, actor, operation, from, to,
+            CommunicationLogSanitizer.sanitize(detail).take(500), now)
 
     private fun mutate(
         context: Context,
