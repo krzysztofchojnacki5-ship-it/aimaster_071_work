@@ -1908,6 +1908,8 @@ class MainActivity : Activity() {
                             }
                         }
                         val memoryContext = pl.aimasterpro.app.core.AiMemoryStore.contextString(this, prompt, maxChars = 2_200)
+                        val projectSourceContext = buildProjectSourceContext(prompt)
+                        logProjectSourceContext(chatId, projectSourceContext)
                         val evidenceContext = buildMasterEvidenceContext(chatId)
                         masterEvidenceForQualityGate = evidenceContext
                         logAgentForChat(chatId, "🧾 Dowody MASTER-a: ${evidenceContext.status} • rekordy=${evidenceContext.evidenceCount} • claims=${evidenceContext.agentClaimCount}.")
@@ -1916,6 +1918,9 @@ class MainActivity : Activity() {
                             if (memoryContext.isNotBlank()) append("\n\nPamięć ciągła:\n").append(memoryContext)
                             if (decisionContext.isNotBlank()) append("\n\nHistoria decyzji MASTER-a:\n").append(decisionContext)
                             if (errorContext.isNotBlank()) append("\n\nZnane incydenty i błędy:\n").append(errorContext)
+                            if (projectSourceContext.status == pl.aimasterpro.app.core.ProjectSourceContextBuilder.Status.READY) {
+                                append("\n\n").append(projectSourceContext.contextText)
+                            }
                             append("\n\n").append(evidenceContext.contextText)
                         }
                         val resp = chatWithFallback(
@@ -1979,7 +1984,14 @@ class MainActivity : Activity() {
                         task.agentId to (usableAssigned ?: safeConfig)
                     }.toMap()
 
-                    val projectContext = pl.aimasterpro.app.core.ProjectCodebase.fullContext()
+                    val projectSourceContext = buildProjectSourceContext(prompt)
+                    logProjectSourceContext(chatId, projectSourceContext)
+                    val projectContext = buildString {
+                        append(pl.aimasterpro.app.core.ProjectCodebase.fullContext())
+                        if (projectSourceContext.status == pl.aimasterpro.app.core.ProjectSourceContextBuilder.Status.READY) {
+                            append("\n\n").append(projectSourceContext.contextText)
+                        }
+                    }
                     val explicitTeamRequest = listOf("cały zespół", "caly zespol", "wszyscy agenci", "uruchom cały zespół", "uruchom caly zespol").any(prompt.lowercase(java.util.Locale.ROOT)::contains)
                     val adaptivePlan = pl.aimasterpro.app.core.AdaptiveExecutionPolicy.plan(prompt, tasks.size, explicitTeamRequest, routing.mode == pl.aimasterpro.app.agents.AgentRoutingPolicy.Mode.TEAM)
                     val adaptiveTasks = tasks.take(adaptivePlan.maxAgents)
@@ -3404,6 +3416,54 @@ class MainActivity : Activity() {
         if (screen == "Rozmowy" && collaborationChatId == chatId) {
             runOnUiThread { refreshCollaborationTimeline(chatId) }
         }
+    }
+
+    /** Reads only manifest-owned source files while holding the process-wide workspace gate. */
+    private fun buildProjectSourceContext(
+        prompt: String
+    ): pl.aimasterpro.app.core.ProjectSourceContextBuilder.Result {
+        val busy = pl.aimasterpro.app.core.ProjectSourceContextBuilder.Result(
+            pl.aimasterpro.app.core.ProjectSourceContextBuilder.Status.WORKSPACE_BUSY, "", emptyList(), 0, 0
+        )
+        return runCatching {
+            pl.aimasterpro.app.core.ProjectWorkspaceOperationLock.tryWithLock {
+                val workspace = pl.aimasterpro.app.core.ProjectWorkspaceStore(File(filesDir, "project_workspace"))
+                val info = workspace.currentInfo()
+                    ?: return@tryWithLock pl.aimasterpro.app.core.ProjectSourceContextBuilder.Result(
+                        pl.aimasterpro.app.core.ProjectSourceContextBuilder.Status.NOT_IMPORTED, "", emptyList(), 0, 0
+                    )
+                val integrity = workspace.verifyCurrentWorkspace()
+                if (!integrity.valid) {
+                    return@tryWithLock pl.aimasterpro.app.core.ProjectSourceContextBuilder.Result(
+                        pl.aimasterpro.app.core.ProjectSourceContextBuilder.Status.INTEGRITY_FAILED, "", emptyList(),
+                        integrity.missing.size + integrity.modified.size + integrity.unexpected.size, 0
+                    )
+                }
+                pl.aimasterpro.app.core.ProjectSourceContextBuilder.build(info.files, prompt) { path, maxBytes ->
+                    workspace.readTextFile(path, maxBytes)
+                }
+            } ?: busy
+        }.getOrElse { error ->
+            android.util.Log.w("AiFORTecaSourceContext", "Bezpieczny odczyt kontekstu projektu został zablokowany.", error)
+            pl.aimasterpro.app.core.ProjectSourceContextBuilder.Result(
+                pl.aimasterpro.app.core.ProjectSourceContextBuilder.Status.INTEGRITY_FAILED, "", emptyList(), 1, 0
+            )
+        }
+    }
+
+    private fun logProjectSourceContext(
+        chatId: String,
+        result: pl.aimasterpro.app.core.ProjectSourceContextBuilder.Result
+    ) {
+        val state = when (result.status) {
+            pl.aimasterpro.app.core.ProjectSourceContextBuilder.Status.READY -> "PROJEKT DOSTĘPNY"
+            pl.aimasterpro.app.core.ProjectSourceContextBuilder.Status.NOT_IMPORTED -> "BRAK IMPORTU"
+            pl.aimasterpro.app.core.ProjectSourceContextBuilder.Status.WORKSPACE_BUSY -> "OBSZAR ROBOCZY ZAJĘTY"
+            pl.aimasterpro.app.core.ProjectSourceContextBuilder.Status.INTEGRITY_FAILED -> "ODCZYT ZABLOKOWANY — KONTROLA INTEGRALNOŚCI"
+            pl.aimasterpro.app.core.ProjectSourceContextBuilder.Status.NO_MATCHES -> "BRAK PASUJĄCYCH PLIKÓW"
+            pl.aimasterpro.app.core.ProjectSourceContextBuilder.Status.BLOCKED_FILES -> "ODCZYT ZABLOKOWANY — PLIKI"
+        }
+        logAgentForChat(chatId, "📂 Kontekst źródłowy: $state • pliki=\${result.selectedPaths.size} • znaki=\${result.totalChars} • pominięte=\${result.skippedFiles}.")
     }
 
     /** Evidence is selected only from the durable host-owned active ChangeSet pointer. */
@@ -6595,7 +6655,7 @@ class MainActivity : Activity() {
         val configs = configByAgent.mapValues { it.value!! }
         val fallback = configs.values.first()
         val mode = currentWorkMode()
-        val projectContext = runCatching { pl.aimasterpro.app.core.ProjectCodebase.fullContext() }.getOrDefault("")
+        val projectContextBase = runCatching { pl.aimasterpro.app.core.ProjectCodebase.fullContext() }.getOrDefault("")
         val outputTokens = 1_400L
         val teamTasks = specs.map { spec ->
             pl.aimasterpro.app.agents.TeamTask(
@@ -6609,7 +6669,7 @@ class MainActivity : Activity() {
             val spec = pl.aimasterpro.app.agents.AgentCatalog.find(teamTask.agentId)
             val cfg = configs.getValue(teamTask.agentId)
             val chars = (spec?.systemPrompt.orEmpty().length + mode.systemInstruction.length +
-                projectContext.length + teamTask.prompt.length + 1_800)
+                projectContextBase.length + 18_000 + teamTask.prompt.length + 1_800)
             pl.aimasterpro.app.core.BudgetRequest(
                 taskId = teamTask.id, agentId = teamTask.agentId, providerId = cfg.id,
                 baseUrl = cfg.baseUrl, modelName = cfg.model,
@@ -6646,6 +6706,14 @@ class MainActivity : Activity() {
         activeQueueRequestScope = requestScope
         executor.execute {
             try {
+                val sourceContextResult = buildProjectSourceContext(task.title + "\n" + task.objective)
+                logProjectSourceContext(task.chatId.ifBlank { chatId }, sourceContextResult)
+                val projectContext = buildString {
+                    append(projectContextBase)
+                    if (sourceContextResult.status == pl.aimasterpro.app.core.ProjectSourceContextBuilder.Status.READY) {
+                        append("\n\n").append(sourceContextResult.contextText)
+                    }
+                }
                 val results = TeamRunEngine(client, maxParallel = minOf(4, allowed.size.coerceAtLeast(1))).use { engine ->
                     engine.runBatch(
                         tasks = allowed,
