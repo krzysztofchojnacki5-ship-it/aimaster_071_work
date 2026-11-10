@@ -234,6 +234,7 @@ class SecureStore internal constructor(
             require(apiKey is String && apiKey.length <= 8192) { "Nieprawidłowy klucz API w kopii." }
         }
         if (config.has("enabled")) require(config.opt("enabled") is Boolean) { "Nieprawidłowy status dostawcy." }
+        if (config.has("allowInsecureLanOllama")) require(config.opt("allowInsecureLanOllama") is Boolean) { "Nieprawidłowe zezwolenie HTTP dla Ollama." }
         if (config.has("parentProviderId") && !config.isNull("parentProviderId")) {
             val parent = config.opt("parentProviderId")
             require(parent is String && parent.length <= 128) { "Nieprawidłowy identyfikator profilu nadrzędnego." }
