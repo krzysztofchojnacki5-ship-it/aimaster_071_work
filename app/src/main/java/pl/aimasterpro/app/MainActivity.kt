@@ -80,7 +80,7 @@ class MainActivity : Activity() {
     private val executor = Executors.newSingleThreadExecutor()
     /** Prevent overlapping catalog refreshes from import, manual refresh and screen navigation. */
     private val modelCatalogRefreshInFlight = AtomicBoolean(false)
-    @Volatile private var modelCatalogRefreshGeneration = 0L
+    private val modelCatalogRefreshGeneration = pl.aimasterpro.app.core.ProviderCatalogSyncGeneration()
     private lateinit var store: SecureStore
     private lateinit var client: ProviderClient
     private lateinit var root: FrameLayout
@@ -4348,7 +4348,7 @@ class MainActivity : Activity() {
             return
         }
 
-        val refreshGeneration = modelCatalogRefreshGeneration
+        val refreshGeneration = modelCatalogRefreshGeneration.snapshot()
         try {
             val providers = runCatching {
                 store.allConfigs().mapNotNull { j ->
@@ -4380,9 +4380,17 @@ class MainActivity : Activity() {
 
                     val report = pl.aimasterpro.app.core.ProviderCatalogSyncRunner.synchronize(
                         providers = providers,
-                        isCancelled = { store.isStorageUncertain() || modelCatalogRefreshGeneration != refreshGeneration },
+                        isCancelled = { store.isStorageUncertain() || !modelCatalogRefreshGeneration.isCurrent(refreshGeneration) },
                         discover = { provider -> client.discoverModelDetails(provider) },
-                        save = { provider, discovered -> saveModelCatalogForProvider(provider, discovered) }
+                        save = { provider, discovered ->
+                            val committed = modelCatalogRefreshGeneration.commitIfCurrent(refreshGeneration) {
+                                if (store.isStorageUncertain()) {
+                                    throw java.util.concurrent.CancellationException("Magazyn konfiguracji jest niepewny.")
+                                }
+                                saveModelCatalogForProvider(provider, discovered)
+                            }
+                            if (!committed) throw java.util.concurrent.CancellationException("Konfiguracja dostawców uległa zmianie.")
+                        }
                     )
                     val success = report.successCount
                     val failures = report.failures.map { "${it.provider.name}: ${it.message}" }
@@ -4398,7 +4406,11 @@ class MainActivity : Activity() {
                     val now = System.currentTimeMillis()
                     val editor = modelCatalogPrefs.edit().putLong("last_attempt", now)
                     if (success > 0) editor.putLong("last_sync", now)
-                    val metadataSaved = editor.commit()
+                    var metadataSaved = false
+                    val metadataCommitted = modelCatalogRefreshGeneration.commitIfCurrent(refreshGeneration) {
+                        if (!store.isStorageUncertain()) metadataSaved = editor.commit()
+                    }
+                    if (!metadataCommitted || store.isStorageUncertain()) return@execute
                     runOnUiThread {
                         if (isFinishing || isDestroyed) return@runOnUiThread
                         status.text = if (metadataSaved) {
@@ -4430,7 +4442,17 @@ class MainActivity : Activity() {
                         }
                     }
                 } finally {
+                    val providerSnapshotWasInvalidated = !modelCatalogRefreshGeneration.isCurrent(refreshGeneration)
                     modelCatalogRefreshInFlight.set(false)
+                    // An import may have requested a refresh while this old generation still
+                    // held the single-flight gate. Retry once for the new provider snapshot.
+                    if (providerSnapshotWasInvalidated && !isFinishing && !isDestroyed) {
+                        runOnUiThread {
+                            if (!isFinishing && !isDestroyed && screen == "Modele") {
+                                refreshAllModelCatalogs(showToast = false)
+                            }
+                        }
+                    }
                 }
             }
         } catch (error: Throwable) {
@@ -7322,7 +7344,7 @@ class MainActivity : Activity() {
                     runCatching {
                         val configs = BackupCrypto.parseProviderConfigs(result.getOrThrow())
                         // Invalidate any catalog job using the old provider snapshot before replacing keys.
-                        modelCatalogRefreshGeneration++
+                        modelCatalogRefreshGeneration.invalidate()
                         // Stop old-profile requests before the provider set changes. The
                         // persisted assignments are invalidated immediately after a successful swap.
                         cancelProviderWorkBeforeConfigReplacement()
@@ -7526,7 +7548,7 @@ class MainActivity : Activity() {
             .setMessage("Znaleziono ${migrated.size} profili. Import odbywa się lokalnie. Profile z nieczytelnym, zaszyfrowanym polem klucza zostaną przeniesione bez klucza i będzie trzeba wpisać go ponownie. Zastąpić obecną konfigurację?")
             .setNegativeButton("Anuluj", null).setPositiveButton("Importuj") { _, _ ->
                 // Match encrypted-backup import: invalidate catalog work and quiesce requests before replacing provider profiles.
-                modelCatalogRefreshGeneration++
+                modelCatalogRefreshGeneration.invalidate()
                 cancelProviderWorkBeforeConfigReplacement()
                 if (!store.replaceAllConfigs(migrated)) {
                     if (store.isStorageUncertain()) {
