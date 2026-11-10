@@ -1,5 +1,7 @@
 package pl.aimasterpro.app.core
 
+import java.util.concurrent.CancellationException
+
 /**
  * Executes model-catalog discovery with a failure boundary per provider.
  *
@@ -30,26 +32,44 @@ object ProviderCatalogSyncRunner {
         val failures = mutableListOf<ProviderCatalogSyncFailure<P>>()
         var stopped = false
 
+        fun shouldStop(): Boolean = Thread.currentThread().isInterrupted || isCancelled()
+
         for (provider in providers) {
-            if (isCancelled()) {
+            if (shouldStop()) {
                 stopped = true
                 break
             }
-            val result = runCatching {
+
+            try {
                 val models = discover(provider)
-                require(models.isNotEmpty()) { "API zwróciło pustą listę" }
-                check(!isCancelled()) { "Synchronizacja została przerwana" }
-                save(provider, models)
-            }
-            result.fold(
-                onSuccess = { successes += provider },
-                onFailure = { error ->
-                    failures += ProviderCatalogSyncFailure(
-                        provider,
-                        error.message?.take(500) ?: error.javaClass.simpleName
-                    )
+                // Import/teardown may happen while the network request is in flight.
+                // Never persist a response obtained for the previous provider snapshot.
+                if (shouldStop()) {
+                    stopped = true
+                    break
                 }
-            )
+                require(models.isNotEmpty()) { "API zwróciło pustą listę" }
+                save(provider, models)
+                successes += provider
+            } catch (cancelled: CancellationException) {
+                stopped = true
+                break
+            } catch (interrupted: InterruptedException) {
+                Thread.currentThread().interrupt()
+                stopped = true
+                break
+            } catch (error: Exception) {
+                // Isolate ordinary provider/network/storage failures, but do not swallow
+                // fatal VM errors (OutOfMemoryError, LinkageError, etc.).
+                failures += ProviderCatalogSyncFailure(
+                    provider,
+                    error.message?.take(500) ?: error.javaClass.simpleName
+                )
+                if (shouldStop()) {
+                    stopped = true
+                    break
+                }
+            }
         }
         return ProviderCatalogSyncReport(successes, failures, stopped)
     }
