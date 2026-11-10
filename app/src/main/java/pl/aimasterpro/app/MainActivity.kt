@@ -6536,11 +6536,10 @@ class MainActivity : Activity() {
                         mode = mode,
                         projectContext = projectContext,
                         onLog = { sender, recipient, message, eventStatus ->
-                            android.util.Log.i("AiFORTecaQueue", "$taskId • $sender → $recipient • $eventStatus • ${message.take(500)}")
-                            runOnUiThread {
-                                if (!isFinishing) logAgentForChat(currentChatId.ifBlank { "aiforteca-queue" },
-                                    "[KOLEJKA $taskId] $sender → $recipient • $eventStatus • ${message.take(300)}")
-                            }
+                            val logged = queueStore.recordAgentMessage(this, taskId, sender, recipient,
+                                eventStatus, message)
+                            if (!logged) android.util.Log.w("AiFORTecaQueue", "Nie zapisano komunikatu $taskId • $sender → $recipient")
+                            android.util.Log.i("AiFORTecaQueue", "$taskId • $sender → $recipient • $eventStatus • ${message.take(350)}")
                         },
                         onUsage = { agentId, subTaskId, actualProvider, usage ->
                             pl.aimasterpro.app.core.ApiTokenTracker.recordQuery(
