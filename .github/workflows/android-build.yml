@@ -50,7 +50,39 @@ jobs:
             app/build/test-results/testDebugUnitTest/
             app/build/reports/tests/testDebugUnitTest/
           if-no-files-found: warn
+      - name: Prepare release signing
+        id: signing
+        if: github.event_name == 'push' && github.ref == 'refs/heads/work/aiforteca-0.2-master-agent-foundation'
+        env:
+          AIFORTECA_KEYSTORE_BASE64: ${{ secrets.AIFORTECA_KEYSTORE_BASE64 }}
+          AIFORTECA_KEYSTORE_PASSWORD: ${{ secrets.AIFORTECA_KEYSTORE_PASSWORD }}
+          AIFORTECA_KEY_ALIAS: ${{ secrets.AIFORTECA_KEY_ALIAS }}
+          AIFORTECA_KEY_PASSWORD: ${{ secrets.AIFORTECA_KEY_PASSWORD }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "${AIFORTECA_KEYSTORE_BASE64:-}" ]]; then
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+            echo "Signing secrets are not configured; producing an unsigned CI APK."
+            exit 0
+          fi
+          for name in AIFORTECA_KEYSTORE_PASSWORD AIFORTECA_KEY_ALIAS AIFORTECA_KEY_PASSWORD; do
+            if [[ -z "${!name:-}" ]]; then
+              echo "::error::Missing required signing secret: $name"
+              exit 1
+            fi
+          done
+          KEYSTORE_PATH="$RUNNER_TEMP/aiforteca-release.jks"
+          printf '%s' "$AIFORTECA_KEYSTORE_BASE64" | base64 --decode > "$KEYSTORE_PATH"
+          test -s "$KEYSTORE_PATH"
+          keytool -list -keystore "$KEYSTORE_PATH" -storepass "$AIFORTECA_KEYSTORE_PASSWORD" -alias "$AIFORTECA_KEY_ALIAS" >/dev/null
+          echo "AIFORTECA_KEYSTORE_PATH=$KEYSTORE_PATH" >> "$GITHUB_ENV"
+          echo "configured=true" >> "$GITHUB_OUTPUT"
       - name: Assemble release APK
+        env:
+          AIFORTECA_KEYSTORE_PASSWORD: ${{ secrets.AIFORTECA_KEYSTORE_PASSWORD }}
+          AIFORTECA_KEY_ALIAS: ${{ secrets.AIFORTECA_KEY_ALIAS }}
+          AIFORTECA_KEY_PASSWORD: ${{ secrets.AIFORTECA_KEY_PASSWORD }}
         run: ./gradlew --no-daemon assembleRelease
       - name: Package source project
         run: |
@@ -63,10 +95,17 @@ jobs:
           path: aiforteca-source-project.zip
           if-no-files-found: error
           retention-days: 90
-      - name: Upload release APK
-        if: success()
+      - name: Upload signed release APK
+        if: success() && steps.signing.outputs.configured == 'true'
         uses: actions/upload-artifact@v4
         with:
-          name: aiforteca-release-apk
+          name: aiforteca-release-apk-signed
+          path: app/build/outputs/apk/release/*.apk
+          if-no-files-found: error
+      - name: Upload unsigned release APK
+        if: success() && steps.signing.outputs.configured != 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: aiforteca-release-apk-unsigned
           path: app/build/outputs/apk/release/*.apk
           if-no-files-found: error
