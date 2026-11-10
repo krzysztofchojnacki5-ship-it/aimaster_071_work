@@ -1744,7 +1744,7 @@ class MainActivity : Activity() {
             toast("Wysyłanie zablokowane: przypisania agentów nie zostały bezpiecznie uzgodnione. Otwórz MODELE i wykonaj pełny import/uzgodnienie konfiguracji.")
             return
         }
-        if (isThinking) { toast("Poczekaj na zakończenie poprzedniej odpowiedzi."); return }
+        if (isThinking || activeQueueTaskId.isNotBlank()) { toast("Poczekaj na zakończenie bieżącego zadania MASTER-a."); return }
         var prompt = input.text.toString().trim()
         if (attachedText.isNotBlank()) prompt += "\n\n[Załączony plik tekstowy: $attachedName]\n$attachedText"
         if (attachedName.isNotBlank() && attachedText.isBlank()) prompt += "\n\nZałącznik: $attachedName ($attachedMime). Przeanalizuj załącznik, jeśli ten dostawca obsługuje jego format."
@@ -6447,7 +6447,7 @@ class MainActivity : Activity() {
             return
         }
         synchronized(masterJournalLifecycleLock) {
-            if (activeQueueTaskId.isNotBlank() || isThinking) {
+            if (activeQueueTaskId.isNotBlank() || isThinking || activeChatTaskId.isNotBlank()) {
                 toast("Inne zadanie MASTER-a jest już uruchomione.")
                 return
             }
