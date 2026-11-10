@@ -249,7 +249,7 @@ class MainActivity : Activity() {
         window.statusBarColor = bg
         window.navigationBarColor = bg
         window.setBackgroundDrawable(ColorDrawable(bg))
-        navigate("Czat")
+        navigate("Centrum")
         recoverPendingPatchReceiptAtStartup()
     }
 
