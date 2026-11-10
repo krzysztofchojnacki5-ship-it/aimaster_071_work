@@ -131,7 +131,7 @@ object ChatHistoryStore {
      */
     @Synchronized
     fun updateRoot(context: Context, update: (JSONObject) -> Boolean): Boolean =
-        updateRootInternal(context, null, update)
+        updateRootInternal(context, null, null, update)
 
     /** Atomically commits the canonical history and its user-chat navigation mirror. */
     @Synchronized
@@ -141,7 +141,7 @@ object ChatHistoryStore {
         update: (JSONObject) -> Boolean
     ): Boolean {
         if (lastUserChatId.isBlank() || lastUserChatId.length > 200) return false
-        return updateRootInternal(context, lastUserChatId, update)
+        return updateRootInternal(context, lastUserChatId, null, update)
     }
 
     @Synchronized
