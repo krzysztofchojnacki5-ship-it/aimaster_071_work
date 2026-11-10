@@ -69,3 +69,22 @@ Weryfikacja dla dokładnie powyższego SHA:
 Status punktu 2: **DONE — walidacja CI dla końcowego commita zakończona powodzeniem**.
 
 Ograniczenie: test urządzeniowy po imporcie zaszyfrowanej bazy i obserwacja logcat nadal są NOT RUN. Dlatego nie stwierdzamy, że pierwotny crash został definitywnie odtworzony i usunięty; poprawki zabezpieczają podejrzaną ścieżkę synchronizacji, ale potwierdzenie na urządzeniu pozostaje wymagane w punkcie 3 / testach końcowych.
+
+
+## Punkt 3 — regresja po poprawce cache (2026-11-10)
+
+Dodatkowy problem wykryty podczas przeglądu: import może zastąpić konfigurację dostawcy, a identyfikator dostawcy może zostać ponownie użyty dla innego adresu API. Samo unieważnienie cache przy imporcie nie wystarcza jako ostatnia linia obrony, jeśli odczyt katalogu trafi na dane historyczne lub częściowo odtworzone.
+
+Wdrożono:
+- `ProviderCatalogCachePolicy` — katalog jest widoczny wyłącznie, gdy identyfikator dostawcy nadal istnieje, a znormalizowany Base URL cache odpowiada bieżącej konfiguracji.
+- Przy niepewnym stanie magazynu albo błędzie odczytu konfiguracji katalog nie jest pokazywany (fail closed).
+- 6 testów polityki: zgodny endpoint, ponownie użyty identyfikator z innym endpointem, usunięty dostawca, brak endpointu w starym cache, normalizacja wielkości liter/slash końcowych i istotność ścieżki endpointu.
+
+Commit: `d28f82f5aab4934e69fb1331830c0417def0e80c`
+CI dla tego SHA:
+- Android Build: SUCCESS — run `42880766072`.
+- Gradle Wrapper Validation: SUCCESS — run `42880765703`.
+- Raport JUnit z artefaktu `13794530933`: **983 testy w 106 zestawach, 0 failures, 0 errors, 0 skipped**.
+- Wybrane zestawy: BackupCrypto 20/20, ChatHistoryStore 23/23, ChatResponseArchive 15/15, ProviderCatalogCachePolicy 6/6, ProviderCatalogSyncGeneration 4/4, ProviderCatalogSyncRunner 5/5.
+
+Status punktu 3: **IN PROGRESS**. Pokrycie jednostkowe dla szyfrowania/parsowania kopii, katalogu i trwałości historii rozmów jest potwierdzone CI. Nadal wymagają osobnego potwierdzenia ścieżki interfejsu importu na urządzeniu: import bazy, wejście w Modele, Czat i Rozmowy po imporcie, w tym brak zamknięcia aplikacji. Test urządzeniowy i logcat: NOT RUN.
