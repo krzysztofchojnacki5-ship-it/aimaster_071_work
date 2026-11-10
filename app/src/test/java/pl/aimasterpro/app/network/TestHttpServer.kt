@@ -101,7 +101,7 @@ class TestHttpServer(
                 output.write(respBytes)
                 output.flush()
             }
-        } catch (error: Exception) {
+        } catch (error: Throwable) {
             lastFailure = "${error::class.java.simpleName}: ${error.message.orEmpty()}"
         }
     }
