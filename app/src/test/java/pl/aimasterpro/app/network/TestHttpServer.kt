@@ -18,6 +18,10 @@ class TestHttpServer(
     val requestCount = AtomicInteger(0)
     private val executor = Executors.newCachedThreadPool()
     @Volatile private var isRunning = true
+    @Volatile var lastRequestBody: String? = null
+        private set
+    @Volatile var lastFailure: String? = null
+        private set
 
     init {
         executor.execute {
@@ -71,6 +75,7 @@ class TestHttpServer(
                     else -> ByteArray(0)
                 }
                 val body = String(bodyBytes, Charsets.UTF_8)
+                lastRequestBody = body
 
                 val (statusCode, responseText) = handler(body, attempt)
                 val respBytes = responseText.toByteArray(Charsets.UTF_8)
@@ -96,7 +101,8 @@ class TestHttpServer(
                 output.write(respBytes)
                 output.flush()
             }
-        } catch (_: Exception) {
+        } catch (error: Exception) {
+            lastFailure = "${error::class.java.simpleName}: ${error.message.orEmpty()}"
         }
     }
 
