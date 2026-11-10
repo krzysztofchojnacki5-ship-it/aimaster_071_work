@@ -83,6 +83,34 @@ object ChatHistoryStore {
      * Reads the navigation mirror under the same health gate as canonical history.
      * Null means the preference file could not be read safely; callers must not guess a destination.
      */
+    /**
+     * Commits conversation selection before callers replace their in-memory/UI snapshot.
+     * A new empty conversation may be created, but an existing corrupt history never is.
+     * The canonical currentId and user-chat navigation mirror are committed together.
+     */
+    @Synchronized
+    fun selectChat(context: Context, chatId: String): Boolean {
+        if (chatId.isBlank() || chatId.length > 200) return false
+        val update: (JSONObject) -> Boolean = { root ->
+            val chats = root.optJSONObject("chats") ?: JSONObject().also { root.put("chats", it) }
+            if (!chats.has(chatId)) {
+                chats.put(chatId, JSONObject()
+                    .put("title", "Nowa rozmowa")
+                    .put("updatedAt", System.currentTimeMillis())
+                    .put("messages", JSONArray())
+                    .put("agentActivity", JSONArray())
+                    .put("assistantTaskIds", JSONArray()))
+            }
+            root.put("currentId", chatId)
+            true
+        }
+        return if (chatId == "assistant_dedicated_chat_id" || chatId.startsWith("assistant-")) {
+            updateRoot(context, update)
+        } else {
+            updateRootAndLastUserChatId(context, chatId, update)
+        }
+    }
+
     fun readLastUserChatId(context: Context): String? = runCatching {
         SharedPreferencesWriteHealth.withHealthyAccess(PREFS) {
             context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
