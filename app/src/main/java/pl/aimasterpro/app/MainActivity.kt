@@ -4526,6 +4526,11 @@ class MainActivity : Activity() {
                     apiKey, old.enabled, old.parentProviderId,
                     allowInsecureLanOllama = lanOptIn && kind == ProviderKind.OPENAI_COMPATIBLE
                 )
+                if (lanOptIn && (kind != ProviderKind.OPENAI_COMPATIBLE ||
+                        !pl.aimasterpro.app.core.OllamaModelManager.isOllamaProvider(cfg))) {
+                    toast("Zezwolenie LAN jest dostępne wyłącznie dla profilu Ollama (port 11434).")
+                    return@setPositiveButton
+                }
                 if (lanOptIn) {
                     val decision = pl.aimasterpro.app.core.ProviderEndpointPolicy.validate(base, apiKey, true)
                     if (!decision.allowed) {
