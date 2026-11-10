@@ -317,6 +317,10 @@ class MainActivity : Activity() {
             }
             "Asystent" -> {
                 val assistantId = assistantChatId()
+                    ?: run {
+                        toast("Nie można bezpiecznie odczytać identyfikatora rozmowy Asystenta. Przejście zostało wstrzymane.")
+                        return
+                    }
                 if (!isAssistantChatId(currentChatId) && currentChatId.isNotBlank() && !saveCurrentId()) {
                     toast("Nie udało się trwale zapisać bieżącej rozmowy. Przejście do Asystenta zostało wstrzymane.")
                     return
@@ -3140,9 +3144,9 @@ class MainActivity : Activity() {
         if (!saved) android.util.Log.e("AIMasterChat", "Nie udało się trwale zapisać aktywności agentów.")
     }
 
-    /** Zapamiętuje tylko ID bieżącej rozmowy (bez zmiany kolejności listy). */
-    private fun assistantChatId(): String =
-        chatPrefs.getString("assistant_chat_id", "assistant_dedicated_chat_id")?.takeIf { it.isNotBlank() } ?: "assistant_dedicated_chat_id"
+    /** Reads the dedicated assistant conversation pointer through the durable history gate. */
+    private fun assistantChatId(): String? =
+        pl.aimasterpro.app.core.ChatHistoryStore.readAssistantChatId(this)
 
     private fun isAssistantChatId(id: String): Boolean =
         id == "assistant_dedicated_chat_id" || id.startsWith("assistant-")
@@ -3293,14 +3297,16 @@ class MainActivity : Activity() {
             return
         }
         val newId = "assistant-${UUID.randomUUID()}"
-        chatPrefs.edit().putString("assistant_chat_id", newId).apply()
+        if (!pl.aimasterpro.app.core.ChatHistoryStore.selectChat(this, newId)) {
+            toast("Nie udało się trwale utworzyć rozmowy Asystenta. Poprzednia rozmowa pozostała aktywna.")
+            return
+        }
         currentChatId = newId
         messages.clear()
         assistantTaskIds.clear()
         agentActivity.clear()
         attachedText = ""; attachedName = ""; attachedMime = ""; attachedBase64 = ""
         draft = ""
-        persistMessages()
         navigate("Asystent")
     }
 
