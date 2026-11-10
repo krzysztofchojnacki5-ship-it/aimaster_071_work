@@ -6451,7 +6451,7 @@ class MainActivity : Activity() {
         }
         val queueStore = pl.aimasterpro.app.core.MasterTaskQueueStore
         val task = queueStore.snapshot(this).tasks.firstOrNull { it.id == taskId }
-        if (task == null || task.status != queueStore.Status.ASSIGNED || task.assignedAgentIds.isEmpty()) {
+        if (task == null || task.status != pl.aimasterpro.app.core.MasterTaskQueueStore.Status.ASSIGNED || task.assignedAgentIds.isEmpty()) {
             toast("Zadanie nie jest gotowe do uruchomienia.")
             return
         }
@@ -6520,7 +6520,7 @@ class MainActivity : Activity() {
         }
         val allowed = teamTasks.filter { it.id in budgetPlan.allowedTaskIds }
         val blocked = teamTasks.filterNot { it.id in budgetPlan.allowedTaskIds }
-        if (!queueStore.transition(this, taskId, "MASTER", queueStore.Status.RUNNING,
+        if (!queueStore.transition(this, taskId, "MASTER", pl.aimasterpro.app.core.MasterTaskQueueStore.Status.RUNNING,
                 "MASTER uruchomił TeamRunEngine dla ${allowed.size}/${teamTasks.size} agentów.")) {
             pl.aimasterpro.app.core.ApiTokenTracker.releaseBatchReservation(budgetPlan.reservationId)
             activeQueueTaskId = ""
@@ -6528,7 +6528,7 @@ class MainActivity : Activity() {
             return
         }
         blocked.forEach { item ->
-            queueStore.recordAgentResult(this, taskId, item.agentId, queueStore.Status.BLOCKED,
+            queueStore.recordAgentResult(this, taskId, item.agentId, pl.aimasterpro.app.core.MasterTaskQueueStore.Status.BLOCKED,
                 budgetPlan.blockedReasons[item.id] ?: "Zablokowano przez Smart Budget.")
         }
         toast("MASTER uruchamia ${allowed.size} agentów. Wyniki będą zapisane w historii zadania.")
@@ -6616,9 +6616,9 @@ class MainActivity : Activity() {
                 }
                 results.forEach { result ->
                     val queueResult = when (result.status) {
-                        pl.aimasterpro.app.agents.TeamTaskResult.Status.COMPLETED -> queueStore.Status.COMPLETED
-                        pl.aimasterpro.app.agents.TeamTaskResult.Status.FAILED -> queueStore.Status.FAILED
-                        pl.aimasterpro.app.agents.TeamTaskResult.Status.BLOCKED -> queueStore.Status.BLOCKED
+                        pl.aimasterpro.app.agents.TeamTaskResult.Status.COMPLETED -> pl.aimasterpro.app.core.MasterTaskQueueStore.Status.COMPLETED
+                        pl.aimasterpro.app.agents.TeamTaskResult.Status.FAILED -> pl.aimasterpro.app.core.MasterTaskQueueStore.Status.FAILED
+                        pl.aimasterpro.app.agents.TeamTaskResult.Status.BLOCKED -> pl.aimasterpro.app.core.MasterTaskQueueStore.Status.BLOCKED
                     }
                     val saved = queueStore.recordAgentResult(this, taskId, result.agentId, queueResult,
                         "${result.status}: ${result.report.take(420)}")
@@ -6626,7 +6626,7 @@ class MainActivity : Activity() {
                 }
                 val returned = results.map { it.agentId }.toSet()
                 allowed.filterNot { it.agentId in returned }.forEach { item ->
-                    queueStore.recordAgentResult(this, taskId, item.agentId, queueStore.Status.FAILED,
+                    queueStore.recordAgentResult(this, taskId, item.agentId, pl.aimasterpro.app.core.MasterTaskQueueStore.Status.FAILED,
                         "TeamRunEngine nie zwrócił wyniku dla tego agenta.")
                 }
                 runOnUiThread {
@@ -6640,11 +6640,11 @@ class MainActivity : Activity() {
             } catch (error: Throwable) {
                 android.util.Log.e("AiFORTecaQueue", "Błąd wykonania zadania $taskId.", error)
                 val current = queueStore.snapshot(this).tasks.firstOrNull { it.id == taskId }
-                if (current?.status == queueStore.Status.RUNNING) {
+                if (current?.status == pl.aimasterpro.app.core.MasterTaskQueueStore.Status.RUNNING) {
                     current.assignedAgentIds.filter { agentId ->
                         queueStore.snapshot(this).events.none { it.taskId == taskId && it.actor == "agent:$agentId" && it.operation == "AGENT_RESULT" }
                     }.forEach { agentId ->
-                        queueStore.recordAgentResult(this, taskId, agentId, queueStore.Status.FAILED,
+                        queueStore.recordAgentResult(this, taskId, agentId, pl.aimasterpro.app.core.MasterTaskQueueStore.Status.FAILED,
                             "Błąd wykonania: ${error.message.orEmpty().take(400)}")
                     }
                 }
