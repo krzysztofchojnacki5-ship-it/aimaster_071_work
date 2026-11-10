@@ -71,6 +71,45 @@ class MasterTaskQueueStoreTest {
             dependencies = listOf("task-004"), now = 45L))
     }
 
+    @Test fun multiAgentTaskCompletesOnlyAfterEveryAssignedAgentReports() {
+        assertTrue(MasterTaskQueueStore.enqueue(context, "task-008", "Zespół", "Wspólny cel.", now = 60L))
+        assertTrue(MasterTaskQueueStore.assign(context, "task-008",
+            listOf("critical-reviewer", "unit-test-engineer"), now = 61L))
+        assertTrue(MasterTaskQueueStore.transition(context, "task-008", "MASTER",
+            MasterTaskQueueStore.Status.RUNNING, "TeamRunEngine start.", 62L))
+
+        assertTrue(MasterTaskQueueStore.recordAgentResult(context, "task-008", "critical-reviewer",
+            MasterTaskQueueStore.Status.COMPLETED, "Recenzja gotowa.", 63L))
+        assertEquals(MasterTaskQueueStore.Status.RUNNING,
+            MasterTaskQueueStore.snapshot(context).tasks.single().status)
+        assertFalse(MasterTaskQueueStore.recordAgentResult(context, "task-008", "critical-reviewer",
+            MasterTaskQueueStore.Status.COMPLETED, "Duplikat wyniku.", 64L))
+        assertFalse(MasterTaskQueueStore.recordAgentResult(context, "task-008", "debugger",
+            MasterTaskQueueStore.Status.COMPLETED, "Agent spoza przydziału.", 64L))
+
+        assertTrue(MasterTaskQueueStore.recordAgentResult(context, "task-008", "unit-test-engineer",
+            MasterTaskQueueStore.Status.COMPLETED, "Testy gotowe.", 65L))
+        val state = MasterTaskQueueStore.snapshot(context)
+        assertEquals(MasterTaskQueueStore.Status.COMPLETED, state.tasks.single().status)
+        assertEquals(2, state.events.count { it.operation == "AGENT_RESULT" })
+    }
+
+    @Test fun failedAgentMakesMultiAgentTaskFailedAfterAllReports() {
+        assertTrue(MasterTaskQueueStore.enqueue(context, "task-009", "Zespół", "Wspólny cel.", now = 70L))
+        assertTrue(MasterTaskQueueStore.assign(context, "task-009",
+            listOf("critical-reviewer", "unit-test-engineer"), now = 71L))
+        assertTrue(MasterTaskQueueStore.transition(context, "task-009", "MASTER",
+            MasterTaskQueueStore.Status.RUNNING, "TeamRunEngine start.", 72L))
+        assertTrue(MasterTaskQueueStore.recordAgentResult(context, "task-009", "critical-reviewer",
+            MasterTaskQueueStore.Status.FAILED, "Błąd providera.", 73L))
+        assertEquals(MasterTaskQueueStore.Status.RUNNING,
+            MasterTaskQueueStore.snapshot(context).tasks.single().status)
+        assertTrue(MasterTaskQueueStore.recordAgentResult(context, "task-009", "unit-test-engineer",
+            MasterTaskQueueStore.Status.COMPLETED, "Drugi agent zakończył.", 74L))
+        assertEquals(MasterTaskQueueStore.Status.FAILED,
+            MasterTaskQueueStore.snapshot(context).tasks.single().status)
+    }
+
     @Test fun terminalTaskCannotBeReopenedAndCorruptStorageFailsClosed() {
         assertTrue(MasterTaskQueueStore.enqueue(context, "task-006", "Final", "Cel.", now = 50L))
         assertTrue(MasterTaskQueueStore.transition(context, "task-006", "MASTER",
