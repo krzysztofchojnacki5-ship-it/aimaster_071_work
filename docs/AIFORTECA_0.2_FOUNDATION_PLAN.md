@@ -89,3 +89,24 @@ Cover unauthorized create/update/delete, scope escape, missing or forged approva
 - The previous wrapper-validation workflow passed, but the Android compile failed. No newer workflow run, successful Android build, unit-test result, APK artifact or device test has been confirmed for the current branch state.
 - Local execution is unavailable in this environment because Gradle and Android SDK are not installed and outbound DNS/network access is unavailable. Do not mark build/tests as PASS on that basis.
 - Release identity remains versionName=0.2, versionCode=3.
+
+## Implementation checkpoint — MASTER workspace increment 1
+- Added `MasterTaskQueueStore`: a separate durable queue for operational tasks; the older `MasterWorkJournalStore` and `TaskCheckpointStore` remain intact and are not migrated or cleared.
+- Queue records support bounded task descriptions, priority, dependencies, multiple agent assignments, explicit lifecycle states and a bounded transition history in the same persisted JSON document.
+- Coordinator operations are restricted to `MASTER`/`USER`; an agent identity may report only its own assigned RUNNING task as COMPLETED/FAILED/BLOCKED. An agent cannot assign work, pause/cancel work or change another agent's task.
+- Assignment validates that every selected agent is currently enabled. Dependencies must already be completed before a dependent task is created or assigned.
+- Corrupt or uncertain queue storage fails closed; it is not replaced with an empty queue. Terminal states cannot be reopened through ordinary transitions.
+- The Zadania screen now creates durable queue items, assigns enabled agents, displays task state and transition history, and supports pause/unblock/cancel without deleting task records.
+- **Explicit limitation of this increment:** the new queue is not yet connected to `TeamRunEngine`; assignment currently records ownership and status only. The screen does not claim that an LLM call has started. Connecting queue execution to the existing Smart Budget / `TeamRunEngine` path, and routing its callbacks into the queue, is the next implementation gate.
+- Added unit tests for queue persistence, assignment authorization, disabled agents, dependency gating, terminal-state protection and corrupt-storage fail-closed behavior.
+- CI status must be read from the workflow run for the latest branch head before this increment is called build/test verified. No physical-device test has been performed for the new queue UI.
+
+## Preserved follow-on backlog (do not drop)
+1. Connect MASTER task queue to the existing adaptive planning, Smart Budget and `TeamRunEngine`; persist QUEUED/ASSIGNED/RUNNING/terminal transitions from actual execution callbacks and support safe cancellation/recovery.
+2. Build the Android-Studio-style workspace layout: navigation/project pane, central task/agent workspace, contextual inspector, and bottom event console; adapt panels for phone screens.
+3. Add live agent-to-agent communication stream with sender, recipient, task, model/provider, timestamp, status and sanitized payload preview.
+4. Add governed memory/configuration mutation adapters: per-agent read/write/update/delete scopes, MASTER/user approvals, append-only provenance/audit, version history, tombstones and fail-closed recovery. Enforce in storage adapters, not only UI or prompts.
+5. Add diagnostics/console view aggregating queue events, task checkpoints, provider health, budget, errors and persistence health; redact secrets and prompts.
+6. Add agent workload/availability, role/model assignment visibility, task dependencies, priorities, conflict detection and duplicate-work prevention.
+7. Complete regression and acceptance tests against real store adapters; run CI, inspect test reports/APK metadata, then prepare a new test APK while preserving version 0.2 until the user authorizes a version bump.
+8. Preserve all existing provider profiles, encrypted keys, chats, memories, learning history, agent definitions and legacy journals; no destructive migration without explicit approval.
