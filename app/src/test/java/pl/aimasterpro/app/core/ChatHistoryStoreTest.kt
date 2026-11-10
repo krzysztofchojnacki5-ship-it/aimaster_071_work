@@ -429,4 +429,26 @@ class ChatHistoryStoreTest {
         assertEquals("new-user-chat", ChatHistoryStore.readRoot(context)!!.getString("currentId"))
     }
 
+
+    @Test fun lastUserChatIdReadReturnsStoredIdAndTreatsMissingMirrorAsEmpty() {
+        assertEquals("", ChatHistoryStore.readLastUserChatId(context))
+        assertTrue(prefs.edit().putString("last_user_chat_id", "saved-chat").commit())
+        assertEquals("saved-chat", ChatHistoryStore.readLastUserChatId(context))
+    }
+
+    @Test fun lastUserChatIdReadFailsClosedWhenPreferenceAccessThrows() {
+        val failingContext = object : android.content.ContextWrapper(context) {
+            override fun getSharedPreferences(name: String, mode: Int): android.content.SharedPreferences {
+                throw IllegalStateException("controlled navigation mirror read failure")
+            }
+        }
+        assertNull(ChatHistoryStore.readLastUserChatId(failingContext))
+    }
+
+    @Test fun lastUserChatIdReadFailsClosedWhenHistoryStoreIsQuarantined() {
+        assertFalse(ChatHistoryStore.writeRoot(AmbiguousCommitContext(context, "chat_state"), JSONObject().put("chats", JSONObject())))
+        assertTrue(SharedPreferencesWriteHealth.isUncertain("chat_state"))
+        assertNull(ChatHistoryStore.readLastUserChatId(context))
+    }
+
 }
