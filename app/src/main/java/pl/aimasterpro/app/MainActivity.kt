@@ -4162,7 +4162,7 @@ class MainActivity : Activity() {
                 progress.show()
                 executor.execute {
                     val result = runCatching {
-                        pl.aimasterpro.app.core.OllamaModelManager.pull(provider.baseUrl, model, cancellation) { update ->
+                        pl.aimasterpro.app.core.OllamaModelManager.pull(provider.baseUrl, model, cancellation, provider.allowInsecureLanOllama) { update ->
                             val detail = buildString {
                                 append(update.status.ifBlank { "Pobieranie" })
                                 update.percent?.let { append(" • $it%") }
@@ -4487,11 +4487,20 @@ class MainActivity : Activity() {
         val box = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(20, 4, 20, 4) }
         val name = field("Nazwa", old.name); val url = field("Base URL", old.baseUrl); val model = field("Model ID", old.model)
         val key = field(if (recoverSecret) "Wprowadź nowy klucz API — wymagany do naprawy" else "Klucz API (pozostaw pusty, aby zachować istniejący)", "", InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD)
+        val allowLanOllama = CheckBox(this).apply {
+            text = "Zezwól na HTTP dla Ollama w prywatnej sieci Wi-Fi"
+            setTextColor(white)
+            isChecked = old.allowInsecureLanOllama
+        }
+        val lanSecurityNote = TextView(this).apply {
+            text = "Opcja dotyczy wyłącznie Ollama na prywatnym adresie IPv4 (10.x, 172.16–31.x, 192.168.x), porcie 11434 i bez klucza API. Ruch nie jest szyfrowany. Nie włączaj jej w publicznych sieciach Wi-Fi."
+            setTextColor(muted); textSize = 11f; setPadding(0, dp(2), 0, dp(6))
+        }
         val kindSpinner = Spinner(this)
         val kindOptions = listOf("OpenAI-compatible", "Google Gemini API", "Anthropic API")
         kindSpinner.adapter = ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item, kindOptions)
         kindSpinner.setSelection(when (old.kind) { ProviderKind.OPENAI_COMPATIBLE -> 0; ProviderKind.GEMINI -> 1; ProviderKind.ANTHROPIC -> 2 })
-        listOf(TextView(this).apply { text = "Typ dostawcy"; setTextColor(white) }, kindSpinner, name, url, model, key).forEach { box.addView(it); if (it is EditText) it.setPadding(dp(12), dp(8), dp(12), dp(8)) }
+        listOf(TextView(this).apply { text = "Typ dostawcy"; setTextColor(white) }, kindSpinner, name, url, model, key, allowLanOllama, lanSecurityNote).forEach { box.addView(it); if (it is EditText) it.setPadding(dp(12), dp(8), dp(12), dp(8)) }
         AlertDialog.Builder(this).setTitle(if (recoverSecret) "Odzyskiwanie profilu dostawcy" else "Konfiguracja dostawcy").setView(box)
             .setNegativeButton("Anuluj", null)
             .setPositiveButton("Zapisz") { _, _ ->
@@ -4507,7 +4516,23 @@ class MainActivity : Activity() {
                     return@setPositiveButton
                 }
                 val apiKey = enteredKey.ifBlank { old.apiKey.trim().removePrefix("Bearer ").trim() }
-                val cfg = ProviderConfig(old.id, name.text.toString().ifBlank { old.name }, kind, base, model.text.toString().trim(), apiKey, old.enabled, old.parentProviderId)
+                val lanOptIn = allowLanOllama.isChecked
+                if (lanOptIn && apiKey.isNotBlank()) {
+                    toast("Ollama przez HTTP w LAN nie może używać klucza API. Usuń klucz lub wyłącz tę opcję.")
+                    return@setPositiveButton
+                }
+                val cfg = ProviderConfig(
+                    old.id, name.text.toString().ifBlank { old.name }, kind, base, model.text.toString().trim(),
+                    apiKey, old.enabled, old.parentProviderId,
+                    allowInsecureLanOllama = lanOptIn && kind == ProviderKind.OPENAI_COMPATIBLE
+                )
+                if (lanOptIn) {
+                    val decision = pl.aimasterpro.app.core.ProviderEndpointPolicy.validate(base, apiKey, true)
+                    if (!decision.allowed) {
+                        toast("Nie można włączyć HTTP dla tego adresu: ${decision.message}")
+                        return@setPositiveButton
+                    }
+                }
                 if (!saveProvider(cfg)) return@setPositiveButton
                 modelCatalogPrefs.edit().putLong("last_attempt", 0L).apply()
                 showShell("Modele"); showProviders()
@@ -4534,7 +4559,8 @@ class MainActivity : Activity() {
 
     private fun saveProvider(config: ProviderConfig): Boolean {
         val json = JSONObject().put("id", config.id).put("name", config.name).put("kind", config.kind.name)
-            .put("baseUrl", config.baseUrl).put("model", config.model).put("apiKey", config.apiKey).put("enabled", config.enabled).put("parentProviderId", config.parentProviderId)
+            .put("baseUrl", config.baseUrl).put("model", config.model).put("apiKey", config.apiKey).put("enabled", config.enabled)
+            .put("parentProviderId", config.parentProviderId).put("allowInsecureLanOllama", config.allowInsecureLanOllama)
         val saved = store.saveConfig(json)
         if (!saved) {
             if (store.isStorageUncertain()) {
@@ -4552,7 +4578,11 @@ class MainActivity : Activity() {
         if (j.optBoolean("_secretUnavailable", false)) return null
         val kind = runCatching { ProviderKind.valueOf(j.optString("kind")) }.getOrDefault(ProviderKind.OPENAI_COMPATIBLE)
         val parentId = j.optString("parentProviderId", "")
-        val stored = ProviderConfig(j.optString("id", id), j.optString("name", id), kind, j.optString("baseUrl"), j.optString("model"), j.optString("apiKey").trim().removePrefix("Bearer ").trim(), j.optBoolean("enabled", true), parentId)
+        val stored = ProviderConfig(
+            j.optString("id", id), j.optString("name", id), kind, j.optString("baseUrl"), j.optString("model"),
+            j.optString("apiKey").trim().removePrefix("Bearer ").trim(), j.optBoolean("enabled", true), parentId,
+            j.optBoolean("allowInsecureLanOllama", false)
+        )
         if (parentId.isBlank()) return stored
         val parentJson = store.readConfig(parentId) ?: return null
         if (parentJson.optBoolean("_secretUnavailable", false)) return null
@@ -4561,7 +4591,8 @@ class MainActivity : Activity() {
             kind = parentKind,
             baseUrl = parentJson.optString("baseUrl", stored.baseUrl),
             apiKey = parentJson.optString("apiKey", stored.apiKey).trim().removePrefix("Bearer ").trim(),
-            enabled = parentJson.optBoolean("enabled", stored.enabled)
+            enabled = parentJson.optBoolean("enabled", stored.enabled),
+            allowInsecureLanOllama = parentJson.optBoolean("allowInsecureLanOllama", stored.allowInsecureLanOllama)
         )
     }
 
