@@ -6317,7 +6317,7 @@ class MainActivity : Activity() {
         val checkpoints = pl.aimasterpro.app.core.TaskCheckpointStore.latest(this)
         val latestByTask = checkpoints.distinctBy { it.taskId }
 
-        card("CENTRUM ZADAŃ • MASTER", "Kolejka operacyjna, przydziały agentów, zależności i historia zmian statusu. Zadania z tej kolejki są trwałe i oddzielone od planów oraz checkpointów starszego dziennika.")
+        card("CENTRUM ZADAŃ • MASTER", "Kolejka operacyjna, przydziały agentów, zależności i historia zmian statusu. Zadania są trwałe. Ten etap zapisuje i koordynuje przydziały; wykonanie LLM z tej kolejki zostanie spięte z TeamRunEngine w następnym kroku.")
         if (queue.status != pl.aimasterpro.app.core.MasterTaskQueueStore.ReadStatus.AVAILABLE) {
             card("KOLEJKA NIEDOSTĘPNA", "Stan magazynu: ${queue.status}\nKod: ${queue.errorCode}\nZapis i przydzielanie są zablokowane. Dane nie zostaną automatycznie nadpisane.")
         } else {
@@ -6383,29 +6383,22 @@ class MainActivity : Activity() {
                             }.show()
                     }
                 }
-                when (task.status) {
-                    pl.aimasterpro.app.core.MasterTaskQueueStore.Status.ASSIGNED ->
-                        action("▶ ROZPOCZNIJ PRZEBIEG", box) {
-                            if (queueStore.transition(this, task.id, "MASTER",
-                                    pl.aimasterpro.app.core.MasterTaskQueueStore.Status.RUNNING, "MASTER oznaczył zadanie jako uruchomione.")) {
-                                showShell("Zadania"); showTasksCenter()
-                            } else toast("Nie udało się zmienić statusu.")
-                        }
-                    pl.aimasterpro.app.core.MasterTaskQueueStore.Status.BLOCKED ->
-                        action("ODBLOCKUJ → KOLEJKA", box) {
-                            if (queueStore.transition(this, task.id, "MASTER",
-                                    pl.aimasterpro.app.core.MasterTaskQueueStore.Status.QUEUED, "MASTER przywrócił zadanie do kolejki.")) {
-                                showShell("Zadania"); showTasksCenter()
-                            } else toast("Nie udało się odblokować zadania.")
-                        }
-                    pl.aimasterpro.app.core.MasterTaskQueueStore.Status.RUNNING ->
-                        action("Ⅱ WSTRZYMAJ ZADANIE", box) {
-                            if (queueStore.transition(this, task.id, "USER",
-                                    pl.aimasterpro.app.core.MasterTaskQueueStore.Status.PAUSED, "Wstrzymano z poziomu centrum zadań.")) {
-                                showShell("Zadania"); showTasksCenter()
-                            } else toast("Nie udało się wstrzymać zadania.")
-                        }
-                    else -> Unit
+                if (task.status == pl.aimasterpro.app.core.MasterTaskQueueStore.Status.BLOCKED) {
+                    action("ODBLOCKUJ → KOLEJKA", box) {
+                        if (queueStore.transition(this, task.id, "MASTER",
+                                pl.aimasterpro.app.core.MasterTaskQueueStore.Status.QUEUED, "MASTER przywrócił zadanie do kolejki.")) {
+                            showShell("Zadania"); showTasksCenter()
+                        } else toast("Nie udało się odblokować zadania.")
+                    }
+                }
+                if (task.status in setOf(pl.aimasterpro.app.core.MasterTaskQueueStore.Status.ASSIGNED,
+                        pl.aimasterpro.app.core.MasterTaskQueueStore.Status.RUNNING)) {
+                    action("Ⅱ WSTRZYMAJ ZADANIE", box) {
+                        if (queueStore.transition(this, task.id, "USER",
+                                pl.aimasterpro.app.core.MasterTaskQueueStore.Status.PAUSED, "Wstrzymano z poziomu centrum zadań.")) {
+                            showShell("Zadania"); showTasksCenter()
+                        } else toast("Nie udało się wstrzymać zadania.")
+                    }
                 }
                 if (task.status !in setOf(pl.aimasterpro.app.core.MasterTaskQueueStore.Status.COMPLETED,
                         pl.aimasterpro.app.core.MasterTaskQueueStore.Status.FAILED,
