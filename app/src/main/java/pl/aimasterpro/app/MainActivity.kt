@@ -4442,8 +4442,11 @@ class MainActivity : Activity() {
                         }
                     }
                 } finally {
-                    val providerSnapshotWasInvalidated = !modelCatalogRefreshGeneration.isCurrent(refreshGeneration)
+                    // Release the single-flight gate before checking the generation. This closes
+                    // the race where import invalidates immediately after the check, requests a
+                    // refresh while the gate is still held, and then loses that refresh on return.
                     modelCatalogRefreshInFlight.set(false)
+                    val providerSnapshotWasInvalidated = !modelCatalogRefreshGeneration.isCurrent(refreshGeneration)
                     // An import may have requested a refresh while this old generation still
                     // held the single-flight gate. Retry once for the new provider snapshot.
                     if (providerSnapshotWasInvalidated && !isFinishing && !isDestroyed) {
