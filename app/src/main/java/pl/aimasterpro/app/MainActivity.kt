@@ -306,7 +306,11 @@ class MainActivity : Activity() {
         // Resolve role and conversation before building the top bar so its model/provider are correct.
         when (label) {
             "Czat" -> {
-                val lastId = chatPrefs.getString("last_user_chat_id", "") ?: ""
+                val lastId = pl.aimasterpro.app.core.ChatHistoryStore.readLastUserChatId(this)
+                    ?: run {
+                        toast("Nie można bezpiecznie odczytać ostatniej rozmowy. Historia pozostała bez zmian; uruchom aplikację ponownie.")
+                        return
+                    }
                 val targetId = if (lastId.isNotBlank()) lastId else UUID.randomUUID().toString()
                 if (!restoreMessagesForCurrentChat(targetId)) return
                 selectedAgent = AgentRole.MASTER
