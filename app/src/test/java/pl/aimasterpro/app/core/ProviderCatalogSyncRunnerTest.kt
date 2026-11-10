@@ -57,6 +57,25 @@ class ProviderCatalogSyncRunnerTest {
     }
 
     @Test
+    fun cancellationDuringDiscoveryPreventsStaleCatalogFromBeingSaved() {
+        val saved = mutableListOf<String>()
+        var cancelled = false
+        val report = ProviderCatalogSyncRunner.synchronize(
+            providers = listOf("old-profile", "new-profile"),
+            isCancelled = { cancelled },
+            discover = { provider ->
+                if (provider == "old-profile") cancelled = true
+                listOf("stale-model")
+            },
+            save = { provider, _ -> saved += provider }
+        )
+
+        assertTrue(saved.isEmpty())
+        assertTrue(report.stopped)
+        assertTrue(report.successfulProviders.isEmpty())
+    }
+
+    @Test
     fun cancellationStopsBeforeStartingNextProvider() {
         var checks = 0
         val discovered = mutableListOf<String>()
