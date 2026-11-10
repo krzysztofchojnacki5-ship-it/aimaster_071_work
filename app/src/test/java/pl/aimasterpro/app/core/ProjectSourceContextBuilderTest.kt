@@ -28,7 +28,7 @@ class ProjectSourceContextBuilderTest {
 
     @Test fun missingWorkspaceAndUnsupportedFilesAreReportedWithoutFalseAccessClaim() {
         assertEquals(ProjectSourceContextBuilder.Status.NOT_IMPORTED,
-            ProjectSourceContextBuilder.build(emptyList(), "code", { _, _ -> error("must not read") }).status)
+            ProjectSourceContextBuilder.build(emptyList(), "code", readFile = { _, _ -> error("must not read") }).status)
         val blocked = ProjectSourceContextBuilder.build(listOf(record("app/src/MainActivity.kt")), "MainActivity", readFile = { _, _ ->
             error("secret-like file rejected by workspace reader")
         })
