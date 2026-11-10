@@ -6397,18 +6397,18 @@ class MainActivity : Activity() {
                         } else toast("Nie udało się odblokować zadania.")
                     }
                 }
-                if (task.status in setOf(pl.aimasterpro.app.core.MasterTaskQueueStore.Status.ASSIGNED,
-                        pl.aimasterpro.app.core.MasterTaskQueueStore.Status.RUNNING)) {
-                    action("Ⅱ WSTRZYMAJ ZADANIE", box) {
+                if (task.status == pl.aimasterpro.app.core.MasterTaskQueueStore.Status.ASSIGNED) {
+                    action("Ⅱ WSTRZYMAJ PRZED STARTEM", box) {
                         if (queueStore.transition(this, task.id, "USER",
-                                pl.aimasterpro.app.core.MasterTaskQueueStore.Status.PAUSED, "Wstrzymano z poziomu centrum zadań.")) {
+                                pl.aimasterpro.app.core.MasterTaskQueueStore.Status.PAUSED, "Wstrzymano przydział przed wysłaniem żądań do modeli.")) {
                             showShell("Zadania"); showTasksCenter()
                         } else toast("Nie udało się wstrzymać zadania.")
                     }
                 }
-                if (task.status !in setOf(pl.aimasterpro.app.core.MasterTaskQueueStore.Status.COMPLETED,
-                        pl.aimasterpro.app.core.MasterTaskQueueStore.Status.FAILED,
-                        pl.aimasterpro.app.core.MasterTaskQueueStore.Status.CANCELLED)) {
+                if (task.status in setOf(pl.aimasterpro.app.core.MasterTaskQueueStore.Status.QUEUED,
+                        pl.aimasterpro.app.core.MasterTaskQueueStore.Status.ASSIGNED,
+                        pl.aimasterpro.app.core.MasterTaskQueueStore.Status.PAUSED,
+                        pl.aimasterpro.app.core.MasterTaskQueueStore.Status.BLOCKED)) {
                     action("ANULUJ ZADANIE", box) {
                         AlertDialog.Builder(this).setTitle("Anulować zadanie?")
                             .setMessage("Zadanie pozostanie w historii. Nie usuwam jego danych ani audytu.")
