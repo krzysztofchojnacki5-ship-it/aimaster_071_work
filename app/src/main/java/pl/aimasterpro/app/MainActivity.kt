@@ -3965,7 +3965,7 @@ class MainActivity : Activity() {
             }
         }
 
-        card("MODELE • centrum zarządzania", "Jedno miejsce do pobierania modeli, sprawdzania cen, kopiowania identyfikatorów i tworzenia profili modeli. Agenci korzystają później z gotowych profili.")
+        card("DOSTAWCY AI • KONFIGURACJA", "Zarządzanie połączeniami, kluczami API, lokalnym Ollama, katalogiem modeli i profilami modeli przypisywanymi do agentów.")
 
         val syncCard = card("Katalog modeli", "Dane pochodzą z API skonfigurowanych dostawców. Cena nieznana nie jest traktowana jako darmowa.")
         action("⟳ ODŚWIEŻ WSZYSTKICH DOSTAWCÓW", syncCard) { refreshAllModelCatalogs(showToast = true) }
@@ -4699,7 +4699,7 @@ class MainActivity : Activity() {
             return
         }
         loadAgentActivity()
-        card("Zespół agentów", "Tutaj przydzielasz gotowe profile modeli do ról, ustawiasz tryb pracy i testujesz połączenie. Katalog modeli oraz klucze API są zarządzane wyłącznie w zakładce MODELE.")
+        card("ZESPÓŁ AGENTÓW • STUDIO", "Panel operacyjny zespołu AiFORTeca. MASTER koordynuje zadania, a specjaliści otrzymują role, profile modeli i własny zakres odpowiedzialności. Zarządzanie agentami pozostaje oddzielone od konfiguracji dostawców.")
 
         val mode = currentWorkMode()
         val modeCard = card("Tryb pracy: ${mode.label}", mode.description)
@@ -4710,7 +4710,12 @@ class MainActivity : Activity() {
                 toast("Ustawiono tryb: ${candidate.label}")
             }
         }
-        val catalogCard = card("Biblioteka specjalizacji", "Definicje ról i zadań nie wymagają osobnych kluczy API. Wykonanie każdej roli korzysta z profilu modelu przypisanego poniżej.")
+        val masterProfile = loadProvider(resolvedMasterProviderId().orEmpty())
+        val masterState = if (!agentAssignmentsHealthy) "PRZYPISANIA WYMAGAJĄ UZGODNIENIA" else if (masterProfile == null) "BRAK PROFILU MASTER" else "PROFIL MASTER WYBRANY"
+        val masterCard = card("MASTER • KOORDYNATOR GŁÓWNY", "$masterState\nModel: ${masterProfile?.model?.ifBlank { "nie wybrano" } ?: "nieprzypisany"}\nDostawca: ${masterProfile?.name ?: "brak"}\nMASTER przydziela zadania, nadzoruje wyniki specjalistów i przygotowuje końcową syntezę.")
+        action("OTWÓRZ CENTRUM MASTER", masterCard) { navigate("Centrum") }
+
+        val catalogCard = card("KATALOG AGENTÓW I SPECJALIZACJI", "Zarządzaj aktywnością agentów, dodawaj własne specjalizacje i przypisuj profile modeli. Definicje ról nie wymagają osobnych kluczy API.")
         val agentManagerSnapshot = pl.aimasterpro.app.core.AgentManagerStore.snapshot(this)
         val totalManagedAgents = AgentCatalog.all.size + agentManagerSnapshot.customAgents.size
         val enabledManagedAgents = if (agentManagerSnapshot.status == pl.aimasterpro.app.core.AgentManagerStore.ReadStatus.AVAILABLE)
