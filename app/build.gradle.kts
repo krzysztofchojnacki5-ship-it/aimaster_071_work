@@ -2,6 +2,19 @@ plugins {
     id("com.android.application")
 }
 
+val releaseSigningEnvironment = listOf(
+    "AIFORTECA_KEYSTORE_PATH",
+    "AIFORTECA_KEYSTORE_PASSWORD",
+    "AIFORTECA_KEY_ALIAS",
+    "AIFORTECA_KEY_PASSWORD"
+).associateWith { System.getenv(it).orEmpty() }
+val hasAnyReleaseSigningValue = releaseSigningEnvironment.values.any { it.isNotBlank() }
+val hasCompleteReleaseSigningEnvironment = releaseSigningEnvironment.values.all { it.isNotBlank() }
+
+if (hasAnyReleaseSigningValue && !hasCompleteReleaseSigningEnvironment) {
+    throw GradleException("Release signing is partially configured. Provide all AIFORTECA signing environment variables or none.")
+}
+
 android {
     namespace = "pl.aimasterpro.app"
     compileSdk = 36
@@ -14,10 +27,24 @@ android {
         versionName = "0.2"
     }
 
+    signingConfigs {
+        if (hasCompleteReleaseSigningEnvironment) {
+            create("release") {
+                storeFile = file(releaseSigningEnvironment.getValue("AIFORTECA_KEYSTORE_PATH"))
+                storePassword = releaseSigningEnvironment.getValue("AIFORTECA_KEYSTORE_PASSWORD")
+                keyAlias = releaseSigningEnvironment.getValue("AIFORTECA_KEY_ALIAS")
+                keyPassword = releaseSigningEnvironment.getValue("AIFORTECA_KEY_PASSWORD")
+            }
+        }
+    }
+
     buildTypes {
         debug { applicationIdSuffix = ".debug"; versionNameSuffix = "-debug" }
         release {
             isMinifyEnabled = false
+            if (hasCompleteReleaseSigningEnvironment) {
+                signingConfig = signingConfigs.getByName("release")
+            }
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
         }
     }
