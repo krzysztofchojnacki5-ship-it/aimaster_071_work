@@ -80,6 +80,17 @@ object ChatHistoryStore {
     }.getOrNull()
 
     /**
+     * Reads the navigation mirror under the same health gate as canonical history.
+     * Null means the preference file could not be read safely; callers must not guess a destination.
+     */
+    fun readLastUserChatId(context: Context): String? = runCatching {
+        SharedPreferencesWriteHealth.withHealthyAccess(PREFS) {
+            context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+                .getString("last_user_chat_id", "") ?: ""
+        }
+    }.getOrNull()
+
+    /**
      * Performs a read-modify-write against one locked snapshot. Callers must mutate the supplied
      * root only inside this callback; returning false means no persistence is needed.
      */
