@@ -1,5 +1,7 @@
 package pl.aimasterpro.app.network
 
+import java.io.ByteArrayOutputStream
+import java.io.InputStream
 import java.net.InetAddress
 import java.net.InetSocketAddress
 import java.net.ServerSocket
@@ -36,35 +38,39 @@ class TestHttpServer(
             socket.use { s ->
                 val input = s.getInputStream()
                 val headers = mutableListOf<String>()
-                val lineBuf = StringBuilder()
-                var c: Int
-                while (input.read().also { c = it } != -1) {
-                    if (c == '\n'.code) {
-                        val line = lineBuf.toString().trimEnd('\r')
-                        lineBuf.setLength(0)
-                        if (line.isEmpty()) break
-                        headers.add(line)
-                    } else {
-                        lineBuf.append(c.toChar())
-                    }
+                while (true) {
+                    val line = input.readAsciiLine() ?: break
+                    if (line.isEmpty()) break
+                    headers.add(line)
                 }
                 if (headers.isEmpty()) return
 
-                var contentLength = 0
-                for (h in headers) {
-                    if (h.startsWith("Content-Length:", ignoreCase = true)) {
-                        contentLength = h.substringAfter(":").trim().toIntOrNull() ?: 0
-                    }
+                val contentLength = headers.firstNotNullOfOrNull { header ->
+                    if (header.startsWith("Content-Length:", ignoreCase = true)) {
+                        header.substringAfter(":").trim().toIntOrNull()
+                    } else null
+                } ?: 0
+                val isChunked = headers.any {
+                    it.startsWith("Transfer-Encoding:", ignoreCase = true) &&
+                        it.substringAfter(":").contains("chunked", ignoreCase = true)
                 }
 
-                val bodyBytes = ByteArray(contentLength)
-                var readTotal = 0
-                while (readTotal < contentLength) {
-                    val r = input.read(bodyBytes, readTotal, contentLength - readTotal)
-                    if (r == -1) break
-                    readTotal += r
+                val bodyBytes = when {
+                    isChunked -> input.readChunkedBody()
+                    contentLength > 0 -> ByteArray(contentLength).also { bytes ->
+                        var offset = 0
+                        while (offset < bytes.size) {
+                            val count = input.read(bytes, offset, bytes.size - offset)
+                            if (count < 0) break
+                            offset += count
+                        }
+                    }.let { bytes ->
+                        // A short fixed-length body is still returned as received.
+                        bytes
+                    }
+                    else -> ByteArray(0)
                 }
-                val body = String(bodyBytes, 0, readTotal, Charsets.UTF_8)
+                val body = String(bodyBytes, Charsets.UTF_8)
 
                 val (statusCode, responseText) = handler(body, attempt)
                 val respBytes = responseText.toByteArray(Charsets.UTF_8)
@@ -98,5 +104,45 @@ class TestHttpServer(
         isRunning = false
         try { serverSocket.close() } catch (_: Exception) {}
         executor.shutdownNow()
+    }
+}
+
+private fun InputStream.readAsciiLine(): String? {
+    val bytes = ByteArrayOutputStream()
+    while (true) {
+        val value = read()
+        if (value < 0) return if (bytes.size() == 0) null else bytes.toString(Charsets.US_ASCII.name()).trimEnd('\r')
+        if (value == '\n'.code) return bytes.toString(Charsets.US_ASCII.name()).trimEnd('\r')
+        bytes.write(value)
+    }
+}
+
+private fun InputStream.readChunkedBody(): ByteArray {
+    val body = ByteArrayOutputStream()
+    while (true) {
+        val sizeLine = readAsciiLine() ?: throw java.io.IOException("Unexpected end of chunked request")
+        val sizeToken = sizeLine.substringBefore(';').trim()
+        val size = sizeToken.toLongOrNull(16)
+            ?: throw java.io.IOException("Invalid chunk size")
+        if (size == 0L) {
+            // Consume optional trailer headers and the final empty line.
+            while (true) {
+                val trailer = readAsciiLine() ?: break
+                if (trailer.isEmpty()) break
+            }
+            return body.toByteArray()
+        }
+        require(size <= Int.MAX_VALUE) { "Chunk is too large" }
+        var remaining = size.toInt()
+        val buffer = ByteArray(minOf(8192, remaining))
+        while (remaining > 0) {
+            val count = read(buffer, 0, minOf(buffer.size, remaining))
+            if (count < 0) throw java.io.IOException("Truncated chunk")
+            body.write(buffer, 0, count)
+            remaining -= count
+        }
+        val cr = read()
+        val lf = read()
+        if (cr != '\r'.code || lf != '\n'.code) throw java.io.IOException("Invalid chunk terminator")
     }
 }
