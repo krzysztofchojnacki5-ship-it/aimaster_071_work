@@ -7343,44 +7343,46 @@ class MainActivity : Activity() {
                     if (result.isFailure) { toast("Nie można odszyfrować bazy. Sprawdź hasło i plik."); return@setPositiveButton }
                     runCatching {
                         val configs = BackupCrypto.parseProviderConfigs(result.getOrThrow())
-                        // Invalidate any catalog job using the old provider snapshot before replacing keys.
-                        modelCatalogRefreshGeneration.invalidate()
-                        // Stop old-profile requests before the provider set changes. The
-                        // persisted assignments are invalidated immediately after a successful swap.
-                        cancelProviderWorkBeforeConfigReplacement()
-                        val previousCatalogIdentity = store.allConfigs().associate { saved ->
-                            saved.optString("id") to saved.optString("baseUrl").trimEnd('/').lowercase(java.util.Locale.ROOT)
-                        }
-                        require(store.replaceAllConfigs(configs)) { "Import nie został zatwierdzony. Dotychczasowe konfiguracje pozostały bez zmian." }
+                        // Hold the generation gate through provider replacement, cache invalidation
+                        // and assignment reconciliation. A refresh cannot snapshot the old profiles
+                        // in the gap after invalidation but before the replacement is complete.
+                        modelCatalogRefreshGeneration.invalidateAndRun {
+                            // Stop old-profile requests before the provider set changes.
+                            cancelProviderWorkBeforeConfigReplacement()
+                            val previousCatalogIdentity = store.allConfigs().associate { saved ->
+                                saved.optString("id") to saved.optString("baseUrl").trimEnd('/').lowercase(java.util.Locale.ROOT)
+                            }
+                            require(store.replaceAllConfigs(configs)) { "Import nie został zatwierdzony. Dotychczasowe konfiguracje pozostały bez zmian." }
 
-                        // The portable backup replaces provider identities. The on-device model
-                        // discovery cache is not part of that backup, so never show cached models
-                        // from an old endpoint under an imported provider that reused its ID.
-                        val catalogCleared = modelCatalogPrefs.edit()
-                            .remove("models_json")
-                            .remove("last_sync")
-                            .putLong("last_attempt", 0L)
-                            .commit()
-                        if (!catalogCleared) {
-                            android.util.Log.e("AiFORTecaImport", "Nie udało się trwale unieważnić cache katalogu modeli po imporcie.")
-                        }
-                        configs.forEach { imported ->
-                            val providerId = imported.optString("id")
-                            val oldBase = previousCatalogIdentity[providerId].orEmpty()
-                            val newBase = imported.optString("baseUrl").trimEnd('/').lowercase(java.util.Locale.ROOT)
-                            if (oldBase.isNotBlank() && oldBase != newBase) {
-                                runCatching {
-                                    pl.aimasterpro.app.core.ApiTokenTracker.replaceCatalogPricingForProvider(
-                                        this, providerId, oldBase, emptyList()
-                                    )
-                                }.onFailure {
-                                    android.util.Log.e("AiFORTecaImport", "Nie udało się usunąć nieaktualnego cennika dostawcy $providerId.", it)
+                            // The portable backup replaces provider identities. The on-device model
+                            // discovery cache is not part of that backup, so never show cached models
+                            // from an old endpoint under an imported provider that reused its ID.
+                            val catalogCleared = modelCatalogPrefs.edit()
+                                .remove("models_json")
+                                .remove("last_sync")
+                                .putLong("last_attempt", 0L)
+                                .commit()
+                            if (!catalogCleared) {
+                                android.util.Log.e("AiFORTecaImport", "Nie udało się trwale unieważnić cache katalogu modeli po imporcie.")
+                            }
+                            configs.forEach { imported ->
+                                val providerId = imported.optString("id")
+                                val oldBase = previousCatalogIdentity[providerId].orEmpty()
+                                val newBase = imported.optString("baseUrl").trimEnd('/').lowercase(java.util.Locale.ROOT)
+                                if (oldBase.isNotBlank() && oldBase != newBase) {
+                                    runCatching {
+                                        pl.aimasterpro.app.core.ApiTokenTracker.replaceCatalogPricingForProvider(
+                                            this, providerId, oldBase, emptyList()
+                                        )
+                                    }.onFailure {
+                                        android.util.Log.e("AiFORTecaImport", "Nie udało się usunąć nieaktualnego cennika dostawcy $providerId.", it)
+                                    }
                                 }
                             }
-                        }
-                        val preferredMasterId = configs.first().optString("id", "gemini")
-                        require(reconcileAgentAssignmentsAfterImport(configs, preferredMasterId)) {
-                            "Konfiguracje zaimportowano, ale nie udało się trwale uzgodnić przypisań agentów. Nie uruchamiaj zadań; zamknij i uruchom ponownie aplikację."
+                            val preferredMasterId = configs.first().optString("id", "gemini")
+                            require(reconcileAgentAssignmentsAfterImport(configs, preferredMasterId)) {
+                                "Konfiguracje zaimportowano, ale nie udało się trwale uzgodnić przypisań agentów. Nie uruchamiaj zadań; zamknij i uruchom ponownie aplikację."
+                            }
                         }
                         showShell("Modele"); showProviders()
                         toast("Wczytano ${configs.size} konfiguracji modeli wraz z kluczami API.")
@@ -7547,24 +7549,28 @@ class MainActivity : Activity() {
         AlertDialog.Builder(this).setTitle("Import starej bazy")
             .setMessage("Znaleziono ${migrated.size} profili. Import odbywa się lokalnie. Profile z nieczytelnym, zaszyfrowanym polem klucza zostaną przeniesione bez klucza i będzie trzeba wpisać go ponownie. Zastąpić obecną konfigurację?")
             .setNegativeButton("Anuluj", null).setPositiveButton("Importuj") { _, _ ->
-                // Match encrypted-backup import: invalidate catalog work and quiesce requests before replacing provider profiles.
-                modelCatalogRefreshGeneration.invalidate()
-                cancelProviderWorkBeforeConfigReplacement()
-                if (!store.replaceAllConfigs(migrated)) {
+                // Keep import, cache invalidation and assignment migration atomic against new refresh snapshots.
+                val importCommitted = runCatching {
+                    modelCatalogRefreshGeneration.invalidateAndRun {
+                        cancelProviderWorkBeforeConfigReplacement()
+                        if (!store.replaceAllConfigs(migrated)) return@invalidateAndRun false
+                        modelCatalogPrefs.edit().remove("models_json").remove("last_sync").putLong("last_attempt", 0L).commit()
+                        seedMissingDefaultProviders()
+                        val preferredMasterId = migrated.firstOrNull { it.optString("id") == "gemini" }?.optString("id") ?: migrated.first().optString("id")
+                        val importedProviderRows = store.allConfigs()
+                        reconcileAgentAssignmentsAfterImport(importedProviderRows, preferredMasterId)
+                    }
+                }.getOrElse { error ->
+                    android.util.Log.e("AiFORTecaImport", "Nie udało się zakończyć importu starej bazy.", error)
+                    false
+                }
+                if (!importCommitted) {
                     if (store.isStorageUncertain()) {
                         client.cancelActiveRequests()
                         toast("Błąd zapisu magazynu. Przerwano aktywne żądania API. Zamknij całkowicie AI MASTER PRO i uruchom ponownie aplikację.")
                     } else {
-                        toast("Import nie został zatwierdzony. Dotychczasowe konfiguracje pozostały bez zmian.")
+                        toast("Import nie został zatwierdzony lub nie udało się uzgodnić przypisań agentów.")
                     }
-                    return@setPositiveButton
-                }
-                modelCatalogPrefs.edit().remove("models_json").remove("last_sync").putLong("last_attempt", 0L).apply()
-                seedMissingDefaultProviders()
-                val preferredMasterId = migrated.firstOrNull { it.optString("id") == "gemini" }?.optString("id") ?: migrated.first().optString("id")
-                val importedProviderRows = store.allConfigs()
-                if (!reconcileAgentAssignmentsAfterImport(importedProviderRows, preferredMasterId)) {
-                    toast("Konfiguracje zaimportowano, ale nie udało się trwale uzgodnić przypisań agentów. Zamknij i uruchom ponownie aplikację.")
                     return@setPositiveButton
                 }
                 showShell("Modele"); showProviders()
