@@ -3,10 +3,10 @@ name: Gradle Wrapper Validation
 on:
   push:
     branches:
-      - work/aiforteca-0.0.1-foundation
+      - 'work/aiforteca-*'
   pull_request:
     branches:
-      - work/aiforteca-0.0.1-foundation
+      - 'work/aiforteca-*'
 
 permissions:
   contents: read
