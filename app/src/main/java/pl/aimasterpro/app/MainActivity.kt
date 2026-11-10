@@ -214,6 +214,7 @@ class MainActivity : Activity() {
             "Przywrócono $restoredChatResponses odpowiedzi czatu po przerwaniu procesu."
         )
         seedDefaultProviders()
+        migrateLegacyOllamaEmulatorEndpoint()
         selectedProviderId = runCatching { chatPrefs.getString("selected_provider", "gemini") }.getOrNull() ?: ""
         restoreMessages()
         client = ProviderClient()
@@ -3910,6 +3911,23 @@ class MainActivity : Activity() {
             ProviderConfig("custom", "Własny endpoint (OpenAI-compatible)", ProviderKind.OPENAI_COMPATIBLE, "", "", "", false)
         )
         defaults.filter { it.id !in existingIds }.forEach { saveProvider(it) }
+    }
+
+    /**
+     * 10.0.2.2 is an Android-emulator-only host alias, not a reachable PC address on a physical phone.
+     * Migrate only the untouched legacy default; preserve user-entered endpoints and selected models.
+     */
+    private fun migrateLegacyOllamaEmulatorEndpoint() {
+        val legacy = loadProvider("ollama") ?: return
+        val normalized = legacy.baseUrl.trim().trimEnd('/')
+        if (!normalized.equals("http://10.0.2.2:11434/v1", ignoreCase = true) &&
+            !normalized.equals("http://10.0.2.2:11434", ignoreCase = true)) return
+        val migrated = legacy.copy(baseUrl = "", enabled = false, allowInsecureLanOllama = false)
+        if (!saveProvider(migrated)) {
+            android.util.Log.e("AiFORTecaMigration", "Nie udało się wyczyścić emulatorowego adresu Ollama. Profil pozostawiono bez zmian.")
+        } else {
+            android.util.Log.i("AiFORTecaMigration", "Usunięto wyłącznie domyślny adres emulatora 10.0.2.2. Wpisz adres IP komputera w sieci LAN.")
+        }
     }
 
     private fun showProviders() {
