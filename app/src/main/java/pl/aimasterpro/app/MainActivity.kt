@@ -3439,9 +3439,9 @@ class MainActivity : Activity() {
                         integrity.missing.size + integrity.modified.size + integrity.unexpected.size, 0
                     )
                 }
-                pl.aimasterpro.app.core.ProjectSourceContextBuilder.build(info.files, prompt) { path, maxBytes ->
+                pl.aimasterpro.app.core.ProjectSourceContextBuilder.build(info.files, prompt, readFile = { path, maxBytes ->
                     workspace.readTextFile(path, maxBytes)
-                }
+                })
             } ?: busy
         }.getOrElse { error ->
             android.util.Log.w("AiFORTecaSourceContext", "Bezpieczny odczyt kontekstu projektu został zablokowany.", error)
