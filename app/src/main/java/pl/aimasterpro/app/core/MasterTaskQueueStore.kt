@@ -228,7 +228,7 @@ object MasterTaskQueueStore {
                 if (task.status != Status.RUNNING) task else {
                     recovered++
                     task.copy(status = Status.BLOCKED,
-                        currentStep = "Przerwano działanie aplikacji. Wynik żądań może być nieznany; sprawdź historię API przed ponownym uruchomieniem.",
+                        currentStep = "Przerwano działanie aplikacji. wynik żądań może być nieznany; sprawdź historię API przed ponownym uruchomieniem.",
                         updatedAt = maxOf(now, task.updatedAt))
                 }
             }

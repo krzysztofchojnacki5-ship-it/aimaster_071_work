@@ -7278,7 +7278,36 @@ class MainActivity : Activity() {
                         // Stop old-profile requests before the provider set changes. The
                         // persisted assignments are invalidated immediately after a successful swap.
                         cancelProviderWorkBeforeConfigReplacement()
+                        val previousCatalogIdentity = store.allConfigs().associate { saved ->
+                            saved.optString("id") to saved.optString("baseUrl").trimEnd('/').lowercase(java.util.Locale.ROOT)
+                        }
                         require(store.replaceAllConfigs(configs)) { "Import nie został zatwierdzony. Dotychczasowe konfiguracje pozostały bez zmian." }
+
+                        // The portable backup replaces provider identities. The on-device model
+                        // discovery cache is not part of that backup, so never show cached models
+                        // from an old endpoint under an imported provider that reused its ID.
+                        val catalogCleared = modelCatalogPrefs.edit()
+                            .remove("models_json")
+                            .remove("last_sync")
+                            .putLong("last_attempt", 0L)
+                            .commit()
+                        if (!catalogCleared) {
+                            android.util.Log.e("AiFORTecaImport", "Nie udało się trwale unieważnić cache katalogu modeli po imporcie.")
+                        }
+                        configs.forEach { imported ->
+                            val providerId = imported.optString("id")
+                            val oldBase = previousCatalogIdentity[providerId].orEmpty()
+                            val newBase = imported.optString("baseUrl").trimEnd('/').lowercase(java.util.Locale.ROOT)
+                            if (oldBase.isNotBlank() && oldBase != newBase) {
+                                runCatching {
+                                    pl.aimasterpro.app.core.ApiTokenTracker.replaceCatalogPricingForProvider(
+                                        this, providerId, oldBase, emptyList()
+                                    )
+                                }.onFailure {
+                                    android.util.Log.e("AiFORTecaImport", "Nie udało się usunąć nieaktualnego cennika dostawcy $providerId.", it)
+                                }
+                            }
+                        }
                         val preferredMasterId = configs.first().optString("id", "gemini")
                         require(reconcileAgentAssignmentsAfterImport(configs, preferredMasterId)) {
                             "Konfiguracje zaimportowano, ale nie udało się trwale uzgodnić przypisań agentów. Nie uruchamiaj zadań; zamknij i uruchom ponownie aplikację."
