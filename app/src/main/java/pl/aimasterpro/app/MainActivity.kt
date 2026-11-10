@@ -61,6 +61,7 @@ import java.io.File
 import java.io.InputStreamReader
 import java.util.UUID
 import java.util.concurrent.Executors
+import java.util.concurrent.atomic.AtomicBoolean
 
 class MainActivity : Activity() {
     // ---- Paleta (ciemny motyw w stylu ChatGPT; pomarańcz/turkus zostają jako akcenty) ----
@@ -77,6 +78,8 @@ class MainActivity : Activity() {
     private val markdownLinkRegex = Regex("\\[([^\\]]+)]\\((https?://[^\\s)]+)\\)")
 
     private val executor = Executors.newSingleThreadExecutor()
+    /** Prevent overlapping catalog refreshes from import, manual refresh and screen navigation. */
+    private val modelCatalogRefreshInFlight = AtomicBoolean(false)
     private lateinit var store: SecureStore
     private lateinit var client: ProviderClient
     private lateinit var root: FrameLayout
@@ -4143,11 +4146,8 @@ class MainActivity : Activity() {
             }
         }
 
-        // Synchronizacja automatyczna najwyżej raz na 6 godzin; ręczne odświeżenie działa zawsze.
-        val lastAttempt = modelCatalogPrefs.getLong("last_attempt", 0L)
-        if (lastAttempt == 0L || System.currentTimeMillis() - lastAttempt > 6 * 60 * 60 * 1000L) {
-            refreshAllModelCatalogs(showToast = false)
-        }
+        // Rendering this screen must never trigger network I/O. Imports start one
+        // controlled refresh after the new provider set and assignments are committed.
     }
 
     /** Opens the native Ollama pull workflow; cloud-provider catalog discovery never downloads model weights. */
@@ -4342,56 +4342,110 @@ class MainActivity : Activity() {
             navigate("Modele")
             return
         }
-        val providers = store.allConfigs().mapNotNull { j -> runCatching { loadProvider(j.optString("id")) }.getOrNull() }
-            .filter { it.parentProviderId.isBlank() && providerCredentialsReady(it) }
-        if (providers.isEmpty()) {
-            if (showToast) toast("Brak skonfigurowanych dostawców. Dodaj Base URL i klucz API.")
+        if (!modelCatalogRefreshInFlight.compareAndSet(false, true)) {
+            if (showToast) toast("Synchronizacja katalogów już trwa.")
             return
         }
-        status.text = "Pobieranie katalogów modeli…"
-        executor.execute {
-            if (store.isStorageUncertain()) {
-                runOnUiThread {
-                    status.text = "Magazyn konfiguracji wymaga ponownego uruchomienia"
-                    if (showToast) toast("Pobieranie katalogów przerwane. Uruchom ponownie AI MASTER PRO.")
+
+        try {
+            val providers = runCatching {
+                store.allConfigs().mapNotNull { j ->
+                    runCatching { loadProvider(j.optString("id")) }.getOrNull()
+                }.filter { it.parentProviderId.isBlank() && providerCredentialsReady(it) }
+            }.getOrElse { error ->
+                modelCatalogRefreshInFlight.set(false)
+                status.text = "Nie można odczytać konfiguracji dostawców"
+                if (showToast) toast("Nie udało się odczytać konfiguracji: ${error.message ?: "błąd magazynu"}")
+                return
+            }
+            if (providers.isEmpty()) {
+                modelCatalogRefreshInFlight.set(false)
+                status.text = "Brak dostawców gotowych do synchronizacji"
+                if (showToast) toast("Brak skonfigurowanych dostawców. Dodaj Base URL i klucz API.")
+                return
+            }
+
+            status.text = "Pobieranie katalogów modeli…"
+            executor.execute {
+                try {
+                    if (store.isStorageUncertain()) {
+                        runOnUiThread {
+                            status.text = "Magazyn konfiguracji wymaga ponownego uruchomienia"
+                            if (showToast) toast("Pobieranie katalogów przerwane. Uruchom ponownie AiFORTecę.")
+                        }
+                        return@execute
+                    }
+
+                    var success = 0
+                    val failures = mutableListOf<String>()
+                    providers.forEach { provider ->
+                        if (store.isStorageUncertain()) return@forEach
+                        // Each provider is an independent failure boundary: a bad endpoint,
+                        // malformed response or local pricing-store error must not abort others.
+                        val result = runCatching {
+                            client.discoverModelDetails(provider).also { discovered ->
+                                require(discovered.isNotEmpty()) {
+                                    "API zwróciło pustą listę; zachowano poprzedni katalog"
+                                }
+                                check(!store.isStorageUncertain()) { "Magazyn konfiguracji wymaga ponownego uruchomienia" }
+                                saveModelCatalogForProvider(provider, discovered)
+                            }
+                        }
+                        if (result.isSuccess) success++
+                        else failures.add("${provider.name}: ${result.exceptionOrNull()?.message ?: "błąd synchronizacji"}")
+                    }
+
+                    if (store.isStorageUncertain()) {
+                        runOnUiThread {
+                            status.text = "Synchronizacja przerwana: magazyn konfiguracji wymaga ponownego uruchomienia"
+                            if (showToast) toast("Nie zapisano wyników synchronizacji.")
+                        }
+                        return@execute
+                    }
+
+                    val now = System.currentTimeMillis()
+                    val editor = modelCatalogPrefs.edit().putLong("last_attempt", now)
+                    if (success > 0) editor.putLong("last_sync", now)
+                    val metadataSaved = editor.commit()
+                    runOnUiThread {
+                        if (isFinishing || isDestroyed) return@runOnUiThread
+                        status.text = if (metadataSaved) {
+                            "Katalog modeli: $success/${providers.size} dostawców"
+                        } else {
+                            "Katalog pobrany, ale nie zapisano czasu synchronizacji"
+                        }
+                        // Refresh the visible list only; showProviders no longer starts requests.
+                        if (screen == "Modele") {
+                            showShell("Modele")
+                            showProviders()
+                        }
+                        if (showToast) toast(
+                            if (success > 0) "Pobrano modele od $success/${providers.size} dostawców."
+                            else "Nie udało się pobrać katalogów. Sprawdź klucze i adresy API."
+                        )
+                        if (failures.isNotEmpty() && (showToast || success == 0)) {
+                            AlertDialog.Builder(this).setTitle("Synchronizacja katalogów zakończona z błędami")
+                                .setMessage(failures.joinToString("\n\n").take(5000))
+                                .setPositiveButton("OK", null).show()
+                        }
+                    }
+                } catch (error: Throwable) {
+                    android.util.Log.e("AiFORTecaCatalog", "Nieoczekiwany błąd synchronizacji katalogów.", error)
+                    runOnUiThread {
+                        if (!isFinishing && !isDestroyed) {
+                            status.text = "Synchronizacja katalogów nie powiodła się"
+                            if (showToast) toast("Błąd synchronizacji katalogów: ${error.message ?: "nieznany błąd"}")
+                        }
+                    }
+                } finally {
+                    modelCatalogRefreshInFlight.set(false)
                 }
-                return@execute
             }
-            var success = 0
-            val failures = mutableListOf<String>()
-            providers.forEach { provider ->
-                if (store.isStorageUncertain()) return@forEach
-                val result = if (store.isStorageUncertain()) Result.failure(IllegalStateException("SecureStore uncertain"))
-                    else runCatching { client.discoverModelDetails(provider) }
-                if (store.isStorageUncertain()) return@forEach
-                if (result.isSuccess) {
-                    val discovered = result.getOrDefault(emptyList())
-                    if (discovered.isNotEmpty()) {
-                        saveModelCatalogForProvider(provider, discovered)
-                        success++
-                    } else failures.add("${provider.name}: API zwróciło pustą listę; zachowano poprzedni katalog")
-                } else failures.add("${provider.name}: ${result.exceptionOrNull()?.message ?: "błąd"}")
-            }
-            if (store.isStorageUncertain()) {
-                runOnUiThread {
-                    status.text = "Synchronizacja przerwana: magazyn konfiguracji wymaga ponownego uruchomienia"
-                    if (showToast) toast("Nie zapisano wyników synchronizacji.")
-                }
-                return@execute
-            }
-            runOnUiThread {
-                val now = System.currentTimeMillis()
-                val editor = modelCatalogPrefs.edit().putLong("last_attempt", now)
-                if (success > 0) editor.putLong("last_sync", now)
-                editor.apply()
-                status.text = "Katalog modeli: $success/${providers.size} dostawców"
-                showShell("Modele"); showProviders()
-                if (showToast) toast(if (success > 0) "Pobrano modele od $success/${providers.size} dostawców." else "Nie udało się pobrać katalogów. Sprawdź klucze i adresy API.")
-                if (success == 0 && failures.isNotEmpty()) {
-                    AlertDialog.Builder(this).setTitle("Nie udało się pobrać katalogu")
-                        .setMessage(failures.joinToString("\n\n").take(5000)).setPositiveButton("OK", null).show()
-                }
-            }
+        } catch (error: Throwable) {
+            modelCatalogRefreshInFlight.set(false)
+            android.util.Log.e("AiFORTecaCatalog", "Nie udało się uruchomić synchronizacji katalogów.", error)
+            status.text = "Nie udało się uruchomić synchronizacji katalogów"
+            if (showToast) toast("Nie udało się uruchomić synchronizacji: ${error.message ?: "błąd"}")
         }
     }
 
@@ -7314,6 +7368,7 @@ class MainActivity : Activity() {
                         }
                         showShell("Modele"); showProviders()
                         toast("Wczytano ${configs.size} konfiguracji modeli wraz z kluczami API.")
+                        refreshAllModelCatalogs(showToast = false)
                     }.onFailure {
                         if (store.isStorageUncertain()) {
                             client.cancelActiveRequests()
@@ -7497,6 +7552,7 @@ class MainActivity : Activity() {
                 }
                 showShell("Modele"); showProviders()
                 toast("Zaimportowano ${migrated.size} profili. Sprawdź pola kluczy API przed użyciem.")
+                refreshAllModelCatalogs(showToast = false)
             }.show()
     }
 
