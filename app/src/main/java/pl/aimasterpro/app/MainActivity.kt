@@ -3060,7 +3060,9 @@ class MainActivity : Activity() {
             showShell("Asystent")
             showChat(snapshotAlreadyRestored = true)
         } else {
-            navigate("Czat")
+            selectedAgent = AgentRole.MASTER
+            showShell("Czat")
+            showChat(snapshotAlreadyRestored = true)
         }
     }
 
