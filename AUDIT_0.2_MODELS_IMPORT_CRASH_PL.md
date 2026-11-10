@@ -115,3 +115,31 @@ Artefakty CI:
 Uwaga o APK: workflow wyprodukował `app-release-unsigned.apk`. Build się powiódł, ale ten plik nie jest podpisany kluczem wydania i nie należy traktować go jako gotowego APK do instalacji/odbioru. Trwały klucz i podpisywanie pozostają osobnym punktem 4 planu; nie wygenerowano ani nie ujawniono żadnego klucza.
 
 Status punktu 3 pozostaje **IN PROGRESS**: testy automatyczne CI przeszły, lecz test na fizycznym urządzeniu (import → Modele → Czat → Rozmowy, obserwacja logcat) nadal **NOT RUN**.
+
+
+## Dalsza regresja — atomowe przełączanie rozmów (2026-11-10)
+
+W przeglądzie ścieżki otwierania rozmowy wykryto ryzyko niespójności: `openChat()` wcześniej modyfikował aktywne kolekcje wiadomości/aktywności przed potwierdzeniem trwałego zapisu identyfikatora wybranej rozmowy. W przypadku niejednoznacznego błędu zapisu ekran i trwały wskaźnik bieżącej rozmowy mogły wskazywać różne stany.
+
+Wdrożono:
+- `ChatHistoryStore.selectChat()` — zatwierdza wybór rozmowy w kanonicznym dokumencie historii, a dla zwykłego czatu także `last_user_chat_id` w ramach wspólnej operacji zapisu.
+- Jeśli wybrany identyfikator nie istnieje, tworzy poprawny pusty rekord rozmowy; nie nadpisuje uszkodzonej historii.
+- `restoreMessagesForCurrentChat()` najpierw parsuje cały snapshot, następnie trwale zatwierdza wybór. Dopiero po udanym zapisie zmienia kolekcje w pamięci.
+- `openChat()` korzysta z jednej ścieżki odtwarzania i nie wykonuje drugiego, redundantnego zapisu wyboru.
+- Dodano 3 testy: atomowy zapis bieżącego ID i wskaźnika użytkownika, brak nadpisania ostatniego czatu użytkownika przez czat Asystenta oraz brak zmiany wskaźników przy uszkodzonej historii.
+
+Commit kodu: `88a16b279672c5917ea3984852c7b61a0cfadb36`.
+CI dla dokładnie tego SHA:
+- Android Build: SUCCESS — run `42892044049`; wszystkie kroki, w tym unit tests, assemble release APK, pakowanie projektu źródłowego i upload artefaktów: SUCCESS.
+- Gradle Wrapper Validation: SUCCESS — run `42892044062`.
+- Raport JUnit z artefaktu `13798612154`: **989 testów w 106 zestawach, 0 failures, 0 errors, 0 skipped**.
+- `ChatHistoryStoreTest` zawiera teraz testy selekcji rozmowy razem z wcześniejszymi testami trwałości i odtwarzania historii.
+
+Artefakty:
+- Raport testów: `aiforteca-unit-test-reports` (artifact ID `13798612154`).
+- Projekt źródłowy: `aiforteca-source-project` (artifact ID `13800030224`).
+- APK: `aiforteca-release-apk` (artifact ID `13798672387`).
+
+APK nadal jest `app-release-unsigned.apk` (1 341 962 bajty). Build release przechodzi, ale artefakt nie jest podpisany kluczem wydania i nie jest gotowym pakietem instalacyjnym do odbioru. Punkt 4 — trwały klucz i konfiguracja podpisywania — pozostaje osobnym krokiem i wymaga uzgodnienia z użytkownikiem.
+
+Status punktu 3: **IN PROGRESS**. Testy automatyczne dla dokładnego SHA przeszły. Test urządzeniowy po imporcie bazy (import → Modele → Czat → Rozmowy, potwierdzenie braku zamknięcia aplikacji i kontrola logcat) pozostaje **NOT RUN**.
