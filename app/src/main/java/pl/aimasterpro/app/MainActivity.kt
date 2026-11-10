@@ -4433,7 +4433,7 @@ class MainActivity : Activity() {
                                 .setPositiveButton("OK", null).show()
                         }
                     }
-                } catch (error: Throwable) {
+                } catch (error: Exception) {
                     android.util.Log.e("AiFORTecaCatalog", "Nieoczekiwany błąd synchronizacji katalogów.", error)
                     runOnUiThread {
                         if (!isFinishing && !isDestroyed) {
@@ -4455,7 +4455,7 @@ class MainActivity : Activity() {
                     }
                 }
             }
-        } catch (error: Throwable) {
+        } catch (error: Exception) {
             modelCatalogRefreshInFlight.set(false)
             android.util.Log.e("AiFORTecaCatalog", "Nie udało się uruchomić synchronizacji katalogów.", error)
             status.text = "Nie udało się uruchomić synchronizacji katalogów"
