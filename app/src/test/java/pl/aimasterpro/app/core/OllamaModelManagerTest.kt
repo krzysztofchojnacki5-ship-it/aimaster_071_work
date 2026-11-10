@@ -4,8 +4,11 @@ import java.io.IOException
 import java.util.concurrent.CancellationException
 import org.junit.Assert.*
 import org.junit.Test
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
 import pl.aimasterpro.app.network.TestHttpServer
 
+@RunWith(RobolectricTestRunner::class)
 class OllamaModelManagerTest {
     @Test fun nativeBaseUrlStripsOnlyOpenAiV1Suffix() {
         assertEquals("http://10.0.2.2:11434", OllamaModelManager.nativeBaseUrl("http://10.0.2.2:11434/v1"))
