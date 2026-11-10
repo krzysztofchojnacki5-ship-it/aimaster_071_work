@@ -26,10 +26,11 @@ object ProjectSourceContextBuilder {
     ): Result {
         require(maxFiles in 1..10)
         require(maxFileBytes in 1..(64 * 1024))
-        require(maxTotalChars in 1..32_000)
+        require(maxTotalChars in 600..32_000)
         if (records.isEmpty()) return Result(Status.NOT_IMPORTED, "", emptyList(), 0, 0)
 
-        val summary = ProjectCodeIndex.build(records)
+        val readableRecords = records.filter { it.sizeBytes <= maxFileBytes.toLong() }
+        val summary = ProjectCodeIndex.build(readableRecords)
         val ranked = ProjectCodeIndex.selectRelevant(summary, query, maxFiles).ifEmpty {
             // A general project/code question has no path token to match. Supply a small,
             // deterministic architectural sample rather than falsely claiming no source exists.
@@ -43,23 +44,21 @@ object ProjectSourceContextBuilder {
 
         val chunks = mutableListOf<String>()
         val selected = mutableListOf<String>()
-        var skipped = 0
+        var skipped = (records.size - readableRecords.size)
         var used = 0
+        // Reserve space for the fixed trust-boundary header, file-count metadata and closing marker.
+        val payloadBudget = maxTotalChars - 500
         for (entry in ranked) {
-            if (selected.size >= maxFiles || used >= maxTotalChars) break
-            val remaining = maxTotalChars - used
-            val fileLimit = minOf(maxFileBytes, remaining - 180)
-            if (fileLimit < 256 || entry.sizeBytes > maxFileBytes.toLong()) {
+            if (selected.size >= maxFiles || used >= payloadBudget) break
+            val header = "PLIK: ${entry.path}\nSHA-256: ${"a".repeat(64)}\nTREŚĆ:\n"
+            val available = payloadBudget - used - header.length
+            if (available < 256) {
                 skipped++
                 continue
             }
+            val fileLimit = minOf(maxFileBytes, available)
             val file = runCatching { readFile(entry.path, fileLimit) }.getOrNull()
             if (file == null) {
-                skipped++
-                continue
-            }
-            val available = maxTotalChars - used - entry.path.length - 80
-            if (available <= 0) {
                 skipped++
                 continue
             }
