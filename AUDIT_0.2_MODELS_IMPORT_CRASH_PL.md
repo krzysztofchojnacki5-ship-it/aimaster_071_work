@@ -143,3 +143,34 @@ Artefakty:
 APK nadal jest `app-release-unsigned.apk` (1 341 962 bajty). Build release przechodzi, ale artefakt nie jest podpisany kluczem wydania i nie jest gotowym pakietem instalacyjnym do odbioru. Punkt 4 — trwały klucz i konfiguracja podpisywania — pozostaje osobnym krokiem i wymaga uzgodnienia z użytkownikiem.
 
 Status punktu 3: **IN PROGRESS**. Testy automatyczne dla dokładnego SHA przeszły. Test urządzeniowy po imporcie bazy (import → Modele → Czat → Rozmowy, potwierdzenie braku zamknięcia aplikacji i kontrola logcat) pozostaje **NOT RUN**.
+
+
+## Dalsza regresja — trwałość wskaźnika rozmowy Asystenta i pełny CI (2026-11-10)
+
+W przeglądzie trwałości historii wykryto dodatkową niespójność: otwarcie starszej rozmowy Asystenta aktualizowało kanoniczny `currentId`, ale nie aktualizowało dedykowanego `assistant_chat_id`. Powrót do zakładki Asystent mógł więc otworzyć inny wątek. Tworzenie nowej rozmowy zapisywało ponadto wskaźnik przez `.apply()` przed trwałym zatwierdzeniem historii.
+
+Wdrożono w commicie kodu `d315e0dbc63d74fea1da7788d219eca49e3110b5`:
+- `ChatHistoryStore.selectChat()` rozpoznaje rozmowy Asystenta i atomowo aktualizuje kanoniczny identyfikator oraz `assistant_chat_id`.
+- `readAssistantChatId()` odczytuje wskaźnik pod kontrolą `SharedPreferencesWriteHealth` i zwraca brak wartości, gdy dostęp do preferencji jest niepewny.
+- `MainActivity.assistantChatId()` korzysta z bezpiecznego odczytu.
+- Nawigacja do Asystenta zatrzymuje się z komunikatem, jeśli wskaźnika nie można bezpiecznie odczytać.
+- `newAssistantChat()` najpierw trwale zatwierdza wybór przez `selectChat()`; przy błędzie zachowuje poprzednią rozmowę i przerywa tworzenie.
+- Usunięto niezabezpieczony zapis `.apply()` i redundantny zapis pustej historii.
+- Dodano 3 testy dotyczące atomowej aktualizacji wskaźnika Asystenta, ochrony wskaźnika przed wyborem czatu użytkownika oraz bezpiecznego odczytu przy niedostępnych preferencjach.
+
+Weryfikacja CI dla dokładnego SHA `d315e0dbc63d74fea1da7788d219eca49e3110b5`:
+- Android Build: **SUCCESS** — run `42896436537`; wszystkie kroki zakończone powodzeniem, w tym `Run unit tests`, `Assemble release APK`, `Package source project`, `Upload source project` i `Upload release APK`.
+- Gradle Wrapper Validation: **SUCCESS** — run `42896436823`.
+- Raport JUnit z artefaktu `13799729411`: **992 testy w 106 zestawach, 0 failures, 0 errors, 0 skipped**.
+- `ChatHistoryStoreTest`: 32 testy.
+- Artefakty run `42896436537`:
+  - raport testów: `aiforteca-unit-test-reports`, ID `13799729411`;
+  - źródła: `aiforteca-source-project`, ID `13800523144`;
+  - APK: `aiforteca-release-apk`, ID `13800188432`.
+
+Kontrola pobranych artefaktów:
+- ZIP projektu źródłowego zawiera 762 wpisy, w tym `app/build.gradle.kts` i `gradle-wrapper.jar`; rozmiar wewnętrznego ZIP: 1 482 069 bajtów; SHA-256: `a77321d9665ee411ade1e7e7bd6d439a3e4451c507acc37b045255914223da50`.
+- APK: `app-release-unsigned.apk`, 1 342 726 bajtów; SHA-256: `4506cba97a77cd96e310fdce2c29172c1fc0be84c0e39b0728e7c4b114435ede`.
+- Weryfikacja `jarsigner -verify` potwierdza, że APK jest **unsigned**. Nie jest to podpisany pakiet Release gotowy do przekazania jako finalny build instalacyjny.
+
+Status punktu 3: **IN PROGRESS**. Testy automatyczne i pełny build CI dla `d315e0d` są zakończone powodzeniem. Test fizycznego urządzenia po imporcie (import → Modele → Czat → Rozmowy → Asystent, kontrola stabilności i logcat) pozostaje **NOT RUN**. Punkt 4 — trwały klucz podpisujący i konfiguracja podpisywania — nadal **NOT STARTED** i wymaga wyraźnej zgody użytkownika przed utworzeniem klucza lub sekretów.
