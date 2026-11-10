@@ -167,6 +167,35 @@ object MasterTaskQueueStore {
         Triple(tasks.map { if (it.id == taskId) next else it }, nextEvents, true)
     }
 
+    /** Persists live execution progress from an assigned agent without changing the parent RUNNING state. */
+    @Synchronized
+    fun recordAgentProgress(
+        context: Context,
+        taskId: String,
+        agentId: String,
+        state: String,
+        detail: String,
+        providerId: String = "",
+        model: String = "",
+        attempts: Int = 0,
+        now: Long = System.currentTimeMillis()
+    ): Boolean = mutate(context) { tasks, events ->
+        val current = tasks.firstOrNull { it.id == taskId } ?: return@mutate null
+        if (current.status != Status.RUNNING || agentId !in current.assignedAgentIds ||
+            state.isBlank() || state.length > 40 || detail.length > 500 ||
+            providerId.length > 120 || model.length > 180 || attempts !in 0..100 ||
+            now < 0L) return@mutate null
+        val safeDetail = CommunicationLogSanitizer.sanitize(detail).take(300)
+        val safeProvider = CommunicationLogSanitizer.sanitize(providerId).take(80)
+        val safeModel = CommunicationLogSanitizer.sanitize(model).take(120)
+        val summary = listOf(state, safeDetail, listOf(safeProvider, safeModel).filter { it.isNotBlank() }.joinToString("/"),
+            if (attempts > 0) "próba $attempts" else "").filter { it.isNotBlank() }.joinToString(" • ").take(500)
+        val next = current.copy(currentStep = summary, updatedAt = maxOf(now, current.updatedAt))
+        Triple(tasks.map { if (it.id == taskId) next else it },
+            events + event(taskId, "agent:$agentId", "AGENT_PROGRESS", Status.RUNNING.name,
+                state, summary, now), true)
+    }
+
     /** Appends sanitized agent-to-agent / agent-to-MASTER communication to the owning task timeline. */
     @Synchronized
     fun recordAgentMessage(
