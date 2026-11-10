@@ -44,11 +44,18 @@ class OllamaModelManagerTest {
         }
         try {
             val progress = mutableListOf<OllamaModelManager.Progress>()
-            val result = OllamaModelManager.pull(
-                "http://127.0.0.1:${server.port}/v1",
-                "qwen2.5-coder:7b",
-                onProgress = progress::add
-            )
+            val result = try {
+                OllamaModelManager.pull(
+                    "http://127.0.0.1:${server.port}/v1",
+                    "qwen2.5-coder:7b",
+                    onProgress = progress::add
+                )
+            } catch (error: Exception) {
+                throw AssertionError(
+                    "pull failed; requests=${server.requestCount.get()}; failure=${server.lastFailure}; body=${server.lastRequestBody}",
+                    error
+                )
+            }
             assertEquals("qwen2.5-coder:7b", result.model)
             assertEquals("success", result.finalStatus)
             assertEquals(4, result.progressEvents)
@@ -69,11 +76,18 @@ class OllamaModelManagerTest {
         val server = TestHttpServer { _, _ -> 200 to response }
         try {
             val progress = mutableListOf<OllamaModelManager.Progress>()
-            val result = OllamaModelManager.pull(
-                "http://127.0.0.1:${server.port}/v1",
-                "llama3:8b",
-                onProgress = progress::add
-            )
+            val result = try {
+                OllamaModelManager.pull(
+                    "http://127.0.0.1:${server.port}/v1",
+                    "llama3:8b",
+                    onProgress = progress::add
+                )
+            } catch (error: Exception) {
+                throw AssertionError(
+                    "pull failed; requests=${server.requestCount.get()}; failure=${server.lastFailure}; body=${server.lastRequestBody}",
+                    error
+                )
+            }
             assertEquals(200L, result.totalBytes)
             assertEquals(150L, result.completedBytes)
             assertEquals(75, progress[1].percent)
@@ -88,7 +102,10 @@ class OllamaModelManagerTest {
             val error = assertThrows(IOException::class.java) {
                 OllamaModelManager.pull("http://127.0.0.1:${server.port}/v1", "missing:model")
             }
-            assertTrue(error.message.orEmpty().contains("OLLAMA_PULL_ERROR"))
+            assertTrue(
+                "unexpected error=${error.message}; requests=${server.requestCount.get()}; failure=${server.lastFailure}; body=${server.lastRequestBody}",
+                error.message.orEmpty().contains("OLLAMA_PULL_ERROR")
+            )
         } finally {
             server.stop()
         }
