@@ -3463,7 +3463,8 @@ class MainActivity : Activity() {
             pl.aimasterpro.app.core.ProjectSourceContextBuilder.Status.NO_MATCHES -> "BRAK PASUJĄCYCH PLIKÓW"
             pl.aimasterpro.app.core.ProjectSourceContextBuilder.Status.BLOCKED_FILES -> "ODCZYT ZABLOKOWANY — PLIKI"
         }
-        logAgentForChat(chatId, "📂 Kontekst źródłowy: $state • pliki=\${result.selectedPaths.size} • znaki=\${result.totalChars} • pominięte=\${result.skippedFiles}.")
+        if (chatId.isBlank()) android.util.Log.i("AiFORTecaSourceContext", "Kontekst źródłowy: $state • pliki=${result.selectedPaths.size} • znaki=${result.totalChars} • pominięte=${result.skippedFiles}.")
+        else logAgentForChat(chatId, "📂 Kontekst źródłowy: $state • pliki=${result.selectedPaths.size} • znaki=${result.totalChars} • pominięte=${result.skippedFiles}.")
     }
 
     /** Evidence is selected only from the durable host-owned active ChangeSet pointer. */
@@ -6707,7 +6708,7 @@ class MainActivity : Activity() {
         executor.execute {
             try {
                 val sourceContextResult = buildProjectSourceContext(task.title + "\n" + task.objective)
-                logProjectSourceContext(task.chatId.ifBlank { chatId }, sourceContextResult)
+                logProjectSourceContext("", sourceContextResult)
                 val projectContext = buildString {
                     append(projectContextBase)
                     if (sourceContextResult.status == pl.aimasterpro.app.core.ProjectSourceContextBuilder.Status.READY) {
