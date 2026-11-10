@@ -15,6 +15,12 @@ class ProviderCatalogSyncGeneration {
 
     fun invalidate(): Long = synchronized(lock) { ++generation }
 
+    /** Invalidates old work and performs the provider-set swap before a new snapshot can start. */
+    fun <T> invalidateAndRun(action: () -> T): T = synchronized(lock) {
+        ++generation
+        action()
+    }
+
     fun isCurrent(snapshot: Long): Boolean = synchronized(lock) { generation == snapshot }
 
     fun commitIfCurrent(snapshot: Long, action: () -> Unit): Boolean = synchronized(lock) {
