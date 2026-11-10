@@ -15,6 +15,15 @@ class OllamaModelManagerTest {
         assertEquals("http://127.0.0.1:11434", OllamaModelManager.nativeBaseUrl("http://127.0.0.1:11434/"))
     }
 
+    @Test fun privateLanBaseUrlRequiresExplicitOptIn() {
+        val lan = "http://192.168.1.50:11434/v1"
+        assertThrows(IllegalArgumentException::class.java) { OllamaModelManager.nativeBaseUrl(lan) }
+        assertEquals("http://192.168.1.50:11434", OllamaModelManager.nativeBaseUrl(lan, allowInsecureLanOllama = true))
+        assertThrows(IllegalArgumentException::class.java) {
+            OllamaModelManager.nativeBaseUrl("http://192.168.1.50:11434/v1", allowInsecureLanOllama = false)
+        }
+    }
+
     @Test fun rejectsUnexpectedBasePathAndCredentials() {
         assertThrows(IllegalArgumentException::class.java) {
             OllamaModelManager.nativeBaseUrl("http://127.0.0.1:11434/custom/v1")
