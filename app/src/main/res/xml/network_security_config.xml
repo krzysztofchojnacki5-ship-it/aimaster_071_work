@@ -1,6 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <network-security-config>
-    <base-config cleartextTrafficPermitted="false">
+    <!-- Platform permits cleartext at the socket layer; ProviderEndpointPolicy is the mandatory app-level gate and only admits exact loopback or opted-in keyless Ollama RFC1918:11434 endpoints. -->
+    <base-config cleartextTrafficPermitted="true">
         <trust-anchors>
             <certificates src="system" />
         </trust-anchors>
