@@ -22,6 +22,14 @@ class TestHttpServer(
         private set
     @Volatile var lastFailure: String? = null
         private set
+    @Volatile var lastResponseStatus: Int? = null
+        private set
+    @Volatile var lastResponseText: String? = null
+        private set
+    @Volatile var lastResponseBytes: Int? = null
+        private set
+    @Volatile var responseWriteCompleted: Boolean = false
+        private set
 
     init {
         executor.execute {
@@ -78,7 +86,10 @@ class TestHttpServer(
                 lastRequestBody = body
 
                 val (statusCode, responseText) = handler(body, attempt)
+                lastResponseStatus = statusCode
+                lastResponseText = responseText
                 val respBytes = responseText.toByteArray(Charsets.UTF_8)
+                lastResponseBytes = respBytes.size
                 val statusMsg = when (statusCode) {
                     200 -> "OK"
                     400 -> "Bad Request"
@@ -100,6 +111,7 @@ class TestHttpServer(
                 output.write(headerText.toByteArray(Charsets.UTF_8))
                 output.write(respBytes)
                 output.flush()
+                responseWriteCompleted = true
             }
         } catch (error: Throwable) {
             lastFailure = "${error::class.java.simpleName}: ${error.message.orEmpty()}"
