@@ -115,11 +115,11 @@ object OllamaModelManager {
                     if (rawLine.isBlank()) return@forEach
                     val item = runCatching { JSONObject(rawLine) }
                         .getOrElse { throw IOException("OLLAMA_STREAM_INVALID_JSON") }
-                    val error = item.optString("error").takeIf { it.isNotBlank() }
+                    val error = item.optString("error").orEmpty().takeIf { it.isNotBlank() }
                     if (error != null) throw IOException("OLLAMA_PULL_ERROR: ${sanitizeError(error)}")
-                    val status = item.optString("status").takeIf { it.isNotBlank() }.orEmpty()
+                    val status = item.optString("status").orEmpty().takeIf { it.isNotBlank() }.orEmpty()
                     if (status.isNotBlank()) lastStatus = status
-                    val digest = item.optString("digest").takeIf { it.isNotBlank() }
+                    val digest = item.optString("digest").orEmpty().takeIf { it.isNotBlank() }
                     val itemCompleted = item.optLong("completed", -1L).takeIf { it >= 0L }
                     val itemTotal = item.optLong("total", -1L).takeIf { it > 0L }
                     if (itemCompleted != null || itemTotal != null) {
