@@ -51,3 +51,21 @@ Pliki przeanalizowane:
 - app/src/main/java/pl/aimasterpro/app/data/BackupCrypto.kt
 - app/src/main/java/pl/aimasterpro/app/core/TokenTracker.kt
 - app/build.gradle.kts
+
+
+## Wynik punktu 2 — poprawki i CI (2026-11-10)
+
+Commit końcowy: `674b6202e5ca2325a2eab26f7780bf703da32b5c`
+Zakres zmian: kontrolowane odświeżanie katalogów dostawców, izolacja błędów, anulowanie nieaktualnych synchronizacji po imporcie, atomowość wymiany konfiguracji względem snapshotów oraz zabezpieczenie ponownego odświeżenia w ścieżce `finally`.
+
+Weryfikacja dla dokładnie powyższego SHA:
+- Android Build: SUCCESS — run `42879134762`.
+- Gradle Wrapper Validation: SUCCESS — run `42879134573`.
+- Kroki Android Build: unit tests, assemble release APK, package source project i upload artefaktów zakończone SUCCESS.
+- Raport JUnit pobrany z artefaktu `13793716127`: **977 testów w 105 zestawach, 0 failures, 0 errors, 0 skipped**.
+- Testy `ProviderCatalogSyncRunnerTest` oraz `ProviderCatalogSyncGenerationTest` są częścią raportu tego commita; szczegółowe scenariusze obejmują izolację błędów dostawców, anulowanie i ochronę przed zapisem wyników starej generacji.
+- Artefakty CI: `aiforteca-source-project`, `aiforteca-unit-test-reports`, `aiforteca-release-apk`.
+
+Status punktu 2: **DONE — walidacja CI dla końcowego commita zakończona powodzeniem**.
+
+Ograniczenie: test urządzeniowy po imporcie zaszyfrowanej bazy i obserwacja logcat nadal są NOT RUN. Dlatego nie stwierdzamy, że pierwotny crash został definitywnie odtworzony i usunięty; poprawki zabezpieczają podejrzaną ścieżkę synchronizacji, ale potwierdzenie na urządzeniu pozostaje wymagane w punkcie 3 / testach końcowych.
