@@ -6585,7 +6585,7 @@ class MainActivity : Activity() {
                         onTaskResult = { result ->
                             pl.aimasterpro.app.core.TaskResultArchive.put(
                                 this, result.taskId, result.agentId, result.report,
-                                result.providerId, result.model, chatId = "aiforteca-queue"
+                                result.providerId, result.model
                             )
                         },
                         onRequestStarting = { item, actualProvider, estimatedInput, estimatedOutput, idempotencyKey, attempts ->
