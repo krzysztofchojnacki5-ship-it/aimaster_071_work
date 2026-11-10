@@ -88,3 +88,30 @@ CI dla tego SHA:
 - Wybrane zestawy: BackupCrypto 20/20, ChatHistoryStore 23/23, ChatResponseArchive 15/15, ProviderCatalogCachePolicy 6/6, ProviderCatalogSyncGeneration 4/4, ProviderCatalogSyncRunner 5/5.
 
 Status punktu 3: **IN PROGRESS**. Pokrycie jednostkowe dla szyfrowania/parsowania kopii, katalogu i trwałości historii rozmów jest potwierdzone CI. Nadal wymagają osobnego potwierdzenia ścieżki interfejsu importu na urządzeniu: import bazy, wejście w Modele, Czat i Rozmowy po imporcie, w tym brak zamknięcia aplikacji. Test urządzeniowy i logcat: NOT RUN.
+
+
+## Dalsza regresja — odczyt identyfikatora ostatniego czatu (2026-11-10)
+
+W przeglądzie nawigacji wykryto, że przejście do głównego czatu odczytywało `last_user_chat_id` bezpośrednio z `SharedPreferences`, poza wspólną blokadą i kontrolą stanu magazynu historii.
+
+Wdrożono:
+- `ChatHistoryStore.readLastUserChatId()` — odczyt przez `SharedPreferencesWriteHealth.withHealthyAccess`.
+- Jeśli preferencje są niedostępne albo magazyn został objęty kwarantanną po niejednoznacznym zapisie, metoda zwraca `null`.
+- Nawigacja do czatu w `MainActivity` zatrzymuje się z komunikatem zamiast generować zastępczy identyfikator i ryzykować rozjazd historii.
+- Dodano 3 testy: poprawny odczyt ID, wyjątek przy odczycie preferencji, odczyt po niejednoznacznym zapisie/kwarantannie.
+
+Commit kodu: `af410dceae0ca446819f95f1b4388be07c1f77d6`
+CI dla dokładnie tego SHA:
+- Android Build: SUCCESS — run `42885596457`; wszystkie kroki, w tym unit tests, assemble release APK i upload artefaktów: SUCCESS.
+- Gradle Wrapper Validation: SUCCESS — run `42885596202`.
+- Raport JUnit z artefaktu `13796336038`: **986 testów w 106 zestawach, 0 failures, 0 errors, 0 skipped**.
+- `ChatHistoryStoreTest`: 26 testów (wcześniej 23); `ProviderCatalogCachePolicyTest`: 6; `ChatResponseArchiveTest`: 15; `SecureStoreImportTest`: 28.
+
+Artefakty CI:
+- Raport testów: `aiforteca-unit-test-reports`.
+- Projekt źródłowy: `aiforteca-source-project`.
+- APK: `aiforteca-release-apk`.
+
+Uwaga o APK: workflow wyprodukował `app-release-unsigned.apk`. Build się powiódł, ale ten plik nie jest podpisany kluczem wydania i nie należy traktować go jako gotowego APK do instalacji/odbioru. Trwały klucz i podpisywanie pozostają osobnym punktem 4 planu; nie wygenerowano ani nie ujawniono żadnego klucza.
+
+Status punktu 3 pozostaje **IN PROGRESS**: testy automatyczne CI przeszły, lecz test na fizycznym urządzeniu (import → Modele → Czat → Rozmowy, obserwacja logcat) nadal **NOT RUN**.
