@@ -129,6 +129,7 @@ class MainActivity : Activity() {
     @Volatile private var activeChatTaskAgentId = ""
     @Volatile private var activeMasterWorkTaskId = ""
     @Volatile private var activeQueueTaskId = ""
+    @Volatile private var activeQueueRequestScope: ProviderClient.RequestScope? = null
     private var draft = ""
     private var composerInput: EditText? = null
 
@@ -144,6 +145,13 @@ class MainActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         store = SecureStore(this)
+        val recoveredQueueTasks = runCatching {
+            pl.aimasterpro.app.core.MasterTaskQueueStore.recoverInterruptedRuns(this)
+        }.getOrDefault(0)
+        if (recoveredQueueTasks > 0) android.util.Log.w(
+            "AiFORTecaQueue",
+            "Odzyskano $recoveredQueueTasks przerwanych zadań MASTER-a jako BLOCKED. Nie wznowiono automatycznie niepewnych żądań API."
+        )
         val pausedMasterWork = runCatching {
             pl.aimasterpro.app.core.MasterWorkJournalStore.pauseActive(this)
         }.getOrDefault(0)
@@ -6389,6 +6397,15 @@ class MainActivity : Activity() {
                         executeQueuedMasterTask(task.id)
                     }
                 }
+                if (task.status == pl.aimasterpro.app.core.MasterTaskQueueStore.Status.RUNNING) {
+                    action("■ ANULUJ AKTYWNE WYKONANIE", box) {
+                        AlertDialog.Builder(this).setTitle("Przerwać wykonanie zadania?")
+                            .setMessage("Aktywne żądania HTTP zostaną anulowane. Zadanie pozostanie w historii jako CANCELLED.")
+                            .setNegativeButton("Wróć", null)
+                            .setPositiveButton("Przerwij") { _, _ -> cancelQueuedMasterTask(task.id) }
+                            .show()
+                    }
+                }
                 if (task.status == pl.aimasterpro.app.core.MasterTaskQueueStore.Status.BLOCKED) {
                     action("ODBLOCKUJ → KOLEJKA", box) {
                         if (queueStore.transition(this, task.id, "MASTER",
@@ -6533,6 +6550,7 @@ class MainActivity : Activity() {
         }
         toast("MASTER uruchamia ${allowed.size} agentów. Wyniki będą zapisane w historii zadania.")
         val requestScope = client.beginRequestScope()
+        activeQueueRequestScope = requestScope
         executor.execute {
             try {
                 val results = TeamRunEngine(client, maxParallel = minOf(4, allowed.size.coerceAtLeast(1))).use { engine ->
@@ -6657,10 +6675,47 @@ class MainActivity : Activity() {
             } finally {
                 pl.aimasterpro.app.core.ApiTokenTracker.requestBatchReservationRelease(budgetPlan.reservationId)
                 client.cancelRequestScope(requestScope)
+                if (activeQueueRequestScope === requestScope) activeQueueRequestScope = null
                 synchronized(masterJournalLifecycleLock) { if (activeQueueTaskId == taskId) activeQueueTaskId = "" }
             }
         }
     }
+    /** Cancels the active queue batch and persists the user-requested terminal state first. */
+    private fun cancelQueuedMasterTask(taskId: String) {
+        val queueStore = pl.aimasterpro.app.core.MasterTaskQueueStore
+        val current = queueStore.snapshot(this).tasks.firstOrNull { it.id == taskId }
+        if (current?.status != pl.aimasterpro.app.core.MasterTaskQueueStore.Status.RUNNING) {
+            toast("Zadanie nie jest już aktywne.")
+            return
+        }
+        if (!queueStore.transition(this, taskId, "USER",
+                pl.aimasterpro.app.core.MasterTaskQueueStore.Status.CANCELLED,
+                "Użytkownik przerwał wykonanie; aktywne żądania HTTP są anulowane.")) {
+            toast("Nie udało się trwale zapisać anulowania. Nie zgłaszam zakończenia operacji.")
+            return
+        }
+        activeQueueRequestScope?.let { scope ->
+            runCatching { client.cancelRequestScope(scope) }
+        }
+        toast("Anulowano zadanie. Wyniki niepotwierdzone przed przerwaniem pozostają nieznane.")
+        if (screen == "Zadania") { showShell("Zadania"); showTasksCenter() }
+    }
+
+    /** Activity teardown is a recoverable interruption, not a successful or terminal completion. */
+    private fun interruptActiveQueuedTask(reason: String) {
+        val taskId = activeQueueTaskId
+        if (taskId.isBlank()) return
+        val queueStore = pl.aimasterpro.app.core.MasterTaskQueueStore
+        val current = runCatching { queueStore.snapshot(this).tasks.firstOrNull { it.id == taskId } }.getOrNull()
+        if (current?.status == pl.aimasterpro.app.core.MasterTaskQueueStore.Status.RUNNING) {
+            queueStore.transition(this, taskId, "MASTER",
+                pl.aimasterpro.app.core.MasterTaskQueueStore.Status.BLOCKED,
+                "$reason Nie wznowiono automatycznie z powodu niepewnego wyniku żądań.")
+        }
+        activeQueueRequestScope?.let { scope -> runCatching { client.cancelRequestScope(scope) } }
+        activeQueueRequestScope = null
+    }
+
     private fun showMemory() {
         pl.aimasterpro.app.core.QualityLearningStore.syncApprovedAgentMemories(this)
         val memories = pl.aimasterpro.app.core.AiMemoryStore.getMemories(this)
@@ -7442,6 +7497,7 @@ class MainActivity : Activity() {
 
     override fun onDestroy() {
         pulse?.cancel()
+        interruptActiveQueuedTask("Activity została zamknięta lub odtworzona.")
         // Persist this Activity's active chat task (MASTER or specialist); startup recovery remains a second layer.
         cancelActiveChatTaskForLifecycle("onDestroy")
         // Activity teardown must close blocking HTTP connections as well as interrupt workers.
