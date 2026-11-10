@@ -6607,6 +6607,10 @@ class MainActivity : Activity() {
                                 )
                             )
                             if (!saved) android.util.Log.e("AiFORTecaQueue", "Nie zapisano checkpointu $taskId/${item.agentId} • $state")
+                            val progressSaved = queueStore.recordAgentProgress(
+                                this, taskId, item.agentId, state, detail, providerId, model, attempts
+                            )
+                            if (!progressSaved) android.util.Log.w("AiFORTecaQueue", "Nie zapisano postępu kolejki $taskId/${item.agentId} • $state")
                         },
                         onTaskResult = { result ->
                             pl.aimasterpro.app.core.TaskResultArchive.put(
