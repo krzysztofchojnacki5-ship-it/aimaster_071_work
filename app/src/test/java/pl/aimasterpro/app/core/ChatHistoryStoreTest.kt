@@ -482,4 +482,27 @@ class ChatHistoryStoreTest {
         assertEquals("before", prefs.getString("last_user_chat_id", null))
     }
 
+
+    @Test fun selectingAssistantChatUpdatesDedicatedPointerInSameStore() {
+        assertTrue(ChatHistoryStore.selectChat(context, "assistant-old"))
+        assertEquals("assistant-old", ChatHistoryStore.readAssistantChatId(context))
+        assertEquals("assistant-old", ChatHistoryStore.readRoot(context)?.optString("currentId"))
+    }
+
+    @Test fun selectingUserChatDoesNotOverwriteAssistantPointer() {
+        assertTrue(ChatHistoryStore.selectChat(context, "assistant-kept"))
+        assertTrue(ChatHistoryStore.selectChat(context, "ordinary-user-chat"))
+        assertEquals("assistant-kept", ChatHistoryStore.readAssistantChatId(context))
+        assertEquals("ordinary-user-chat", ChatHistoryStore.readLastUserChatId(context))
+    }
+
+    @Test fun assistantPointerReadFailsClosedWhenPreferencesAreUnavailable() {
+        val failingContext = object : android.content.ContextWrapper(context) {
+            override fun getSharedPreferences(name: String, mode: Int): android.content.SharedPreferences {
+                throw IllegalStateException("controlled preferences read failure")
+            }
+        }
+        assertNull(ChatHistoryStore.readAssistantChatId(failingContext))
+    }
+
 }
