@@ -128,6 +128,7 @@ class MainActivity : Activity() {
     @Volatile private var activeChatTaskId = ""
     @Volatile private var activeChatTaskAgentId = ""
     @Volatile private var activeMasterWorkTaskId = ""
+    @Volatile private var activeQueueTaskId = ""
     private var draft = ""
     private var composerInput: EditText? = null
 
@@ -6317,7 +6318,7 @@ class MainActivity : Activity() {
         val checkpoints = pl.aimasterpro.app.core.TaskCheckpointStore.latest(this)
         val latestByTask = checkpoints.distinctBy { it.taskId }
 
-        card("CENTRUM ZADAŃ • MASTER", "Kolejka operacyjna, przydziały agentów, zależności i historia zmian statusu. Zadania są trwałe. Ten etap zapisuje i koordynuje przydziały; wykonanie LLM z tej kolejki zostanie spięte z TeamRunEngine w następnym kroku.")
+        card("CENTRUM ZADAŃ • MASTER", "Kolejka operacyjna połączona z TeamRunEngine i istniejącym Smart Budget. Przydziały uruchamiają rzeczywistą pracę agentów; raporty i wyniki są archiwizowane.")
         if (queue.status != pl.aimasterpro.app.core.MasterTaskQueueStore.ReadStatus.AVAILABLE) {
             card("KOLEJKA NIEDOSTĘPNA", "Stan magazynu: ${queue.status}\nKod: ${queue.errorCode}\nZapis i przydzielanie są zablokowane. Dane nie zostaną automatycznie nadpisane.")
         } else {
@@ -6367,7 +6368,7 @@ class MainActivity : Activity() {
                 if (task.status in setOf(pl.aimasterpro.app.core.MasterTaskQueueStore.Status.QUEUED,
                         pl.aimasterpro.app.core.MasterTaskQueueStore.Status.PAUSED)) {
                     action("PRZYDZIEL AGENTÓW", box) {
-                        val catalog = pl.aimasterpro.app.core.AgentManagerStore.enabledCatalog(this)
+                        val catalog = pl.aimasterpro.app.core.AgentManagerStore.enabledCatalog(this).filter { pl.aimasterpro.app.agents.AgentCatalog.find(it.id) != null }
                         if (catalog.isEmpty()) { toast("Brak aktywnych agentów albo magazyn katalogu jest niedostępny."); return@action }
                         val selected = BooleanArray(catalog.size) { catalog[it].id in task.assignedAgentIds }
                         AlertDialog.Builder(this).setTitle("Przydział: ${task.title}")
@@ -6381,6 +6382,11 @@ class MainActivity : Activity() {
                                     showShell("Zadania"); showTasksCenter()
                                 } else toast("Przydział odrzucony. Sprawdź status zadania i aktywność agentów.")
                             }.show()
+                    }
+                }
+                if (task.status == pl.aimasterpro.app.core.MasterTaskQueueStore.Status.ASSIGNED) {
+                    action("▶ URUCHOM PRZYDZIELONY ZESPÓŁ", box) {
+                        executeQueuedMasterTask(task.id)
                     }
                 }
                 if (task.status == pl.aimasterpro.app.core.MasterTaskQueueStore.Status.BLOCKED) {
@@ -6425,7 +6431,230 @@ class MainActivity : Activity() {
         card("DZIENNIK PLANÓW MASTER-A", "Starsze plany: ${work.size} • aktywne: $active • wstrzymane: $paused • zablokowane: $blocked\nCheckpointy: ${latestByTask.size}. Dziennik pozostaje zachowany i nie jest automatycznie migrowany do nowej kolejki.")
         work.take(20).forEach { record ->
             val related = latestByTask.firstOrNull { it.taskId == record.taskId }
-            card(record.title, "Status: ${record.status}\nCel: ${record.objective}\nBieżący krok: ${record.currentStep}\nCheckpoint: ${related?.status ?: "brak"}\nNastępne kroki: ${record.nextSteps.take(4).joinToString(" • ").ifBlank { "nie określono" }}")
+            card(record.title, "Status: ${record.status}\nCel: ${record.objective}\nBieżący krok: ${record.currentStep}\nCheckpoint: ${related?.status ?: "brak"}\nNastępne kroki: ${record.nextSteps.take(4).joinToString(" • ").ifBlank { "nie     /**
+     * Executes a durable queue item through the same provider routing, free-model guard,
+     * Smart Budget, usage ledger, checkpoints and result archive used by MASTER chat.
+     */
+    private fun executeQueuedMasterTask(taskId: String) {
+        if (isThinking || store.isStorageUncertain() || !agentAssignmentsHealthy) {
+            toast("Nie można uruchomić kolejki: trwa inne żądanie albo konfiguracja nie jest bezpiecznie uzgodniona.")
+            return
+        }
+        val queueStore = pl.aimasterpro.app.core.MasterTaskQueueStore
+        val task = queueStore.snapshot(this).tasks.firstOrNull { it.id == taskId }
+        if (task == null || task.status != queueStore.Status.ASSIGNED || task.assignedAgentIds.isEmpty()) {
+            toast("Zadanie nie jest gotowe do uruchomienia.")
+            return
+        }
+        synchronized(masterJournalLifecycleLock) {
+            if (activeQueueTaskId.isNotBlank() || isThinking) {
+                toast("Inne zadanie MASTER-a jest już uruchomione.")
+                return
+            }
+            activeQueueTaskId = taskId
+        }
+        val specs = task.assignedAgentIds.mapNotNull { id ->
+            pl.aimasterpro.app.agents.AgentCatalog.find(id)?.takeIf {
+                pl.aimasterpro.app.core.AgentManagerStore.isEnabled(this, id)
+            }
+        }
+        if (specs.size != task.assignedAgentIds.size) {
+            activeQueueTaskId = ""
+            toast("Co najmniej jeden przydzielony agent nie istnieje w katalogu lub jest wyłączony.")
+            return
+        }
+        val configByAgent = specs.associate { spec ->
+            val role = pl.aimasterpro.app.agents.AgentProviderRouting.roleFor(spec)
+            val assignedId = agentProviders[role.name] ?: resolvedMasterProviderId().orEmpty()
+            spec.id to loadProvider(assignedId)
+        }
+        if (configByAgent.values.any { it == null || !providerReady(it) || !isVerifiedFreeConfig(it) }) {
+            activeQueueTaskId = ""
+            toast("Brak gotowego, zweryfikowanego darmowego modelu dla co najmniej jednego agenta. Nie wysłano żądań.")
+            return
+        }
+        val configs = configByAgent.mapValues { it.value!! }
+        val fallback = configs.values.first()
+        val mode = currentWorkMode()
+        val projectContext = runCatching { pl.aimasterpro.app.core.ProjectCodebase.fullContext() }.getOrDefault("")
+        val outputTokens = 1_400L
+        val teamTasks = specs.map { spec ->
+            pl.aimasterpro.app.agents.TeamTask(
+                id = "q-${task.id.take(45)}-${spec.id.take(35)}",
+                agentId = spec.id,
+                goal = task.title,
+                prompt = "Zadanie MASTER-a: ${task.title}\n\nCel i kryteria wykonania:\n${task.objective}\n\nPrzeanalizuj cel, wykonaj przydzieloną pracę na podstawie dostępnego kontekstu i zwróć raport z ustaleniami, ograniczeniami oraz weryfikacją. Nie twierdź, że zmieniłeś pliki ani wykonałeś operacje, do których nie masz narzędzi."
+            )
+        }
+        val budgetRequests = teamTasks.map { teamTask ->
+            val spec = pl.aimasterpro.app.agents.AgentCatalog.find(teamTask.agentId)
+            val cfg = configs.getValue(teamTask.agentId)
+            val chars = (spec?.systemPrompt.orEmpty().length + mode.systemInstruction.length +
+                projectContext.length + teamTask.prompt.length + 1_800)
+            pl.aimasterpro.app.core.BudgetRequest(
+                taskId = teamTask.id, agentId = teamTask.agentId, providerId = cfg.id,
+                baseUrl = cfg.baseUrl, modelName = cfg.model,
+                estimatedInputTokens = ((chars + 2) / 3).toLong(),
+                estimatedOutputTokens = outputTokens
+            )
+        }
+        val budgetPlan = runCatching { pl.aimasterpro.app.core.ApiTokenTracker.planBatch(this, budgetRequests) }
+            .getOrElse {
+                activeQueueTaskId = ""
+                toast("Smart Budget nie mógł zarezerwować limitów: ${it.message ?: "błąd magazynu"}.")
+                return
+            }
+        if (budgetPlan.reservationId.isBlank() || budgetPlan.allowedTaskIds.isEmpty()) {
+            activeQueueTaskId = ""
+            toast("Smart Budget zablokował uruchomienie. Sprawdź limity w Monitorze API.")
+            return
+        }
+        val allowed = teamTasks.filter { it.id in budgetPlan.allowedTaskIds }
+        val blocked = teamTasks.filterNot { it.id in budgetPlan.allowedTaskIds }
+        if (!queueStore.transition(this, taskId, "MASTER", queueStore.Status.RUNNING,
+                "MASTER uruchomił TeamRunEngine dla ${allowed.size}/${teamTasks.size} agentów.")) {
+            pl.aimasterpro.app.core.ApiTokenTracker.releaseBatchReservation(budgetPlan.reservationId)
+            activeQueueTaskId = ""
+            toast("Nie udało się trwale rozpocząć zadania. Nie wysłano żądań.")
+            return
+        }
+        blocked.forEach { item ->
+            queueStore.recordAgentResult(this, taskId, item.agentId, queueStore.Status.BLOCKED,
+                budgetPlan.blockedReasons[item.id] ?: "Zablokowano przez Smart Budget.")
+        }
+        toast("MASTER uruchamia ${allowed.size} agentów. Wyniki będą zapisane w historii zadania.")
+        val requestScope = client.beginRequestScope()
+        executor.execute {
+            try {
+                val results = TeamRunEngine(client, maxParallel = minOf(4, allowed.size.coerceAtLeast(1))).use { engine ->
+                    engine.runBatch(
+                        tasks = allowed,
+                        provider = fallback,
+                        agentProvidersMap = configs,
+                        fallbackProviders = listOf(fallback),
+                        isFreeProvider = { candidate -> isVerifiedFreeConfig(candidate) },
+                        mode = mode,
+                        projectContext = projectContext,
+                        onLog = { sender, recipient, message, eventStatus ->
+                            android.util.Log.i("AiFORTecaQueue", "$taskId • $sender → $recipient • $eventStatus • ${message.take(500)}")
+                            runOnUiThread {
+                                if (!isFinishing) logAgentForChat(currentChatId.ifBlank { "aiforteca-queue" },
+                                    "[KOLEJKA $taskId] $sender → $recipient • $eventStatus • ${message.take(300)}")
+                            }
+                        },
+                        onUsage = { agentId, subTaskId, actualProvider, usage ->
+                            pl.aimasterpro.app.core.ApiTokenTracker.recordQuery(
+                                this, actualProvider.id, actualProvider.model, agentId, subTaskId,
+                                usage.inputTokens, usage.outputTokens, usage.reasoningTokens, usage.cachedTokens,
+                                usage.status, actualProvider.baseUrl, budgetPlan.reservationId,
+                                "queue:$taskId:$subTaskId:${actualProvider.id}",
+                                usage.cacheWriteTokens, usage.cacheWrite1hTokens, usage.reasoningTokensKnown
+                            )
+                        },
+                        unknownOutputEstimateTokens = outputTokens,
+                        onUnknownUsage = { agentId, subTaskId, actualProvider, estimatedInput, estimatedOutput ->
+                            pl.aimasterpro.app.core.ApiTokenTracker.recordQuery(
+                                this, actualProvider.id, actualProvider.model, agentId, subTaskId,
+                                estimatedInput, estimatedOutput, status = "UNAVAILABLE",
+                                baseUrl = actualProvider.baseUrl, reservationId = budgetPlan.reservationId,
+                                idempotencyKey = "queue:$taskId:$subTaskId:${actualProvider.id}"
+                            )
+                        },
+                        rankProviders = { candidates -> pl.aimasterpro.app.core.ModelHealthTracker.rank(this, candidates) },
+                        onProviderHealth = { model, success, category, latency ->
+                            pl.aimasterpro.app.core.ModelHealthTracker.record(this, model, success, category, latency)
+                        },
+                        persistedCooldownMs = { model ->
+                            runCatching { pl.aimasterpro.app.core.ProviderCooldownStore.remainingMs(this, model) }.getOrDefault(0L)
+                        },
+                        onRateLimited = { model ->
+                            runCatching { pl.aimasterpro.app.core.ProviderCooldownStore.markRateLimited(this, model) }.getOrDefault(0L)
+                        },
+                        onProviderSuccess = { model ->
+                            runCatching { pl.aimasterpro.app.core.ProviderCooldownStore.markSuccess(this, model) }
+                        },
+                        onTaskState = { item, state, detail, providerId, model, attempts ->
+                            val saved = pl.aimasterpro.app.core.TaskCheckpointStore.record(
+                                this, pl.aimasterpro.app.core.TaskCheckpointStore.Event(
+                                    item.id, item.agentId, state, detail, System.currentTimeMillis(),
+                                    providerId, model, attempts
+                                )
+                            )
+                            if (!saved) android.util.Log.e("AiFORTecaQueue", "Nie zapisano checkpointu $taskId/${item.agentId} • $state")
+                        },
+                        onTaskResult = { result ->
+                            pl.aimasterpro.app.core.TaskResultArchive.put(
+                                this, result.taskId, result.agentId, result.report,
+                                result.providerId, result.model, chatId = "aiforteca-queue"
+                            )
+                        },
+                        onRequestStarting = { item, actualProvider, estimatedInput, estimatedOutput, idempotencyKey, attempts ->
+                            !store.isStorageUncertain() && pl.aimasterpro.app.core.TaskCheckpointStore.record(
+                                this, pl.aimasterpro.app.core.TaskCheckpointStore.Event(
+                                    item.id, item.agentId, "REQUESTING",
+                                    "Żądanie API rozpoczęte z kolejki MASTER-a.",
+                                    System.currentTimeMillis(), actualProvider.id, actualProvider.model, attempts,
+                                    estimatedInputTokens = estimatedInput, estimatedOutputTokens = estimatedOutput,
+                                    idempotencyKey = idempotencyKey,
+                                    baseUrl = pl.aimasterpro.app.core.TaskCheckpointStore.safeBaseUrlForCheckpoint(actualProvider.baseUrl)
+                                )
+                            )
+                        },
+                        requestScope = requestScope,
+                        onTaskFinished = { subTaskId ->
+                            pl.aimasterpro.app.core.ApiTokenTracker.completeReservationTask(budgetPlan.reservationId, subTaskId)
+                        }
+                    )
+                }
+                results.forEach { result ->
+                    val queueResult = when (result.status) {
+                        pl.aimasterpro.app.agents.TeamTaskResult.Status.COMPLETED -> queueStore.Status.COMPLETED
+                        pl.aimasterpro.app.agents.TeamTaskResult.Status.FAILED -> queueStore.Status.FAILED
+                        pl.aimasterpro.app.agents.TeamTaskResult.Status.BLOCKED -> queueStore.Status.BLOCKED
+                    }
+                    val saved = queueStore.recordAgentResult(this, taskId, result.agentId, queueResult,
+                        "${result.status}: ${result.report.take(420)}")
+                    if (!saved) android.util.Log.e("AiFORTecaQueue", "Nie zapisano wyniku agenta ${result.agentId} dla $taskId.")
+                }
+                val returned = results.map { it.agentId }.toSet()
+                allowed.filterNot { it.agentId in returned }.forEach { item ->
+                    queueStore.recordAgentResult(this, taskId, item.agentId, queueStore.Status.FAILED,
+                        "TeamRunEngine nie zwrócił wyniku dla tego agenta.")
+                }
+                runOnUiThread {
+                    if (!isFinishing) {
+                        val state = queueStore.snapshot(this)
+                        val finalTask = state.tasks.firstOrNull { it.id == taskId }
+                        toast("Zadanie $taskId: ${finalTask?.status ?: "brak potwierdzenia zapisu"}.")
+                        if (screen == "Zadania") { showShell("Zadania"); showTasksCenter() }
+                    }
+                }
+            } catch (error: Throwable) {
+                android.util.Log.e("AiFORTecaQueue", "Błąd wykonania zadania $taskId.", error)
+                val current = queueStore.snapshot(this).tasks.firstOrNull { it.id == taskId }
+                if (current?.status == queueStore.Status.RUNNING) {
+                    current.assignedAgentIds.filter { agentId ->
+                        queueStore.snapshot(this).events.none { it.taskId == taskId && it.actor == "agent:$agentId" && it.operation == "AGENT_RESULT" }
+                    }.forEach { agentId ->
+                        queueStore.recordAgentResult(this, taskId, agentId, queueStore.Status.FAILED,
+                            "Błąd wykonania: ${error.message.orEmpty().take(400)}")
+                    }
+                }
+                runOnUiThread {
+                    if (!isFinishing) {
+                        toast("Wykonanie zadania nie powiodło się: ${error.message ?: "błąd"}")
+                        if (screen == "Zadania") { showShell("Zadania"); showTasksCenter() }
+                    }
+                }
+            } finally {
+                pl.aimasterpro.app.core.ApiTokenTracker.requestBatchReservationRelease(budgetPlan.reservationId)
+                client.cancelRequestScope(requestScope)
+                synchronized(masterJournalLifecycleLock) { if (activeQueueTaskId == taskId) activeQueueTaskId = "" }
+            }
+        }
+    }
+
+określono" }}")
         }
         if (latestByTask.isNotEmpty()) {
             card("OSTATNIE CHECKPOINTY", latestByTask.take(20).joinToString("\n") { event ->
