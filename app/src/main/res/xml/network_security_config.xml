@@ -6,7 +6,7 @@
             <certificates src="system" />
         </trust-anchors>
     </base-config>
-    <!-- Explicit exceptions only for on-device local inference and Android Emulator host access. -->
+    <!-- The platform layer must permit dynamic private IPv4 hosts; ProviderEndpointPolicy is the mandatory app-level gate for every provider HTTP request. -->
     <domain-config cleartextTrafficPermitted="true">
         <domain includeSubdomains="false">localhost</domain>
         <domain includeSubdomains="false">127.0.0.1</domain>
