@@ -187,6 +187,32 @@ object MasterTaskQueueStore {
         Triple(tasks, events + event(taskId, sender, "AGENT_MESSAGE", "", status, detail, now), true)
     }
 
+    /** Moves interrupted RUNNING tasks to BLOCKED after process restart; never auto-replays uncertain API work. */
+    @Synchronized
+    fun recoverInterruptedRuns(context: Context, now: Long = System.currentTimeMillis()): Int {
+        if (now < 0L) return 0
+        var recovered = 0
+        val saved = mutate(context) { tasks, events ->
+            val running = tasks.filter { it.status == Status.RUNNING }
+            if (running.isEmpty()) return@mutate null
+            val updated = tasks.map { task ->
+                if (task.status != Status.RUNNING) task else {
+                    recovered++
+                    task.copy(status = Status.BLOCKED,
+                        currentStep = "Przerwano działanie aplikacji. Wynik żądań może być nieznany; sprawdź historię API przed ponownym uruchomieniem.",
+                        updatedAt = maxOf(now, task.updatedAt))
+                }
+            }
+            val recoveryEvents = running.map { task ->
+                event(task.id, "MASTER_RECOVERY", "RECOVER_INTERRUPTED", Status.RUNNING.name,
+                    Status.BLOCKED.name,
+                    "Proces aplikacji zakończył się podczas pracy. Nie wznowiono automatycznie, aby uniknąć duplikowania żądań API.", now)
+            }
+            Triple(updated, events + recoveryEvents, true)
+        }
+        return if (saved) recovered else 0
+    }
+
     private fun allowedCoordinatorTransition(from: Status, to: Status): Boolean = when (from) {
         Status.QUEUED -> to in setOf(Status.ASSIGNED, Status.CANCELLED, Status.BLOCKED)
         Status.ASSIGNED -> to in setOf(Status.RUNNING, Status.PAUSED, Status.CANCELLED, Status.BLOCKED)
