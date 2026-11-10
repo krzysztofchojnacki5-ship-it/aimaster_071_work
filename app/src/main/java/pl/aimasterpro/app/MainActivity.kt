@@ -80,6 +80,7 @@ class MainActivity : Activity() {
     private val executor = Executors.newSingleThreadExecutor()
     /** Prevent overlapping catalog refreshes from import, manual refresh and screen navigation. */
     private val modelCatalogRefreshInFlight = AtomicBoolean(false)
+    @Volatile private var modelCatalogRefreshGeneration = 0L
     private lateinit var store: SecureStore
     private lateinit var client: ProviderClient
     private lateinit var root: FrameLayout
@@ -4347,6 +4348,7 @@ class MainActivity : Activity() {
             return
         }
 
+        val refreshGeneration = modelCatalogRefreshGeneration
         try {
             val providers = runCatching {
                 store.allConfigs().mapNotNull { j ->
@@ -4378,7 +4380,7 @@ class MainActivity : Activity() {
 
                     val report = pl.aimasterpro.app.core.ProviderCatalogSyncRunner.synchronize(
                         providers = providers,
-                        isCancelled = { store.isStorageUncertain() },
+                        isCancelled = { store.isStorageUncertain() || modelCatalogRefreshGeneration != refreshGeneration },
                         discover = { provider -> client.discoverModelDetails(provider) },
                         save = { provider, discovered -> saveModelCatalogForProvider(provider, discovered) }
                     )
@@ -7319,6 +7321,8 @@ class MainActivity : Activity() {
                     if (result.isFailure) { toast("Nie można odszyfrować bazy. Sprawdź hasło i plik."); return@setPositiveButton }
                     runCatching {
                         val configs = BackupCrypto.parseProviderConfigs(result.getOrThrow())
+                        // Invalidate any catalog job using the old provider snapshot before replacing keys.
+                        modelCatalogRefreshGeneration++
                         // Stop old-profile requests before the provider set changes. The
                         // persisted assignments are invalidated immediately after a successful swap.
                         cancelProviderWorkBeforeConfigReplacement()
@@ -7521,7 +7525,8 @@ class MainActivity : Activity() {
         AlertDialog.Builder(this).setTitle("Import starej bazy")
             .setMessage("Znaleziono ${migrated.size} profili. Import odbywa się lokalnie. Profile z nieczytelnym, zaszyfrowanym polem klucza zostaną przeniesione bez klucza i będzie trzeba wpisać go ponownie. Zastąpić obecną konfigurację?")
             .setNegativeButton("Anuluj", null).setPositiveButton("Importuj") { _, _ ->
-                // Match encrypted-backup import: quiesce requests before replacing provider profiles.
+                // Match encrypted-backup import: invalidate catalog work and quiesce requests before replacing provider profiles.
+                modelCatalogRefreshGeneration++
                 cancelProviderWorkBeforeConfigReplacement()
                 if (!store.replaceAllConfigs(migrated)) {
                     if (store.isStorageUncertain()) {
