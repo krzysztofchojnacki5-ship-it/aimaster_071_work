@@ -80,10 +80,6 @@ object ChatHistoryStore {
     }.getOrNull()
 
     /**
-     * Reads the navigation mirror under the same health gate as canonical history.
-     * Null means the preference file could not be read safely; callers must not guess a destination.
-     */
-    /**
      * Commits conversation selection before callers replace their in-memory/UI snapshot.
      * A new empty conversation may be created, but an existing corrupt history never is.
      * The canonical currentId and user-chat navigation mirror are committed together.
@@ -104,12 +100,23 @@ object ChatHistoryStore {
             root.put("currentId", chatId)
             true
         }
-        return if (chatId == "assistant_dedicated_chat_id" || chatId.startsWith("assistant-")) {
-            updateRoot(context, update)
+        return if (isAssistantChatId(chatId)) {
+            updateRootAndAssistantChatId(context, chatId, update)
         } else {
             updateRootAndLastUserChatId(context, chatId, update)
         }
     }
+
+    private fun isAssistantChatId(chatId: String): Boolean =
+        chatId == "assistant_dedicated_chat_id" || chatId.startsWith("assistant-")
+
+    fun readAssistantChatId(context: Context): String? = runCatching {
+        SharedPreferencesWriteHealth.withHealthyAccess(PREFS) {
+            context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+                .getString("assistant_chat_id", "assistant_dedicated_chat_id")
+                ?.takeIf { it.isNotBlank() } ?: "assistant_dedicated_chat_id"
+        }
+    }.getOrNull()
 
     fun readLastUserChatId(context: Context): String? = runCatching {
         SharedPreferencesWriteHealth.withHealthyAccess(PREFS) {
@@ -137,9 +144,20 @@ object ChatHistoryStore {
         return updateRootInternal(context, lastUserChatId, update)
     }
 
+    @Synchronized
+    fun updateRootAndAssistantChatId(
+        context: Context,
+        assistantChatId: String,
+        update: (JSONObject) -> Boolean
+    ): Boolean {
+        if (!isAssistantChatId(assistantChatId) || assistantChatId.length > 200) return false
+        return updateRootInternal(context, null, assistantChatId, update)
+    }
+
     private fun updateRootInternal(
         context: Context,
         lastUserChatId: String?,
+        assistantChatId: String? = null,
         update: (JSONObject) -> Boolean
     ): Boolean = runCatching {
         // Hold the shared preference-file lock across the complete read-modify-write cycle,
@@ -147,18 +165,19 @@ object ChatHistoryStore {
         SharedPreferencesWriteHealth.withHealthyAccess(PREFS) {
             val root = readRoot(context) ?: return@withHealthyAccess false
             val changed = runCatching { update(root) }.getOrElse { return@withHealthyAccess false }
-            !changed || writeRootInternal(context, root, lastUserChatId)
+            !changed || writeRootInternal(context, root, lastUserChatId, assistantChatId)
         }
     }.getOrDefault(false)
 
     @Synchronized
     fun writeRoot(context: Context, root: JSONObject): Boolean =
-        writeRootInternal(context, root, null)
+        writeRootInternal(context, root, null, null)
 
     private fun writeRootInternal(
         context: Context,
         root: JSONObject,
-        lastUserChatId: String?
+        lastUserChatId: String?,
+        assistantChatId: String?
     ): Boolean = runCatching {
         // Keep validation, existing-document check, and commit in the same file-wide critical
         // section. updateRoot already owns this reentrant monitor; direct callers get the same
@@ -171,6 +190,7 @@ object ChatHistoryStore {
             validate(candidate)
             val editor = prefs.edit().putString(KEY, serialized)
             if (lastUserChatId != null) editor.putString("last_user_chat_id", lastUserChatId)
+            if (assistantChatId != null) editor.putString("assistant_chat_id", assistantChatId)
             SharedPreferencesWriteHealth.commit(PREFS, editor)
         }
     }.getOrDefault(false)
