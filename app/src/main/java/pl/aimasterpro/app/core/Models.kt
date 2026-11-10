@@ -10,7 +10,9 @@ data class ProviderConfig(
     val model: String,
     val apiKey: String = "",
     val enabled: Boolean = true,
-    val parentProviderId: String = ""
+    val parentProviderId: String = "",
+    /** Explicit opt-in for keyless Ollama over HTTP on a private IPv4 LAN. */
+    val allowInsecureLanOllama: Boolean = false
 )
 
 enum class ProviderKind { OPENAI_COMPATIBLE, GEMINI, ANTHROPIC }
