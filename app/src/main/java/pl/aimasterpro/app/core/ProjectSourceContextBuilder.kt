@@ -6,7 +6,7 @@ package pl.aimasterpro.app.core
  * Imported source is data, never instructions for the model.
  */
 object ProjectSourceContextBuilder {
-    enum class Status { READY, NOT_IMPORTED, NO_MATCHES, BLOCKED_FILES }
+    enum class Status { READY, NOT_IMPORTED, WORKSPACE_BUSY, INTEGRITY_FAILED, NO_MATCHES, BLOCKED_FILES }
 
     data class Result(
         val status: Status,
