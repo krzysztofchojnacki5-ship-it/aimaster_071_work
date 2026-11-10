@@ -143,6 +143,21 @@ class MasterTaskQueueStoreTest {
         assertEquals(0, MasterTaskQueueStore.recoverInterruptedRuns(context, now = 91L))
     }
 
+    @Test fun eventJournalRollsOverAtItsBoundWithoutFreezingQueueWrites() {
+        assertTrue(MasterTaskQueueStore.enqueue(context, "task-012", "Długi przebieg", "Test limitu historii.", now = 200L))
+        assertTrue(MasterTaskQueueStore.assign(context, "task-012", listOf("critical-reviewer"), now = 201L))
+        assertTrue(MasterTaskQueueStore.transition(context, "task-012", "MASTER",
+            MasterTaskQueueStore.Status.RUNNING, "Start.", 202L))
+        repeat(810) { index ->
+            assertTrue(MasterTaskQueueStore.recordAgentProgress(context, "task-012", "critical-reviewer",
+                "RUNNING", "Krok $index", attempts = 1, now = 203L + index))
+        }
+        val state = MasterTaskQueueStore.snapshot(context)
+        assertEquals(MasterTaskQueueStore.ReadStatus.AVAILABLE, state.status)
+        assertEquals(800, state.events.size)
+        assertTrue(state.events.last().detail.contains("Krok 809"))
+    }
+
     @Test fun terminalTaskCannotBeReopenedAndCorruptStorageFailsClosed() {
         assertTrue(MasterTaskQueueStore.enqueue(context, "task-006", "Final", "Cel.", now = 50L))
         assertTrue(MasterTaskQueueStore.transition(context, "task-006", "MASTER",
