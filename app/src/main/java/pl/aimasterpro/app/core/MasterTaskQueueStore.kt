@@ -266,7 +266,8 @@ object MasterTaskQueueStore {
                 val current = read(context)
                 if (current.status != ReadStatus.AVAILABLE) return@withHealthyAccess false
                 val changed = operation(current.tasks, current.events) ?: return@withHealthyAccess false
-                if (changed.first.size > MAX_TASKS || changed.second.size > MAX_EVENTS) return@withHealthyAccess false
+                if (changed.first.size > MAX_TASKS) return@withHealthyAccess false
+                // Event history is a rolling bounded journal; reaching the cap must not freeze the queue.
                 write(context, changed.first, changed.second)
             }
         }.getOrDefault(false)
