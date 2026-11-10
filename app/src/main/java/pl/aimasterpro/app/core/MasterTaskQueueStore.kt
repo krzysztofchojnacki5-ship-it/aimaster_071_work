@@ -130,6 +130,40 @@ object MasterTaskQueueStore {
             events + event(taskId, actor, "TRANSITION", current.status.name, target.name, detail.trim(), now), true)
     }
 
+    /** Records one assigned agent's terminal execution result; the queue task closes only after every assignee reports. */
+    @Synchronized
+    fun recordAgentResult(
+        context: Context,
+        taskId: String,
+        agentId: String,
+        result: Status,
+        detail: String,
+        now: Long = System.currentTimeMillis()
+    ): Boolean = mutate(context) { tasks, events ->
+        val current = tasks.firstOrNull { it.id == taskId } ?: return@mutate null
+        if (current.status != Status.RUNNING || agentId !in current.assignedAgentIds ||
+            result !in setOf(Status.COMPLETED, Status.FAILED, Status.BLOCKED) ||
+            detail.length > 500 || now < 0L) return@mutate null
+        val alreadyReported = events.any {
+            it.taskId == taskId && it.actor == "agent:$agentId" && it.operation == "AGENT_RESULT"
+        }
+        if (alreadyReported) return@mutate null
+        val nextEvents = events + event(taskId, "agent:$agentId", "AGENT_RESULT", Status.RUNNING.name,
+            result.name, detail.trim(), now)
+        val reports = nextEvents.filter { it.taskId == taskId && it.operation == "AGENT_RESULT" }
+        val reportedAgents = reports.map { it.actor.removePrefix("agent:") }.toSet()
+        val allReported = current.assignedAgentIds.all { it in reportedAgents }
+        val finalStatus = if (!allReported) Status.RUNNING else when {
+            reports.any { it.toStatus == Status.FAILED.name } -> Status.FAILED
+            reports.any { it.toStatus == Status.BLOCKED.name } -> Status.BLOCKED
+            else -> Status.COMPLETED
+        }
+        val step = if (allReported) "Wyniki wszystkich przypisanych agentów zapisane."
+            else "Wynik agenta $agentId zapisany (${reportedAgents.size}/${current.assignedAgentIds.size})."
+        val next = current.copy(status = finalStatus, currentStep = step, updatedAt = now)
+        Triple(tasks.map { if (it.id == taskId) next else it }, nextEvents, true)
+    }
+
     private fun allowedCoordinatorTransition(from: Status, to: Status): Boolean = when (from) {
         Status.QUEUED -> to in setOf(Status.ASSIGNED, Status.CANCELLED, Status.BLOCKED)
         Status.ASSIGNED -> to in setOf(Status.RUNNING, Status.PAUSED, Status.CANCELLED, Status.BLOCKED)
