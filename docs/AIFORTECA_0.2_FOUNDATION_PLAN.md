@@ -80,3 +80,12 @@ New shared memories enter a pending state with source/provenance and proposed sc
 ### Acceptance tests for this contract
 Cover unauthorized create/update/delete, scope escape, missing or forged approval, audit tampering, duplicate/replayed requests, concurrent updates, interrupted commits/recovery, secret redaction, and preservation of legacy records. Tests must exercise the real store adapters, not only prompt text or UI.
 
+## Execution checkpoint — 2026-11-10
+- The failed Android workflow run 42810366053 was tied to the earlier source state at commit 77db75dce6713347895dd8efa19f002bb9a6d70c. Its Kotlin compiler error was caused by five drawer-row statements joined with literal escaped newline text on one source line.
+- The current branch source has those statements on separate physical lines; the previously failing pattern is absent.
+- Added the dedicated Ustawienia department and drawer entry.
+- Added the data-governance contract to the plan. The enforcement layer is still pending implementation and must not be reported as complete.
+- Current known branch commit after the source and plan updates: 763868aa300e9918bfee85035be03fa3a5e3b693.
+- The previous wrapper-validation workflow passed, but the Android compile failed. No newer workflow run, successful Android build, unit-test result, APK artifact or device test has been confirmed for the current branch state.
+- Local execution is unavailable in this environment because Gradle and Android SDK are not installed and outbound DNS/network access is unavailable. Do not mark build/tests as PASS on that basis.
+- Release identity remains versionName=0.2, versionCode=3.
