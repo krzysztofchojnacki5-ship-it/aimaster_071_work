@@ -9,9 +9,9 @@ object ProjectCodebase {
         === KONTEKST PROJEKTU AI MASTER PRO ANDROID ===
         - Aplikacja Android w Kotlinie; moduł aplikacji: app.
         - Architektura obejmuje MASTER, politykę routingu, silnik TeamRunEngine i ProviderClient.
-        - Kontekst przekazany w tym polu jest wyłącznie krótkim opisem architektury.
-        - Nie zawiera automatycznie plików źródłowych, logów, wyników kompilacji ani wyników testów.
-        - Agent musi wskazać brakujące pliki i nie może twierdzić, że je odczytał bez ich rzeczywistego przekazania.
+        - To pole zawiera wyłącznie krótki opis architektury; rzeczywiste pliki źródłowe, jeśli zostały bezpiecznie odczytane, są dołączane w osobnym bloku kontekstu.
+        - Nie zawiera automatycznie logów, wyników kompilacji ani wyników testów.
+        - Agent może twierdzić, że przeanalizował tylko pliki jawnie wymienione i przekazane w bloku danych źródłowych.
     """.trimIndent()
 
     fun fullContext(): String = repositorySummary
