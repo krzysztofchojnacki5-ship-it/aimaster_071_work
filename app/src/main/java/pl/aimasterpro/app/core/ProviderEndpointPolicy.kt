@@ -15,7 +15,7 @@ object ProviderEndpointPolicy {
         val url: URL? = null
     )
 
-    fun validate(rawUrl: String, apiKey: String): Decision {
+    fun validate(rawUrl: String, apiKey: String, allowInsecureLanOllama: Boolean = false): Decision {
         if (rawUrl.isBlank() || rawUrl.length > MAX_URL_CHARS) {
             return reject("INVALID_ENDPOINT", "Adres endpointu jest pusty lub przekracza limit długości.")
         }
@@ -44,10 +44,16 @@ object ProviderEndpointPolicy {
                 Regex("(?:^|[&;])(?:key|api[_-]?key|token|access[_-]?token|authorization|password|passwd|secret|credential|auth|client[_-]?secret)(?:=|[&;]|$)", RegexOption.IGNORE_CASE)
                     .containsMatchIn(decodedQuery)
             } == true
-            if (!CleartextEndpointPolicy.isAllowedHost(parsed.host) || apiKey.isNotBlank() || queryContainsCredential) {
+            val isExplicitOllamaLan = allowInsecureLanOllama &&
+                parsed.port == 11434 &&
+                CleartextEndpointPolicy.isPrivateLanIpv4(parsed.host) &&
+                parsed.path.orEmpty().trimEnd('/').let { it.isEmpty() || it == "/v1" } &&
+                apiKey.isBlank() && !queryContainsCredential
+            if ((!CleartextEndpointPolicy.isAllowedHost(parsed.host) && !isExplicitOllamaLan) ||
+                apiKey.isNotBlank() || queryContainsCredential) {
                 return reject(
                     "SECURITY_HTTP",
-                    "Niezabezpieczone HTTP jest dozwolone wyłącznie dla localhost, dokładnego adresu 127.0.0.1 lub aliasu emulatora 10.0.2.2 — bez klucza API. Dla sieci LAN i usług zewnętrznych użyj HTTPS."
+                    "HTTP jest domyślnie blokowane. Dla Ollama w prywatnej sieci wymagane jest jawne zezwolenie, adres IPv4 RFC1918, port 11434 i brak klucza API. Dla pozostałych usług użyj HTTPS."
                 )
             }
         }
