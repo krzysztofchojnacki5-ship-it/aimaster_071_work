@@ -167,6 +167,26 @@ object MasterTaskQueueStore {
         Triple(tasks.map { if (it.id == taskId) next else it }, nextEvents, true)
     }
 
+    /** Appends sanitized agent-to-agent / agent-to-MASTER communication to the owning task timeline. */
+    @Synchronized
+    fun recordAgentMessage(
+        context: Context,
+        taskId: String,
+        sender: String,
+        recipient: String,
+        status: String,
+        message: String,
+        now: Long = System.currentTimeMillis()
+    ): Boolean = mutate(context) { tasks, events ->
+        val current = tasks.firstOrNull { it.id == taskId } ?: return@mutate null
+        if (current.status != Status.RUNNING || sender.isBlank() || sender.length > 100 ||
+            recipient.isBlank() || recipient.length > 100 || status.length > 30 ||
+            message.isBlank() || message.length > 8_000 || now < 0L) return@mutate null
+        val safe = CommunicationLogSanitizer.sanitize(message).take(350)
+        val detail = "Do: $recipient • $status • $safe"
+        Triple(tasks, events + event(taskId, sender, "AGENT_MESSAGE", "", status, detail, now), true)
+    }
+
     private fun allowedCoordinatorTransition(from: Status, to: Status): Boolean = when (from) {
         Status.QUEUED -> to in setOf(Status.ASSIGNED, Status.CANCELLED, Status.BLOCKED)
         Status.ASSIGNED -> to in setOf(Status.RUNNING, Status.PAUSED, Status.CANCELLED, Status.BLOCKED)
