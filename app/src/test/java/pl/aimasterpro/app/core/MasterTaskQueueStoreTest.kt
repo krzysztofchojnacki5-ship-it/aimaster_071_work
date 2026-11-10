@@ -114,6 +114,20 @@ class MasterTaskQueueStoreTest {
             MasterTaskQueueStore.snapshot(context).tasks.single().status)
     }
 
+    @Test fun interruptedRunningTasksRecoverAsBlockedWithoutAutomaticReplay() {
+        assertTrue(MasterTaskQueueStore.enqueue(context, "task-010", "Przerwane", "Sprawdź wynik.", now = 80L))
+        assertTrue(MasterTaskQueueStore.assign(context, "task-010", listOf("critical-reviewer"), now = 81L))
+        assertTrue(MasterTaskQueueStore.transition(context, "task-010", "MASTER",
+            MasterTaskQueueStore.Status.RUNNING, "Żądanie mogło zostać wysłane.", 82L))
+
+        assertEquals(1, MasterTaskQueueStore.recoverInterruptedRuns(context, now = 90L))
+        val state = MasterTaskQueueStore.snapshot(context)
+        assertEquals(MasterTaskQueueStore.Status.BLOCKED, state.tasks.single().status)
+        assertTrue(state.tasks.single().currentStep.contains("wynik żądań może być nieznany"))
+        assertEquals("RECOVER_INTERRUPTED", state.events.last().operation)
+        assertEquals(0, MasterTaskQueueStore.recoverInterruptedRuns(context, now = 91L))
+    }
+
     @Test fun terminalTaskCannotBeReopenedAndCorruptStorageFailsClosed() {
         assertTrue(MasterTaskQueueStore.enqueue(context, "task-006", "Final", "Cel.", now = 50L))
         assertTrue(MasterTaskQueueStore.transition(context, "task-006", "MASTER",
