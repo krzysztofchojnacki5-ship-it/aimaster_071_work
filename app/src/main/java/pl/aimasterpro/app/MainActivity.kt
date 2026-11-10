@@ -311,6 +311,8 @@ class MainActivity : Activity() {
         when (label) {
             "Czat", "Asystent" -> showChat(snapshotAlreadyRestored = true)
             "Centrum" -> showCommandCenter()
+            "Zadania" -> showTasksCenter()
+            "Pamięć" -> showMemory()
             "Rozmowy" -> showAgentCollaborationScreen()
             "Monitor API" -> showApiMonitoringScreen()
             "Diagnostyka" -> showDiagnostics()
@@ -445,22 +447,37 @@ class MainActivity : Activity() {
     }
 
     private fun buildTabs(active: String): View {
+        // AiFORTeca 0.2: navigation is organized around the MASTER-led agent workspace.
+        // Legacy screens remain available through these departments; no stored data is migrated or discarded.
+        val departments = listOf(
+            Triple("⌂", "MASTER", "Centrum"),
+            Triple("♟", "Zespół", "Agenci"),
+            Triple("☷", "Zadania", "Zadania"),
+            Triple("🧠", "Pamięć", "Pamięć"),
+            Triple("⇄", "Komunikacja", "Rozmowy"),
+            Triple("◇", "Dostawcy", "Modele"),
+            Triple("⌁", "Diagnostyka", "Diagnostyka"),
+            Triple("✉", "Czat", "Czat")
+        )
         val hs = HorizontalScrollView(this)
         hs.isHorizontalScrollBarEnabled = false
         val row = LinearLayout(this)
         row.orientation = LinearLayout.HORIZONTAL
         row.setPadding(dp(6), 0, dp(6), 0)
-        listOf("Centrum", "Czat", "Asystent", "Rozmowy", "Monitor API", "Diagnostyka", "Modele", "Agenci", "Pomoc").forEach { label ->
-            val isActive = label == active
-            val tab = LinearLayout(this)
-            tab.orientation = LinearLayout.VERTICAL
-            tab.setOnClickListener { navigate(label) }
+        departments.forEach { (glyph, label, destination) ->
+            val isActive = destination == active
+            val tab = LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL
+                gravity = Gravity.CENTER
+                background = ripple(if (isActive) panel else Color.TRANSPARENT, 12)
+                setOnClickListener { navigate(destination) }
+            }
             val tv = TextView(this)
-            tv.text = label
-            tv.textSize = 14f
+            tv.text = "$glyph  $label"
+            tv.textSize = 13f
             tv.setTextColor(if (isActive) white else muted)
             if (isActive) tv.typeface = Typeface.DEFAULT_BOLD
-            tv.setPadding(dp(14), dp(10), dp(14), dp(8))
+            tv.setPadding(dp(12), dp(11), dp(12), dp(9))
             tab.addView(tv)
             val underline = View(this)
             underline.setBackgroundColor(if (isActive) orange else Color.TRANSPARENT)
@@ -651,7 +668,7 @@ class MainActivity : Activity() {
         head.orientation = LinearLayout.HORIZONTAL
         head.gravity = Gravity.CENTER_VERTICAL
         val brand = TextView(this)
-        brand.text = "AI Master Pro"
+        brand.text = "AiFORTeca"
         brand.textSize = 19f
         brand.typeface = Typeface.DEFAULT_BOLD
         brand.setTextColor(white)
@@ -697,10 +714,10 @@ class MainActivity : Activity() {
         divider.setBackgroundColor(Color.rgb(48, 48, 48))
         d.addView(divider, LinearLayout.LayoutParams(-1, 1).apply { topMargin = dp(6); bottomMargin = dp(4) })
         d.addView(drawerRow("Biblioteka plików", R.drawable.ic_copy) { closeDrawer(); showLibrary() })
-        d.addView(drawerRow("Modele i klucze API", R.drawable.ic_expand) { closeDrawer(); navigate("Modele") })
-        d.addView(drawerRow("Zespół agentów", R.drawable.ic_menu) { closeDrawer(); navigate("Agenci") })
+        d.addView(drawerRow("Dostawcy i modele", R.drawable.ic_expand) { closeDrawer(); navigate("Modele") })
+        d.addView(drawerRow("Centrum MASTER", R.drawable.ic_menu) { closeDrawer(); navigate("Centrum") })\n        d.addView(drawerRow("Zespół agentów", R.drawable.ic_menu) { closeDrawer(); navigate("Agenci") })\n        d.addView(drawerRow("Zadania i kolejka", R.drawable.ic_menu) { closeDrawer(); navigate("Zadania") })\n        d.addView(drawerRow("Pamięć systemu", R.drawable.ic_copy) { closeDrawer(); navigate("Pamięć") })\n        d.addView(drawerRow("Komunikacja agentów", R.drawable.ic_menu) { closeDrawer(); navigate("Rozmowy") })
         val ver = TextView(this)
-        ver.text = "Wersja 0.5.0"
+        ver.text = "AiFORTeca • wersja 0.2"
         ver.textSize = 11f
         ver.setTextColor(muted)
         ver.setPadding(dp(12), dp(6), 0, dp(2))
@@ -5705,7 +5722,14 @@ class MainActivity : Activity() {
         val interruptedTasks = taskStates.filter { it.status in setOf("INTERRUPTED", "TIMED_OUT", "CANCELLED", "FAILED", "BLOCKED") }
         val recentFailures = events.filter { it.status.uppercase(java.util.Locale.ROOT) in setOf("FAILED", "ERROR", "BLOCKED", "CANCELLED", "TIMED_OUT", "INTERRUPTED") }.take(5)
 
-        card("AI MASTER PRO • COMMAND CENTER", "Jeden ekran kontroli zespołu, budżetu, jakości, pamięci i bezpieczeństwa zmian. Dane operacyjne są lokalne; odczyt tego panelu nie uruchamia zapytań API.")
+        card("AiFORTeca 0.2 • CENTRUM MASTER", "Główne centrum sterowania zespołem AI. Wybierz dział: agenci, zadania, pamięć, komunikacja, dostawcy lub diagnostyka. Dane operacyjne pozostają lokalne; odczyt panelu nie uruchamia zapytań API.");
+        val departmentsCard = card("Działy AiFORTeci", "Każdy obszar ma własny ekran. MASTER pozostaje koordynatorem, a istniejące mechanizmy i dane są zachowane.")
+        action("♟  ZESPÓŁ AGENTÓW", departmentsCard) { navigate("Agenci") }
+        action("☷  ZADANIA I KOLEJKA MASTER-A", departmentsCard) { navigate("Zadania") }
+        action("🧠  PAMIĘĆ SYSTEMU", departmentsCard) { navigate("Pamięć") }
+        action("⇄  KOMUNIKACJA AGENTÓW", departmentsCard) { navigate("Rozmowy") }
+        action("◇  DOSTAWCY I MODELE", departmentsCard) { navigate("Modele") }
+        action("✉  OTWÓRZ CZAT MASTER-A", departmentsCard) { navigate("Czat") }
         card("Stan wykonania", "Status: ${if (isThinking) "PRACA W TOKU" else "GOTOWY"}\n${if (isThinking) thinkingLabel else "Brak aktywnego zadania."}\nAgenci z historią: ${agentStats.size} • katalog agentów: ${pl.aimasterpro.app.agents.AgentCatalog.all.size}\nZdarzenia dziennika: ${events.size} • ostatnie 5 awarii/blokad: ${recentFailures.size}\nCheckpointy zadań: ${taskStates.size} • przerwane/nieudane: ${interruptedTasks.size}")
         card("Budżet API", "Dzisiaj: ${budget.recordedTodayTokens} zużytych + ${budget.activeReservedTokens} zarezerwowanych / ${budget.dailyLimitTokens} tokenów\nPozostało: ${budget.remainingTokens}\nKoszt 30 dni: ${"%.4f".format(java.util.Locale.US, budget.recorded30DayCostPln)} zł / ${"%.2f".format(java.util.Locale.US, budget.monthlyCostLimitPln)} zł\nRezerwa kosztów: ${"%.4f".format(java.util.Locale.US, budget.activeReservedCostPln)} zł")
         card("Jakość i pamięć", "Oceny: ${quality.total} • pozytywne: ${quality.positive} • negatywne: ${quality.negative}\nAgenci ocenieni przez użytkownika: ${quality.ratedAgents}\nZatwierdzone wnioski jakościowe: ${quality.approved}\nPamięć operacyjna per agent: ${memories.size}/300 wpisów")
@@ -6242,6 +6266,34 @@ class MainActivity : Activity() {
             }.show()
         })
         card("Ważne", "Darmowy model nie oznacza nielimitowanego użycia. Smart Budget nadal kontroluje dzienną pulę tokenów aplikacji, a dostawca może dodatkowo nakładać własne limity. Zwiększaj limit dzienny tylko wtedy, gdy świadomie akceptujesz większe zużycie.")
+    }
+
+    private fun showTasksCenter() {
+        val col = content
+        col.setPadding(dp(16), dp(14), dp(16), dp(24))
+        val work = pl.aimasterpro.app.core.MasterWorkJournalStore.latest(this, 40)
+        val checkpoints = pl.aimasterpro.app.core.TaskCheckpointStore.latest(this)
+        val latestByTask = checkpoints.distinctBy { it.taskId }
+        val active = work.count { it.status == "ACTIVE" }
+        val blocked = work.count { it.status == "BLOCKED" }
+        val paused = work.count { it.status == "PAUSED" }
+        card("ZADANIA MASTER-A", "Trwałe plany pracy koordynatora, checkpointy i statusy. Ten ekran odczytuje lokalne dzienniki — nie uruchamia zapytań API.")
+        card("Kolejka i stan", "Plany zapisane: ${work.size}\nAktywne: $active • wstrzymane: $paused • zablokowane: $blocked\nCheckpointy zadań: ${latestByTask.size}")
+        action("↻ ODŚWIEŻ ZADANIA", onClick = { showShell("Zadania"); showTasksCenter() })
+        if (work.isEmpty() && latestByTask.isEmpty()) {
+            card("Brak zapisanych zadań", "Gdy MASTER rozpocznie pracę zespołową, plan i postęp pojawią się tutaj.")
+        }
+        work.forEach { record ->
+            val stamp = java.text.SimpleDateFormat("dd.MM.yyyy HH:mm", java.util.Locale.getDefault())
+                .format(java.util.Date(record.updatedAt))
+            val related = latestByTask.firstOrNull { it.taskId == record.taskId }
+            card(record.title, "Status: ${record.status}\nCel: ${record.objective}\nBieżący krok: ${record.currentStep}\nOstatnia aktualizacja: $stamp\nCheckpoint: ${related?.status ?: "brak"}\nNastępne kroki: ${record.nextSteps.take(4).joinToString(" • ").ifBlank { "nie określono" }}")
+        }
+        if (latestByTask.isNotEmpty()) {
+            card("Ostatnie checkpointy", latestByTask.take(20).joinToString("\n") { event ->
+                "${event.agentId} • ${event.status} • ${event.detail.take(110)}"
+            })
+        }
     }
 
     private fun showMemory() {
