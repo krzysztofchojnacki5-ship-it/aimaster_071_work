@@ -35,6 +35,7 @@ class CleartextEndpointPolicyTest {
 
     @Test fun doesNotTreatIpv6OrLookalikeNamesAsAllowed() {
         assertFalse(CleartextEndpointPolicy.isAllowedHost("::1"))
+        assertFalse(CleartextEndpointPolicy.isAllowedHost("[::1]"))
         assertFalse(CleartextEndpointPolicy.isAllowedHost("localhost.attacker.example"))
         assertFalse(CleartextEndpointPolicy.isAllowedHost("notlocalhost"))
         assertFalse(CleartextEndpointPolicy.isAllowedHost("10.0.2.2.attacker.example"))
