@@ -5893,7 +5893,7 @@ class MainActivity : Activity() {
         }
 
         val configByAgent = planned.associate { task ->
-            val spec = activeAgentCatalog.firstOrNull { it.id == task.agentId }!!
+            val spec = AgentCatalog.find(task.agentId)!!
             val role = AgentProviderRouting.roleFor(spec)
             val profileId = agentProviders[role.name]!!
             task.agentId to loadProvider(profileId)!!
@@ -5910,7 +5910,7 @@ class MainActivity : Activity() {
             )
         }
         val budgetRequests = tasks.map { task ->
-            val spec = activeAgentCatalog.firstOrNull { it.id == task.agentId }!!
+            val spec = AgentCatalog.find(task.agentId)!!
             val config = configByAgent[task.agentId]!!
             pl.aimasterpro.app.core.BudgetRequest(
                 taskId = task.id,
