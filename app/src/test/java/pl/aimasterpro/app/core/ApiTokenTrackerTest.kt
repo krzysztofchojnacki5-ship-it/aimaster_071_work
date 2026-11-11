@@ -1224,4 +1224,49 @@ class ApiTokenTrackerTest {
         }.isFailure)
     }
 
+
+    @Test fun explicitlyApprovedUnknownPricingStillPersistsTokenUsageWithoutInventingZeroCost() {
+        ApiTokenTracker.replaceCatalogPricingForProvider(
+            context, "unknown-price-provider", "https://unknown-price.example/v1",
+            listOf(CatalogModelPrice("vendor/unpriced-model", null, 0.8, explicitlyFree = false))
+        )
+        val blockedByDefault = runCatching {
+            ApiTokenTracker.recordQuery(
+                context, "unknown-price-provider", "vendor/unpriced-model", "MASTER", "unknown-price-default",
+                inputTokens = 120L, outputTokens = 80L, status = "REAL",
+                baseUrl = "https://unknown-price.example/v1", idempotencyKey = "unknown-price-default"
+            )
+        }
+        assertTrue("Unknown pricing must remain blocked unless explicitly approved", blockedByDefault.isFailure)
+        assertTrue(ApiTokenTracker.loadAllRecordsFromStorage(context).isEmpty())
+
+        val approved = ApiTokenTracker.recordQuery(
+            context, "unknown-price-provider", "vendor/unpriced-model", "MASTER", "unknown-price-approved",
+            inputTokens = 120L, outputTokens = 80L, status = "REAL",
+            baseUrl = "https://unknown-price.example/v1", idempotencyKey = "unknown-price-approved",
+            allowUnknownPricing = true
+        )
+        assertEquals(200L, approved.totalTokens)
+        assertFalse(approved.costKnown)
+        assertEquals(0.0, approved.costPln, 0.0)
+
+        val summary = ApiTokenTracker.calculateSummary(ApiTokenTracker.loadAllRecordsFromStorage(context))
+        assertEquals(200L, summary.totalTokens)
+        assertEquals("Unknown cost must not be presented as a verified zero price", 0.0, summary.costPln, 0.0)
+
+        ApiTokenTracker.resetInMemoryStateForTests()
+        val restored = ApiTokenTracker.loadAllRecordsFromStorage(context).single()
+        assertFalse("Unknown-cost state must survive process restart", restored.costKnown)
+        assertEquals(200L, restored.totalTokens)
+    }
+
+    @Test fun legacyUsageRowsWithoutCostKnownFlagRemainKnownCostRows() {
+        val prefs = context.getSharedPreferences("api_token_tracker_records_v1", Context.MODE_PRIVATE)
+        val legacy = """[{"qId":"legacy-known-cost","ts":1,"prov":"p","model":"m","agent":"MASTER","task":"legacy","in":10,"out":2,"tot":12,"reas":0,"cache":0,"status":"REAL","usd":0.01,"pln":0.04}]"""
+        assertTrue(prefs.edit().putString("records", legacy).commit())
+        val row = ApiTokenTracker.loadAllRecordsFromStorage(context).single()
+        assertTrue("Legacy rows must retain their historical known-cost interpretation", row.costKnown)
+        assertEquals(0.04, ApiTokenTracker.calculateSummary(listOf(row)).costPln, 0.000001)
+    }
+
 }
