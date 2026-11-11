@@ -87,8 +87,13 @@ Menedżer ma działać jak panel operacyjny IDE:
 - [x] Potwierdzono istniejące grupowanie zużycia według nazwy modelu w Monitorze API.
 - [x] Zidentyfikowano twardą zależność księgowania i planowania zadań od kompletnej wyceny.
 - [x] Ustalono bezpieczny model danych i kolejność zmian.
-- [ ] Nie zmieniono jeszcze kodu aplikacji.
-- [ ] Nie uruchomiono nowego builda ani testów dla tej funkcji.
+- [x] Dodano do TokenRecord pole costKnown; starsze rekordy bez tego pola są odczytywane jako historyczne rekordy z wyceną.
+- [x] Zapis tokenów może być jawnie zatwierdzony dla niekompletnej stawki katalogowej; rekord zachowuje tokeny i oznacza koszt jako nieznany, nie jako 0 PLN.
+- [x] Podsumowania kosztów pomijają rekordy z nieznaną ceną, zachowując ich tokeny w agregatach.
+- [x] Nieznana cena nie może być zatwierdzona, gdy aktywny jest miesięczny limit finansowy.
+- [x] Planowanie zadań blokuje się przy aktywnym limicie finansowym, jeśli w ostatnich 30 dniach występuje rekord o nieznanym koszcie.
+- [x] Dodano testy: domyślna blokada, jawna zgoda przy wyłączonym limicie finansowym, trwałość flagi po restarcie oraz zgodność ze starymi rekordami.
+- [ ] CI dla najnowszego commitu jest w toku; wyniki testów/builda nie są jeszcze potwierdzone.
 - [ ] Nie przygotowano nowego APK.
 
 Następny krok: implementacja punktu 1 w `ApiTokenTracker` z testami, bez zmiany numeru wersji 0.2 i bez naruszania istniejących danych użytkownika.
