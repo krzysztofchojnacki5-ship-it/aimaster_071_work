@@ -1226,10 +1226,9 @@ class ApiTokenTrackerTest {
 
 
     @Test fun explicitlyApprovedUnknownPricingStillPersistsTokenUsageWithoutInventingZeroCost() {
-        ApiTokenTracker.replaceCatalogPricingForProvider(
-            context, "unknown-price-provider", "https://unknown-price.example/v1",
-            listOf(CatalogModelPrice("vendor/unpriced-model", null, 0.8, explicitlyFree = false))
-        )
+        val pricingPrefs = context.getSharedPreferences("api_token_pricing_v1", Context.MODE_PRIVATE)
+        val incomplete = """[{"providerId":"unknown-price-provider","modelName":"vendor/unpriced-model","baseUrl":"https://unknown-price.example/v1","inputPer1MUsd":null,"outputPer1MUsd":0.8,"explicitlyFree":false}]"""
+        assertTrue(pricingPrefs.edit().putString("catalog_model_prices", incomplete).commit())
         val blockedByDefault = runCatching {
             ApiTokenTracker.recordQuery(
                 context, "unknown-price-provider", "vendor/unpriced-model", "MASTER", "unknown-price-default",
