@@ -55,6 +55,8 @@ class TeamRunEngine(
         agentProvidersMap: Map<String, ProviderConfig> = emptyMap(),
         fallbackProviders: List<ProviderConfig> = emptyList(),
         isFreeProvider: (ProviderConfig) -> Boolean = { FreeModelsCatalog.isFreeModel(it.id, it.model, it.baseUrl) },
+        /** Additional opt-in policy for explicitly approved unknown-price models. */
+        isProviderAllowed: (ProviderConfig) -> Boolean = isFreeProvider,
         mode: WorkMode,
         projectContext: String = "",
         attachmentMime: String = "",
@@ -113,12 +115,12 @@ class TeamRunEngine(
                         val hasExplicitConfig = agentProvidersMap.containsKey(task.agentId) && agentProvidersMap[task.agentId] != null
                         val agentProvider = agentProvidersMap[task.agentId] ?: provider
                         val candidates = listOf(agentProvider) + fallbackProviders.filter { it.id != agentProvider.id }
-                        val orderedProviders = rankProviders(candidates.filter(isFreeProvider))
+                        val orderedProviders = rankProviders(candidates.filter(isProviderAllowed))
 
                         if (orderedProviders.isEmpty()) {
-                            onLog("SYSTEM", agent.name, "[FREE FAILOVER GUARD] Zablokowano przełączenie na model płatny. Brak darmowych modeli zapasowych.", "BLOCKED")
+                            onLog("SYSTEM", agent.name, "[COST POLICY GUARD] Zablokowano przełączenie na niedozwolony model. Brak zweryfikowanego darmowego lub jawnie zatwierdzonego modelu zapasowego.", "BLOCKED")
                             runCatching { onTaskState(task, "BLOCKED", "Brak dostępnego zweryfikowanego darmowego modelu.", "", "", 0) }
-                            return@Callable TeamTaskResult(task.id, task.agentId, TeamTaskResult.Status.FAILED, "BRAK DOSTĘPNEGO DARMOWEGO MODELU ZAPASOWEGO. Skonfiguruj darmowy model zapasowy.", System.currentTimeMillis() - taskStartedAt, reviewOfAgentId = task.reviewOfAgentId)
+                            return@Callable TeamTaskResult(task.id, task.agentId, TeamTaskResult.Status.FAILED, "BRAK DOZWOLONEGO MODELU ZAPASOWEGO. Skonfiguruj zweryfikowany darmowy model lub jawnie zatwierdź model z nieznaną ceną.", System.currentTimeMillis() - taskStartedAt, reviewOfAgentId = task.reviewOfAgentId)
                         }
 
                         if (!hasExplicitConfig && fallbackProviders.isEmpty() && agentProvidersMap.isEmpty()) {
