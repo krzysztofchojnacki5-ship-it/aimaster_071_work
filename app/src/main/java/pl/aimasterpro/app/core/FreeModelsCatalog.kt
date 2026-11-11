@@ -128,12 +128,9 @@ object FreeModelsCatalog {
             parsed.rawUserInfo != null || parsed.rawQuery != null || parsed.rawFragment != null ||
             parsed.path.orEmpty().trimEnd('/').let { it.isNotEmpty() && it != "/v1" }) return false
         val host = parsed.host.lowercase(Locale.ROOT).removePrefix("[").removeSuffix("]")
-        val secondOctet = host.split(".").getOrNull(1)?.toIntOrNull()
         return host == "localhost" || host.endsWith(".local") || host == "::1" ||
-            host.startsWith("127.") || host.startsWith("10.") || host.startsWith("192.168.") ||
-            (host.startsWith("172.") && secondOctet != null && secondOctet in 16..31) ||
-            host.startsWith("fe80:") || (host.startsWith("fc") && host.contains(':')) ||
-            (host.startsWith("fd") && host.contains(':'))
+            host == "127.0.0.1" || CleartextEndpointPolicy.isPrivateLanIpv4(host) ||
+            host.startsWith("fe80:") || host.startsWith("fc") || host.startsWith("fd")
     }
 
     private fun endpointHost(baseUrl: String): String =
