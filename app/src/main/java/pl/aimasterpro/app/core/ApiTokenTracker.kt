@@ -30,7 +30,9 @@ data class TokenRecord(
     /** False when the provider did not expose a reasoning-token breakdown. */
     val reasoningTokensKnown: Boolean = false,
     /** False when usage is known but pricing has not been verified. Legacy rows default to true. */
-    val costKnown: Boolean = true
+    val costKnown: Boolean = true,
+    /** Exact endpoint identity for provider-specific model accounting; blank on legacy rows. */
+    val baseUrl: String = ""
 )
 
 class UnknownModelPricingException(message: String) : IllegalStateException(message)
@@ -361,6 +363,7 @@ object ApiTokenTracker {
             timestamp = System.currentTimeMillis(),
             providerId = providerId,
             modelName = modelName,
+            baseUrl = baseUrl.trim().trimEnd('/'),
             agentId = agentId,
             taskId = taskId,
             inputTokens = inputTokens,
@@ -481,6 +484,7 @@ object ApiTokenTracker {
                 .put("ts", r.timestamp)
                 .put("prov", r.providerId)
                 .put("model", r.modelName)
+                .put("baseUrl", r.baseUrl)
                 .put("agent", r.agentId)
                 .put("task", r.taskId)
                 .put("in", r.inputTokens)
@@ -571,6 +575,7 @@ object ApiTokenTracker {
                 timestamp = timestamp,
                 providerId = providerId,
                 modelName = modelName,
+                baseUrl = o.optString("baseUrl", ""),
                 agentId = agentId,
                 taskId = taskId,
                 inputTokens = input,
@@ -924,11 +929,24 @@ object ApiTokenTracker {
         var reservedTokens = 0L
         var reservedCost = 0.0
         val newReservationTasks = mutableListOf<ActiveReservationTask>()
+        val modelTokensUsed = mutableMapOf<String, Long>()
+        val modelLimits = readModelLimits(context)
+        activeReservations.values.flatMap { it.tasks }.forEach { task ->
+            val key = modelBudgetKey(task.providerId, task.baseUrl, task.modelName)
+            modelTokensUsed[key] = addTokenCounts(modelTokensUsed[key] ?: 0L, task.tokensRemaining)
+        }
+        all.filter { filterRecords(listOf(it), "Dzisiaj").isNotEmpty() }.forEach { record ->
+            val key = modelBudgetKey(record.providerId, record.baseUrl, record.modelName)
+            modelTokensUsed[key] = addTokenCounts(modelTokensUsed[key] ?: 0L, record.totalTokens)
+        }
 
         requests.forEach { request ->
             val estimate = Math.addExact(request.estimatedInputTokens, request.estimatedOutputTokens)
             val agentKey = request.agentId.lowercase(Locale.ROOT)
             val agentUsed = perAgentUsed[agentKey] ?: 0L
+            val modelKey = modelBudgetKey(request.providerId, request.baseUrl, request.modelName)
+            val modelLimit = modelLimits[modelKey]?.takeIf { it.enabled }?.dailyLimitTokens ?: 0L
+            val modelUsed = modelTokensUsed[modelKey] ?: 0L
             val pricing = getPricing(context, request.modelName, request.providerId, request.baseUrl)
             // Reserve against the most expensive published input path. Automatic/provider
             // caching can turn part of this prompt into cache writes with a premium rate.
@@ -959,6 +977,7 @@ object ApiTokenTracker {
                 nextMonthlyCost == null || nextBatchReserveCost == null -> "Pominięto: łączna wycena zadań i rezerw przekroczyłaby zakres bezpiecznej reprezentacji kosztu."
                 exceedsTokenLimit(dailyUsed, estimate, limits.dailyTokenLimit) -> "Pominięto: brak dziennego budżetu tokenów."
                 exceedsTokenLimit(agentUsed, estimate, limits.agentTokenLimit) -> "Pominięto: agent przekroczyłby dzienny limit tokenów."
+                modelLimit > 0L && exceedsTokenLimit(modelUsed, estimate, modelLimit) -> "Pominięto: model przekroczyłby własny dzienny limit tokenów."
                 limits.monthlyCostPlnLimit > 0.0 && nextMonthlyCost > limits.monthlyCostPlnLimit -> "Pominięto: przekroczony zostałby miesięczny budżet."
                 else -> null
             }
@@ -966,6 +985,7 @@ object ApiTokenTracker {
                 allowed += request.taskId
                 dailyUsed = addTokenCounts(dailyUsed, estimate)
                 perAgentUsed[agentKey] = addTokenCounts(agentUsed, estimate)
+                modelTokensUsed[modelKey] = addTokenCounts(modelUsed, estimate)
                 monthlyCostUsed = nextMonthlyCost!!
                 reservedTokens += estimate
                 reservedCost = nextBatchReserveCost!!
