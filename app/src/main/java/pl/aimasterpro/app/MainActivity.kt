@@ -2104,7 +2104,7 @@ class MainActivity : Activity() {
                     else logAgentForChat(chatId, "🧠 Adaptacyjny budżet: ${adaptivePlan.reason}.")
                     val cacheFingerprints = adaptiveTasks.associate { task ->
                         val cfg = batchAgentConfigsMap[task.agentId] ?: safeConfig
-                        val specialistPrompt = AgentCatalog.find(task.agentId)?.systemPrompt.orEmpty()
+                        val specialistPrompt = activeAgentCatalog.firstOrNull { it.id == task.agentId }?.systemPrompt.orEmpty()
                         task.id to pl.aimasterpro.app.core.TaskResultCache.fingerprint(task.agentId,
                             task.goal + "\n" + specialistPrompt + "\n" + mode.systemInstruction, task.prompt,
                             projectContext, sendMime, sendBase64, cfg.id, cfg.baseUrl, cfg.model)
@@ -2118,7 +2118,7 @@ class MainActivity : Activity() {
                     val cachedTaskIds = cachedResults.map { it.taskId }.toSet()
                     val tasksToRun = adaptiveTasks.filterNot { it.id in cachedTaskIds }
                     val budgetRequests = tasksToRun.map { task ->
-                        val spec = AgentCatalog.find(task.agentId)
+                        val spec = activeAgentCatalog.firstOrNull { it.id == task.agentId }
                         val cfg = batchAgentConfigsMap[task.agentId] ?: safeConfig
                         val inputChars = (spec?.systemPrompt.orEmpty().length + mode.systemInstruction.length +
                             projectContext.length + task.prompt.length + 1800)
@@ -2292,7 +2292,7 @@ class MainActivity : Activity() {
                                         task == null -> null
                                         else -> pl.aimasterpro.app.core.TaskResultCache.fingerprint(
                                             task.agentId,
-                                            task.goal + "\n" + AgentCatalog.find(task.agentId)?.systemPrompt.orEmpty() +
+                                            task.goal + "\n" + activeAgentCatalog.firstOrNull { it.id == task.agentId }?.systemPrompt.orEmpty() +
                                                 "\n" + mode.systemInstruction,
                                             task.prompt, projectContext, sendMime, sendBase64,
                                             actualConfig.id, actualConfig.baseUrl, actualConfig.model
@@ -2391,7 +2391,7 @@ class MainActivity : Activity() {
                         emptyList<pl.aimasterpro.app.agents.TeamTaskResult>()
                     } else {
                         val reviewBudgetRequests = peerReviewTasks.map { task ->
-                            val spec = AgentCatalog.find(task.agentId)
+                            val spec = activeAgentCatalog.firstOrNull { it.id == task.agentId }
                             val cfg = batchAgentConfigsMap[task.agentId] ?: safeConfig
                             val inputChars = (spec?.systemPrompt.orEmpty().length + mode.systemInstruction.length + task.prompt.length + 1_200)
                             pl.aimasterpro.app.core.BudgetRequest(
@@ -5893,7 +5893,7 @@ class MainActivity : Activity() {
         }
 
         val configByAgent = planned.associate { task ->
-            val spec = AgentCatalog.find(task.agentId)!!
+            val spec = activeAgentCatalog.firstOrNull { it.id == task.agentId }!!
             val role = AgentProviderRouting.roleFor(spec)
             val profileId = agentProviders[role.name]!!
             task.agentId to loadProvider(profileId)!!
@@ -5910,7 +5910,7 @@ class MainActivity : Activity() {
             )
         }
         val budgetRequests = tasks.map { task ->
-            val spec = AgentCatalog.find(task.agentId)!!
+            val spec = activeAgentCatalog.firstOrNull { it.id == task.agentId }!!
             val config = configByAgent[task.agentId]!!
             pl.aimasterpro.app.core.BudgetRequest(
                 taskId = task.id,
