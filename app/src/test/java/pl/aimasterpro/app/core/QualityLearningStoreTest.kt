@@ -54,6 +54,22 @@ class QualityLearningStoreTest {
         assertEquals("APPROVED", QualityLearningStore.proposals(context).single().status)
     }
 
+    @Test fun recoveryIsAuditedAndBoundToExactProposalReference() {
+        val proposal = QualityLearningStore.addProposal(
+            context, "Reguła do kontrolowanego odzyskania", 7, "wstępna",
+            listOf("task-recovery-audit"), listOf("coder"), emptyList()
+        )
+        assertTrue(QualityLearningStore.setProposalStatus(
+            context, proposal.id, "APPROVED", "test-approval:${proposal.id}"
+        ))
+        assertEquals(1, QualityLearningStore.syncApprovedAgentMemories(context))
+        val records = MemoryAuditLog.readVerified(context)!!
+        val recovery = records.filter { it.actor == "SYSTEM_RECOVERY" && it.objectId == proposal.id }
+        assertEquals(2, recovery.size)
+        assertTrue(recovery.all { it.approvalRef == "proposal:${proposal.id}" })
+        assertEquals(listOf(MemoryAuditLog.Phase.INTENT, MemoryAuditLog.Phase.COMMITTED), recovery.map { it.phase })
+    }
+
     @Test fun approvedSharedMemoryIsReconciledAfterInterruptedApprovalWrite() {
         val proposal = QualityLearningStore.addProposal(
             context, "Odtwarzalna zatwierdzona reguła pamięci", 9, "wstępna",

@@ -181,24 +181,40 @@ object QualityLearningStore {
         proposals(context).forEach { proposal ->
             val memoryEntry = "[UCZENIE ZATWIERDZONE ${proposal.id.take(8)}; dowody=${proposal.evidenceCount}; pewność=${proposal.confidence}] ${proposal.text}".take(1000)
             val sourceRef = "proposal:${proposal.id}"
-            if (proposal.status == "APPROVED") {
-                if (AiMemoryStore.addMemory(context, memoryEntry)) synchronized++
-                else android.util.Log.e("AIMasterQuality", "Nie udało się uzgodnić pamięci wspólnej dla propozycji ${proposal.id}.")
-                proposal.affectedAgents.forEach { agentId ->
-                    if (AgentOperationalMemoryStore.addApproved(context, agentId, proposal.text,
-                        category = "wniosek jakościowy", sourceTaskIds = listOf(sourceRef),
-                        confidence = proposal.confidence) != null) synchronized++
-                    else android.util.Log.e("AIMasterQuality", "Nie udało się uzgodnić pamięci agenta dla propozycji ${proposal.id}.")
+            val approved = proposal.status == "APPROVED"
+            val request = MemoryGovernance.Request(
+                actor = MemoryGovernance.Actor.SYSTEM_RECOVERY,
+                mutation = if (approved) MemoryGovernance.Mutation.RECONCILE_APPROVED_PROPOSAL
+                    else MemoryGovernance.Mutation.RECONCILE_REVOKED_PROPOSAL,
+                objectId = proposal.id,
+                reason = if (approved) "Uzgodnienie pamięci z propozycją trwale zatwierdzoną."
+                    else "Usunięcie pamięci powiązanej z propozycją niezatwierdzoną lub cofniętą.",
+                approvalRef = sourceRef
+            )
+            val recovered = MemoryMutationGate.execute(context, request) {
+                if (approved) {
+                    val sharedSaved = AiMemoryStore.addMemory(context, memoryEntry)
+                    val agentSaves = proposal.affectedAgents.map { agentId ->
+                        AgentOperationalMemoryStore.addApproved(context, agentId, proposal.text,
+                            category = "wniosek jakościowy", sourceTaskIds = listOf(sourceRef),
+                            confidence = proposal.confidence) != null
+                    }
+                    if (!sharedSaved || agentSaves.any { !it }) {
+                        AiMemoryStore.removeMemory(context, memoryEntry)
+                        AgentOperationalMemoryStore.removeBySource(context, sourceRef)
+                        false
+                    } else {
+                        synchronized++
+                        true
+                    }
+                } else {
+                    val sharedRemoved = AiMemoryStore.removeMemory(context, memoryEntry)
+                    val agentRemoved = AgentOperationalMemoryStore.removeBySource(context, sourceRef)
+                    sharedRemoved && agentRemoved
                 }
-            } else {
-                // A crash after REJECTED/PROPOSAL was committed but before memory cleanup
-                // must not leave a revoked lesson active indefinitely.
-                if (!AiMemoryStore.removeMemory(context, memoryEntry)) {
-                    android.util.Log.e("AIMasterQuality", "Nie udało się usunąć cofniętej reguły wspólnej dla propozycji ${proposal.id}.")
-                }
-                if (!AgentOperationalMemoryStore.removeBySource(context, sourceRef)) {
-                    android.util.Log.e("AIMasterQuality", "Nie udało się usunąć cofniętej reguły agenta dla propozycji ${proposal.id}.")
-                }
+            }
+            if (!recovered) {
+                android.util.Log.e("AIMasterQuality", "Nie udało się uzgodnić pamięci dla propozycji ${proposal.id}.")
             }
         }
         return synchronized
