@@ -105,6 +105,31 @@ class MemoryMutationGateTest {
         assertEquals(MemoryAuditLog.Phase.COMMITTED, rows.last().phase)
     }
 
+    @Test fun deniedAttemptDoesNotMaskAnEarlierUnresolvedIntent() {
+        val userRequest = request()
+        assertTrue(MemoryAuditLog.append(context, MemoryAuditLog.Event(
+            actor = userRequest.actor.name,
+            mutation = userRequest.mutation.name,
+            objectId = userRequest.objectId,
+            reason = userRequest.reason,
+            approvalRef = userRequest.approvalRef,
+            phase = MemoryAuditLog.Phase.INTENT,
+            outcome = "AUTHORIZED"
+        )))
+
+        assertFalse(MemoryMutationGate.execute(context, request(MemoryGovernance.Actor.AGENT)) {
+            _: MemoryMutationPermit -> error("Denied agent mutation must never run")
+        })
+        var replayInvoked = false
+        assertFalse(MemoryMutationGate.execute(context, userRequest) {
+            _: MemoryMutationPermit -> replayInvoked = true; true
+        })
+        assertFalse(replayInvoked)
+        val rows = MemoryAuditLog.readVerified(context)!!
+        assertEquals(listOf("AUTHORIZED", "DENIED_AGENT_READ_ONLY"), rows.map { it.outcome })
+        assertTrue(MemoryAuditLog.hasUnresolvedIntent(context, "USER", "ADD_SHARED_RULE", "rule-1"))
+    }
+
     @Test fun missingApprovalBlocksMutationBeforeIntent() {
         var invoked = false
         assertFalse(MemoryMutationGate.execute(context, request(approvalRef = "")) { _: MemoryMutationPermit ->

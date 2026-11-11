@@ -147,6 +147,37 @@ class QualityLearningStoreTest {
         assertFalse(AgentOperationalMemoryStore.all(context).any { "proposal:${proposal.id}" in it.sourceTaskIds })
     }
 
+    @Test fun unresolvedRecoveryWithAmbiguousStoreStateIsNotReplayed() {
+        val proposal = QualityLearningStore.addProposal(
+            context, "Reguła po przerwanym odzyskiwaniu", 8, "wysoka",
+            listOf("task-ambiguous-recovery"), listOf("coder"), emptyList()
+        )
+        assertTrue(QualityLearningStore.setProposalStatus(context, proposal.id, "APPROVED", "test-approval:${proposal.id}"))
+        val memoryEntry = "[UCZENIE ZATWIERDZONE ${proposal.id.take(8)}; dowody=${proposal.evidenceCount}; pewność=${proposal.confidence}] ${proposal.text}".take(1000)
+        val sharedPrefs = context.getSharedPreferences("ai_master_memory_store_v1", Context.MODE_PRIVATE)
+        assertTrue(sharedPrefs.edit().putString("memories", "[]").commit())
+        assertFalse(AiMemoryStore.getMemories(context).contains(memoryEntry))
+        assertTrue(AgentOperationalMemoryStore.all(context).any { "proposal:${proposal.id}" in it.sourceTaskIds })
+
+        assertTrue(MemoryAuditLog.append(context, MemoryAuditLog.Event(
+            actor = MemoryGovernance.Actor.SYSTEM_RECOVERY.name,
+            mutation = MemoryGovernance.Mutation.RECONCILE_APPROVED_PROPOSAL.name,
+            objectId = proposal.id,
+            reason = "Symulacja przerwania odzyskiwania przed zakończeniem.",
+            approvalRef = "proposal:${proposal.id}",
+            phase = MemoryAuditLog.Phase.INTENT,
+            outcome = "AUTHORIZED"
+        )))
+        val before = MemoryAuditLog.readVerified(context)!!.size
+
+        assertEquals(0, QualityLearningStore.syncApprovedAgentMemories(context))
+        assertFalse(AiMemoryStore.getMemories(context).contains(memoryEntry))
+        assertTrue(AgentOperationalMemoryStore.all(context).any { "proposal:${proposal.id}" in it.sourceTaskIds })
+        assertEquals(before, MemoryAuditLog.readVerified(context)!!.size)
+        assertTrue(MemoryAuditLog.hasUnresolvedIntent(context, "SYSTEM_RECOVERY",
+            "RECONCILE_APPROVED_PROPOSAL", proposal.id))
+    }
+
     @Test fun corruptProposalLedgerDoesNotCauseReconciliationToDeleteExistingMemories() {
         val proposal = QualityLearningStore.addProposal(
             context, "Nie usuwaj przy nieczytelnym rejestrze", 6, "wstępna",
