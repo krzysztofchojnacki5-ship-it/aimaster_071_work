@@ -1551,10 +1551,30 @@ class MainActivity : Activity() {
 
         var lastErr: Throwable? = null
         var requestAttempt = 0
+        var budgetedProvider = if (budgetReservationId.isBlank()) ordered.first() else config
         val estimatedRequestInput = (systemPrompt.length.toLong() + userText.length.toLong() + 2L) / 3L
         try {
             for (cfg in ordered) {
                 if (Thread.currentThread().isInterrupted) throw ProviderException(null, "Żądanie anulowane przez użytkownika.", category = "CANCELLED")
+                val reservationTargetChanged = !cfg.id.equals(budgetedProvider.id, true) ||
+                    !cfg.baseUrl.trimEnd('/').equals(budgetedProvider.baseUrl.trimEnd('/'), true) ||
+                    !cfg.model.equals(budgetedProvider.model, true)
+                if (reservationTargetChanged) {
+                    val retargeted = runCatching {
+                        pl.aimasterpro.app.core.ApiTokenTracker.retargetReservationTask(
+                            this, effectiveBudgetReservationId, requestTaskId, requestAgentId,
+                            cfg.id, cfg.baseUrl, cfg.model
+                        )
+                    }.getOrDefault(false)
+                    if (!retargeted) {
+                        val reason = "Smart Budget zablokował failover do " + cfg.name + "/" + cfg.model + ": nie udało się przenieść rezerwacji na limit i wycenę tego modelu."
+                        runCatching { logAgentForChat(requestChatId, "⛔ " + reason) }
+                        lastErr = IllegalStateException(reason)
+                        continue
+                    }
+                    budgetedProvider = cfg
+                    runCatching { logAgentForChat(requestChatId, "🧠 Smart Budget: rezerwacja przeniesiona na " + cfg.name + "/" + cfg.model + "; limit modelu sprawdzony przed HTTP.") }
+                }
                 if (!providerReady(cfg)) continue
                 val quotaKey = pl.aimasterpro.app.core.ProviderQuotaScheduler.key(cfg.parentProviderId.ifBlank { cfg.id }, cfg.baseUrl, cfg.model)
                 val persistedWait = runCatching { pl.aimasterpro.app.core.ProviderCooldownStore.remainingMs(this, cfg) }.getOrDefault(0L)
