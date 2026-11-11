@@ -133,14 +133,21 @@ object FreeModelsCatalog {
             host.startsWith("fe80:") || host.startsWith("fc") || host.startsWith("fd")
     }
 
-    private fun endpointHost(baseUrl: String): String =
-        runCatching { java.net.URI(baseUrl.trim()).host.orEmpty().lowercase(Locale.ROOT) }.getOrDefault("")
+    private fun isOfficialHttpsEndpoint(baseUrl: String, host: String, apiPath: String): Boolean =
+        runCatching {
+            val uri = java.net.URI(baseUrl.trim())
+            uri.scheme.equals("https", true) &&
+                uri.host.equals(host, true) &&
+                (uri.port == -1 || uri.port == 443) &&
+                uri.rawUserInfo == null && uri.rawQuery == null && uri.rawFragment == null &&
+                uri.path.orEmpty().trimEnd('/') == apiPath
+        }.getOrDefault(false)
 
     private fun isOfficialOpenRouterEndpoint(baseUrl: String): Boolean =
-        endpointHost(baseUrl) == "openrouter.ai"
+        isOfficialHttpsEndpoint(baseUrl, "openrouter.ai", "/api/v1")
 
     private fun isOfficialGroqEndpoint(baseUrl: String): Boolean =
-        endpointHost(baseUrl) == "api.groq.com"
+        isOfficialHttpsEndpoint(baseUrl, "api.groq.com", "/openai/v1")
 
     fun isFreeModel(providerId: String, modelId: String, baseUrl: String = ""): Boolean {
         val model = modelId.lowercase(Locale.ROOT)
