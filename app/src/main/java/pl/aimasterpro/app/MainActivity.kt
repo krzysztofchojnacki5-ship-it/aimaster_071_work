@@ -7245,6 +7245,7 @@ class MainActivity : Activity() {
         addBreakdown("Zużycie według dostawców", { it.providerId })
         addBreakdown("Zużycie według agentów", { it.agentId })
         addBreakdown("Zużycie według modeli", { it.modelName })
+        showPerModelTokenBudgets()
 
         val healthEvents = pl.aimasterpro.app.core.ModelHealthTracker.load(this)
         val healthCard = card("Kondycja modeli", "Lokalna historia sukcesów, błędów i czasu odpowiedzi. Na jej podstawie routing może preferować stabilniejsze modele; nie jest to odczyt limitów dostawcy.")
@@ -7337,6 +7338,166 @@ class MainActivity : Activity() {
                     }.start()
                 }.show()
         }
+    }
+
+    /**
+     * Per-model daily token budgets are managed alongside API usage so the user can
+     * inspect actual usage and edit the cap without leaving the monitoring workflow.
+     */
+    private fun showPerModelTokenBudgets() {
+        val budgetCard = card(
+            "Indywidualne limity modeli",
+            "Limit dotyczy dokładnej kombinacji dostawcy, endpointu i ID modelu. Ostrzeżenie pojawia się domyślnie przy 90%; rezerwacje zadań są uwzględniane przed wysłaniem żądań."
+        )
+        if (store.isStorageUncertain()) {
+            budgetCard.addView(TextView(this).apply {
+                text = "Magazyn profili jest niepewny. Edycja limitów modeli została wstrzymana."
+                setTextColor(Color.RED); textSize = 12f
+            })
+            return
+        }
+        val profiles = store.allConfigs().mapNotNull { raw ->
+            runCatching { loadProvider(raw.optString("id")) }.getOrNull()
+        }.filter { it.model.isNotBlank() && it.baseUrl.isNotBlank() }
+            .distinctBy { "${it.id}|${it.baseUrl.trim().trimEnd('/')}|${it.model}" }
+            .sortedBy { it.name.lowercase(java.util.Locale.ROOT) }
+
+        if (profiles.isEmpty()) {
+            budgetCard.addView(TextView(this).apply {
+                text = "Brak skonfigurowanych profili modeli. Dodaj profil w zakładce MODELE, a następnie wróć tutaj, aby ustawić jego limit."
+                setTextColor(muted); textSize = 12f
+            })
+            return
+        }
+
+        profiles.forEach { cfg ->
+            val usage = pl.aimasterpro.app.core.ApiTokenTracker.getModelTokenUsage(
+                this, cfg.id, cfg.baseUrl, cfg.model
+            )
+            val enabledLimit = usage.config?.takeIf { it.enabled }
+            val item = LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL
+                setPadding(dp(11), dp(10), dp(11), dp(10))
+                background = rounded(cardBg, 11, border)
+                val lp = LinearLayout.LayoutParams(-1, -2)
+                lp.bottomMargin = dp(8)
+                layoutParams = lp
+            }
+            item.addView(TextView(this).apply {
+                text = "${cfg.name} • ${cfg.model}"
+                setTextColor(white); textSize = 13f; typeface = Typeface.DEFAULT_BOLD
+            })
+            item.addView(TextView(this).apply {
+                text = "${cfg.id}  |  ${cfg.baseUrl}"
+                setTextColor(muted); textSize = 10f; setTextIsSelectable(true)
+                setPadding(0, dp(3), 0, dp(5))
+            })
+            val limitText = if (enabledLimit == null) {
+                if (usage.config == null) "Limit indywidualny: nieustawiony" else "Limit indywidualny: wyłączony"
+            } else {
+                "Dzisiaj: ${usage.usedTokens} użytych + ${usage.reservedTokens} zarezerwowanych / ${enabledLimit.dailyLimitTokens} tokenów • ${usage.usagePercent}%"
+            }
+            item.addView(TextView(this).apply {
+                text = limitText
+                setTextColor(if (usage.limitReached) Color.RED else if (usage.warningReached) orange else muted)
+                textSize = 11f
+            })
+            if (enabledLimit != null) {
+                item.addView(android.widget.ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply {
+                    max = 100
+                    progress = usage.usagePercent.coerceIn(0, 100)
+                    isIndeterminate = false
+                }, LinearLayout.LayoutParams(-1, dp(8)).apply { topMargin = dp(6); bottomMargin = dp(6) })
+                val state = when {
+                    usage.limitReached -> "LIMIT 100% — nowe zadania tego modelu są blokowane."
+                    usage.warningReached -> "OSTRZEŻENIE — osiągnięto próg ${enabledLimit.warningPercent}%."
+                    else -> "Budżet modelu jest dostępny."
+                }
+                item.addView(TextView(this).apply {
+                    text = state
+                    setTextColor(if (usage.limitReached) Color.RED else if (usage.warningReached) orange else Color.rgb(65, 205, 120))
+                    textSize = 11f
+                })
+            } else {
+                item.addView(TextView(this).apply {
+                    text = "Użycie dzisiaj: ${usage.usedTokens} tokenów • rezerwacje: ${usage.reservedTokens}"
+                    setTextColor(muted); textSize = 11f
+                })
+            }
+            val actions = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+            val edit = TextView(this).apply {
+                text = if (usage.config == null) "USTAW LIMIT" else "EDYTUJ LIMIT"
+                setTextColor(white); textSize = 11f; gravity = Gravity.CENTER
+                setPadding(dp(12), dp(8), dp(12), dp(8)); background = ripple(panel, 9)
+                setOnClickListener { showModelTokenLimitDialog(cfg, usage.config) }
+            }
+            actions.addView(edit, LinearLayout.LayoutParams(0, -2, 1f).apply { rightMargin = dp(6) })
+            if (usage.config?.enabled == true) {
+                val disable = TextView(this).apply {
+                    text = "WYŁĄCZ"
+                    setTextColor(white); textSize = 11f; gravity = Gravity.CENTER
+                    setPadding(dp(12), dp(8), dp(12), dp(8)); background = ripple(panel, 9)
+                    setOnClickListener {
+                        val current = usage.config
+                        val saved = pl.aimasterpro.app.core.ApiTokenTracker.setModelTokenLimit(
+                            this@MainActivity, current.copy(enabled = false)
+                        )
+                        toast(if (saved) "Wyłączono indywidualny limit modelu." else "Nie udało się zapisać limitu.")
+                        showShell("Monitor API"); showApiMonitoringScreen()
+                    }
+                }
+                actions.addView(disable, LinearLayout.LayoutParams(0, -2, 1f))
+            }
+            item.addView(actions, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(7) })
+            budgetCard.addView(item)
+        }
+    }
+
+    private fun showModelTokenLimitDialog(
+        config: ProviderConfig,
+        existing: pl.aimasterpro.app.core.ModelTokenLimitConfig?
+    ) {
+        val box = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(20), dp(8), dp(20), 0)
+        }
+        val limit = field("Dzienny limit tokenów", existing?.dailyLimitTokens?.toString() ?: "100000", InputType.TYPE_CLASS_NUMBER)
+        val warning = field("Próg ostrzeżenia (%)", existing?.warningPercent?.toString() ?: "90", InputType.TYPE_CLASS_NUMBER)
+        val enabled = CheckBox(this).apply {
+            text = "Limit aktywny — blokuj nowe zadania po wyczerpaniu"
+            setTextColor(white)
+            isChecked = existing?.enabled ?: true
+        }
+        listOf(
+            TextView(this).apply { text = "Dzienny limit tokenów"; setTextColor(white) }, limit,
+            TextView(this).apply { text = "Ostrzegaj od (%)"; setTextColor(white); setPadding(0, dp(8), 0, 0) }, warning,
+            enabled
+        ).forEach { box.addView(it) }
+        AlertDialog.Builder(this)
+            .setTitle("Limit: ${config.name} / ${config.model}")
+            .setView(box)
+            .setNegativeButton("Anuluj", null)
+            .setPositiveButton("Zapisz") { _, _ ->
+                val daily = limit.text.toString().toLongOrNull()
+                val threshold = warning.text.toString().toIntOrNull()
+                if (daily == null || daily <= 0L || threshold == null || threshold !in 1..99) {
+                    toast("Podaj limit większy od zera i próg ostrzeżenia od 1 do 99%.")
+                    return@setPositiveButton
+                }
+                val saved = pl.aimasterpro.app.core.ApiTokenTracker.setModelTokenLimit(
+                    this,
+                    pl.aimasterpro.app.core.ModelTokenLimitConfig(
+                        providerId = config.id,
+                        baseUrl = config.baseUrl,
+                        modelName = config.model,
+                        dailyLimitTokens = daily,
+                        warningPercent = threshold,
+                        enabled = enabled.isChecked
+                    )
+                )
+                toast(if (saved) "Zapisano indywidualny limit modelu." else "Nie udało się trwale zapisać limitu.")
+                showShell("Monitor API"); showApiMonitoringScreen()
+            }.show()
     }
 
     private fun showLimitsDialog() {
