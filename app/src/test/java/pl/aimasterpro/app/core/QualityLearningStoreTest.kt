@@ -40,7 +40,7 @@ class QualityLearningStoreTest {
     @Test fun proposalsOnlyEnterSharedMemoryAfterApproval() {
         val proposal = QualityLearningStore.addProposal(context, "Preferuj model A dla kodu", 8, "wstępna", listOf("t1"), listOf("coder"), listOf("groq/model-a"))
         assertFalse(AiMemoryStore.getMemories(context).any { it.contains("Preferuj model A") })
-        assertTrue(QualityLearningStore.setProposalStatus(context, proposal.id, "APPROVED"))
+        assertTrue(QualityLearningStore.setProposalStatus(context, proposal.id, "APPROVED", "test-approval:${proposal.id}"))
         assertTrue(AiMemoryStore.getMemories(context).any { it.contains("Preferuj model A") })
         assertEquals("APPROVED", QualityLearningStore.proposals(context).single().status)
     }
@@ -50,7 +50,7 @@ class QualityLearningStoreTest {
             context, "Odtwarzalna zatwierdzona reguła pamięci", 9, "wstępna",
             listOf("task-recovery"), listOf("coder"), emptyList()
         )
-        assertTrue(QualityLearningStore.setProposalStatus(context, proposal.id, "APPROVED"))
+        assertTrue(QualityLearningStore.setProposalStatus(context, proposal.id, "APPROVED", "test-approval:${proposal.id}"))
         val memoryEntry = "[UCZENIE ZATWIERDZONE ${proposal.id.take(8)}; dowody=${proposal.evidenceCount}; pewność=${proposal.confidence}] ${proposal.text}".take(1000)
         assertTrue(AiMemoryStore.removeMemory(context, memoryEntry))
         assertFalse(AiMemoryStore.getMemories(context).contains(memoryEntry))
@@ -64,7 +64,7 @@ class QualityLearningStoreTest {
             context, "Reguła cofnięta po przerwaniu procesu", 8, "wysoka",
             listOf("task-revoked"), listOf("coder"), emptyList()
         )
-        assertTrue(QualityLearningStore.setProposalStatus(context, proposal.id, "APPROVED"))
+        assertTrue(QualityLearningStore.setProposalStatus(context, proposal.id, "APPROVED", "test-approval:${proposal.id}"))
         val memoryEntry = "[UCZENIE ZATWIERDZONE ${proposal.id.take(8)}; dowody=${proposal.evidenceCount}; pewność=${proposal.confidence}] ${proposal.text}".take(1000)
         assertTrue(AiMemoryStore.getMemories(context).contains(memoryEntry))
         assertTrue(AgentOperationalMemoryStore.all(context).any { "proposal:${proposal.id}" in it.sourceTaskIds })
@@ -84,7 +84,7 @@ class QualityLearningStoreTest {
             context, "Nie usuwaj przy nieczytelnym rejestrze", 6, "wstępna",
             listOf("task-corrupt"), listOf("coder"), emptyList()
         )
-        assertTrue(QualityLearningStore.setProposalStatus(context, proposal.id, "APPROVED"))
+        assertTrue(QualityLearningStore.setProposalStatus(context, proposal.id, "APPROVED", "test-approval:${proposal.id}"))
         val memoryEntry = "[UCZENIE ZATWIERDZONE ${proposal.id.take(8)}; dowody=${proposal.evidenceCount}; pewność=${proposal.confidence}] ${proposal.text}".take(1000)
         val prefs = context.getSharedPreferences("ai_quality_learning_v1", Context.MODE_PRIVATE)
         val corrupt = """[{"id":"broken","text":"missing required fields"}]"""
@@ -103,22 +103,22 @@ class QualityLearningStoreTest {
         val memoryPrefs = context.getSharedPreferences("ai_master_memory_store_v1", Context.MODE_PRIVATE)
         val corrupt = """["valid entry",null]"""
         assertTrue(memoryPrefs.edit().putString("memories", corrupt).commit())
-        assertFalse(QualityLearningStore.setProposalStatus(context, proposal.id, "APPROVED"))
+        assertFalse(QualityLearningStore.setProposalStatus(context, proposal.id, "APPROVED", "test-approval:${proposal.id}"))
         assertEquals("PROPOSAL", QualityLearningStore.proposals(context).single().status)
         assertEquals(corrupt, memoryPrefs.getString("memories", null))
     }
 
     @Test fun revokingApprovalRemovesThePreviouslyInjectedRule() {
         val proposal = QualityLearningStore.addProposal(context, "Reguła do cofnięcia", 6, "wstępna", emptyList(), emptyList(), emptyList())
-        QualityLearningStore.setProposalStatus(context, proposal.id, "APPROVED")
+        QualityLearningStore.setProposalStatus(context, proposal.id, "APPROVED", "test-approval:${proposal.id}")
         assertTrue(AiMemoryStore.getMemories(context).any { it.contains("Reguła do cofnięcia") })
-        QualityLearningStore.setProposalStatus(context, proposal.id, "REJECTED")
+        QualityLearningStore.setProposalStatus(context, proposal.id, "REJECTED", "test-approval:${proposal.id}")
         assertFalse(AiMemoryStore.getMemories(context).any { it.contains("Reguła do cofnięcia") })
     }
 
     @Test fun rejectedProposalNeverEntersMemory() {
         val proposal = QualityLearningStore.addProposal(context, "Zła reguła", 2, "niska", emptyList(), emptyList(), emptyList())
-        QualityLearningStore.setProposalStatus(context, proposal.id, "REJECTED")
+        QualityLearningStore.setProposalStatus(context, proposal.id, "REJECTED", "test-approval:${proposal.id}")
         assertFalse(AiMemoryStore.getMemories(context).any { it.contains("Zła reguła") })
     }
     @Test fun malformedFeedbackJournalIsNotOverwrittenByNewRating() {

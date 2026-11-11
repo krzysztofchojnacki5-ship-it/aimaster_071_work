@@ -7221,8 +7221,18 @@ class MainActivity : Activity() {
                 AlertDialog.Builder(this).setTitle("${entry.agentId} • pamięć")
                     .setMessage("${entry.text}\n\nPewność: ${entry.confidence}\nŹródła: ${entry.sourceTaskIds.size}")
                     .setNeutralButton("Usuń") { _, _ ->
-                        pl.aimasterpro.app.core.AgentOperationalMemoryStore.remove(this, entry.id)
-                        toast("Usunięto wpis pamięci agenta."); showShell("Pamięć"); showMemory()
+                        val request = pl.aimasterpro.app.core.MemoryGovernance.Request(
+                            actor = pl.aimasterpro.app.core.MemoryGovernance.Actor.USER,
+                            mutation = pl.aimasterpro.app.core.MemoryGovernance.Mutation.REMOVE_AGENT_LESSON,
+                            objectId = entry.id,
+                            reason = "Użytkownik potwierdził usunięcie wpisu pamięci agenta.",
+                            approvalRef = "ui-confirm:${java.util.UUID.randomUUID()}"
+                        )
+                        val removed = pl.aimasterpro.app.core.MemoryMutationGate.execute(this, request) {
+                            pl.aimasterpro.app.core.AgentOperationalMemoryStore.remove(this, entry.id)
+                        }
+                        toast(if (removed) "Usunięto wpis pamięci agenta." else "Nie udało się usunąć wpisu pamięci agenta.")
+                        showShell("Pamięć"); showMemory()
                     }.setPositiveButton("OK", null).show()
             }.setNegativeButton("Zamknij", null).show()
         })
@@ -7324,12 +7334,16 @@ class MainActivity : Activity() {
                 val p = proposals[which]
                 AlertDialog.Builder(this).setTitle("Wniosek • ${p.status}").setMessage("${p.text}\n\nDowody: ${p.evidenceCount} • Pewność: ${p.confidence}\nZadania źródłowe: ${p.sourceTaskIds.joinToString().ifBlank { "brak" }}\nAgenci: ${p.affectedAgents.joinToString()}\nModele: ${p.affectedModels.joinToString()}")
                     .setPositiveButton("Zatwierdź i dodaj do pamięci") { _, _ ->
-                        val saved = pl.aimasterpro.app.core.QualityLearningStore.setProposalStatus(this, p.id, "APPROVED")
+                        val saved = pl.aimasterpro.app.core.QualityLearningStore.setProposalStatus(
+                            this, p.id, "APPROVED", "ui-confirm:${java.util.UUID.randomUUID()}"
+                        )
                         toast(if (saved) "Zatwierdzono. Wniosek będzie dołączany do pamięci MASTER-a."
                             else "Nie udało się trwale zatwierdzić wniosku i zsynchronizować pamięci.")
                         showShell("Pamięć"); showMemory()
                     }.setNegativeButton("Odrzuć") { _, _ ->
-                        val saved = pl.aimasterpro.app.core.QualityLearningStore.setProposalStatus(this, p.id, "REJECTED")
+                        val saved = pl.aimasterpro.app.core.QualityLearningStore.setProposalStatus(
+                            this, p.id, "REJECTED", "ui-confirm:${java.util.UUID.randomUUID()}"
+                        )
                         toast(if (saved) "Odrzucono wniosek."
                             else "Nie udało się trwale zmienić statusu wniosku.")
                         showShell("Pamięć"); showMemory()
@@ -7348,7 +7362,16 @@ class MainActivity : Activity() {
                 .setPositiveButton("Zapisz zasadę") { _, _ ->
                     val value = input.text.toString().trim()
                     if (value.isNotBlank()) {
-                        val saved = pl.aimasterpro.app.core.AiMemoryStore.addMemory(this, value)
+                        val request = pl.aimasterpro.app.core.MemoryGovernance.Request(
+                            actor = pl.aimasterpro.app.core.MemoryGovernance.Actor.USER,
+                            mutation = pl.aimasterpro.app.core.MemoryGovernance.Mutation.ADD_SHARED_RULE,
+                            objectId = "manual:${java.util.UUID.randomUUID()}",
+                            reason = "Użytkownik potwierdził dodanie zasady do pamięci wspólnej.",
+                            approvalRef = "ui-confirm:${java.util.UUID.randomUUID()}"
+                        )
+                        val saved = pl.aimasterpro.app.core.MemoryMutationGate.execute(this, request) {
+                            pl.aimasterpro.app.core.AiMemoryStore.addMemory(this, value)
+                        }
                         toast(if (saved) "Zapisano zasadę. Będzie dołączana do kolejnych zadań."
                             else "Nie udało się zapisać zasady. Dotychczasowa pamięć pozostała bez zmian.")
                         showShell("Pamięć"); showMemory()

@@ -103,8 +103,30 @@ object QualityLearningStore {
         return p
     }
 
+    /** User-confirmed proposal decision; all related memory writes share one audited gate. */
+    @Synchronized fun setProposalStatus(
+        context: Context, id: String, status: String, approvalRef: String
+    ): Boolean {
+        val mutation = when (status) {
+            "APPROVED" -> MemoryGovernance.Mutation.APPROVE_PROPOSAL
+            "REJECTED" -> MemoryGovernance.Mutation.REJECT_PROPOSAL
+            else -> return false
+        }
+        val request = MemoryGovernance.Request(
+            actor = MemoryGovernance.Actor.USER,
+            mutation = mutation,
+            objectId = id,
+            reason = if (status == "APPROVED") "Użytkownik zatwierdził propozycję uczenia."
+                else "Użytkownik odrzucił propozycję uczenia.",
+            approvalRef = approvalRef
+        )
+        return MemoryMutationGate.execute(context, request) {
+            setProposalStatusRaw(context, id, status)
+        }
+    }
+
     /** Only APPROVED proposals enter shared model memory. Rejected proposals remain auditable. */
-    @Synchronized fun setProposalStatus(context: Context, id: String, status: String): Boolean {
+    @Synchronized private fun setProposalStatusRaw(context: Context, id: String, status: String): Boolean {
         require(status in setOf("APPROVED", "REJECTED", "PROPOSAL"))
         if (readArrayStrict(context, PROPOSALS_KEY) == null) return false
         val all = proposals(context).toMutableList()
