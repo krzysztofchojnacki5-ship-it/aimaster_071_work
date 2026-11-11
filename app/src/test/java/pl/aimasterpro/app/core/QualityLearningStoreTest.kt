@@ -115,7 +115,7 @@ class QualityLearningStoreTest {
         // Simulate a crash after the proposal ledger was updated but before memory was written.
         val prefs = context.getSharedPreferences("ai_quality_learning_v1", Context.MODE_PRIVATE)
         val raw = prefs.getString("proposals", null)!!
-        assertTrue(prefs.edit().putString("proposals", raw.replace("\\"status\\":\\"PROPOSAL\\"", "\\"status\\":\\"APPROVED\\"")).commit())
+        assertTrue(prefs.edit().putString("proposals", raw.replace("\"status\":\"PROPOSAL\"", "\"status\":\"APPROVED\"")).commit())
 
         assertEquals(1, QualityLearningStore.syncApprovedAgentMemories(context))
         assertFalse(MemoryAuditLog.hasUnresolvedIntent(context, "USER", "APPROVE_PROPOSAL", proposal.id))
