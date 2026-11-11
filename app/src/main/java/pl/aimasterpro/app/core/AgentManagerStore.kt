@@ -94,6 +94,15 @@ object AgentManagerStore {
         return write(context, state.disabledIds, state.customAgents + agent)
     }
 
+    fun updateCustomAgent(context: Context, agent: AgentSpec): Boolean {
+        if (!validCustom(agent) || AgentCatalog.find(agent.id) != null) return false
+        val state = snapshot(context)
+        if (state.status != ReadStatus.AVAILABLE || state.customAgents.none { it.id == agent.id }) return false
+        return write(context, state.disabledIds, state.customAgents.map { current ->
+            if (current.id == agent.id) agent else current
+        })
+    }
+
     fun removeCustomAgent(context: Context, agentId: String): Boolean {
         val state = snapshot(context)
         if (state.status != ReadStatus.AVAILABLE || state.customAgents.none { it.id == agentId }) return false
