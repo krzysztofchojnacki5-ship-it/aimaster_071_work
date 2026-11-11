@@ -20,6 +20,10 @@ class SmartBudgetAndHealthTest {
     }
 
     @Test fun activeBatchReservationBlocksSecondConcurrentBatch() {
+        ApiTokenTracker.replaceCatalogPricingForProvider(
+            context, "custom", "https://api.example.test/v1",
+            listOf(CatalogModelPrice("paid-model", 0.2, 0.4))
+        )
         val first = ApiTokenTracker.planBatch(context, listOf(
             BudgetRequest("task-a", "agent-a", "custom", "https://api.example.test/v1", "paid-model", 4_000, 4_000)
         ))
