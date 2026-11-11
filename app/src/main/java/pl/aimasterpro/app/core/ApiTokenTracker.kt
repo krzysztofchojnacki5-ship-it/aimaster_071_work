@@ -105,7 +105,7 @@ object ApiTokenTracker {
     private val sessionRecords = mutableListOf<TokenRecord>()
     // Session means the current app process, not an in-memory list that disappears from the monitor.
     private val sessionStartedAt = System.currentTimeMillis()
-    private data class ActiveReservationTask(val taskId: String, val agentId: String, var providerId: String, var baseUrl: String, var modelName: String, var tokensRemaining: Long, var costPlnRemaining: Double, var completed: Boolean = false)
+    private data class ActiveReservationTask(val taskId: String, val agentId: String, var providerId: String, var baseUrl: String, var modelName: String, val estimatedInputTokens: Long, val estimatedOutputTokens: Long, var tokensRemaining: Long, var costPlnRemaining: Double, var completed: Boolean = false)
     private data class ActiveReservation(val id: String, val tasks: MutableList<ActiveReservationTask>, var globalTokensRemaining: Long, val globalReserveAgentId: String = "", val globalReserveCostPln: Double = 0.0, var releaseRequested: Boolean = false)
     private val activeReservations = linkedMapOf<String, ActiveReservation>()
 
@@ -505,6 +505,7 @@ object ApiTokenTracker {
         val targetUsed = addTokenCounts(recordedForTarget, otherReservedForTarget)
         if (modelLimit > 0L && exceedsTokenLimit(targetUsed, task.tokensRemaining, modelLimit)) return false
 
+        if (task.tokensRemaining != addTokenCounts(task.estimatedInputTokens, task.estimatedOutputTokens)) return false
         val pricing = runCatching { getPricing(context, modelName, providerId, baseUrl) }.getOrNull() ?: return false
         val inputRate = maxOf(
             pricing.inputPer1MUsd,
@@ -513,8 +514,8 @@ object ApiTokenTracker {
             pricing.cacheWriteInput1hPer1MUsd ?: pricing.cacheWriteInputPer1MUsd ?: pricing.inputPer1MUsd
         )
         val outputRate = maxOf(pricing.outputPer1MUsd, pricing.internalReasoningPer1MUsd ?: pricing.outputPer1MUsd)
-        val estimatedUsd = (task.tokensRemaining * inputRate.coerceAtLeast(0.0) +
-            0L * outputRate.coerceAtLeast(0.0)) / 1_000_000.0
+        val estimatedUsd = (task.estimatedInputTokens * inputRate.coerceAtLeast(0.0) +
+            task.estimatedOutputTokens * outputRate.coerceAtLeast(0.0)) / 1_000_000.0
         val exchangeRate = getExchangeRate(context)
         val targetCost = estimatedUsd * exchangeRate
         if (!targetCost.isFinite() || targetCost < 0.0 || !exchangeRate.isFinite() || exchangeRate <= 0.0) return false
@@ -1059,7 +1060,7 @@ object ApiTokenTracker {
                 monthlyCostUsed = nextMonthlyCost!!
                 reservedTokens += estimate
                 reservedCost = nextBatchReserveCost!!
-                newReservationTasks += ActiveReservationTask(request.taskId, request.agentId, request.providerId, request.baseUrl, request.modelName, estimate, estimatedPln)
+                newReservationTasks += ActiveReservationTask(request.taskId, request.agentId, request.providerId, request.baseUrl, request.modelName, request.estimatedInputTokens, request.estimatedOutputTokens, estimate, estimatedPln)
             } else {
                 blocked[request.taskId] = reason
             }
