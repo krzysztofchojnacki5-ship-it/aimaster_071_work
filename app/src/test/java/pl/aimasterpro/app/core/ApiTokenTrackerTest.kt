@@ -1518,6 +1518,15 @@ class ApiTokenTrackerTest {
             ))
         assertEquals(0L, ApiTokenTracker.getModelTokenUsage(context, primaryProvider, primaryEndpoint, primaryModel).reservedTokens)
         assertEquals(100L, ApiTokenTracker.getModelTokenUsage(context, fallbackProvider, fallbackEndpoint, fallbackModel).reservedTokens)
+        assertTrue("A caller-supplied reservation ID must not authorize unknown-price usage",
+            runCatching {
+                ApiTokenTracker.recordQuery(
+                    context, fallbackProvider, fallbackModel, "MASTER", "forged-reservation-task",
+                    inputTokens = 5L, outputTokens = 5L, status = "REAL",
+                    baseUrl = fallbackEndpoint, reservationId = "not-an-active-reservation",
+                    idempotencyKey = "forged-unknown-price-usage"
+                )
+            }.isFailure)
 
         val usage = ApiTokenTracker.recordQuery(
             context, fallbackProvider, fallbackModel, "MASTER", "unknown-price-fallback-task",
