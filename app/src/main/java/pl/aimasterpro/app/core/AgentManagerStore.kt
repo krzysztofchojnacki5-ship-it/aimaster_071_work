@@ -35,32 +35,55 @@ object AgentManagerStore {
                     ?: return@withHealthyAccess Snapshot(ReadStatus.AVAILABLE)
                 require(raw.isNotBlank() && raw.length <= 256_000) { "AGENT_MANAGER_STATE_SIZE" }
                 val root = JSONObject(raw)
-                require(root.optInt("version", -1) == VERSION) { "AGENT_MANAGER_VERSION" }
+                val versionValue = root.opt("version")
+                require(versionValue is Number && versionValue.toInt() == VERSION) { "AGENT_MANAGER_VERSION" }
+                require(!root.has("disabled") || root.opt("disabled") is JSONArray) { "AGENT_MANAGER_DISABLED_TYPE" }
                 val disabledArray = root.optJSONArray("disabled") ?: JSONArray()
                 require(disabledArray.length() <= MAX_DISABLED) { "AGENT_MANAGER_DISABLED_LIMIT" }
-                val disabled = (0 until disabledArray.length()).map { disabledArray.getString(it) }
+                val disabled = (0 until disabledArray.length()).map { index ->
+                    val value = disabledArray.opt(index)
+                    require(value is String) { "AGENT_MANAGER_DISABLED_ID_TYPE" }
+                    value
+                }
                 require(disabled.all { it.matches(ID_PATTERN) } && disabled.distinct().size == disabled.size) {
                     "AGENT_MANAGER_DISABLED_IDS"
                 }
+                require(!root.has("removedCustomIds") || root.opt("removedCustomIds") is JSONArray) { "AGENT_MANAGER_REMOVED_TYPE" }
                 val removedArray = root.optJSONArray("removedCustomIds") ?: JSONArray()
                 require(removedArray.length() <= MAX_REMOVED) { "AGENT_MANAGER_REMOVED_LIMIT" }
-                val removed = (0 until removedArray.length()).map { removedArray.getString(it) }
+                val removed = (0 until removedArray.length()).map { index ->
+                    val value = removedArray.opt(index)
+                    require(value is String) { "AGENT_MANAGER_REMOVED_ID_TYPE" }
+                    value
+                }
                 require(removed.all { it.matches(ID_PATTERN) } && removed.distinct().size == removed.size) {
                     "AGENT_MANAGER_REMOVED_IDS"
                 }
+                require(!root.has("customAgents") || root.opt("customAgents") is JSONArray) { "AGENT_MANAGER_CUSTOM_TYPE" }
                 val customArray = root.optJSONArray("customAgents") ?: JSONArray()
                 require(customArray.length() <= MAX_CUSTOM) { "AGENT_MANAGER_CUSTOM_LIMIT" }
                 val custom = (0 until customArray.length()).map { index ->
-                    val item = customArray.getJSONObject(index)
+                    val itemValue = customArray.opt(index)
+                    require(itemValue is JSONObject) { "AGENT_MANAGER_CUSTOM_ITEM_TYPE" }
+                    val item = itemValue
+                    require(item.opt("id") is String && item.opt("name") is String &&
+                        item.opt("category") is String && item.opt("responsibility") is String &&
+                        item.opt("systemPrompt") is String) { "AGENT_MANAGER_CUSTOM_FIELD_TYPE" }
+                    require(!item.has("keywords") || item.opt("keywords") is JSONArray) { "AGENT_MANAGER_KEYWORDS_TYPE" }
                     val keywordsArray = item.optJSONArray("keywords") ?: JSONArray()
                     require(keywordsArray.length() in 1..MAX_KEYWORDS) { "AGENT_MANAGER_KEYWORDS" }
+                    val keywords = (0 until keywordsArray.length()).map { keywordIndex ->
+                        val keyword = keywordsArray.opt(keywordIndex)
+                        require(keyword is String) { "AGENT_MANAGER_KEYWORD_TYPE" }
+                        keyword
+                    }
                     val agent = AgentSpec(
-                        id = item.getString("id"),
-                        name = item.getString("name"),
-                        category = item.getString("category"),
-                        responsibility = item.getString("responsibility"),
-                        keywords = (0 until keywordsArray.length()).map { keywordsArray.getString(it) },
-                        systemPromptOverride = item.getString("systemPrompt")
+                        id = item.opt("id") as String,
+                        name = item.opt("name") as String,
+                        category = item.opt("category") as String,
+                        responsibility = item.opt("responsibility") as String,
+                        keywords = keywords,
+                        systemPromptOverride = item.opt("systemPrompt") as String
                     )
                     require(validCustom(agent)) { "AGENT_MANAGER_CUSTOM_AGENT_INVALID" }
                     agent
