@@ -1489,6 +1489,26 @@ class MainActivity : Activity() {
     //  Wysyłanie wiadomości
     // =====================================================================
 
+    private fun ensureBudgetReservationTarget(
+        reservationId: String,
+        taskId: String,
+        agentId: String,
+        provider: ProviderConfig
+    ): Boolean {
+        val accepted = runCatching {
+            pl.aimasterpro.app.core.ApiTokenTracker.retargetReservationTask(
+                this, reservationId, taskId, agentId,
+                provider.id, provider.baseUrl, provider.model
+            )
+        }.getOrDefault(false)
+        if (!accepted) android.util.Log.w(
+            "AiFORTecaBudget",
+            "Zablokowano żądanie przed HTTP: brak rezerwacji dla " +
+                provider.id + "/" + provider.model + " • task=" + taskId
+        )
+        return accepted
+    }
+
     private fun isVerifiedFreeConfig(config: ProviderConfig): Boolean {
         if (config.id.equals("ollama", true) || config.baseUrl.contains("11434") || config.baseUrl.contains("localhost") || config.baseUrl.contains("127.0.0.1")) return true
         val baseId = config.parentProviderId.ifBlank { config.id }
@@ -1560,12 +1580,9 @@ class MainActivity : Activity() {
                     !cfg.baseUrl.trimEnd('/').equals(budgetedProvider.baseUrl.trimEnd('/'), true) ||
                     !cfg.model.equals(budgetedProvider.model, true)
                 if (reservationTargetChanged) {
-                    val retargeted = runCatching {
-                        pl.aimasterpro.app.core.ApiTokenTracker.retargetReservationTask(
-                            this, effectiveBudgetReservationId, requestTaskId, requestAgentId,
-                            cfg.id, cfg.baseUrl, cfg.model
-                        )
-                    }.getOrDefault(false)
+                    val retargeted = ensureBudgetReservationTarget(
+                        effectiveBudgetReservationId, requestTaskId, requestAgentId, cfg
+                    )
                     if (!retargeted) {
                         val reason = "Smart Budget zablokował failover do " + cfg.name + "/" + cfg.model + ": nie udało się przenieść rezerwacji na limit i wycenę tego modelu."
                         runCatching { logAgentForChat(requestChatId, "⛔ " + reason) }
@@ -2240,8 +2257,9 @@ class MainActivity : Activity() {
                                 if (store.isStorageUncertain()) {
                                     logAgentForChat(chatId, "⛔ Magazyn konfiguracji ma niepewny stan. Żądanie do dostawcy nie zostało wysłane; uruchom ponownie aplikację.")
                                     false
-                                } else {
-                                    val safeBaseUrl = pl.aimasterpro.app.core.TaskCheckpointStore.safeBaseUrlForCheckpoint(actualProvider.baseUrl)
+                                } else if (!ensureBudgetReservationTarget(budgetPlan.reservationId, task.id, task.agentId, actualProvider)) {
+                                    false
+                                } else {                                    val safeBaseUrl = pl.aimasterpro.app.core.TaskCheckpointStore.safeBaseUrlForCheckpoint(actualProvider.baseUrl)
                                     pl.aimasterpro.app.core.TaskCheckpointStore.record(
                                         this,
                                         pl.aimasterpro.app.core.TaskCheckpointStore.Event(
@@ -2401,8 +2419,9 @@ class MainActivity : Activity() {
                                         if (store.isStorageUncertain()) {
                                             logAgentForChat(chatId, "⛔ Magazyn konfiguracji ma niepewny stan. Żądanie do dostawcy nie zostało wysłane; uruchom ponownie aplikację.")
                                             false
-                                        } else {
-                                            val safeBaseUrl = pl.aimasterpro.app.core.TaskCheckpointStore.safeBaseUrlForCheckpoint(actualProvider.baseUrl)
+                                        } else if (!ensureBudgetReservationTarget(reviewBudget.reservationId, task.id, task.agentId, actualProvider)) {
+                                    false
+                                } else {                                            val safeBaseUrl = pl.aimasterpro.app.core.TaskCheckpointStore.safeBaseUrlForCheckpoint(actualProvider.baseUrl)
                                             pl.aimasterpro.app.core.TaskCheckpointStore.record(
                                                 this,
                                                 pl.aimasterpro.app.core.TaskCheckpointStore.Event(
@@ -5831,8 +5850,9 @@ class MainActivity : Activity() {
                             if (store.isStorageUncertain()) {
                                 logAgentForChat(chatId, "⛔ Magazyn konfiguracji ma niepewny stan. Żądanie do dostawcy nie zostało wysłane; uruchom ponownie aplikację.")
                                 false
-                            } else {
-                                val safeBaseUrl = pl.aimasterpro.app.core.TaskCheckpointStore.safeBaseUrlForCheckpoint(actualProvider.baseUrl)
+                            } else if (!ensureBudgetReservationTarget(reviewBudget.reservationId, task.id, task.agentId, actualProvider)) {
+                                    false
+                                } else {                                val safeBaseUrl = pl.aimasterpro.app.core.TaskCheckpointStore.safeBaseUrlForCheckpoint(actualProvider.baseUrl)
                                 pl.aimasterpro.app.core.TaskCheckpointStore.record(
                                     this,
                                     pl.aimasterpro.app.core.TaskCheckpointStore.Event(
@@ -6801,7 +6821,7 @@ class MainActivity : Activity() {
                             )
                         },
                         onRequestStarting = { item, actualProvider, estimatedInput, estimatedOutput, idempotencyKey, attempts ->
-                            !store.isStorageUncertain() && pl.aimasterpro.app.core.TaskCheckpointStore.record(
+                            !store.isStorageUncertain() && ensureBudgetReservationTarget(budgetPlan.reservationId, item.id, item.agentId, actualProvider) && pl.aimasterpro.app.core.TaskCheckpointStore.record(
                                 this, pl.aimasterpro.app.core.TaskCheckpointStore.Event(
                                     item.id, item.agentId, "REQUESTING",
                                     "Żądanie API rozpoczęte z kolejki MASTER-a.",
