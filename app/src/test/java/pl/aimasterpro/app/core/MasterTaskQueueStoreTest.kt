@@ -71,6 +71,12 @@ class MasterTaskQueueStoreTest {
         assertTrue(MasterTaskQueueStore.enqueue(context, "task-custom-001", "Zadanie własnego agenta", "Sprawdź kolejkę.", now = 35L))
         assertTrue(MasterTaskQueueStore.assign(context, "task-custom-001", listOf(custom.id), now = 36L))
         assertEquals(listOf(custom.id), MasterTaskQueueStore.snapshot(context).tasks.single().assignedAgentIds)
+        assertTrue(MasterTaskQueueStore.transition(context, "task-custom-001", "MASTER",
+            MasterTaskQueueStore.Status.RUNNING, "Start własnego agenta.", 37L))
+        assertTrue(MasterTaskQueueStore.recordAgentResult(context, "task-custom-001", custom.id,
+            MasterTaskQueueStore.Status.COMPLETED, "Raport własnego agenta.", 38L))
+        assertEquals(MasterTaskQueueStore.Status.COMPLETED,
+            MasterTaskQueueStore.snapshot(context).tasks.first { it.id == "task-custom-001" }.status)
 
         assertTrue(AgentManagerStore.setEnabled(context, custom.id, false))
         assertTrue(MasterTaskQueueStore.enqueue(context, "task-custom-002", "Zadanie wyłączonego agenta", "Nie uruchamiaj.", now = 37L))
