@@ -5397,7 +5397,7 @@ class MainActivity : Activity() {
     }
 
     private fun assignModelToAgent(role: AgentRole, modelSpec: pl.aimasterpro.app.core.FreeModelSpec) {
-        if (!modelSpec.freeStatus.isAllowedForSelection || !pl.aimasterpro.app.core.FreeModelsCatalog.isFreeModel(modelSpec.providerId, modelSpec.modelId)) {
+        if (!modelSpec.freeStatus.isAllowedForSelection || !pl.aimasterpro.app.core.FreeModelsCatalog.isFreeModel(modelSpec.providerId, modelSpec.modelId, modelSpec.endpointBaseUrl)) {
             toast("Ten model nie ma potwierdzonego darmowego statusu. Nie można go przypisać.")
             return
         }
@@ -5497,12 +5497,12 @@ class MainActivity : Activity() {
         fun populateList(query: String) {
             modelsContainer.removeAllViews()
             val all = pl.aimasterpro.app.core.FreeModelsCatalog.loadCatalog(this)
-            val verifiedCount = all.count { it.freeStatus.isAllowedForSelection && pl.aimasterpro.app.core.FreeModelsCatalog.isFreeModel(it.providerId, it.modelId) }
+            val verifiedCount = all.count { it.freeStatus.isAllowedForSelection && pl.aimasterpro.app.core.FreeModelsCatalog.isFreeModel(it.providerId, it.modelId, it.endpointBaseUrl) }
             val unknownCount = all.count { it.freeStatus == pl.aimasterpro.app.core.FreeStatus.UNKNOWN }
             catalogSummaryTv.text = "Potwierdzone darmowe: $verifiedCount   •   Niezweryfikowane: $unknownCount (zablokowane)"
             val filtered = all.filter {
                 it.freeStatus.isAllowedForSelection &&
-                pl.aimasterpro.app.core.FreeModelsCatalog.isFreeModel(it.providerId, it.modelId) &&
+                pl.aimasterpro.app.core.FreeModelsCatalog.isFreeModel(it.providerId, it.modelId, it.endpointBaseUrl) &&
                 (query.isBlank() || it.modelName.contains(query, true) || it.modelId.contains(query, true) || it.providerName.contains(query, true))
             }
             if (filtered.isEmpty()) {
@@ -5589,12 +5589,14 @@ class MainActivity : Activity() {
                                 cfg.baseUrl.contains("groq.com", true) -> "groq"
                                 cfg.baseUrl.contains("generativelanguage.googleapis.com", true) -> "gemini"
                                 cfg.baseUrl.contains("api.mistral.ai", true) -> "mistral"
-                                cfg.baseUrl.contains("11434") || cfg.name.contains("ollama", true) -> "ollama"
+                                pl.aimasterpro.app.core.FreeModelsCatalog.isLocalOllamaEndpoint(cfg.baseUrl) -> "ollama"
                                 else -> cfg.id
                             }
                             refreshedProviders.add(canonicalProvider)
                             result.getOrDefault(emptyList()).forEach { mid ->
-                                val spec = pl.aimasterpro.app.core.FreeModelsCatalog.classifyDiscoveredModel(canonicalProvider, mid, cfg.name, cfg.id)
+                                val spec = pl.aimasterpro.app.core.FreeModelsCatalog.classifyDiscoveredModel(
+                                    canonicalProvider, mid, cfg.name, cfg.id, cfg.baseUrl
+                                )
                                 if (discoveredList.none { it.providerId == spec.providerId && it.modelId == spec.modelId }) discoveredList.add(spec)
                             }
                         }
