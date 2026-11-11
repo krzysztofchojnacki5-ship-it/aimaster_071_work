@@ -4175,7 +4175,7 @@ class MainActivity : Activity() {
                 return
             }
             val freeCount = entries.count { it.info.freeByPricing == true || it.providerId.contains("ollama", true) || it.baseUrl.contains("11434") }
-            val paidCount = entries.count { it.info.freeByPricing == false }
+            val paidCount = entries.count { it.info.freeByPricing == false && !isUnknownPriceCatalogEntry(it) }
             val unknownCount = entries.count { isUnknownPriceCatalogEntry(it) }
             modelsContainer.addView(TextView(this).apply {
                 text = "Wyniki: ${entries.size} • darmowe/lokalne: $freeCount • płatne: $paidCount • nieznana cena: $unknownCount\nOstatnia synchronizacja: ${modelCatalogPrefs.getLong("last_sync", 0L).takeIf { it > 0L }?.let { java.text.SimpleDateFormat("dd.MM.yyyy HH:mm", java.util.Locale.getDefault()).format(java.util.Date(it)) } ?: "brak"}"
