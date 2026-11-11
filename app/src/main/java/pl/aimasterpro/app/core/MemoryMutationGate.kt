@@ -2,6 +2,9 @@ package pl.aimasterpro.app.core
 
 import android.content.Context
 
+internal sealed interface MemoryMutationPermit
+private data class AuthorizedMemoryMutationPermit(val request: MemoryGovernance.Request) : MemoryMutationPermit
+
 /**
  * Single execution boundary for durable memory mutations.
  *
@@ -11,10 +14,10 @@ import android.content.Context
  */
 object MemoryMutationGate {
     @Synchronized
-    fun execute(
+    internal fun execute(
         context: Context,
         request: MemoryGovernance.Request,
-        mutation: () -> Boolean
+        mutation: (MemoryMutationPermit) -> Boolean
     ): Boolean {
         val decision = MemoryGovernance.authorize(request)
         if (!decision.allowed) {
@@ -31,7 +34,8 @@ object MemoryMutationGate {
             )
         ) return false
 
-        val mutationSucceeded = runCatching(mutation).getOrDefault(false)
+        val permit = AuthorizedMemoryMutationPermit(request)
+        val mutationSucceeded = runCatching { mutation(permit) }.getOrDefault(false)
         val terminalPhase = if (mutationSucceeded) MemoryAuditLog.Phase.COMMITTED else MemoryAuditLog.Phase.FAILED
         val terminalOutcome = if (mutationSucceeded) "SUCCESS" else "MUTATION_FAILED"
         val auditSucceeded = MemoryAuditLog.append(
@@ -42,6 +46,20 @@ object MemoryMutationGate {
         // A mutation without a durable terminal audit record is never reported as successful.
         return mutationSucceeded && auditSucceeded
     }
+
+    internal fun isValid(
+        permit: MemoryMutationPermit,
+        allowedMutations: Set<MemoryGovernance.Mutation>,
+        objectId: String? = null
+    ): Boolean {
+        val request = (permit as? AuthorizedMemoryMutationPermit)?.request ?: return false
+        return request.mutation in allowedMutations &&
+            (objectId == null || request.objectId == objectId)
+    }
+
+    @Synchronized
+    fun execute(context: Context, request: MemoryGovernance.Request, mutation: () -> Boolean): Boolean =
+        execute(context, request) { mutation() }
 
     private fun auditEvent(
         request: MemoryGovernance.Request,

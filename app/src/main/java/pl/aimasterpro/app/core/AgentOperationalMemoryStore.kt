@@ -28,9 +28,21 @@ object AgentOperationalMemoryStore {
 
     @Synchronized fun all(context: Context): List<Entry> = read(context) ?: emptyList()
 
-    @Synchronized fun addApproved(
-        context: Context, agentId: String, text: String, category: String = "",
-        sourceTaskIds: List<String> = emptyList(), confidence: String = "zatwierdzona"
+    @Synchronized internal fun addApproved(
+        context: Context, agentId: String, text: String, permit: MemoryMutationPermit,
+        category: String = "", sourceTaskIds: List<String> = emptyList(), confidence: String = "zatwierdzona"
+    ): Entry? {
+        if (!MemoryMutationGate.isValid(permit, setOf(
+                MemoryGovernance.Mutation.ADD_AGENT_LESSON,
+                MemoryGovernance.Mutation.APPROVE_PROPOSAL,
+                MemoryGovernance.Mutation.RECONCILE_APPROVED_PROPOSAL
+            ))) return null
+        return addApprovedRaw(context, agentId, text, category, sourceTaskIds, confidence)
+    }
+
+    @Synchronized private fun addApprovedRaw(
+        context: Context, agentId: String, text: String, category: String,
+        sourceTaskIds: List<String>, confidence: String
     ): Entry? = runCatching {
         SharedPreferencesWriteHealth.withHealthyAccess(PREFS) {
 
@@ -57,7 +69,12 @@ object AgentOperationalMemoryStore {
         }
     }.getOrNull()
 
-    @Synchronized fun remove(context: Context, id: String): Boolean = runCatching {
+    @Synchronized internal fun remove(context: Context, id: String, permit: MemoryMutationPermit): Boolean {
+        if (!MemoryMutationGate.isValid(permit, setOf(MemoryGovernance.Mutation.REMOVE_AGENT_LESSON), id)) return false
+        return removeRaw(context, id)
+    }
+
+    @Synchronized private fun removeRaw(context: Context, id: String): Boolean = runCatching {
         SharedPreferencesWriteHealth.withHealthyAccess(PREFS) {
 
         val entries = read(context) ?: return@withHealthyAccess false
@@ -68,7 +85,18 @@ object AgentOperationalMemoryStore {
         }
     }.getOrDefault(false)
 
-    @Synchronized fun removeBySource(context: Context, sourceTaskId: String): Boolean = runCatching {
+    @Synchronized internal fun removeBySource(context: Context, sourceTaskId: String, permit: MemoryMutationPermit): Boolean {
+        if (!MemoryMutationGate.isValid(permit, setOf(
+                MemoryGovernance.Mutation.REMOVE_AGENT_LESSON,
+                MemoryGovernance.Mutation.APPROVE_PROPOSAL,
+                MemoryGovernance.Mutation.REJECT_PROPOSAL,
+                MemoryGovernance.Mutation.RECONCILE_APPROVED_PROPOSAL,
+                MemoryGovernance.Mutation.RECONCILE_REVOKED_PROPOSAL
+            ))) return false
+        return removeBySourceRaw(context, sourceTaskId)
+    }
+
+    @Synchronized private fun removeBySourceRaw(context: Context, sourceTaskId: String): Boolean = runCatching {
         SharedPreferencesWriteHealth.withHealthyAccess(PREFS) {
 
         if (sourceTaskId.isBlank()) return@withHealthyAccess false

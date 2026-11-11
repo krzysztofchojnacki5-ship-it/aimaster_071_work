@@ -52,7 +52,17 @@ object AiMemoryStore {
     }.getOrNull()
 
     @Synchronized
-    fun addMemory(context: Context, memory: String): Boolean = runCatching {
+    internal fun addMemory(context: Context, memory: String, permit: MemoryMutationPermit): Boolean {
+        if (!MemoryMutationGate.isValid(permit, setOf(
+                MemoryGovernance.Mutation.ADD_SHARED_RULE,
+                MemoryGovernance.Mutation.APPROVE_PROPOSAL,
+                MemoryGovernance.Mutation.RECONCILE_APPROVED_PROPOSAL
+            ))) return false
+        return addMemoryRaw(context, memory)
+    }
+
+    @Synchronized
+    private fun addMemoryRaw(context: Context, memory: String): Boolean = runCatching {
         if (memory.isBlank() || SharedPreferencesWriteHealth.isUncertain(PREFS_NAME)) return@runCatching false
         val list = readStoredMemories(context)?.toMutableList() ?: return@runCatching false
         if (list.contains(memory)) return@runCatching true
@@ -65,7 +75,19 @@ object AiMemoryStore {
     }.getOrDefault(false)
 
     @Synchronized
-    fun removeMemory(context: Context, exactMemory: String): Boolean = runCatching {
+    internal fun removeMemory(context: Context, exactMemory: String, permit: MemoryMutationPermit): Boolean {
+        if (!MemoryMutationGate.isValid(permit, setOf(
+                MemoryGovernance.Mutation.REMOVE_SHARED_RULE,
+                MemoryGovernance.Mutation.APPROVE_PROPOSAL,
+                MemoryGovernance.Mutation.REJECT_PROPOSAL,
+                MemoryGovernance.Mutation.RECONCILE_APPROVED_PROPOSAL,
+                MemoryGovernance.Mutation.RECONCILE_REVOKED_PROPOSAL
+            ))) return false
+        return removeMemoryRaw(context, exactMemory)
+    }
+
+    @Synchronized
+    private fun removeMemoryRaw(context: Context, exactMemory: String): Boolean = runCatching {
         if (SharedPreferencesWriteHealth.isUncertain(PREFS_NAME)) return@runCatching false
         val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         val existing = SharedPreferencesWriteHealth.withHealthyAccess(PREFS_NAME) {

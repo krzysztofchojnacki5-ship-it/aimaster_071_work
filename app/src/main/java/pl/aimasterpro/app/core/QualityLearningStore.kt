@@ -120,13 +120,13 @@ object QualityLearningStore {
                 else "Użytkownik odrzucił propozycję uczenia.",
             approvalRef = approvalRef
         )
-        return MemoryMutationGate.execute(context, request) {
-            setProposalStatusRaw(context, id, status)
+        return MemoryMutationGate.execute(context, request) { permit ->
+            setProposalStatusRaw(context, id, status, permit)
         }
     }
 
     /** Only APPROVED proposals enter shared model memory. Rejected proposals remain auditable. */
-    @Synchronized private fun setProposalStatusRaw(context: Context, id: String, status: String): Boolean {
+    @Synchronized private fun setProposalStatusRaw(context: Context, id: String, status: String, permit: MemoryMutationPermit): Boolean {
         require(status in setOf("APPROVED", "REJECTED", "PROPOSAL"))
         if (readArrayStrict(context, PROPOSALS_KEY) == null) return false
         val all = proposals(context).toMutableList()
@@ -138,16 +138,16 @@ object QualityLearningStore {
         if (!saveProposals(context, all)) return false
         val memoryEntry = "[UCZENIE ZATWIERDZONE ${old.id.take(8)}; dowody=${old.evidenceCount}; pewność=${old.confidence}] ${old.text}".take(1000)
         if (status == "APPROVED") {
-            val sharedSaved = AiMemoryStore.addMemory(context, memoryEntry)
+            val sharedSaved = AiMemoryStore.addMemory(context, memoryEntry, permit)
             // Preserve agent scope: approved specialist lessons are not broadcast to unrelated agents.
             val sourceRef = "proposal:${old.id}"
             val agentSaves = old.affectedAgents.filter(String::isNotBlank).map { agentId ->
-                AgentOperationalMemoryStore.addApproved(context, agentId, old.text,
+                AgentOperationalMemoryStore.addApproved(context, agentId, old.text, permit,
                     category = "wniosek jakościowy", sourceTaskIds = listOf(sourceRef), confidence = old.confidence) != null
             }
             if (!sharedSaved || agentSaves.any { !it }) {
-                AiMemoryStore.removeMemory(context, memoryEntry)
-                AgentOperationalMemoryStore.removeBySource(context, sourceRef)
+                AiMemoryStore.removeMemory(context, memoryEntry, permit)
+                AgentOperationalMemoryStore.removeBySource(context, sourceRef, permit)
                 all[index] = old
                 if (!saveProposals(context, all)) {
                     android.util.Log.e("AIMasterQuality", "Nie udało się wycofać statusu APPROVED po błędzie zapisu pamięci.")
@@ -155,8 +155,8 @@ object QualityLearningStore {
                 return false
             }
         } else if (old.status == "APPROVED") {
-            val sharedRemoved = AiMemoryStore.removeMemory(context, memoryEntry)
-            val agentRemoved = AgentOperationalMemoryStore.removeBySource(context, "proposal:${old.id}")
+            val sharedRemoved = AiMemoryStore.removeMemory(context, memoryEntry, permit)
+            val agentRemoved = AgentOperationalMemoryStore.removeBySource(context, "proposal:${old.id}", permit)
             if (!sharedRemoved || !agentRemoved) {
                 all[index] = old
                 if (!saveProposals(context, all)) {
@@ -191,25 +191,25 @@ object QualityLearningStore {
                     else "Usunięcie pamięci powiązanej z propozycją niezatwierdzoną lub cofniętą.",
                 approvalRef = sourceRef
             )
-            val recovered = MemoryMutationGate.execute(context, request) {
+            val recovered = MemoryMutationGate.execute(context, request) { permit ->
                 if (approved) {
-                    val sharedSaved = AiMemoryStore.addMemory(context, memoryEntry)
+                    val sharedSaved = AiMemoryStore.addMemory(context, memoryEntry, permit)
                     val agentSaves = proposal.affectedAgents.map { agentId ->
-                        AgentOperationalMemoryStore.addApproved(context, agentId, proposal.text,
+                        AgentOperationalMemoryStore.addApproved(context, agentId, proposal.text, permit,
                             category = "wniosek jakościowy", sourceTaskIds = listOf(sourceRef),
                             confidence = proposal.confidence) != null
                     }
                     if (!sharedSaved || agentSaves.any { !it }) {
-                        AiMemoryStore.removeMemory(context, memoryEntry)
-                        AgentOperationalMemoryStore.removeBySource(context, sourceRef)
+                        AiMemoryStore.removeMemory(context, memoryEntry, permit)
+                        AgentOperationalMemoryStore.removeBySource(context, sourceRef, permit)
                         false
                     } else {
                         synchronized++
                         true
                     }
                 } else {
-                    val sharedRemoved = AiMemoryStore.removeMemory(context, memoryEntry)
-                    val agentRemoved = AgentOperationalMemoryStore.removeBySource(context, sourceRef)
+                    val sharedRemoved = AiMemoryStore.removeMemory(context, memoryEntry, permit)
+                    val agentRemoved = AgentOperationalMemoryStore.removeBySource(context, sourceRef, permit)
                     sharedRemoved && agentRemoved
                 }
             }

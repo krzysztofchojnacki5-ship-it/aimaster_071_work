@@ -7228,8 +7228,8 @@ class MainActivity : Activity() {
                             reason = "Użytkownik potwierdził usunięcie wpisu pamięci agenta.",
                             approvalRef = "ui-confirm:${java.util.UUID.randomUUID()}"
                         )
-                        val removed = pl.aimasterpro.app.core.MemoryMutationGate.execute(this, request) {
-                            pl.aimasterpro.app.core.AgentOperationalMemoryStore.remove(this, entry.id)
+                        val removed = pl.aimasterpro.app.core.MemoryMutationGate.execute(this, request) { permit ->
+                            pl.aimasterpro.app.core.AgentOperationalMemoryStore.remove(this, entry.id, permit)
                         }
                         toast(if (removed) "Usunięto wpis pamięci agenta." else "Nie udało się usunąć wpisu pamięci agenta.")
                         showShell("Pamięć"); showMemory()
@@ -7369,8 +7369,8 @@ class MainActivity : Activity() {
                             reason = "Użytkownik potwierdził dodanie zasady do pamięci wspólnej.",
                             approvalRef = "ui-confirm:${java.util.UUID.randomUUID()}"
                         )
-                        val saved = pl.aimasterpro.app.core.MemoryMutationGate.execute(this, request) {
-                            pl.aimasterpro.app.core.AiMemoryStore.addMemory(this, value)
+                        val saved = pl.aimasterpro.app.core.MemoryMutationGate.execute(this, request) { permit ->
+                            pl.aimasterpro.app.core.AiMemoryStore.addMemory(this, value, permit)
                         }
                         toast(if (saved) "Zapisano zasadę. Będzie dołączana do kolejnych zadań."
                             else "Nie udało się zapisać zasady. Dotychczasowa pamięć pozostała bez zmian.")
