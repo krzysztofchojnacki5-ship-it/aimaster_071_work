@@ -7271,7 +7271,7 @@ class MainActivity : Activity() {
                 appendLine("Tokeny: ${stats.totalTokens} (wejście ${stats.inputTokens}, wyjście ${stats.outputTokens})")
                 appendLine("REAL: $realCount | ESTIMATED: $estimatedCount | UNAVAILABLE: $unavailableCount | inne: $unknownCount")
                 appendLine("Reasoning: ${stats.reasoningTokens} | Cached: ${stats.cachedTokens}")
-                appendLine("Koszt szacowany: ${'$'}${String.format(java.util.Locale.US, "%.6f", stats.costUsd)} USD / ${String.format(java.util.Locale.US, "%.4f", stats.costPln)} PLN")
+                appendLine("Koszt znany: ${'$'}${String.format(java.util.Locale.US, "%.6f", stats.costUsd)} USD / ${String.format(java.util.Locale.US, "%.4f", stats.costPln)} PLN")
                 appendLine("Rekordy z nieznanym kosztem: $unknownCostCount (nie są traktowane jako 0)")
                 appendLine()
                 filtered.take(100).forEach { r ->
