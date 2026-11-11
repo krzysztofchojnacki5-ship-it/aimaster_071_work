@@ -4343,6 +4343,29 @@ class MainActivity : Activity() {
                 val row = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(10), dp(9), dp(10), dp(9)); background = rounded(cardBg, 10, border) }
                 row.addView(TextView(this).apply { text = (if (selected) "✓ AKTYWNY • " else "") + profile.name; setTextColor(if (selected) orange else white); textSize = 13f; typeface = Typeface.DEFAULT_BOLD })
                 row.addView(TextView(this).apply { text = profile.model; setTextColor(muted); textSize = 11f; setPadding(0, dp(2), 0, dp(4)); setTextIsSelectable(true) })
+                val modelUsage = pl.aimasterpro.app.core.ApiTokenTracker.getModelTokenUsage(
+                    this, profile.id, profile.baseUrl, profile.model
+                )
+                val modelLimit = modelUsage.config?.takeIf { it.enabled }
+                val modelUsageText = if (modelLimit == null) {
+                    "Zużycie dzisiaj: ${modelUsage.usedTokens} użytych + ${modelUsage.reservedTokens} zarezerwowanych tokenów • limit indywidualny nieustawiony"
+                } else {
+                    val state = when {
+                        modelUsage.limitReached -> "LIMIT 100% — nowe zadania blokowane"
+                        modelUsage.warningReached -> "OSTRZEŻENIE ≥${modelLimit.warningPercent}%"
+                        else -> "limit dostępny"
+                    }
+                    "Dzisiaj: ${modelUsage.usedTokens} użytych + ${modelUsage.reservedTokens} zarezerwowanych / ${modelLimit.dailyLimitTokens} tokenów • ${modelUsage.usagePercent}% • $state"
+                }
+                row.addView(TextView(this).apply {
+                    text = modelUsageText
+                    setTextColor(if (modelUsage.limitReached) Color.RED else if (modelUsage.warningReached) orange else muted)
+                    textSize = 11f
+                    setPadding(0, dp(2), 0, dp(6))
+                })
+                action("Ustaw limit tokenów tego modelu", row) {
+                    showModelTokenLimitDialog(profile, modelUsage.config)
+                }
                 action("Ustaw jako model czatu", row) {
                     if (!persistAgentProviderAssignment(AgentRole.MASTER, profile.id)) return@action
                     showShell("Modele"); showProviders(); toast("Aktywny model czatu: ${profile.model}")
