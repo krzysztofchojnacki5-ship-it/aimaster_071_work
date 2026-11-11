@@ -1227,34 +1227,36 @@ class ApiTokenTrackerTest {
 
 
     @Test fun explicitlyApprovedUnknownPricingStillPersistsTokenUsageWithoutInventingZeroCost() {
+        val provider = "unknown-price-provider"
+        val endpoint = "https://unknown-price.example/v1"
+        val model = "vendor/unpriced-model"
         val pricingPrefs = context.getSharedPreferences("api_token_pricing_v1", Context.MODE_PRIVATE)
         val incomplete = """[{"providerId":"unknown-price-provider","modelName":"vendor/unpriced-model","baseUrl":"https://unknown-price.example/v1","inputPer1MUsd":null,"outputPer1MUsd":0.8,"explicitlyFree":false}]"""
         assertTrue(pricingPrefs.edit().putString("catalog_model_prices", incomplete).commit())
-        val blockedByDefault = runCatching {
-            ApiTokenTracker.recordQuery(
-                context, "unknown-price-provider", "vendor/unpriced-model", "MASTER", "unknown-price-default",
-                inputTokens = 120L, outputTokens = 80L, status = "REAL",
-                baseUrl = "https://unknown-price.example/v1", idempotencyKey = "unknown-price-default"
-            )
-        }
-        assertTrue("Unknown pricing must remain blocked unless explicitly approved", blockedByDefault.isFailure)
+
+        val blockedByDefault = ApiTokenTracker.planBatch(context, listOf(
+            BudgetRequest("unknown-price-default", "MASTER", provider, endpoint, model, 120L, 80L)
+        ))
+        assertTrue("Unknown pricing must remain blocked unless explicitly approved", blockedByDefault.allowedTaskIds.isEmpty())
         assertTrue(ApiTokenTracker.loadAllRecordsFromStorage(context).isEmpty())
-        val unknownWhileMoneyLimitActive = runCatching {
-            ApiTokenTracker.recordQuery(
-                context, "unknown-price-provider", "vendor/unpriced-model", "MASTER", "unknown-price-money-limit",
-                inputTokens = 10L, outputTokens = 10L, status = "REAL",
-                baseUrl = "https://unknown-price.example/v1", idempotencyKey = "unknown-price-money-limit",
-                allowUnknownPricing = true
-            )
-        }
-        assertTrue("Unknown cost must not bypass an active monthly money limit", unknownWhileMoneyLimitActive.isFailure)
+
+        assertTrue(UnknownPriceApprovalStore.setApproved(context, provider, endpoint, model, true))
+        val unknownWhileMoneyLimitActive = ApiTokenTracker.planBatch(context, listOf(
+            BudgetRequest("unknown-price-money-limit", "MASTER", provider, endpoint, model, 10L, 10L)
+        ))
+        assertTrue("Unknown cost must not bypass an active monthly money limit",
+            unknownWhileMoneyLimitActive.allowedTaskIds.isEmpty())
         ApiTokenTracker.setLimits(context, daily = 100_000L, monthly = 0.0, perAgent = 50_000L)
 
+        val approvedPlan = ApiTokenTracker.planBatch(context, listOf(
+            BudgetRequest("unknown-price-approved", "MASTER", provider, endpoint, model, 120L, 80L)
+        ))
+        assertTrue(approvedPlan.allowedTaskIds.contains("unknown-price-approved"))
         val approved = ApiTokenTracker.recordQuery(
-            context, "unknown-price-provider", "vendor/unpriced-model", "MASTER", "unknown-price-approved",
+            context, provider, model, "MASTER", "unknown-price-approved",
             inputTokens = 120L, outputTokens = 80L, status = "REAL",
-            baseUrl = "https://unknown-price.example/v1", idempotencyKey = "unknown-price-approved",
-            allowUnknownPricing = true
+            baseUrl = endpoint, reservationId = approvedPlan.reservationId,
+            idempotencyKey = "unknown-price-approved"
         )
         assertEquals(200L, approved.totalTokens)
         assertFalse(approved.costKnown)
@@ -1264,6 +1266,7 @@ class ApiTokenTrackerTest {
         assertEquals(200L, summary.totalTokens)
         assertEquals("Unknown cost must not be presented as a verified zero price", 0.0, summary.costPln, 0.0)
 
+        ApiTokenTracker.releaseBatchReservation(approvedPlan.reservationId)
         ApiTokenTracker.resetInMemoryStateForTests()
         val restored = ApiTokenTracker.loadAllRecordsFromStorage(context).single()
         assertFalse("Unknown-cost state must survive process restart", restored.costKnown)
@@ -1291,6 +1294,12 @@ class ApiTokenTrackerTest {
         assertTrue(financialCapPlan.blockedReasons["unknown-price-money-cap"]?.contains("cena modelu jest nieznana") == true)
 
         ApiTokenTracker.setLimits(context, daily = 100_000L, monthly = 0.0, perAgent = 50_000L)
+        val unapprovedTokenOnlyPlan = ApiTokenTracker.planBatch(context, listOf(
+            BudgetRequest("unknown-price-token-cap-unapproved", "MASTER", provider, endpoint, model, 150L, 100L)
+        ))
+        assertTrue("Token-only budget still requires explicit unknown-price consent",
+            unapprovedTokenOnlyPlan.allowedTaskIds.isEmpty())
+        assertTrue(UnknownPriceApprovalStore.setApproved(context, provider, endpoint, model, true))
         val tokenOnlyPlan = ApiTokenTracker.planBatch(context, listOf(
             BudgetRequest("unknown-price-token-cap", "MASTER", provider, endpoint, model, 150L, 100L)
         ))
@@ -1511,7 +1520,15 @@ class ApiTokenTrackerTest {
         assertEquals(100L, ApiTokenTracker.getModelTokenUsage(context, primaryProvider, primaryEndpoint, primaryModel).reservedTokens)
 
         ApiTokenTracker.setLimits(context, daily = 10_000L, monthly = 0.0, perAgent = 5_000L)
-        assertTrue("Token-only fallback must work without a price catalogue entry",
+        assertFalse("Unknown-price fallback also requires explicit consent",
+            ApiTokenTracker.retargetReservationTask(
+                context, plan.reservationId, "unknown-price-fallback-task", "MASTER",
+                fallbackProvider, fallbackEndpoint, fallbackModel
+            ))
+        assertTrue(UnknownPriceApprovalStore.setApproved(
+            context, fallbackProvider, fallbackEndpoint, fallbackModel, true
+        ))
+        assertTrue("Approved token-only fallback must work without a price catalogue entry",
             ApiTokenTracker.retargetReservationTask(
                 context, plan.reservationId, "unknown-price-fallback-task", "MASTER",
                 fallbackProvider, fallbackEndpoint, fallbackModel
