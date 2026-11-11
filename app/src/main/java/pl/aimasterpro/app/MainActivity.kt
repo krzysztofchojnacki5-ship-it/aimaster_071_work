@@ -5194,6 +5194,12 @@ class MainActivity : Activity() {
                 }
                 row.addView(toggle)
                 if (agent.id.startsWith("custom-")) {
+                    val edit = TextView(this).apply {
+                        text = "Edytuj"
+                        setTextColor(orange); textSize = 12f; setPadding(dp(8), 0, 0, 0)
+                        setOnClickListener { showCreateCustomAgentDialog(agent) }
+                    }
+                    row.addView(edit)
                     val remove = TextView(this).apply {
                         text = "Usuń"
                         setTextColor(Color.RED); textSize = 12f; setPadding(dp(8), 0, 0, 0)
@@ -5228,7 +5234,7 @@ class MainActivity : Activity() {
         render("")
     }
 
-    private fun showCreateCustomAgentDialog() {
+    private fun showCreateCustomAgentDialog(existing: pl.aimasterpro.app.agents.AgentSpec? = null) {
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(16), dp(12), dp(16), dp(8))
@@ -5244,13 +5250,15 @@ class MainActivity : Activity() {
                 isSingleLine = true
             }
         }
-        val name = field("Nazwa agenta")
-        val responsibility = field("Zakres odpowiedzialności", true)
-        val keywords = field("Słowa kluczowe, oddzielone przecinkami")
-        val prompt = field("Dodatkowe instrukcje systemowe (bez kluczy API i haseł)", true)
+        val name = field("Nazwa agenta").apply { setText(existing?.name.orEmpty()) }
+        val responsibility = field("Zakres odpowiedzialności", true).apply { setText(existing?.responsibility.orEmpty()) }
+        val keywords = field("Słowa kluczowe, oddzielone przecinkami").apply { setText(existing?.keywords?.joinToString(", ").orEmpty()) }
+        val prompt = field("Dodatkowe instrukcje systemowe (bez kluczy API i haseł)", true).apply { setText(existing?.systemPromptOverride.orEmpty()) }
         val categories = AgentCatalog.all.map { it.category }.distinct().sorted()
         val category = Spinner(this).apply {
             adapter = ArrayAdapter(this@MainActivity, android.R.layout.simple_spinner_dropdown_item, categories)
+            val selected = categories.indexOf(existing?.category)
+            setSelection(if (selected >= 0) selected else 0)
         }
         root.addView(TextView(this).apply { text = "Nazwa"; setTextColor(white) })
         root.addView(name)
@@ -5268,9 +5276,9 @@ class MainActivity : Activity() {
         })
 
         val dialog = AlertDialog.Builder(this)
-            .setTitle("Dodaj własnego agenta")
+            .setTitle(if (existing == null) "Dodaj własnego agenta" else "Edytuj własnego agenta")
             .setView(root)
-            .setPositiveButton("Zapisz", null)
+            .setPositiveButton(if (existing == null) "Dodaj" else "Zapisz zmiany", null)
             .setNegativeButton("Anuluj", null)
             .create()
         dialog.setOnShowListener {
@@ -5286,18 +5294,24 @@ class MainActivity : Activity() {
                     "Jesteś agentem $agentName. Twoja odpowiedzialność: $agentResponsibility. Nie zmyślaj dowodów i nie ujawniaj sekretów."
                 }
                 val agent = pl.aimasterpro.app.agents.AgentSpec(
-                    id = "custom-${java.util.UUID.randomUUID().toString().take(8)}",
+                    id = existing?.id ?: "custom-${java.util.UUID.randomUUID().toString().take(8)}",
                     name = agentName,
                     category = categories.getOrElse(category.selectedItemPosition) { categories.first() },
                     responsibility = agentResponsibility,
                     keywords = agentKeywords,
                     systemPromptOverride = customPrompt
                 )
-                if (!pl.aimasterpro.app.core.AgentManagerStore.addCustomAgent(this, agent)) {
-                    toast("Nie udało się zapisać profilu. Sprawdź limit 24 profili i stan magazynu.")
+                val saved = if (existing == null) {
+                    pl.aimasterpro.app.core.AgentManagerStore.addCustomAgent(this, agent)
+                } else {
+                    pl.aimasterpro.app.core.AgentManagerStore.updateCustomAgent(this, agent)
+                }
+                if (!saved) {
+                    toast(if (existing == null) "Nie udało się dodać profilu. Sprawdź limit 24 profili i stan magazynu."
+                        else "Nie udało się zapisać zmian. Istniejący profil pozostał bez zmian.")
                     return@setOnClickListener
                 }
-                logAgent("Menadżer agentów: dodano własny profil ${agent.id}")
+                logAgent("Menadżer agentów: ${if (existing == null) "dodano" else "zaktualizowano"} własny profil ${agent.id}")
                 dialog.dismiss()
                 showAgentCatalogManager()
             }
