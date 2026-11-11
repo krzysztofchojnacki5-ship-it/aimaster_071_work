@@ -184,6 +184,9 @@ object ApiTokenTracker {
                     getPricing(context, modelName, providerId, baseUrl)
                 } catch (error: UnknownModelPricingException) {
                     if (!allowUnknownPricing) throw error
+                    require(getLimits(context).monthlyCostPlnLimit == 0.0) {
+                        "Nieznany koszt modelu wymaga wyłączenia limitu finansowego i świadomej zgody; limit tokenów nadal obowiązuje."
+                    }
                     null
                 }
                 val upgradeRate = getExchangeRate(context)
@@ -237,6 +240,9 @@ object ApiTokenTracker {
             getPricing(context, modelName, providerId, baseUrl)
         } catch (error: UnknownModelPricingException) {
             if (!allowUnknownPricing) throw error
+            require(getLimits(context).monthlyCostPlnLimit == 0.0) {
+                "Nieznany koszt modelu wymaga wyłączenia limitu finansowego i świadomej zgody; limit tokenów nadal obowiązuje."
+            }
             null
         }
         val exchangeRate = getExchangeRate(context)
@@ -790,8 +796,12 @@ object ApiTokenTracker {
             val key = globalReserveAgentId.lowercase(Locale.ROOT)
             perAgentUsed[key] = addTokenCounts(perAgentUsed[key] ?: 0L, globalReserveTokens)
         }
+        if (limits.monthlyCostPlnLimit > 0.0 && recent.any { !it.costKnown }) {
+            val reason = "Wstrzymano: w bieżącym okresie istnieje użycie z nieznanym kosztem; limit finansowy nie może być bezpiecznie zweryfikowany."
+            return BatchBudgetPlan(emptySet(), requests.associate { it.taskId to reason }, 0L, 0.0)
+        }
         val monthlyCostUsedInitial = trySumNonNegativeCosts(
-            recent.map { it.costPln } +
+            recent.filter { it.costKnown }.map { it.costPln } +
                 activeReservations.values.flatMap { r ->
                     listOf(r.globalReserveCostPln) + r.tasks.map { it.costPlnRemaining }
                 } + listOf(globalReserveCostPln)
