@@ -15,6 +15,7 @@ class UnknownPriceApprovalStoreTest {
 
     @Before fun setUp() {
         context = RuntimeEnvironment.getApplication()
+        SharedPreferencesWriteHealth.resetForTests("unknown_price_approvals_v1")
         context.getSharedPreferences("unknown_price_approvals_v1", Context.MODE_PRIVATE)
             .edit().clear().commit()
     }
