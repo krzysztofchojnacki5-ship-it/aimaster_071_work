@@ -1226,6 +1226,42 @@ class ApiTokenTrackerTest {
     }
 
 
+    @Test fun modelWithoutCatalogOrKnownFamilyPriceDoesNotReceiveGenericDefaultPrice() {
+        val error = runCatching {
+            ApiTokenTracker.getPricing(
+                context, "vendor/new-unpriced-model", "new-provider", "https://new-provider.example/v1"
+            )
+        }.exceptionOrNull()
+        assertTrue("An arbitrary model must remain unknown instead of inheriting a fabricated generic rate",
+            error is UnknownModelPricingException)
+    }
+
+    @Test fun approvedUnknownPriceConsentResolvesChildModelProfileToParentProvider() {
+        val provider = "parent-provider"
+        val profile = "parent-provider-model-profile"
+        val endpoint = "https://parent-provider.example/v1"
+        val model = "vendor/parent-unpriced-model"
+        val incomplete = """[{"providerId":"parent-provider","modelName":"vendor/parent-unpriced-model","baseUrl":"https://parent-provider.example/v1","inputPer1MUsd":null,"outputPer1MUsd":0.8,"explicitlyFree":false}]"""
+        assertTrue(context.getSharedPreferences("api_token_pricing_v1", Context.MODE_PRIVATE)
+            .edit().putString("catalog_model_prices", incomplete).commit())
+        assertTrue(UnknownPriceApprovalStore.setApproved(context, provider, endpoint, model, true))
+        ApiTokenTracker.setLimits(context, daily = 10_000L, monthly = 0.0, perAgent = 5_000L)
+
+        val plan = ApiTokenTracker.planBatch(context, listOf(
+            BudgetRequest("parent-profile-task", "MASTER", profile, endpoint, model, 60L, 40L)
+        ))
+        assertEquals(setOf("parent-profile-task"), plan.allowedTaskIds)
+        val usage = ApiTokenTracker.recordQuery(
+            context, profile, model, "MASTER", "parent-profile-task",
+            inputTokens = 30L, outputTokens = 20L, status = "REAL",
+            baseUrl = endpoint, reservationId = plan.reservationId,
+            idempotencyKey = "parent-profile-usage"
+        )
+        assertFalse(usage.costKnown)
+        assertEquals(50L, usage.totalTokens)
+        ApiTokenTracker.releaseBatchReservation(plan.reservationId)
+    }
+
     @Test fun explicitlyApprovedUnknownPricingStillPersistsTokenUsageWithoutInventingZeroCost() {
         val provider = "unknown-price-provider"
         val endpoint = "https://unknown-price.example/v1"
