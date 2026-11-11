@@ -105,7 +105,7 @@ object ApiTokenTracker {
     private val sessionRecords = mutableListOf<TokenRecord>()
     // Session means the current app process, not an in-memory list that disappears from the monitor.
     private val sessionStartedAt = System.currentTimeMillis()
-    private data class ActiveReservationTask(val taskId: String, val agentId: String, val providerId: String, val baseUrl: String, val modelName: String, var tokensRemaining: Long, var costPlnRemaining: Double, var completed: Boolean = false)
+    private data class ActiveReservationTask(val taskId: String, val agentId: String, var providerId: String, var baseUrl: String, var modelName: String, var tokensRemaining: Long, var costPlnRemaining: Double, var completed: Boolean = false)
     private data class ActiveReservation(val id: String, val tasks: MutableList<ActiveReservationTask>, var globalTokensRemaining: Long, val globalReserveAgentId: String = "", val globalReserveCostPln: Double = 0.0, var releaseRequested: Boolean = false)
     private val activeReservations = linkedMapOf<String, ActiveReservation>()
 
@@ -465,6 +465,76 @@ object ApiTokenTracker {
         if (reservation.releaseRequested && reservation.tasks.all { it.completed }) {
             activeReservations.remove(reservationId)
         }
+    }
+
+    /**
+     * Atomically moves an existing task reservation to a fallback provider/model.
+     * The global and per-agent token reservations remain unchanged; only the
+     * provider-specific model bucket and estimated monetary reservation are retargeted.
+     */
+    @Synchronized
+    fun retargetReservationTask(
+        context: Context,
+        reservationId: String,
+        taskId: String,
+        agentId: String,
+        providerId: String,
+        baseUrl: String,
+        modelName: String
+    ): Boolean {
+        if (reservationId.isBlank() || taskId.isBlank() || agentId.isBlank() ||
+            providerId.isBlank() || baseUrl.isBlank() || modelName.isBlank()) return false
+        val reservation = activeReservations[reservationId] ?: return false
+        val task = reservation.tasks.singleOrNull {
+            it.taskId == taskId && it.agentId.equals(agentId, true)
+        } ?: return false
+        if (task.completed) return false
+        val persisted = readPersistedRecords(context) ?: return false
+        val limits = getLimits(context)
+        val allRecords = (persisted + sessionRecords).distinctBy { it.queryId }
+        val today = filterRecords(allRecords, "Dzisiaj")
+        val recent = filterRecords(allRecords, "30 dni")
+        val targetKey = modelBudgetKey(providerId, baseUrl, modelName)
+        val modelLimit = readModelLimits(context)[targetKey]?.takeIf { it.enabled }?.dailyLimitTokens ?: 0L
+        val otherReservedForTarget = sumTokenCounts(activeReservations.values.flatMap { it.tasks }.filter {
+            !(it === task) && modelBudgetKey(it.providerId, it.baseUrl, it.modelName) == targetKey
+        }.map { it.tokensRemaining })
+        val recordedForTarget = sumTokenCounts(today.filter {
+            modelBudgetKey(it.providerId, it.baseUrl, it.modelName) == targetKey
+        }.map { it.totalTokens })
+        val targetUsed = addTokenCounts(recordedForTarget, otherReservedForTarget)
+        if (modelLimit > 0L && exceedsTokenLimit(targetUsed, task.tokensRemaining, modelLimit)) return false
+
+        val pricing = runCatching { getPricing(context, modelName, providerId, baseUrl) }.getOrNull() ?: return false
+        val inputRate = maxOf(
+            pricing.inputPer1MUsd,
+            pricing.cachedInputPer1MUsd ?: pricing.inputPer1MUsd,
+            pricing.cacheWriteInputPer1MUsd ?: pricing.inputPer1MUsd,
+            pricing.cacheWriteInput1hPer1MUsd ?: pricing.cacheWriteInputPer1MUsd ?: pricing.inputPer1MUsd
+        )
+        val outputRate = maxOf(pricing.outputPer1MUsd, pricing.internalReasoningPer1MUsd ?: pricing.outputPer1MUsd)
+        val estimatedUsd = (task.tokensRemaining * inputRate.coerceAtLeast(0.0) +
+            0L * outputRate.coerceAtLeast(0.0)) / 1_000_000.0
+        val exchangeRate = getExchangeRate(context)
+        val targetCost = estimatedUsd * exchangeRate
+        if (!targetCost.isFinite() || targetCost < 0.0 || !exchangeRate.isFinite() || exchangeRate <= 0.0) return false
+
+        if (limits.monthlyCostPlnLimit > 0.0) {
+            if (recent.any { !it.costKnown }) return false
+            val otherReservedCosts = activeReservations.values.flatMap { active ->
+                listOf(active.globalReserveCostPln) + active.tasks.filter { it !== task }.map { it.costPlnRemaining }
+            }
+            val committedCosts = recent.filter { it.costKnown }.map { it.costPln }
+            val monthlyUsed = trySumNonNegativeCosts(committedCosts + otherReservedCosts) ?: return false
+            val projected = tryAddNonNegativeCosts(monthlyUsed, targetCost) ?: return false
+            if (projected > limits.monthlyCostPlnLimit) return false
+        }
+
+        task.providerId = providerId
+        task.baseUrl = baseUrl
+        task.modelName = modelName
+        task.costPlnRemaining = targetCost
+        return true
     }
 
     private fun saveRecordToStorage(context: Context, record: TokenRecord): Boolean {
