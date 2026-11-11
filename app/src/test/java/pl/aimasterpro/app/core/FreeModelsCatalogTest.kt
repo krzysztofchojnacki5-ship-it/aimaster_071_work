@@ -62,6 +62,8 @@ class FreeModelsCatalogTest {
         assertFalse(FreeModelsCatalog.isLocalOllamaEndpoint("http://localhost:11434/v1?token=secret"))
         assertFalse(FreeModelsCatalog.isLocalOllamaEndpoint("http://localhost:11434/api/pull"))
         assertFalse(FreeModelsCatalog.isLocalOllamaEndpoint("http://public.example:11434/v1"))
+        assertFalse(FreeModelsCatalog.isLocalOllamaEndpoint("http://127.attacker.example:11434/v1"))
+        assertFalse(FreeModelsCatalog.isLocalOllamaEndpoint("http://10.attacker.example:11434/v1"))
     }
 
     @Test
