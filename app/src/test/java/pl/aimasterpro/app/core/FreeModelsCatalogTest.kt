@@ -40,6 +40,17 @@ class FreeModelsCatalogTest {
     }
 
     @Test
+    fun localOllamaEndpointMustHaveSafeSchemeAuthorityAndApiRoot() {
+        assertTrue(FreeModelsCatalog.isLocalOllamaEndpoint("http://192.168.1.50:11434/v1"))
+        assertTrue(FreeModelsCatalog.isLocalOllamaEndpoint("https://localhost:11434"))
+        assertFalse(FreeModelsCatalog.isLocalOllamaEndpoint("ftp://localhost:11434/v1"))
+        assertFalse(FreeModelsCatalog.isLocalOllamaEndpoint("http://user@localhost:11434/v1"))
+        assertFalse(FreeModelsCatalog.isLocalOllamaEndpoint("http://localhost:11434/v1?token=secret"))
+        assertFalse(FreeModelsCatalog.isLocalOllamaEndpoint("http://localhost:11434/api/pull"))
+        assertFalse(FreeModelsCatalog.isLocalOllamaEndpoint("http://public.example:11434/v1"))
+    }
+
+    @Test
     fun ollamaNameAloneNeverProvesLocalOrFreeEndpoint() {
         val publicEndpoint = "https://ollama.example:11434/v1"
         assertFalse(FreeModelsCatalog.isFreeModel("ollama", "llama3", publicEndpoint))
