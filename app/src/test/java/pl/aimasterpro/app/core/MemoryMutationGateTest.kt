@@ -73,7 +73,7 @@ class MemoryMutationGateTest {
     @Test fun permitForOneMutationCannotBeReusedForAnotherStoreOperation() {
         val request = request()
         var storeMutationResult = true
-        assertTrue(MemoryMutationGate.execute(context, request) { permit ->
+        assertTrue(MemoryMutationGate.execute(context, request) { permit: MemoryMutationPermit ->
             storeMutationResult = AiMemoryStore.removeMemory(context, "unrelated", permit)
             true
         })
