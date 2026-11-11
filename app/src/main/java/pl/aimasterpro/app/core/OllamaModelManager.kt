@@ -53,11 +53,8 @@ object OllamaModelManager {
 
     private val modelNamePattern = Regex("[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}")
 
-    fun isOllamaProvider(config: ProviderConfig): Boolean {
-        if (config.id.equals("ollama", ignoreCase = true) ||
-            config.name.contains("ollama", ignoreCase = true)) return true
-        return runCatching { URI(config.baseUrl).port == 11434 }.getOrDefault(false)
-    }
+    fun isOllamaProvider(config: ProviderConfig): Boolean =
+        FreeModelsCatalog.isLocalOllamaEndpoint(config.baseUrl)
 
     /** Converts OpenAI-compatible Ollama base URL (/v1) to the native API root. */
     fun nativeBaseUrl(baseUrl: String, allowInsecureLanOllama: Boolean = false): String {
