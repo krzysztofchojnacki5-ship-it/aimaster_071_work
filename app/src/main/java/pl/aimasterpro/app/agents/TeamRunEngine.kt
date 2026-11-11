@@ -118,9 +118,9 @@ class TeamRunEngine(
                         val orderedProviders = rankProviders(candidates.filter(isProviderAllowed))
 
                         if (orderedProviders.isEmpty()) {
-                            onLog("SYSTEM", agent.name, "[COST POLICY GUARD] Zablokowano przełączenie na niedozwolony model. Brak zweryfikowanego darmowego lub jawnie zatwierdzonego modelu zapasowego.", "BLOCKED")
+                            onLog("SYSTEM", agent.name, "[FREE FAILOVER GUARD][COST POLICY GUARD] Zablokowano przełączenie na niedozwolony model. Brak zweryfikowanego darmowego lub jawnie zatwierdzonego modelu zapasowego.", "BLOCKED")
                             runCatching { onTaskState(task, "BLOCKED", "Brak dostępnego zweryfikowanego darmowego modelu.", "", "", 0) }
-                            return@Callable TeamTaskResult(task.id, task.agentId, TeamTaskResult.Status.FAILED, "BRAK DOZWOLONEGO MODELU ZAPASOWEGO. Skonfiguruj zweryfikowany darmowy model lub jawnie zatwierdź model z nieznaną ceną.", System.currentTimeMillis() - taskStartedAt, reviewOfAgentId = task.reviewOfAgentId)
+                            return@Callable TeamTaskResult(task.id, task.agentId, TeamTaskResult.Status.FAILED, "BRAK DOSTĘPNEGO DARMOWEGO MODELU ZAPASOWEGO / BRAK DOZWOLONEGO MODELU. Skonfiguruj zweryfikowany darmowy model lub jawnie zatwierdź model z nieznaną ceną.", System.currentTimeMillis() - taskStartedAt, reviewOfAgentId = task.reviewOfAgentId)
                         }
 
                         if (!hasExplicitConfig && fallbackProviders.isEmpty() && agentProvidersMap.isEmpty()) {
