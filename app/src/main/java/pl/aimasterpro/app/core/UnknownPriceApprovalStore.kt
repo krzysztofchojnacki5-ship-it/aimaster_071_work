@@ -33,9 +33,15 @@ object UnknownPriceApprovalStore {
         val seen = hashSetOf<List<String>>()
         for (index in 0 until array.length()) {
             val item = array.getJSONObject(index)
-            val provider = item.getString("providerId")
-            val endpoint = item.getString("baseUrl")
-            val model = item.getString("modelName")
+            val providerValue = item.opt("providerId")
+            val endpointValue = item.opt("baseUrl")
+            val modelValue = item.opt("modelName")
+            require(providerValue is String && endpointValue is String && modelValue is String) {
+                "Zgoda na nieznaną cenę ma pola tożsamości o nieprawidłowym typie."
+            }
+            val provider = providerValue
+            val endpoint = endpointValue
+            val model = modelValue
             require(provider.isNotBlank() && endpoint.isNotBlank() && model.isNotBlank()) {
                 "Zgoda na nieznaną cenę ma niekompletną tożsamość."
             }
