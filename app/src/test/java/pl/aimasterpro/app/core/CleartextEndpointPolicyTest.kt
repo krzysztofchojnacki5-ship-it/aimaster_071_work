@@ -11,6 +11,7 @@ class CleartextEndpointPolicyTest {
         assertFalse(CleartextEndpointPolicy.isAllowedHost("LOCALHOST."))
         assertTrue(CleartextEndpointPolicy.isAllowedHost("127.0.0.1"))
         assertTrue(CleartextEndpointPolicy.isAllowedHost("::1"))
+        assertTrue(CleartextEndpointPolicy.isAllowedHost("[::1]"))
         assertFalse(CleartextEndpointPolicy.isAllowedHost("127.0.0.2"))
         assertTrue(CleartextEndpointPolicy.isAllowedHost("10.0.2.2"))
         assertFalse(CleartextEndpointPolicy.isAllowedHost("10.0.2.3"))
