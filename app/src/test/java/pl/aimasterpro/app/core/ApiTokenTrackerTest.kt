@@ -1476,6 +1476,62 @@ class ApiTokenTrackerTest {
     }
 
 
+
+    @Test fun fallbackRetargetToUnknownPriceRequiresFinancialCapToBeDisabled() {
+        val primaryProvider = "known-price-primary"
+        val primaryEndpoint = "https://known-price-primary.example/v1"
+        val primaryModel = "primary-free"
+        val fallbackProvider = "unknown-price-fallback"
+        val fallbackEndpoint = "https://unknown-price-fallback.example/v1"
+        val fallbackModel = "vendor/unpriced-fallback"
+        ApiTokenTracker.replaceCatalogPricingForProvider(
+            context, primaryProvider, primaryEndpoint,
+            listOf(CatalogModelPrice(primaryModel, 0.0, 0.0, explicitlyFree = true))
+        )
+        val pricingPrefs = context.getSharedPreferences("api_token_pricing_v1", Context.MODE_PRIVATE)
+        val incomplete = """[{"providerId":"unknown-price-fallback","modelName":"vendor/unpriced-fallback","baseUrl":"https://unknown-price-fallback.example/v1","inputPer1MUsd":null,"outputPer1MUsd":0.8,"explicitlyFree":false}]"""
+        assertTrue(pricingPrefs.edit().putString("catalog_model_prices", incomplete).commit())
+        assertTrue(ApiTokenTracker.setModelTokenLimit(
+            context, ModelTokenLimitConfig(primaryProvider, primaryEndpoint, primaryModel, 300L, 90)
+        ))
+        assertTrue(ApiTokenTracker.setModelTokenLimit(
+            context, ModelTokenLimitConfig(fallbackProvider, fallbackEndpoint, fallbackModel, 300L, 90)
+        ))
+        ApiTokenTracker.setLimits(context, daily = 10_000L, monthly = 25.0, perAgent = 5_000L)
+        val plan = ApiTokenTracker.planBatch(context, listOf(
+            BudgetRequest("unknown-price-fallback-task", "MASTER", primaryProvider, primaryEndpoint, primaryModel, 60L, 40L)
+        ))
+        assertEquals(setOf("unknown-price-fallback-task"), plan.allowedTaskIds)
+
+        assertFalse("Unknown-price fallback must be blocked while a financial cap is active",
+            ApiTokenTracker.retargetReservationTask(
+                context, plan.reservationId, "unknown-price-fallback-task", "MASTER",
+                fallbackProvider, fallbackEndpoint, fallbackModel
+            ))
+        assertEquals(100L, ApiTokenTracker.getModelTokenUsage(context, primaryProvider, primaryEndpoint, primaryModel).reservedTokens)
+
+        ApiTokenTracker.setLimits(context, daily = 10_000L, monthly = 0.0, perAgent = 5_000L)
+        assertTrue("Token-only fallback must work without a price catalogue entry",
+            ApiTokenTracker.retargetReservationTask(
+                context, plan.reservationId, "unknown-price-fallback-task", "MASTER",
+                fallbackProvider, fallbackEndpoint, fallbackModel
+            ))
+        assertEquals(0L, ApiTokenTracker.getModelTokenUsage(context, primaryProvider, primaryEndpoint, primaryModel).reservedTokens)
+        assertEquals(100L, ApiTokenTracker.getModelTokenUsage(context, fallbackProvider, fallbackEndpoint, fallbackModel).reservedTokens)
+
+        val usage = ApiTokenTracker.recordQuery(
+            context, fallbackProvider, fallbackModel, "MASTER", "unknown-price-fallback-task",
+            inputTokens = 30L, outputTokens = 20L, status = "REAL",
+            baseUrl = fallbackEndpoint, reservationId = plan.reservationId,
+            idempotencyKey = "unknown-price-fallback-usage"
+        )
+        assertFalse(usage.costKnown)
+        assertEquals(50L, usage.totalTokens)
+        assertEquals(50L, ApiTokenTracker.getModelTokenUsage(context, fallbackProvider, fallbackEndpoint, fallbackModel).usedTokens)
+        ApiTokenTracker.releaseBatchReservation(plan.reservationId)
+        assertEquals(0L, ApiTokenTracker.getModelTokenUsage(context, fallbackProvider, fallbackEndpoint, fallbackModel).reservedTokens)
+    }
+
     @Test fun fallbackRetargetChecksTargetModelLimitAndMovesReservationWithoutDoubleGlobalCharge() {
         val primaryProvider = "fallback-primary"
         val primaryEndpoint = "https://primary-fallback.example/v1"
