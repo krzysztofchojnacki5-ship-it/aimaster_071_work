@@ -16,19 +16,33 @@ class FreeModelsCatalogTest {
 
     @Test
     fun onlyOfficialGroqFreePlanModelsAreAllowed() {
-        assertTrue(FreeModelsCatalog.isFreeModel("groq", "openai/gpt-oss-20b"))
-        assertTrue(FreeModelsCatalog.isFreeModel("groq", "openai/gpt-oss-120b"))
-        assertTrue(FreeModelsCatalog.isFreeModel("groq", "qwen/qwen3.8-27b"))
-        assertFalse(FreeModelsCatalog.isFreeModel("groq", "llama-3.3-70b-versatile"))
-        assertEquals(FreeStatus.FREE_TIER, FreeModelsCatalog.classifyDiscoveredModel("groq", "openai/gpt-oss-20b").freeStatus)
-        assertEquals(FreeStatus.UNKNOWN, FreeModelsCatalog.classifyDiscoveredModel("groq", "llama-3.3-70b-versatile").freeStatus)
+        assertTrue(FreeModelsCatalog.isFreeModel("groq", "openai/gpt-oss-20b", "https://api.groq.com/openai/v1"))
+        assertTrue(FreeModelsCatalog.isFreeModel("groq", "openai/gpt-oss-120b", "https://api.groq.com/openai/v1"))
+        assertTrue(FreeModelsCatalog.isFreeModel("groq", "qwen/qwen3.8-27b", "https://api.groq.com/openai/v1"))
+        assertFalse(FreeModelsCatalog.isFreeModel("groq", "llama-3.3-70b-versatile", "https://api.groq.com/openai/v1"))
+        assertEquals(FreeStatus.FREE_TIER, FreeModelsCatalog.classifyDiscoveredModel("groq", "openai/gpt-oss-20b", "Groq", "groq", "https://api.groq.com/openai/v1").freeStatus)
+        assertEquals(FreeStatus.UNKNOWN, FreeModelsCatalog.classifyDiscoveredModel("groq", "llama-3.3-70b-versatile", "Groq", "groq", "https://api.groq.com/openai/v1").freeStatus)
     }
 
     @Test
     fun onlyExplicitOpenRouterFreeIdsAreAllowed() {
-        assertTrue(FreeModelsCatalog.isFreeModel("openrouter", "openrouter/free"))
-        assertTrue(FreeModelsCatalog.isFreeModel("openrouter", "qwen/model:free"))
-        assertFalse(FreeModelsCatalog.isFreeModel("openrouter", "qwen/model"))
+        assertTrue(FreeModelsCatalog.isFreeModel("openrouter", "openrouter/free", "https://openrouter.ai/api/v1"))
+        assertTrue(FreeModelsCatalog.isFreeModel("openrouter", "qwen/model:free", "https://openrouter.ai/api/v1"))
+        assertFalse(FreeModelsCatalog.isFreeModel("openrouter", "qwen/model", "https://openrouter.ai/api/v1"))
+    }
+
+    @Test
+    fun cloudProviderNamesCannotSpoofFreeTierWithoutOfficialEndpointHost() {
+        assertFalse(FreeModelsCatalog.isFreeModel("groq", "openai/gpt-oss-20b"))
+        assertFalse(FreeModelsCatalog.isFreeModel("openrouter", "qwen/model:free"))
+        assertEquals(
+            FreeStatus.UNKNOWN,
+            FreeModelsCatalog.classifyDiscoveredModel("groq", "openai/gpt-oss-20b", "Groq", "groq", "https://groq.example/v1").freeStatus
+        )
+        assertEquals(
+            FreeStatus.UNKNOWN,
+            FreeModelsCatalog.classifyDiscoveredModel("openrouter", "qwen/model:free", "OpenRouter", "openrouter", "https://openrouter.example/api/v1").freeStatus
+        )
     }
 
     @Test
@@ -71,7 +85,7 @@ class FreeModelsCatalogTest {
     fun localOllamaModelsAreFreeButCloudUnknownsStayUnknown() {
         assertFalse(FreeModelsCatalog.isFreeModel("ollama", "llama3"))
         assertTrue(FreeModelsCatalog.isFreeModel("custom", "llama3", "http://10.0.2.2:11434/v1"))
-        assertEquals(FreeStatus.UNKNOWN, FreeModelsCatalog.classifyDiscoveredModel("groq", "some-model").freeStatus)
-        assertEquals(FreeStatus.FREE_TIER, FreeModelsCatalog.classifyDiscoveredModel("openrouter", "some/model:free").freeStatus)
+        assertEquals(FreeStatus.UNKNOWN, FreeModelsCatalog.classifyDiscoveredModel("groq", "some-model", "Groq", "groq", "https://api.groq.com/openai/v1").freeStatus)
+        assertEquals(FreeStatus.FREE_TIER, FreeModelsCatalog.classifyDiscoveredModel("openrouter", "some/model:free", "OpenRouter", "openrouter", "https://openrouter.ai/api/v1").freeStatus)
     }
 }
