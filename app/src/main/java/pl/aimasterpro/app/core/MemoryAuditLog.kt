@@ -62,9 +62,11 @@ object MemoryAuditLog {
     ): Boolean {
         val matching = readRecords(context) ?: return true
         val latest = matching.lastOrNull {
-            it.actor == actor && it.mutation == mutation && it.objectId == objectId
+            it.actor == actor && it.mutation == mutation && it.objectId == objectId &&
+                (it.phase == Phase.INTENT || it.outcome == "SUCCESS" || it.outcome == "MUTATION_FAILED")
         } ?: return false
-        return latest.phase == Phase.INTENT
+        // Only COMMITTED proves completion. MUTATION_FAILED can still follow a partial store write.
+        return latest.phase != Phase.COMMITTED
     }
 
     /**
