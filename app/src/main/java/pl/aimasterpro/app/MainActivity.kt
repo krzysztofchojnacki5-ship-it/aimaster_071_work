@@ -5206,7 +5206,9 @@ class MainActivity : Activity() {
                         setOnClickListener {
                             AlertDialog.Builder(this@MainActivity)
                                 .setTitle("Usunąć własnego agenta?")
-                                .setMessage("Profil ${agent.name} zostanie usunięty z lokalnego katalogu.")
+                                .setMessage(
+                                    "Profil ${agent.name} zostanie usunięty, a jego identyfikator zapamiętany, aby ten sam profil nie został przypadkowo przywrócony. Przypisanie modelu do roli ${pl.aimasterpro.app.agents.AgentProviderRouting.roleFor(agent).label} pozostanie bez zmian, ponieważ jest wspólne dla wszystkich agentów tej roli."
+                                )
                                 .setPositiveButton("Usuń") { _, _ ->
                                     if (pl.aimasterpro.app.core.AgentManagerStore.removeCustomAgent(this@MainActivity, agent.id)) {
                                         logAgent("Menadżer agentów: usunięto profil ${agent.id}")
