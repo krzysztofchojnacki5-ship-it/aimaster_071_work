@@ -57,6 +57,29 @@ class AgentManagerStoreTest {
         assertFalse(AgentManagerStore.enabledCatalog(context).any { it.id == agent.id })
     }
 
+    @Test fun customAgentCanBeEditedWithoutChangingItsIdentityOrDisabledState() {
+        val original = custom()
+        assertTrue(AgentManagerStore.addCustomAgent(context, original))
+        assertTrue(AgentManagerStore.setEnabled(context, original.id, false))
+
+        val updated = original.copy(
+            name = "Audytor logów i bezpieczeństwa",
+            responsibility = "Sprawdza logi, uprawnienia i wycieki danych.",
+            keywords = listOf("logi", "bezpieczeństwo", "wycieki"),
+            systemPromptOverride = "Sprawdzasz logi i nigdy nie ujawniasz sekretów."
+        )
+        assertTrue(AgentManagerStore.updateCustomAgent(context, updated))
+        val snapshot = AgentManagerStore.snapshot(context)
+        assertEquals(updated, snapshot.customAgents.single())
+        assertTrue("Editing must preserve the disabled state", original.id in snapshot.disabledIds)
+        assertFalse(AgentManagerStore.enabledCatalog(context).any { it.id == original.id })
+    }
+
+    @Test fun builtInAndMissingAgentsCannotBeUpdatedAsCustomProfiles() {
+        assertFalse(AgentManagerStore.updateCustomAgent(context, custom(id = "critical-reviewer")))
+        assertFalse(AgentManagerStore.updateCustomAgent(context, custom(id = "custom-not-saved")))
+    }
+
     @Test fun invalidOrDuplicateCustomAgentIsRejected() {
         assertFalse(AgentManagerStore.addCustomAgent(context, custom(id = "bad id")))
         assertTrue(AgentManagerStore.addCustomAgent(context, custom()))
