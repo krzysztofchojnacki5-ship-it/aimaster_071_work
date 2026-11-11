@@ -4151,16 +4151,21 @@ class MainActivity : Activity() {
                 val hay = "${entry.providerName} ${entry.info.name} ${entry.info.id}".lowercase()
                 val matchesQuery = query.isBlank() || hay.contains(query.lowercase())
                 val local = entry.providerId.contains("ollama", true) || entry.baseUrl.contains("11434")
+                val unknownPrice = !local && isUnknownPriceCatalogEntry(entry)
                 val matchesFilter = when (filter) {
                     1 -> local || entry.info.freeByPricing == true
-                    2 -> entry.info.freeByPricing == false
-                    3 -> !local && entry.info.freeByPricing == null
+                    2 -> entry.info.freeByPricing == false && !unknownPrice
+                    3 -> unknownPrice
                     else -> true
                 }
                 matchesQuery && matchesFilter
             }.sortedBy { entry ->
                 val local = entry.providerId.contains("ollama", true) || entry.baseUrl.contains("11434")
-                when { local || entry.info.freeByPricing == true -> 0; entry.info.freeByPricing == null -> 1; else -> 2 }
+                when {
+                    local || entry.info.freeByPricing == true -> 0
+                    isUnknownPriceCatalogEntry(entry) -> 1
+                    else -> 2
+                }
             }
             if (entries.isEmpty()) {
                 modelsContainer.addView(TextView(this).apply {
@@ -4171,7 +4176,7 @@ class MainActivity : Activity() {
             }
             val freeCount = entries.count { it.info.freeByPricing == true || it.providerId.contains("ollama", true) || it.baseUrl.contains("11434") }
             val paidCount = entries.count { it.info.freeByPricing == false }
-            val unknownCount = entries.size - freeCount - paidCount
+            val unknownCount = entries.count { isUnknownPriceCatalogEntry(it) }
             modelsContainer.addView(TextView(this).apply {
                 text = "Wyniki: ${entries.size} • darmowe/lokalne: $freeCount • płatne: $paidCount • nieznana cena: $unknownCount\nOstatnia synchronizacja: ${modelCatalogPrefs.getLong("last_sync", 0L).takeIf { it > 0L }?.let { java.text.SimpleDateFormat("dd.MM.yyyy HH:mm", java.util.Locale.getDefault()).format(java.util.Date(it)) } ?: "brak"}"
                 setTextColor(cyan); textSize = 11f; setPadding(0, 0, 0, dp(8))
@@ -4179,12 +4184,18 @@ class MainActivity : Activity() {
             entries.take(80).forEach { entry ->
                 val info = entry.info
                 val isLocal = entry.providerId.contains("ollama", true) || entry.baseUrl.contains("11434")
+                val unknownPrice = !isLocal && isUnknownPriceCatalogEntry(entry)
+                val approvedUnknownPrice = unknownPrice && pl.aimasterpro.app.core.UnknownPriceApprovalStore.isApproved(
+                    this, entry.providerId, entry.baseUrl, info.id
+                )
                 val freeLabel = when {
                     isLocal -> "LOKALNY • BEZ OPŁAT API"
                     info.freeByPricing == true && info.promptPricePerMillion != null && info.completionPricePerMillion != null -> "FREE • CENA API = 0 (limity konta mogą obowiązywać)"
                     info.freeByPricing == true -> "FREE • JAWNE OZNACZENIE DOSTAWCY"
+                    unknownPrice && info.freeByPricing == false -> "PŁATNY • STAWKA NIEZNANA"
+                    unknownPrice -> "CENA NIEZNANA • ZGODA WYMAGANA"
                     info.freeByPricing == false -> "PŁATNY"
-                    else -> "CENA NIEZNANA"
+                    else -> "CENA NIEPOTWIERDZONA"
                 }
                 val freeColor = when {
                     isLocal || info.freeByPricing == true -> Color.rgb(65, 205, 120)
@@ -4203,7 +4214,7 @@ class MainActivity : Activity() {
                 val priceText = when {
                     isLocal -> "Lokalny model — bez opłat za API; koszty zależą od własnego sprzętu/prądu."
                     info.promptPricePerMillion != null && info.completionPricePerMillion != null -> "Wejście: \$${"%.4f".format(info.promptPricePerMillion)} / 1M • Wyjście: \$${"%.4f".format(info.completionPricePerMillion)} / 1M tokenów (USD)"
-                    else -> "Dostawca nie zwrócił danych cenowych w katalogu modeli."
+                    else -> "Dostawca nie zwrócił kompletnej stawki. Nie zakładam ceny 0 ani bezpłatnego użycia."
                 }
                 val contextText = info.contextLength?.let { " • kontekst: ${it} tokenów" }.orEmpty()
                 row.addView(TextView(this).apply { text = "$freeLabel\n$priceText$contextText\nWykryto na liście dostawcy; test odpowiedzi wykonaj przyciskiem TESTUJ."; textSize = 11f; setTextColor(freeColor); setPadding(0, 0, 0, dp(5)) })
@@ -4226,6 +4237,37 @@ class MainActivity : Activity() {
                     val provider = loadProvider(entry.providerId)
                     if (provider == null) toast("Brak profilu dostawcy.")
                     else testSpecificModel(provider, info)
+                }
+                if (unknownPrice) {
+                    smallButton(if (approvedUnknownPrice) "COFNIJ ZGODĘ" else "ZEZWÓL NA UŻYCIE") {
+                        if (approvedUnknownPrice) {
+                            val revoked = pl.aimasterpro.app.core.UnknownPriceApprovalStore.setApproved(
+                                this, entry.providerId, entry.baseUrl, info.id, false
+                            )
+                            if (revoked) {
+                                toast("Cofnięto zgodę dla ${info.id}.")
+                                renderCatalog(search.text.toString(), filterSpinner.selectedItemPosition)
+                            } else toast("Nie udało się bezpiecznie zmienić rejestru zgód.")
+                        } else {
+                            AlertDialog.Builder(this)
+                                .setTitle("Zgoda na model z nieznaną ceną")
+                                .setMessage(
+                                    "Model ${info.id} nie ma kompletnej, zweryfikowanej stawki API. Nie oznacza to, że jest darmowy. Dostawca może naliczyć opłatę według własnego cennika.\n\n" +
+                                        "Zezwolenie dotyczy tylko tego dostawcy, endpointu i modelu. Nadal obowiązują limity tokenów. Przy aktywnym miesięcznym limicie kosztów model z nieznaną ceną pozostanie zablokowany."
+                                )
+                                .setNegativeButton("Anuluj", null)
+                                .setPositiveButton("Zgadzam się — zezwól") { _, _ ->
+                                    val saved = pl.aimasterpro.app.core.UnknownPriceApprovalStore.setApproved(
+                                        this, entry.providerId, entry.baseUrl, info.id, true
+                                    )
+                                    if (saved) {
+                                        toast("Zgoda zapisana wyłącznie dla ${info.id}.")
+                                        renderCatalog(search.text.toString(), filterSpinner.selectedItemPosition)
+                                    } else toast("Nie udało się zapisać zgody. Model pozostaje zablokowany.")
+                                }
+                                .show()
+                        }
+                    }
                 }
                 row.addView(buttons)
                 modelsContainer.addView(row)
