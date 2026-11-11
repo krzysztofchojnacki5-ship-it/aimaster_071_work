@@ -25,8 +25,10 @@ object UnknownPriceApprovalStore {
         listOf(normalizedProvider(providerId), normalizedEndpoint(baseUrl), modelName.trim())
 
     private fun read(context: Context): List<Approval>? = runCatching {
-        val raw = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-            .getString(KEY, "[]") ?: "[]"
+        val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        val raw = SharedPreferencesWriteHealth.withHealthyAccess(PREFS) {
+            prefs.getString(KEY, "[]") ?: "[]"
+        }
         val array = JSONArray(raw)
         require(array.length() <= 5_000) { "Lista zgód przekracza bezpieczny rozmiar." }
         val result = mutableListOf<Approval>()
@@ -79,6 +81,7 @@ object UnknownPriceApprovalStore {
         val next = current.filterNot {
             identity(it.providerId, it.baseUrl, it.modelName) == target
         }.toMutableList()
+        if (approved && next.size >= 5_000) return false
         if (approved) next += Approval(providerId.trim(), baseUrl.trim().trimEnd('/'), modelName.trim())
         val array = JSONArray()
         next.forEach { item ->
@@ -88,8 +91,8 @@ object UnknownPriceApprovalStore {
                 .put("modelName", item.modelName))
         }
         return runCatching {
-            context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-                .edit().putString(KEY, array.toString()).commit()
+            val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            SharedPreferencesWriteHealth.commit(PREFS, prefs.edit().putString(KEY, array.toString()))
         }.getOrDefault(false)
     }
 }
