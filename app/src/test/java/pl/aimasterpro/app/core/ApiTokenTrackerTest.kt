@@ -256,7 +256,7 @@ class ApiTokenTrackerTest {
         assertEquals("A fallback must not consume another provider's reservation", 200L, ApiTokenTracker.activeReservationStats().tokens)
 
         ApiTokenTracker.recordQuery(
-            context, "provider-a", "different-model", "RESEARCHER", "fallback-task",
+            context, "provider-a", "gpt-different-model", "RESEARCHER", "fallback-task",
             inputTokens = 10, outputTokens = 5, status = "REAL",
             baseUrl = "https://a.invalid/v1", reservationId = plan.reservationId
         )
@@ -964,6 +964,9 @@ class ApiTokenTrackerTest {
     }
 
     @Test fun staleUnavailableRecoveryCannotDowngradeCanonicalRealUsage() {
+        ApiTokenTracker.replaceCatalogPricingForProvider(
+            context, "gateway", "", listOf(CatalogModelPrice("canonical-model-v2", 0.2, 0.4))
+        )
         val key = "team:task-canonical-replay:gateway"
         val actual = ApiTokenTracker.recordQuery(
             context, "gateway", "canonical-model-v2", "RESEARCHER", "task-canonical-replay",
@@ -1199,6 +1202,9 @@ class ApiTokenTrackerTest {
     }
 
     @Test fun ambiguousUsageLedgerCommitQuarantinesBudgetAndFurtherWrites() {
+        ApiTokenTracker.replaceCatalogPricingForProvider(
+            context, "provider", "", listOf(CatalogModelPrice("model", 0.2, 0.4))
+        )
         val failing = AmbiguousCommitContext(context, "api_token_tracker_records_v1")
         val result = runCatching {
             ApiTokenTracker.recordQuery(
@@ -1537,7 +1543,7 @@ class ApiTokenTrackerTest {
             listOf(CatalogModelPrice(primaryModel, 0.0, 0.0, explicitlyFree = true))
         )
         val pricingPrefs = context.getSharedPreferences("api_token_pricing_v1", Context.MODE_PRIVATE)
-        val incomplete = """[{"providerId":"unknown-price-fallback","modelName":"vendor/unpriced-fallback","baseUrl":"https://unknown-price-fallback.example/v1","inputPer1MUsd":null,"outputPer1MUsd":0.8,"explicitlyFree":false}]"""
+        val incomplete = """[{"providerId":"primary-free","modelName":"primary-free-model","baseUrl":"https://primary-free.example/v1","inputPer1MUsd":0.0,"outputPer1MUsd":0.0,"explicitlyFree":true},{"providerId":"unknown-price-fallback","modelName":"vendor/unpriced-fallback","baseUrl":"https://unknown-price-fallback.example/v1","inputPer1MUsd":null,"outputPer1MUsd":0.8,"explicitlyFree":false}]"""
         assertTrue(pricingPrefs.edit().putString("catalog_model_prices", incomplete).commit())
         assertTrue(ApiTokenTracker.setModelTokenLimit(
             context, ModelTokenLimitConfig(primaryProvider, primaryEndpoint, primaryModel, 300L, 90)
