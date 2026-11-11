@@ -28,8 +28,12 @@ data class TokenRecord(
     /** Tokens written to a 1-hour prompt cache; zero for legacy ledger rows. */
     val cacheWrite1hTokens: Long = 0L,
     /** False when the provider did not expose a reasoning-token breakdown. */
-    val reasoningTokensKnown: Boolean = false
+    val reasoningTokensKnown: Boolean = false,
+    /** False when usage is known but pricing has not been verified. Legacy rows default to true. */
+    val costKnown: Boolean = true
 )
+
+class UnknownModelPricingException(message: String) : IllegalStateException(message)
 
 data class ModelPricing(
     val modelKey: String, // model name or prefix
@@ -147,7 +151,8 @@ object ApiTokenTracker {
         idempotencyKey: String = "",
         cacheWriteTokens: Long = 0L,
         cacheWrite1hTokens: Long = 0L,
-        reasoningTokensKnown: Boolean = false
+        reasoningTokensKnown: Boolean = false,
+        allowUnknownPricing: Boolean = false
     ): TokenRecord {
         require(inputTokens >= 0L && outputTokens >= 0L && reasoningTokens >= 0L &&
             reasoningTokens <= outputTokens && cachedTokens >= 0L && cacheWriteTokens >= 0L && cacheWrite1hTokens >= 0L &&
@@ -175,18 +180,21 @@ object ApiTokenTracker {
             // never let a later estimate downgrade already-known REAL usage.
             if (existing.status == "UNAVAILABLE" && status == "REAL") {
                 val upgradedTotal = Math.addExact(inputTokens, outputTokens)
-                val upgradePricing = getPricing(context, modelName, providerId, baseUrl)
-                require(upgradePricing.inputPer1MUsd.isFinite() && upgradePricing.outputPer1MUsd.isFinite() &&
-                    upgradePricing.inputPer1MUsd >= 0.0 && upgradePricing.outputPer1MUsd >= 0.0) {
-                    "Nieprawidłowy cennik modelu."
+                val upgradePricing = try {
+                    getPricing(context, modelName, providerId, baseUrl)
+                } catch (error: UnknownModelPricingException) {
+                    if (!allowUnknownPricing) throw error
+                    null
                 }
                 val upgradeRate = getExchangeRate(context)
                 require(upgradeRate.isFinite() && upgradeRate > 0.0) {
                     "Nieprawidłowy kurs USD/PLN; rozliczenie API wstrzymano."
                 }
-                val upgradeUsd = calculateUsdCost(inputTokens, outputTokens, reasoningTokens, cachedTokens, cacheWriteTokens, cacheWrite1hTokens, reasoningTokensKnown, upgradePricing)
-                val upgradePln = upgradeUsd * upgradeRate
-                require(upgradeUsd.isFinite() && upgradePln.isFinite() && upgradeUsd >= 0.0 && upgradePln >= 0.0) {
+                val upgradeUsd = upgradePricing?.let {
+                    calculateUsdCost(inputTokens, outputTokens, reasoningTokens, cachedTokens, cacheWriteTokens, cacheWrite1hTokens, reasoningTokensKnown, it)
+                }
+                val upgradePln = upgradeUsd?.times(upgradeRate)
+                require(upgradeUsd == null || (upgradeUsd.isFinite() && upgradePln!!.isFinite() && upgradeUsd >= 0.0 && upgradePln >= 0.0)) {
                     "Nieprawidłowy koszt użycia API."
                 }
                 val upgraded = existing.copy(
@@ -201,8 +209,9 @@ object ApiTokenTracker {
                     reasoningTokensKnown = reasoningTokensKnown || reasoningTokens > 0L,
                     modelName = modelName,
                     status = "REAL",
-                    costUsd = upgradeUsd,
-                    costPln = upgradePln
+                    costUsd = upgradeUsd ?: 0.0,
+                    costPln = upgradePln ?: 0.0,
+                    costKnown = upgradeUsd != null
                 )
                 check(saveRecordToStorage(context, upgraded)) {
                     "Nie udało się trwale uzgodnić rzeczywistego usage z wcześniejszym wpisem UNAVAILABLE."
@@ -224,14 +233,17 @@ object ApiTokenTracker {
         }
 
         val total = Math.addExact(inputTokens, outputTokens)
-        val pricing = getPricing(context, modelName, providerId, baseUrl)
-        require(pricing.inputPer1MUsd.isFinite() && pricing.outputPer1MUsd.isFinite() &&
-            pricing.inputPer1MUsd >= 0.0 && pricing.outputPer1MUsd >= 0.0) { "Nieprawidłowy cennik modelu." }
+        val pricing = try {
+            getPricing(context, modelName, providerId, baseUrl)
+        } catch (error: UnknownModelPricingException) {
+            if (!allowUnknownPricing) throw error
+            null
+        }
         val exchangeRate = getExchangeRate(context)
         require(exchangeRate.isFinite() && exchangeRate > 0.0) { "Nieprawidłowy kurs USD/PLN; rozliczenie API wstrzymano." }
-        val usd = calculateUsdCost(inputTokens, outputTokens, reasoningTokens, cachedTokens, cacheWriteTokens, cacheWrite1hTokens, reasoningTokensKnown, pricing)
-        val pln = usd * exchangeRate
-        require(usd.isFinite() && pln.isFinite() && usd >= 0.0 && pln >= 0.0) { "Nieprawidłowy koszt użycia API." }
+        val usd = pricing?.let { calculateUsdCost(inputTokens, outputTokens, reasoningTokens, cachedTokens, cacheWriteTokens, cacheWrite1hTokens, reasoningTokensKnown, it) }
+        val pln = usd?.times(exchangeRate)
+        require(usd == null || (usd.isFinite() && pln!!.isFinite() && usd >= 0.0 && pln >= 0.0)) { "Nieprawidłowy koszt użycia API." }
 
         val record = TokenRecord(
             queryId = stableQueryId,
@@ -249,8 +261,9 @@ object ApiTokenTracker {
             cacheWrite1hTokens = cacheWrite1hTokens,
             reasoningTokensKnown = reasoningTokensKnown || reasoningTokens > 0L,
             status = status,
-            costUsd = usd,
-            costPln = pln
+            costUsd = usd ?: 0.0,
+            costPln = pln ?: 0.0,
+            costKnown = usd != null
         )
 
         // Keep the usage visible and charged against the in-process reservation even if disk
@@ -370,6 +383,7 @@ object ApiTokenTracker {
                 .put("status", r.status)
                 .put("usd", r.costUsd)
                 .put("pln", r.costPln)
+                .put("costKnown", r.costKnown)
             )
         }
         // Usage may represent a billable provider response. Return the commit result so
@@ -458,7 +472,8 @@ object ApiTokenTracker {
                 reasoningTokensKnown = reasoningKnown,
                 status = status,
                 costUsd = costUsd,
-                costPln = costPln
+                costPln = costPln,
+                costKnown = if (o.has("costKnown")) o.opt("costKnown") as? Boolean ?: throw IllegalArgumentException("Invalid cost-known flag.") else true
             ))
         }
         list
@@ -616,8 +631,8 @@ object ApiTokenTracker {
             if (explicitlyFree == true && allRates.all { it == null || it == 0.0 }) {
                 return ModelPricing(modelName, 0.0, 0.0)
             }
-            require(input != null && output != null) {
-                "Katalog cen nie zawiera kompletnej stawki wejścia i wyjścia dla modelu $modelName."
+            if (input == null || output == null) {
+                throw UnknownModelPricingException("Katalog cen nie zawiera kompletnej stawki wejścia i wyjścia dla modelu $modelName.")
             }
             // A contradictory free flag never erases published paid rates.
             return ModelPricing(modelName, input, output, cached, cacheWrite, reasoning, cacheWrite1h)
@@ -714,8 +729,8 @@ object ApiTokenTracker {
         totalTokens = sumTokenCounts(records.map { it.totalTokens }),
         reasoningTokens = sumTokenCounts(records.map { it.reasoningTokens }),
         cachedTokens = sumTokenCounts(records.map { it.cachedTokens }),
-        costUsd = sumNonNegativeCosts(records.map { it.costUsd }),
-        costPln = sumNonNegativeCosts(records.map { it.costPln })
+        costUsd = sumNonNegativeCosts(records.filter { it.costKnown }.map { it.costUsd }),
+        costPln = sumNonNegativeCosts(records.filter { it.costKnown }.map { it.costPln })
     )
 
     /**
