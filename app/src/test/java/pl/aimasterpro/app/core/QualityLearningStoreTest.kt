@@ -15,12 +15,16 @@ class QualityLearningStoreTest {
 
     @Before fun setUp() {
         SharedPreferencesWriteHealth.resetForTests("ai_quality_learning_v1")
+        SharedPreferencesWriteHealth.resetForTests("ai_memory_audit_log_v1")
         context = RuntimeEnvironment.getApplication()
+        context.getSharedPreferences("ai_memory_audit_log_v1", Context.MODE_PRIVATE).edit().clear().commit()
         context.getSharedPreferences("ai_quality_learning_v1", Context.MODE_PRIVATE).edit().clear().commit()
         context.getSharedPreferences("ai_master_memory_store_v1", Context.MODE_PRIVATE).edit().remove("memories").commit()
     }
     @After fun tearDown() {
         SharedPreferencesWriteHealth.resetForTests("ai_quality_learning_v1")
+        SharedPreferencesWriteHealth.resetForTests("ai_memory_audit_log_v1")
+        context.getSharedPreferences("ai_memory_audit_log_v1", Context.MODE_PRIVATE).edit().clear().commit()
         context.getSharedPreferences("ai_quality_learning_v1", Context.MODE_PRIVATE).edit().clear().commit()
         context.getSharedPreferences("ai_master_memory_store_v1", Context.MODE_PRIVATE).edit().remove("memories").commit()
     }
@@ -41,6 +45,11 @@ class QualityLearningStoreTest {
         val proposal = QualityLearningStore.addProposal(context, "Preferuj model A dla kodu", 8, "wstępna", listOf("t1"), listOf("coder"), listOf("groq/model-a"))
         assertFalse(AiMemoryStore.getMemories(context).any { it.contains("Preferuj model A") })
         assertTrue(QualityLearningStore.setProposalStatus(context, proposal.id, "APPROVED", "test-approval:${proposal.id}"))
+        val audit = MemoryAuditLog.readVerified(context)
+        assertTrue(audit != null && audit.any {
+            it.mutation == "APPROVE_PROPOSAL" && it.objectId == proposal.id &&
+                it.phase == MemoryAuditLog.Phase.COMMITTED && it.outcome == "SUCCESS"
+        })
         assertTrue(AiMemoryStore.getMemories(context).any { it.contains("Preferuj model A") })
         assertEquals("APPROVED", QualityLearningStore.proposals(context).single().status)
     }
@@ -133,7 +142,7 @@ class QualityLearningStoreTest {
         val prefs = context.getSharedPreferences("ai_quality_learning_v1", Context.MODE_PRIVATE)
         val corrupt = """[{"id":"proposal-1","text":"old proposal"},null]"""
         assertTrue(prefs.edit().putString("proposals", corrupt).commit())
-        assertFalse(QualityLearningStore.setProposalStatus(context, "proposal-1", "APPROVED"))
+        assertFalse(QualityLearningStore.setProposalStatus(context, "proposal-1", "APPROVED", ""))
         assertTrue(runCatching {
             QualityLearningStore.addProposal(context, "new proposal", 1, "low", emptyList(), emptyList(), emptyList())
         }.isFailure)
@@ -169,7 +178,7 @@ class QualityLearningStoreTest {
         val corrupt = """[{"id":"p1","text":"proposal","status":"PROPOSAL","created":1,"updated":1,"evidence":2.5,"confidence":"low","tasks":[],"agents":[],"models":[]}]"""
         assertTrue(prefs.edit().putString("proposals", corrupt).commit())
         assertTrue(QualityLearningStore.proposals(context).isEmpty())
-        assertFalse(QualityLearningStore.setProposalStatus(context, "p1", "APPROVED"))
+        assertFalse(QualityLearningStore.setProposalStatus(context, "p1", "APPROVED", ""))
         assertEquals(corrupt, prefs.getString("proposals", null))
     }
 
@@ -247,7 +256,7 @@ class QualityLearningStoreTest {
         QualityLearningStore.rate(context, "task-1", "AGENT", 1, "Nie zapisuj")
         assertTrue(QualityLearningStore.feedback(context).isEmpty())
         assertTrue(QualityLearningStore.proposals(context).isEmpty())
-        assertFalse(QualityLearningStore.setProposalStatus(context, "missing", "APPROVED"))
+        assertFalse(QualityLearningStore.setProposalStatus(context, "missing", "APPROVED", ""))
         assertTrue(runCatching {
             QualityLearningStore.addProposal(context, "Nie zapisuj", 1, "low", emptyList(), emptyList(), emptyList())
         }.isFailure)
