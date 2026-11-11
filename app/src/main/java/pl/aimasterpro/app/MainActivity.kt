@@ -4845,7 +4845,44 @@ class MainActivity : Activity() {
         val kindOptions = listOf("OpenAI-compatible", "Google Gemini API", "Anthropic API")
         kindSpinner.adapter = ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item, kindOptions)
         kindSpinner.setSelection(when (old.kind) { ProviderKind.OPENAI_COMPATIBLE -> 0; ProviderKind.GEMINI -> 1; ProviderKind.ANTHROPIC -> 2 })
-        listOf(TextView(this).apply { text = "Typ dostawcy"; setTextColor(white) }, kindSpinner, name, url, model, key, allowLanOllama, lanSecurityNote).forEach { box.addView(it); if (it is EditText) it.setPadding(dp(12), dp(8), dp(12), dp(8)) }
+        val detectionStatus = TextView(this).apply {
+            setTextColor(muted); textSize = 11f
+        }
+        val detectProviderButton = TextView(this).apply {
+            text = "WYKRYJ DOSTAWCĘ Z KLUCZA"
+            textSize = 12f; gravity = Gravity.CENTER; setTextColor(white)
+            setPadding(dp(12), dp(10), dp(12), dp(10)); background = ripple(panel, 9)
+            setOnClickListener {
+                val entered = key.text.toString().trim().removePrefix("Bearer ").trim()
+                val detected = pl.aimasterpro.app.core.ProviderKeyDetector.detect(entered)
+                if (detected == null) {
+                    detectionStatus.text = if (pl.aimasterpro.app.core.ProviderKeyDetector.isAmbiguousGenericSecret(entered)) {
+                        "Prefiks sk- jest niejednoznaczny i występuje u wielu dostawców. Wybierz typ ręcznie; nie zgaduję."
+                    } else {
+                        "Nie rozpoznano prefiksu. Wybierz typ i Base URL ręcznie."
+                    }
+                    toast("Nie udało się jednoznacznie rozpoznać dostawcy.")
+                } else {
+                    kindSpinner.setSelection(when (detected.kind) {
+                        ProviderKind.GEMINI -> 1
+                        ProviderKind.ANTHROPIC -> 2
+                        else -> 0
+                    })
+                    val endpointWasEmpty = url.text.toString().trim().isBlank()
+                    if (endpointWasEmpty) url.setText(detected.defaultBaseUrl)
+                    if (old.name.equals("Własny endpoint", true) || name.text.toString().isBlank()) {
+                        name.setText(detected.providerName)
+                    }
+                    detectionStatus.text = "Rozpoznano: ${detected.providerName}. ${if (endpointWasEmpty) "Ustawiono domyślny Base URL." else "Zachowano wpisany Base URL."} Klucz analizowano wyłącznie lokalnie."
+                    toast("Wykryto dostawcę: ${detected.providerName}.")
+                }
+            }
+        }
+        listOf(
+            TextView(this).apply { text = "Typ dostawcy"; setTextColor(white) },
+            kindSpinner, name, url, model, key, detectProviderButton, detectionStatus,
+            allowLanOllama, lanSecurityNote
+        ).forEach { box.addView(it); if (it is EditText) it.setPadding(dp(12), dp(8), dp(12), dp(8)) }
         AlertDialog.Builder(this).setTitle(if (recoverSecret) "Odzyskiwanie profilu dostawcy" else "Konfiguracja dostawcy").setView(box)
             .setNegativeButton("Anuluj", null)
             .setPositiveButton("Zapisz") { _, _ ->
