@@ -1386,4 +1386,49 @@ class ApiTokenTrackerTest {
         ApiTokenTracker.releaseBatchReservation(retry.reservationId)
     }
 
+
+    @Test fun actualUsageReconcilesModelReservationAndReleasedBudgetCanBeReused() {
+        val provider = "model-reconcile-provider"
+        val endpoint = "https://model-reconcile.example/v1"
+        val model = "vendor/reconcile-model"
+        ApiTokenTracker.replaceCatalogPricingForProvider(
+            context, provider, endpoint,
+            listOf(CatalogModelPrice(model, 0.0, 0.0, explicitlyFree = true))
+        )
+        assertTrue(ApiTokenTracker.setModelTokenLimit(
+            context, ModelTokenLimitConfig(provider, endpoint, model, 100L, 90)
+        ))
+
+        val plan = ApiTokenTracker.planBatch(context, listOf(
+            BudgetRequest("reconcile-task", "MASTER", provider, endpoint, model, 50L, 30L)
+        ))
+        assertEquals(setOf("reconcile-task"), plan.allowedTaskIds)
+        assertTrue(plan.reservationId.isNotBlank())
+        assertEquals(80L, ApiTokenTracker.getModelTokenUsage(context, provider, endpoint, model).reservedTokens)
+
+        ApiTokenTracker.recordQuery(
+            context, provider, model, "MASTER", "reconcile-task",
+            inputTokens = 20L, outputTokens = 15L, status = "REAL",
+            baseUrl = endpoint, reservationId = plan.reservationId,
+            idempotencyKey = "model-reconcile-real-usage"
+        )
+        val during = ApiTokenTracker.getModelTokenUsage(context, provider, endpoint, model)
+        assertEquals("Actual usage must be booked in the ledger", 35L, during.usedTokens)
+        assertEquals("Only the unused part of the estimate remains reserved", 45L, during.reservedTokens)
+        assertEquals(20L, during.remainingTokens)
+
+        ApiTokenTracker.completeReservationTask(plan.reservationId, "reconcile-task")
+        ApiTokenTracker.requestBatchReservationRelease(plan.reservationId)
+        val after = ApiTokenTracker.getModelTokenUsage(context, provider, endpoint, model)
+        assertEquals(35L, after.usedTokens)
+        assertEquals(0L, after.reservedTokens)
+        assertEquals(65L, after.remainingTokens)
+
+        val exactRemainder = ApiTokenTracker.planBatch(context, listOf(
+            BudgetRequest("reconcile-exact-remainder", "MASTER", provider, endpoint, model, 65L, 0L)
+        ))
+        assertEquals(setOf("reconcile-exact-remainder"), exactRemainder.allowedTaskIds)
+        ApiTokenTracker.releaseBatchReservation(exactRemainder.reservationId)
+    }
+
 }
