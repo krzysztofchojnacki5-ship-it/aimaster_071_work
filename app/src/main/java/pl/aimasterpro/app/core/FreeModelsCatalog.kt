@@ -121,6 +121,18 @@ object FreeModelsCatalog {
         "qwen/qwen3.8-27b"
     )
 
+    private fun isLocalIpv6Address(host: String): Boolean {
+        // A colon is required before parsing, so InetAddress never performs a DNS lookup.
+        // Reject scoped literals here: endpoint identity must not depend on a machine-local
+        // interface name, and only actual IPv6 addresses may qualify as local.
+        if (!host.contains(':') || '%' in host) return false
+        val address = runCatching { java.net.InetAddress.getByName(host) as? java.net.Inet6Address }
+            .getOrNull() ?: return false
+        val firstByte = address.address.firstOrNull()?.toInt()?.and(0xff) ?: return false
+        val uniqueLocal = (firstByte and 0xfe) == 0xfc // fc00::/7
+        return address.isLoopbackAddress || address.isLinkLocalAddress || uniqueLocal
+    }
+
     fun isLocalOllamaEndpoint(baseUrl: String): Boolean {
         val parsed = runCatching { java.net.URI(baseUrl.trim()) }.getOrNull() ?: return false
         if (!(parsed.scheme.equals("http", true) || parsed.scheme.equals("https", true)) ||
@@ -128,9 +140,9 @@ object FreeModelsCatalog {
             parsed.rawUserInfo != null || parsed.rawQuery != null || parsed.rawFragment != null ||
             parsed.path.orEmpty().trimEnd('/').let { it.isNotEmpty() && it != "/v1" }) return false
         val host = parsed.host.lowercase(Locale.ROOT).removePrefix("[").removeSuffix("]")
-        return host == "localhost" || host.endsWith(".local") || host == "::1" ||
+        return host == "localhost" || host.endsWith(".local") ||
             host == "127.0.0.1" || CleartextEndpointPolicy.isPrivateLanIpv4(host) ||
-            host.startsWith("fe80:") || host.startsWith("fc") || host.startsWith("fd")
+            isLocalIpv6Address(host)
     }
 
     private fun isOfficialHttpsEndpoint(baseUrl: String, host: String, apiPath: String): Boolean =
