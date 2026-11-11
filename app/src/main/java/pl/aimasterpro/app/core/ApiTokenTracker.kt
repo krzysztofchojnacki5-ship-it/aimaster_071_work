@@ -213,8 +213,7 @@ object ApiTokenTracker {
         ModelPricing("gemini", 0.075, 0.30),
         ModelPricing("gpt-4o-mini", 0.15, 0.60),
         ModelPricing("gpt-", 2.50, 10.00),
-        ModelPricing("claude", 3.00, 15.00),
-        ModelPricing("default", 0.50, 1.50)
+        ModelPricing("claude", 3.00, 15.00)
     )
 
     private fun calculateUsdCost(
@@ -259,7 +258,6 @@ object ApiTokenTracker {
         cacheWriteTokens: Long = 0L,
         cacheWrite1hTokens: Long = 0L,
         reasoningTokensKnown: Boolean = false,
-        allowUnknownPricing: Boolean = false
     ): TokenRecord {
         require(inputTokens >= 0L && outputTokens >= 0L && reasoningTokens >= 0L &&
             reasoningTokens <= outputTokens && cachedTokens >= 0L && cacheWriteTokens >= 0L && cacheWrite1hTokens >= 0L &&
@@ -290,12 +288,17 @@ object ApiTokenTracker {
                 val upgradePricing = try {
                     getPricing(context, modelName, providerId, baseUrl)
                 } catch (error: UnknownModelPricingException) {
-                    val unavailableAccounting = status == "UNAVAILABLE"
-                    if (!unavailableAccounting && !allowUnknownPricing && !hasMatchingActiveReservation(
-                        reservationId, taskId, agentId, providerId, baseUrl, modelName
-                    )) throw error
-                    if (!unavailableAccounting) require(getLimits(context).monthlyCostPlnLimit == 0.0) {
-                        "Nieznany koszt modelu wymaga wyłączenia limitu finansowego i świadomej zgody; limit tokenów nadal obowiązuje."
+                    val unavailableAccounting = existing.status == "UNAVAILABLE"
+                    if (!unavailableAccounting) {
+                        require(hasUnknownPriceApproval(context, providerId, baseUrl, modelName)) {
+                            "Nieznana cena wymaga osobnej zgody dla tego dostawcy, endpointu i modelu."
+                        }
+                        require(hasMatchingActiveReservation(
+                            reservationId, taskId, agentId, providerId, baseUrl, modelName
+                        )) { "Nieznana cena wymaga aktywnej rezerwacji tokenów dla dokładnej tożsamości modelu." }
+                        require(getLimits(context).monthlyCostPlnLimit == 0.0) {
+                            "Nieznany koszt modelu wymaga wyłączenia limitu finansowego; limit tokenów nadal obowiązuje."
+                        }
                     }
                     null
                 }
@@ -350,12 +353,17 @@ object ApiTokenTracker {
             getPricing(context, modelName, providerId, baseUrl)
         } catch (error: UnknownModelPricingException) {
             val unavailableAccounting = status == "UNAVAILABLE"
-                    if (!unavailableAccounting && !allowUnknownPricing && !hasMatchingActiveReservation(
-                        reservationId, taskId, agentId, providerId, baseUrl, modelName
-                    )) throw error
-                    if (!unavailableAccounting) require(getLimits(context).monthlyCostPlnLimit == 0.0) {
-                        "Nieznany koszt modelu wymaga wyłączenia limitu finansowego i świadomej zgody; limit tokenów nadal obowiązuje."
-                    }
+            if (!unavailableAccounting) {
+                require(hasUnknownPriceApproval(context, providerId, baseUrl, modelName)) {
+                    "Nieznana cena wymaga osobnej zgody dla tego dostawcy, endpointu i modelu."
+                }
+                require(hasMatchingActiveReservation(
+                    reservationId, taskId, agentId, providerId, baseUrl, modelName
+                )) { "Nieznana cena wymaga aktywnej rezerwacji tokenów dla dokładnej tożsamości modelu." }
+                require(getLimits(context).monthlyCostPlnLimit == 0.0) {
+                    "Nieznany koszt modelu wymaga wyłączenia limitu finansowego; limit tokenów nadal obowiązuje."
+                }
+            }
                     null
         }
         val exchangeRate = getExchangeRate(context)
@@ -536,7 +544,8 @@ object ApiTokenTracker {
         val pricing = try {
             getPricing(context, modelName, providerId, baseUrl)
         } catch (error: UnknownModelPricingException) {
-            if (limits.monthlyCostPlnLimit > 0.0) return false
+            if (limits.monthlyCostPlnLimit > 0.0 ||
+                !hasUnknownPriceApproval(context, providerId, baseUrl, modelName)) return false
             null
         }
         val targetCost = if (pricing == null) {
@@ -873,6 +882,27 @@ object ApiTokenTracker {
         return defaultPricing.last().copy()
     }
 
+    private fun hasUnknownPriceApproval(
+        context: Context, providerId: String, baseUrl: String, modelName: String
+    ): Boolean {
+        if (UnknownPriceApprovalStore.isApproved(context, providerId, baseUrl, modelName)) return true
+        // Model profiles have their own IDs but inherit catalog identity from the parent provider.
+        // Resolve that one unambiguous provider entry before checking the user's exact-scope consent.
+        val canonicalProvider = runCatching {
+            val catalog = JSONArray(context.getSharedPreferences(PRICING_PREFS, Context.MODE_PRIVATE)
+                .getString("catalog_model_prices", "[]") ?: "[]")
+            val normalizedBase = baseUrl.trim().trimEnd('/').lowercase(Locale.ROOT)
+            val matches = (0 until catalog.length()).mapNotNull { index ->
+                catalog.optJSONObject(index)?.takeIf { row ->
+                    row.optString("modelName") == modelName &&
+                        row.optString("baseUrl").trim().trimEnd('/').lowercase(Locale.ROOT) == normalizedBase
+                }?.optString("providerId")?.takeIf(String::isNotBlank)
+            }.distinct()
+            matches.singleOrNull()
+        }.getOrNull() ?: return false
+        return UnknownPriceApprovalStore.isApproved(context, canonicalProvider, baseUrl, modelName)
+    }
+
     @Synchronized
     fun getExchangeRate(context: Context): Double {
         val prefs = context.getSharedPreferences(PRICING_PREFS, Context.MODE_PRIVATE)
@@ -1060,6 +1090,10 @@ object ApiTokenTracker {
             } catch (error: UnknownModelPricingException) {
                 if (limits.monthlyCostPlnLimit > 0.0) {
                     blocked[request.taskId] = "Wstrzymano: cena modelu jest nieznana, a miesięczny limit finansowy jest aktywny."
+                    return@forEach
+                }
+                if (!hasUnknownPriceApproval(context, request.providerId, request.baseUrl, request.modelName)) {
+                    blocked[request.taskId] = "Wstrzymano: nieznana cena wymaga osobnej zgody dla tego dostawcy, endpointu i modelu."
                     return@forEach
                 }
                 null
