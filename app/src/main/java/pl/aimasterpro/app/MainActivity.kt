@@ -2049,16 +2049,15 @@ class MainActivity : Activity() {
                     }
                     // Specialist IDs and chat-role IDs are separate namespaces. Resolve each
                     // specialist to the matching user-configured role profile, but only use it
-                    // when the profile is complete and explicitly classified as free/local.
-                    // Otherwise use the already selected MASTER profile; TeamRunEngine performs
-                    // a second independent free-model guard before every network request.
+                    // when the profile is complete and allowed by the cost policy (verified free
+                    // or explicitly approved unknown price). TeamRunEngine repeats this guard.
                     val batchAgentConfigsMap = tasks.mapNotNull { task ->
                         val spec = AgentCatalog.find(task.agentId) ?: return@mapNotNull null
                         val role = AgentProviderRouting.roleFor(spec)
                         val assignedId = agentProviders[role.name] ?: resolvedMasterProviderId().orEmpty()
                         val assigned = loadProvider(assignedId)
                         val usableAssigned = assigned?.takeIf { candidate ->
-                            providerReady(candidate) && isVerifiedFreeConfig(candidate)
+                            providerReady(candidate) && isProviderAllowedForRouting(candidate)
                         }
                         task.agentId to (usableAssigned ?: safeConfig)
                     }.toMap()
@@ -6748,7 +6747,7 @@ class MainActivity : Activity() {
     }
 
     /**
-     * Executes a durable queue item through the same provider routing, free-model guard,
+     * Executes a durable queue item through the same provider routing, cost-policy guard,
      * Smart Budget, usage ledger, checkpoints and result archive used by MASTER chat.
      */
     private fun executeQueuedMasterTask(taskId: String) {
@@ -6784,9 +6783,9 @@ class MainActivity : Activity() {
             val assignedId = agentProviders[role.name] ?: resolvedMasterProviderId().orEmpty()
             spec.id to loadProvider(assignedId)
         }
-        if (configByAgent.values.any { it == null || !providerReady(it) || !isVerifiedFreeConfig(it) }) {
+        if (configByAgent.values.any { it == null || !providerReady(it) || !isProviderAllowedForRouting(it) }) {
             activeQueueTaskId = ""
-            toast("Brak gotowego, zweryfikowanego darmowego modelu dla co najmniej jednego agenta. Nie wysłano żądań.")
+            toast("Brak gotowego modelu dozwolonego przez politykę kosztów dla co najmniej jednego agenta. Nie wysłano żądań.")
             return
         }
         val configs = configByAgent.mapValues { it.value!! }
