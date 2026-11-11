@@ -52,7 +52,7 @@ class AgentRoutingPolicyTest {
             "Sprawdź bezpieczeństwo i klucze API w aplikacji",
             catalog = listOf(custom)
         )
-        assertEquals(Mode.ONE_SPECIALIST, result.mode)
+        assertEquals(AgentRoutingPolicy.Mode.ONE_SPECIALIST, result.mode)
         assertEquals(custom.id, result.agents.single().id)
     }
 
