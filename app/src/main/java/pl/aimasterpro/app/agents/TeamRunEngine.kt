@@ -468,7 +468,14 @@ class TeamRunEngine(
                                         actualProviderId, actualModel, attemptCount
                                     )
                                 }
-                                completedResult
+                                // A report is not a completed durable task while token usage or
+                                // the recovery archive is pending. The caller (including MASTER queue)
+                                // must keep it BLOCKED until the missing persistence is recovered.
+                                if (usageAccountingPending || !resultPersisted) {
+                                    completedResult.copy(status = TeamTaskResult.Status.BLOCKED)
+                                } else {
+                                    completedResult
+                                }
                             }
                         } catch (t: Throwable) {
                             val err = "${t.javaClass.simpleName}: ${t.message ?: "Nieznany błąd"}"
