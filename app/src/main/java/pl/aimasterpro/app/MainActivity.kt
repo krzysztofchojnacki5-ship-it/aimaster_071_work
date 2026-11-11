@@ -4190,7 +4190,7 @@ class MainActivity : Activity() {
                 })
                 return
             }
-            val freeCount = entries.count { it.info.freeByPricing == true || it.providerId.contains("ollama", true) || it.baseUrl.contains("11434") }
+            val freeCount = entries.count { it.info.freeByPricing == true || pl.aimasterpro.app.core.FreeModelsCatalog.isLocalOllamaEndpoint(it.baseUrl) }
             val paidCount = entries.count { it.info.freeByPricing == false && !isUnknownPriceCatalogEntry(it) }
             val unknownCount = entries.count { isUnknownPriceCatalogEntry(it) }
             modelsContainer.addView(TextView(this).apply {
