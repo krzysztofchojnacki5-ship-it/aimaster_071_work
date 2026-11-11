@@ -59,7 +59,7 @@ object MemoryMutationGate {
 
     @Synchronized
     fun execute(context: Context, request: MemoryGovernance.Request, mutation: () -> Boolean): Boolean =
-        execute(context, request) { mutation() }
+        execute(context, request) { _: MemoryMutationPermit -> mutation() }
 
     private fun auditEvent(
         request: MemoryGovernance.Request,
