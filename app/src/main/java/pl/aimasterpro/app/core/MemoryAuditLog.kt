@@ -50,6 +50,24 @@ object MemoryAuditLog {
     fun readVerified(context: Context): List<Record>? = readRecords(context)
 
     /**
+     * Detects an operation whose durable INTENT has no terminal record.
+     * Stable identity excludes the reason and approval reference, which can change on retry.
+     */
+    @Synchronized
+    internal fun hasUnresolvedIntent(
+        context: Context,
+        actor: String,
+        mutation: String,
+        objectId: String
+    ): Boolean {
+        val matching = readRecords(context) ?: return true
+        val latest = matching.lastOrNull {
+            it.actor == actor && it.mutation == mutation && it.objectId == objectId
+        } ?: return false
+        return latest.phase == Phase.INTENT
+    }
+
+    /**
      * Adds exactly one event. Existing records are never rewritten or silently discarded.
      * The caller should not perform the associated memory mutation unless this returns true.
      */

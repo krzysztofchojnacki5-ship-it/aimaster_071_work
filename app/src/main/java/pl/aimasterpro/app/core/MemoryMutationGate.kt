@@ -28,6 +28,12 @@ object MemoryMutationGate {
             return false
         }
 
+        // A previous attempt may have changed a store before the process died.
+        // Do not execute it again until an explicit recovery procedure resolves the INTENT.
+        if (MemoryAuditLog.hasUnresolvedIntent(
+                context, request.actor.name, request.mutation.name, request.objectId
+            )) return false
+
         if (!MemoryAuditLog.append(
                 context,
                 auditEvent(request, MemoryAuditLog.Phase.INTENT, "AUTHORIZED")

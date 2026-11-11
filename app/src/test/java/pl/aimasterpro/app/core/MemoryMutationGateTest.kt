@@ -63,6 +63,29 @@ class MemoryMutationGateTest {
         assertEquals(listOf("AUTHORIZED", "SUCCESS"), rows.map { it.outcome })
     }
 
+    @Test fun unresolvedIntentBlocksReplayBeforeMutation() {
+        val request = request()
+        assertTrue(MemoryAuditLog.append(context, MemoryAuditLog.Event(
+            actor = request.actor.name,
+            mutation = request.mutation.name,
+            objectId = request.objectId,
+            reason = request.reason,
+            approvalRef = request.approvalRef,
+            phase = MemoryAuditLog.Phase.INTENT,
+            outcome = "AUTHORIZED"
+        )))
+
+        var invoked = false
+        assertFalse(MemoryMutationGate.execute(context, request) { _: MemoryMutationPermit ->
+            invoked = true
+            true
+        })
+        assertFalse(invoked)
+        val rows = MemoryAuditLog.readVerified(context)!!
+        assertEquals(1, rows.size)
+        assertEquals(MemoryAuditLog.Phase.INTENT, rows.single().phase)
+    }
+
     @Test fun failedMutationLeavesIntentAndFailureRecord() {
         assertFalse(MemoryMutationGate.execute(context, request()) { _: MemoryMutationPermit -> false })
         val rows = MemoryAuditLog.readVerified(context)!!
