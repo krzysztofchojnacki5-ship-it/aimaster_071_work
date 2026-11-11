@@ -1617,6 +1617,12 @@ class MainActivity : Activity() {
         val estimatedRequestInput = (systemPrompt.length.toLong() + userText.length.toLong() + 2L) / 3L
         try {
             for (cfg in ordered) {
+                if (!isProviderAllowedForRouting(cfg)) {
+                    val reason = "Zgoda lub status kosztowy modelu ${cfg.model} nie jest już aktywny. Pomijam profil przed HTTP."
+                    runCatching { logAgentForChat(requestChatId, "⛔ $reason") }
+                    lastErr = IllegalStateException(reason)
+                    continue
+                }
                 if (Thread.currentThread().isInterrupted) throw ProviderException(null, "Żądanie anulowane przez użytkownika.", category = "CANCELLED")
                 val reservationTargetChanged = !cfg.id.equals(budgetedProvider.id, true) ||
                     !cfg.baseUrl.trimEnd('/').equals(budgetedProvider.baseUrl.trimEnd('/'), true) ||
