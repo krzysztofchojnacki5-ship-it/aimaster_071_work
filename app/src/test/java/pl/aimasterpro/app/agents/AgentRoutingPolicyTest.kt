@@ -40,6 +40,22 @@ class AgentRoutingPolicyTest {
         assertTrue(result.agents.none { it.id == "mobile-engineer" })
     }
 
+    @Test fun enabledCustomAgentCanBeSelectedByTheSameRouterAsBuiltInAgents() {
+        val custom = AgentSpec(
+            id = "custom-security-auditor",
+            name = "Własny audytor bezpieczeństwa",
+            category = "Jakość, bezpieczeństwo i zgodność",
+            responsibility = "Audytuje bezpieczeństwo aplikacji.",
+            keywords = listOf("bezpieczeństwo", "klucz api", "sekret")
+        )
+        val result = AgentRoutingPolicy.route(
+            "Sprawdź bezpieczeństwo i klucze API w aplikacji",
+            catalog = listOf(custom)
+        )
+        assertEquals(Mode.ONE_SPECIALIST, result.mode)
+        assertEquals(custom.id, result.agents.single().id)
+    }
+
     @Test fun explicitTeamFallsBackWhenTooFewAgentsAreEnabled() {
         val onlyOne = AgentCatalog.all.filter { it.id == "critical-reviewer" }
         val result = AgentRoutingPolicy.route("Uruchom cały zespół i przygotuj niezależne opinie", catalog = onlyOne)
