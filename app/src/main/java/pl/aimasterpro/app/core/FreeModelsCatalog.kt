@@ -136,12 +136,20 @@ object FreeModelsCatalog {
             (host.startsWith("fd") && host.contains(':'))
     }
 
+    private fun endpointHost(baseUrl: String): String =
+        runCatching { java.net.URI(baseUrl.trim()).host.orEmpty().lowercase(Locale.ROOT) }.getOrDefault("")
+
+    private fun isOfficialOpenRouterEndpoint(baseUrl: String): Boolean =
+        endpointHost(baseUrl) == "openrouter.ai"
+
+    private fun isOfficialGroqEndpoint(baseUrl: String): Boolean =
+        endpointHost(baseUrl) == "api.groq.com"
+
     fun isFreeModel(providerId: String, modelId: String, baseUrl: String = ""): Boolean {
-        val provider = (providerId + " " + baseUrl).lowercase(Locale.ROOT)
         val model = modelId.lowercase(Locale.ROOT)
         if (isLocalOllamaEndpoint(baseUrl)) return true
-        if (provider.contains("openrouter.ai") || provider.contains("openrouter")) return model == "openrouter/free" || model.endsWith(":free")
-        if (provider.contains("groq") || baseUrl.contains("api.groq.com", ignoreCase = true)) return model in groqFreePlanModels
+        if (isOfficialOpenRouterEndpoint(baseUrl)) return model == "openrouter/free" || model.endsWith(":free")
+        if (isOfficialGroqEndpoint(baseUrl)) return model in groqFreePlanModels
         return false
     }
 
@@ -152,11 +160,11 @@ object FreeModelsCatalog {
         providerConfigId: String = providerId,
         endpointBaseUrl: String = ""
     ): FreeModelSpec {
-        val pid = providerId.lowercase(Locale.ROOT)
         val mid = modelId.lowercase(Locale.ROOT)
         val local = isLocalOllamaEndpoint(endpointBaseUrl)
-        val openRouterFree = pid.contains("openrouter") && (mid == "openrouter/free" || mid.endsWith(":free"))
-        val groqFreeTier = (pid.contains("groq") || providerName.contains("groq", true)) && mid in groqFreePlanModels
+        val openRouterFree = isOfficialOpenRouterEndpoint(endpointBaseUrl) &&
+            (mid == "openrouter/free" || mid.endsWith(":free"))
+        val groqFreeTier = isOfficialGroqEndpoint(endpointBaseUrl) && mid in groqFreePlanModels
         val status = when {
             local -> FreeStatus.FREE
             openRouterFree || groqFreeTier -> FreeStatus.FREE_TIER
