@@ -44,7 +44,10 @@ object MasterTaskQueueStore {
         val fromStatus: String,
         val toStatus: String,
         val detail: String,
-        val timestamp: Long
+        val timestamp: Long,
+        val recipient: String = "",
+        val providerId: String = "",
+        val model: String = ""
     )
 
     data class Snapshot(
@@ -193,7 +196,7 @@ object MasterTaskQueueStore {
         val next = current.copy(currentStep = summary, updatedAt = maxOf(now, current.updatedAt))
         Triple(tasks.map { if (it.id == taskId) next else it },
             events + event(taskId, "agent:$agentId", "AGENT_PROGRESS", Status.RUNNING.name,
-                state, summary, now), true)
+                state, summary, now, providerId = safeProvider, model = safeModel), true)
     }
 
     /** Appends sanitized agent-to-agent / agent-to-MASTER communication to the owning task timeline. */
@@ -205,15 +208,19 @@ object MasterTaskQueueStore {
         recipient: String,
         status: String,
         message: String,
-        now: Long = System.currentTimeMillis()
+        now: Long = System.currentTimeMillis(),
+        providerId: String = "",
+        model: String = ""
     ): Boolean = mutate(context) { tasks, events ->
         val current = tasks.firstOrNull { it.id == taskId } ?: return@mutate null
         if (current.status != Status.RUNNING || sender.isBlank() || sender.length > 100 ||
             recipient.isBlank() || recipient.length > 100 || status.length > 30 ||
-            message.isBlank() || message.length > 8_000 || now < 0L) return@mutate null
+            message.isBlank() || message.length > 8_000 || now < 0L ||
+            providerId.length > 120 || model.length > 180) return@mutate null
         val safe = CommunicationLogSanitizer.sanitize(message).take(350)
         val detail = "Do: $recipient • $status • $safe"
-        Triple(tasks, events + event(taskId, sender, "AGENT_MESSAGE", "", status, detail, now), true)
+        Triple(tasks, events + event(taskId, sender, "AGENT_MESSAGE", "", status, detail, now,
+            recipient = recipient, providerId = providerId, model = model), true)
     }
 
     /** Moves interrupted RUNNING tasks to BLOCKED after process restart; never auto-replays uncertain API work. */
@@ -252,9 +259,13 @@ object MasterTaskQueueStore {
     }
 
     private fun event(taskId: String, actor: String, operation: String, from: String,
-                      to: String, detail: String, now: Long) =
+                      to: String, detail: String, now: Long, recipient: String = "",
+                      providerId: String = "", model: String = "") =
         Event(UUID.randomUUID().toString(), taskId, actor, operation, from, to,
-            CommunicationLogSanitizer.sanitize(detail).take(500), now)
+            CommunicationLogSanitizer.sanitize(detail).take(500), now,
+            CommunicationLogSanitizer.sanitize(recipient).take(100),
+            CommunicationLogSanitizer.sanitize(providerId).take(80),
+            CommunicationLogSanitizer.sanitize(model).take(120))
 
     private fun mutate(
         context: Context,
@@ -298,7 +309,8 @@ object MasterTaskQueueStore {
                 val o = eventArray.getJSONObject(i)
                 Event(o.getString("id"), o.getString("taskId"), o.getString("actor"),
                     o.getString("operation"), o.getString("from"), o.getString("to"),
-                    o.getString("detail"), o.getLong("timestamp"))
+                    o.getString("detail"), o.getLong("timestamp"),
+                    o.optString("recipient"), o.optString("providerId"), o.optString("model"))
             }
             require(events.map { it.id }.distinct().size == events.size)
             Snapshot(ReadStatus.AVAILABLE, tasks, events)
@@ -330,7 +342,8 @@ object MasterTaskQueueStore {
         events.takeLast(MAX_EVENTS).forEach { e ->
             eventArray.put(JSONObject().put("id", e.id).put("taskId", e.taskId).put("actor", e.actor)
                 .put("operation", e.operation).put("from", e.fromStatus).put("to", e.toStatus)
-                .put("detail", e.detail).put("timestamp", e.timestamp))
+                .put("detail", e.detail).put("timestamp", e.timestamp)
+                .put("recipient", e.recipient).put("providerId", e.providerId).put("model", e.model))
         }
         val raw = JSONObject().put("version", VERSION).put("tasks", taskArray).put("events", eventArray).toString()
         raw.length <= 512_000 && SharedPreferencesWriteHealth.commit(PREFS,

@@ -155,6 +155,24 @@ class MasterTaskQueueStoreTest {
             "RUNNING", "Obcy agent.", now = 104L))
     }
 
+    @Test fun communicationEventsPersistRecipientAndProviderModelMetadata() {
+        assertTrue(MasterTaskQueueStore.enqueue(context, "task-comms", "Komunikacja", "Test metadanych.", now = 70L))
+        assertTrue(MasterTaskQueueStore.assign(context, "task-comms", listOf("critical-reviewer"), now = 71L))
+        assertTrue(MasterTaskQueueStore.transition(context, "task-comms", "MASTER",
+            MasterTaskQueueStore.Status.RUNNING, "Start.", 72L))
+        assertTrue(MasterTaskQueueStore.recordAgentMessage(
+            context, "task-comms", "Critical Reviewer", "MASTER", "REPORT",
+            "Raport testowy bez sekretów.", now = 73L,
+            providerId = "provider-local", model = "model-test"
+        ))
+        val event = MasterTaskQueueStore.snapshot(context).events.last()
+        assertEquals("Critical Reviewer", event.actor)
+        assertEquals("MASTER", event.recipient)
+        assertEquals("provider-local", event.providerId)
+        assertEquals("model-test", event.model)
+        assertTrue(event.detail.contains("Raport testowy"))
+    }
+
     @Test fun interruptedRunningTasksRecoverAsBlockedWithoutAutomaticReplay() {
         assertTrue(MasterTaskQueueStore.enqueue(context, "task-010", "Przerwane", "Sprawdź wynik.", now = 80L))
         assertTrue(MasterTaskQueueStore.assign(context, "task-010", listOf("critical-reviewer"), now = 81L))

@@ -100,6 +100,8 @@ class MainActivity : Activity() {
     private var collaborationSummaryText: TextView? = null
     private var collaborationChatId: String = ""
     private val collaborationRenderedEntries = mutableListOf<String>()
+    /** Dedicated live view of durable MASTER-queue agent messages. */
+    private var queueCommunicationListLayout: LinearLayout? = null
     private val agentProviders = mutableMapOf<String, String>()
     /** False until every persisted role assignment has been reconciled successfully. */
     private var agentAssignmentsHealthy = true
@@ -356,6 +358,7 @@ class MainActivity : Activity() {
             collaborationSummaryText = null
             collaborationChatId = ""
             collaborationRenderedEntries.clear()
+            queueCommunicationListLayout = null
         }
         screen = title
         pulse?.cancel(); pulse = null
@@ -3954,6 +3957,69 @@ class MainActivity : Activity() {
         collaborationChatId = currentChatId
         collaborationRenderedEntries.clear()
         refreshCollaborationTimeline(currentChatId, scrollToEnd = true)
+
+        val queueHeader = TextView(this).apply {
+            text = "KOMUNIKACJA KOLEJKI MASTER • TRWAŁY DZIENNIK"
+            textSize = 12f
+            typeface = Typeface.DEFAULT_BOLD
+            setTextColor(cyan)
+            setPadding(dp(2), dp(18), 0, dp(8))
+        }
+        col.addView(queueHeader)
+        val queueTimeline = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        val queueScroll = ScrollView(this).apply {
+            isFillViewport = false
+            addView(queueTimeline)
+            layoutParams = LinearLayout.LayoutParams(-1, dp(420))
+        }
+        col.addView(queueScroll)
+        queueCommunicationListLayout = queueTimeline
+        refreshQueueCommunicationTimeline()
+    }
+
+    /** Shows durable queue messages with explicit sender, recipient, provider/model and timestamp. */
+    private fun refreshQueueCommunicationTimeline() {
+        val target = queueCommunicationListLayout ?: return
+        target.removeAllViews()
+        val snapshot = pl.aimasterpro.app.core.MasterTaskQueueStore.snapshot(this)
+        if (snapshot.status != pl.aimasterpro.app.core.MasterTaskQueueStore.ReadStatus.AVAILABLE) {
+            val unavailable = TextView(this).apply {
+                text = "Dziennik kolejki niedostępny (${snapshot.errorCode}). Nie pokazuję niezweryfikowanych danych."
+                setTextColor(Color.rgb(255, 120, 120))
+                setPadding(dp(12), dp(12), dp(12), dp(12))
+            }
+            target.addView(unavailable)
+            return
+        }
+        val titles = snapshot.tasks.associate { it.id to it.title }
+        val events = snapshot.events.filter { it.operation == "AGENT_MESSAGE" }.takeLast(120).asReversed()
+        if (events.isEmpty()) {
+            val empty = TextView(this).apply {
+                text = "Brak komunikatów z kolejki MASTER-a. Wiadomości pojawią się tutaj podczas rzeczywistego wykonania zadań."
+                setTextColor(muted)
+                setPadding(dp(12), dp(12), dp(12), dp(12))
+            }
+            target.addView(empty)
+            return
+        }
+        val formatter = java.text.SimpleDateFormat("dd.MM HH:mm:ss", java.util.Locale.getDefault())
+        events.forEach { event ->
+            val provider = listOf(event.providerId, event.model).filter { it.isNotBlank() }.joinToString(" / ")
+                .ifBlank { "profil modelu nieustalony" }
+            val stamp = formatter.format(java.util.Date(event.timestamp))
+            val row = TextView(this).apply {
+                text = buildString {
+                    appendLine("${event.actor} → ${event.recipient.ifBlank { "odbiorca nieokreślony" }}")
+                    appendLine("${titles[event.taskId] ?: event.taskId} • $provider • $stamp • ${event.toStatus}")
+                    append(event.detail)
+                }
+                textSize = 12f
+                setTextColor(white)
+                setPadding(dp(12), dp(10), dp(12), dp(10))
+                background = ripple(cardBg, 10)
+            }
+            target.addView(row, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(6) })
+        }
     }
 
     private fun createAgentActivityCard(entry: String): View {
@@ -6945,10 +7011,14 @@ class MainActivity : Activity() {
                         mode = mode,
                         projectContext = projectContext,
                         onLog = { sender, recipient, message, eventStatus ->
+                            val senderSpec = enabledAgentCatalog.firstOrNull { it.id == sender || it.name == sender }
+                            val senderConfig = senderSpec?.let { configs[it.id] }
                             val logged = queueStore.recordAgentMessage(this, taskId, sender, recipient,
-                                eventStatus, message)
+                                eventStatus, message, providerId = senderConfig?.id.orEmpty(),
+                                model = senderConfig?.model.orEmpty())
                             if (!logged) android.util.Log.w("AiFORTecaQueue", "Nie zapisano komunikatu $taskId • $sender → $recipient")
                             android.util.Log.i("AiFORTecaQueue", "$taskId • $sender → $recipient • $eventStatus • ${message.take(350)}")
+                            if (screen == "Rozmowy") runOnUiThread { refreshQueueCommunicationTimeline() }
                         },
                         onUsage = { agentId, subTaskId, actualProvider, usage ->
                             pl.aimasterpro.app.core.ApiTokenTracker.recordQuery(
