@@ -33,7 +33,9 @@ data class FreeModelSpec(
     val isRecommendedFor: List<String> = emptyList(),
     /** ID profilu z kluczem API w SecureStore; różni się od providerId przy profilach własnych. */
     val providerConfigId: String = providerId,
-    val verificationSource: String = ""
+    val verificationSource: String = "",
+    /** Exact endpoint used for discovery; required to prove that an Ollama server is local. */
+    val endpointBaseUrl: String = ""
 )
 
 object FreeModelsCatalog {
@@ -57,7 +59,8 @@ object FreeModelsCatalog {
                     if (provider.isBlank() || model.isBlank()) continue
                     // Re-evaluate every cached entry. Older versions trusted broad provider/name rules.
                     val verified = classifyDiscoveredModel(provider, model,
-                        o.optString("providerName", provider), o.optString("providerConfigId", provider))
+                        o.optString("providerName", provider), o.optString("providerConfigId", provider),
+                        o.optString("endpointBaseUrl"))
                     val storedSource = o.optString("verificationSource")
                     add(verified.copy(
                         isOnline = false, // a cached model is not proof of current availability
@@ -75,7 +78,7 @@ object FreeModelsCatalog {
         val arr = JSONArray()
         val now = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault()).format(Date())
         models.distinctBy { "${it.providerId}:${it.modelId}" }.forEach { m ->
-            val verified = classifyDiscoveredModel(m.providerId, m.modelId, m.providerName, m.providerConfigId)
+            val verified = classifyDiscoveredModel(m.providerId, m.modelId, m.providerName, m.providerConfigId, m.endpointBaseUrl)
             arr.put(JSONObject()
                 .put("providerId", verified.providerId)
                 .put("providerName", verified.providerName)
@@ -88,7 +91,8 @@ object FreeModelsCatalog {
                 .put("speedScore", verified.speedScore)
                 .put("verificationDate", now)
                 .put("providerConfigId", verified.providerConfigId)
-                .put("verificationSource", verified.verificationSource))
+                .put("verificationSource", verified.verificationSource)
+                .put("endpointBaseUrl", verified.endpointBaseUrl))
         }
         prefs.edit().putString(KEY_CACHED_MODELS, arr.toString())
             .putLong(KEY_LAST_UPDATE, System.currentTimeMillis()).apply()
@@ -101,7 +105,7 @@ object FreeModelsCatalog {
     }
 
     fun getRecommendedModel(roleName: String, context: Context): FreeModelSpec? {
-        val available = loadCatalog(context).filter { it.freeStatus.isAllowedForSelection && isFreeModel(it.providerId, it.modelId) }
+        val available = loadCatalog(context).filter { it.freeStatus.isAllowedForSelection && isFreeModel(it.providerId, it.modelId, it.endpointBaseUrl) }
         return available.firstOrNull { it.isRecommendedFor.any { r -> r.equals(roleName, true) } }
             ?: available.firstOrNull()
     }
@@ -117,7 +121,7 @@ object FreeModelsCatalog {
         "qwen/qwen3.8-27b"
     )
 
-    private fun isLocalOllamaEndpoint(baseUrl: String): Boolean {
+    fun isLocalOllamaEndpoint(baseUrl: String): Boolean {
         val parsed = runCatching { java.net.URL(baseUrl) }.getOrNull() ?: return false
         if (parsed.port != 11434) return false
         val host = parsed.host.lowercase(Locale.ROOT).removePrefix("[").removeSuffix("]")
@@ -132,7 +136,7 @@ object FreeModelsCatalog {
     fun isFreeModel(providerId: String, modelId: String, baseUrl: String = ""): Boolean {
         val provider = (providerId + " " + baseUrl).lowercase(Locale.ROOT)
         val model = modelId.lowercase(Locale.ROOT)
-        if (providerId.contains("ollama", true) || isLocalOllamaEndpoint(baseUrl)) return true
+        if (isLocalOllamaEndpoint(baseUrl)) return true
         if (provider.contains("openrouter.ai") || provider.contains("openrouter")) return model == "openrouter/free" || model.endsWith(":free")
         if (provider.contains("groq") || baseUrl.contains("api.groq.com", ignoreCase = true)) return model in groqFreePlanModels
         return false
@@ -142,11 +146,12 @@ object FreeModelsCatalog {
         providerId: String,
         modelId: String,
         providerName: String = providerId,
-        providerConfigId: String = providerId
+        providerConfigId: String = providerId,
+        endpointBaseUrl: String = ""
     ): FreeModelSpec {
         val pid = providerId.lowercase(Locale.ROOT)
         val mid = modelId.lowercase(Locale.ROOT)
-        val local = pid.contains("ollama") || pid.contains("localhost") || pid.contains("127.0.0.1")
+        val local = isLocalOllamaEndpoint(endpointBaseUrl)
         val openRouterFree = pid.contains("openrouter") && (mid == "openrouter/free" || mid.endsWith(":free"))
         val groqFreeTier = (pid.contains("groq") || providerName.contains("groq", true)) && mid in groqFreePlanModels
         val status = when {
@@ -174,7 +179,8 @@ object FreeModelsCatalog {
                 FreeStatus.FREE -> "Lokalny endpoint Ollama"
                 FreeStatus.FREE_TIER -> if (groqFreeTier) "Oficjalna tabela limitów Groq Free Plan: https://console.groq.com/docs/rate-limits" else "Jawny znacznik :free / openrouter/free"
                 else -> "Brak wiarygodnego źródła cenowego w odpowiedzi API"
-            }
+            },
+            endpointBaseUrl = endpointBaseUrl
         )
     }
 }
