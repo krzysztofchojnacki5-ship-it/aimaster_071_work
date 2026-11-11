@@ -12,20 +12,47 @@ import org.robolectric.RuntimeEnvironment
 class AgentOperationalMemoryStoreTest {
     private val context get() = RuntimeEnvironment.getApplication()
 
+    private fun addLesson(ctx: Context, agentId: String, text: String, category: String = "",
+        sourceTaskIds: List<String> = emptyList(), confidence: String = "zatwierdzona"): AgentOperationalMemoryStore.Entry? {
+        var result: AgentOperationalMemoryStore.Entry? = null
+        val request = MemoryGovernance.Request(MemoryGovernance.Actor.USER,
+            MemoryGovernance.Mutation.ADD_AGENT_LESSON, "test-agent:${java.util.UUID.randomUUID()}",
+            "Test confirms agent-memory addition", "test-approval")
+        val ok = MemoryMutationGate.execute(ctx, request) { permit ->
+            result = AgentOperationalMemoryStore.addApproved(ctx, agentId, text, permit, category, sourceTaskIds, confidence)
+            result != null
+        }
+        return if (ok) result else null
+    }
+    private fun removeLesson(ctx: Context, id: String): Boolean {
+        val request = MemoryGovernance.Request(MemoryGovernance.Actor.USER,
+            MemoryGovernance.Mutation.REMOVE_AGENT_LESSON, id,
+            "Test confirms agent-memory removal", "test-approval")
+        return MemoryMutationGate.execute(ctx, request) { permit -> AgentOperationalMemoryStore.remove(ctx, id, permit) }
+    }
+    private fun removeLessonBySource(ctx: Context, source: String): Boolean {
+        val request = MemoryGovernance.Request(MemoryGovernance.Actor.USER,
+            MemoryGovernance.Mutation.REMOVE_AGENT_LESSON, "test-source:$source",
+            "Test confirms source cleanup", "test-approval")
+        return MemoryMutationGate.execute(ctx, request) { permit -> AgentOperationalMemoryStore.removeBySource(ctx, source, permit) }
+    }
+
     @Before fun reset() {
+        SharedPreferencesWriteHealth.resetForTests("ai_memory_audit_log_v1")
+        context.getSharedPreferences("ai_memory_audit_log_v1", Context.MODE_PRIVATE).edit().clear().commit()
         SharedPreferencesWriteHealth.resetForTests("ai_agent_operational_memory_v1")
         context.getSharedPreferences("ai_agent_operational_memory_v1", Context.MODE_PRIVATE).edit().clear().commit()
     }
 
     @Test fun memoryIsScopedToTheOwningAgent() {
-        AgentOperationalMemoryStore.addApproved(context, "code-analyst", "W Kotlin sprawdzaj null safety oraz testy jednostkowe.")
+        addLesson(context, "code-analyst", "W Kotlin sprawdzaj null safety oraz testy jednostkowe.")
         assertTrue(AgentOperationalMemoryStore.contextString(context, "code-analyst", "Kotlin null safety", 900).contains("null safety"))
         assertEquals("", AgentOperationalMemoryStore.contextString(context, "security-agent", "Kotlin null safety", 900))
     }
 
     @Test fun retrievalIsRelevantAndBounded() {
-        AgentOperationalMemoryStore.addApproved(context, "tester", "Dla testów Gradle uruchamiaj testDebugUnitTest przed assembleDebug.")
-        AgentOperationalMemoryStore.addApproved(context, "tester", "Przy grafice sprawdzaj proporcje obrazu.")
+        addLesson(context, "tester", "Dla testów Gradle uruchamiaj testDebugUnitTest przed assembleDebug.")
+        addLesson(context, "tester", "Przy grafice sprawdzaj proporcje obrazu.")
         val result = AgentOperationalMemoryStore.contextString(context, "tester", "Gradle testDebugUnitTest", maxChars = 300, maxItems = 4)
         assertTrue(result.length <= 300)
         assertTrue(result.contains("testDebugUnitTest"))
@@ -33,13 +60,13 @@ class AgentOperationalMemoryStoreTest {
     }
 
     @Test fun duplicateEntriesMergeTheirProvenanceAndCanBeRemoved() {
-        val first = AgentOperationalMemoryStore.addApproved(context, "architect", "Zachowuj kompatybilność API przy refaktoryzacji.", sourceTaskIds = listOf("task-a"))!!
-        val second = AgentOperationalMemoryStore.addApproved(context, "architect", "Zachowuj kompatybilność API przy refaktoryzacji.", sourceTaskIds = listOf("task-b"))!!
+        val first = addLesson(context, "architect", "Zachowuj kompatybilność API przy refaktoryzacji.", sourceTaskIds = listOf("task-a"))!!
+        val second = addLesson(context, "architect", "Zachowuj kompatybilność API przy refaktoryzacji.", sourceTaskIds = listOf("task-b"))!!
         assertEquals(first.id, second.id)
         assertEquals(setOf("task-a", "task-b"), second.sourceTaskIds.toSet())
-        AgentOperationalMemoryStore.removeBySource(context, "task-a")
+        removeLessonBySource(context, "task-a")
         assertEquals(listOf("task-b"), AgentOperationalMemoryStore.all(context).single().sourceTaskIds)
-        assertTrue(AgentOperationalMemoryStore.remove(context, first.id))
+        assertTrue(removeLesson(context, first.id))
         assertTrue(AgentOperationalMemoryStore.all(context).isEmpty())
     }
 
@@ -47,9 +74,9 @@ class AgentOperationalMemoryStoreTest {
         val prefs = context.getSharedPreferences("ai_agent_operational_memory_v1", Context.MODE_PRIVATE)
         val corrupt = """[{"id":"entry-1","agentId":"tester","text":"valid row","createdAt":1},null]"""
         assertTrue(prefs.edit().putString("entries", corrupt).commit())
-        assertNull(AgentOperationalMemoryStore.addApproved(context, "tester", "Nowy wniosek po uszkodzeniu magazynu."))
-        assertFalse(AgentOperationalMemoryStore.remove(context, "entry-1"))
-        AgentOperationalMemoryStore.removeBySource(context, "task-1")
+        assertNull(addLesson(context, "tester", "Nowy wniosek po uszkodzeniu magazynu."))
+        assertFalse(removeLesson(context, "entry-1"))
+        removeLessonBySource(context, "task-1")
         assertEquals(corrupt, prefs.getString("entries", null))
     }
 
@@ -58,7 +85,7 @@ class AgentOperationalMemoryStoreTest {
         val fractional = """[{"id":"entry-1","agentId":"tester","text":"valid memory entry","createdAt":1.5}]"""
         assertTrue(prefs.edit().putString("entries", fractional).commit())
         assertTrue(AgentOperationalMemoryStore.all(context).isEmpty())
-        assertNull(AgentOperationalMemoryStore.addApproved(context, "tester", "A nowa reguła po błędzie.") )
+        assertNull(addLesson(context, "tester", "A nowa reguła po błędzie.") )
         assertEquals(fractional, prefs.getString("entries", null))
         val malformedSources = """[{"id":"entry-2","agentId":"tester","text":"valid memory entry","createdAt":1,"sourceTaskIds":[7]}]"""
         assertTrue(prefs.edit().putString("entries", malformedSources).commit())
@@ -68,7 +95,7 @@ class AgentOperationalMemoryStoreTest {
 
     @Test fun approvedOperationalMemoryIsCommittedBeforeReturning() {
         val prefs = context.getSharedPreferences("ai_agent_operational_memory_v1", Context.MODE_PRIVATE)
-        val entry = AgentOperationalMemoryStore.addApproved(
+        val entry = addLesson(
             context, "tester", "Zatwierdzona reguła do testu trwałego zapisu."
         )!!
         assertTrue(prefs.getString("entries", null).orEmpty().contains(entry.id))
@@ -81,7 +108,7 @@ class AgentOperationalMemoryStoreTest {
                 throw IllegalStateException("controlled operational memory preferences failure")
             }
         }
-        assertNull(AgentOperationalMemoryStore.addApproved(
+        assertNull(addLesson(
             failingContext, "tester", "Ta zatwierdzona reguła nie może zostać utracona."
         ))
         assertTrue(AgentOperationalMemoryStore.all(failingContext).isEmpty())
@@ -101,7 +128,7 @@ class AgentOperationalMemoryStoreTest {
         assertFalse(SharedPreferencesWriteHealth.commit("ai_agent_operational_memory_v1", failingEditor))
 
         assertTrue(AgentOperationalMemoryStore.all(context).isEmpty())
-        assertNull(AgentOperationalMemoryStore.addApproved(context, "tester", "Nie zapisuj po niepewnym commit."))
+        assertNull(addLesson(context, "tester", "Nie zapisuj po niepewnym commit."))
         assertEquals(original, prefs.getString("entries", null))
     }
     @Test fun concurrentApprovalsMergeEverySourceTaskWithoutLostUpdates() {
@@ -113,7 +140,7 @@ class AgentOperationalMemoryStoreTest {
                 ready.countDown()
                 try {
                     start.await()
-                    assertNotNull(AgentOperationalMemoryStore.addApproved(
+                    assertNotNull(addLesson(
                         context, "architect", "Zachowuj atomowy zapis pamięci przy równoległych zatwierdzeniach.",
                         sourceTaskIds = listOf("source-$index")
                     ))
@@ -138,7 +165,7 @@ class AgentOperationalMemoryStoreTest {
         val finished = java.util.concurrent.CountDownLatch(1)
         val worker = Thread {
             ready.countDown()
-            AgentOperationalMemoryStore.addApproved(
+            addLesson(
                 context, "tester", "Zapis pamięci musi zachować pełny cykl transakcyjny.",
                 sourceTaskIds = listOf("locked-source")
             )

@@ -14,14 +14,29 @@ import org.robolectric.RuntimeEnvironment
 class AiMemoryStoreTest {
     private val context get() = RuntimeEnvironment.getApplication()
 
+    private fun mutateAdd(ctx: Context, memory: String): Boolean {
+        val request = MemoryGovernance.Request(MemoryGovernance.Actor.USER,
+            MemoryGovernance.Mutation.ADD_SHARED_RULE, "test-add:${java.util.UUID.randomUUID()}",
+            "Test confirms shared-memory addition", "test-approval")
+        return MemoryMutationGate.execute(ctx, request) { permit -> AiMemoryStore.addMemory(ctx, memory, permit) }
+    }
+    private fun mutateRemove(ctx: Context, memory: String): Boolean {
+        val request = MemoryGovernance.Request(MemoryGovernance.Actor.USER,
+            MemoryGovernance.Mutation.REMOVE_SHARED_RULE, "test-remove:${java.util.UUID.randomUUID()}",
+            "Test confirms shared-memory removal", "test-approval")
+        return MemoryMutationGate.execute(ctx, request) { permit -> AiMemoryStore.removeMemory(ctx, memory, permit) }
+    }
+
     @Before fun reset() {
+        SharedPreferencesWriteHealth.resetForTests("ai_memory_audit_log_v1")
+        context.getSharedPreferences("ai_memory_audit_log_v1", Context.MODE_PRIVATE).edit().clear().commit()
         context.getSharedPreferences("ai_master_memory_store_v1", Context.MODE_PRIVATE)
             .edit().clear().commit()
         SharedPreferencesWriteHealth.resetForTests("ai_master_memory_store_v1")
     }
 
     @Test fun contextIsBoundedAndDoesNotInjectOperationalStatsByDefault() {
-        repeat(30) { AiMemoryStore.addMemory(context, "Reguła $it dotycząca Kotlin Android architektury i testów.") }
+        repeat(30) { mutateAdd(context, "Reguła $it dotycząca Kotlin Android architektury i testów.") }
         val text = AiMemoryStore.contextString(context, "Kotlin Android testy", maxChars = 900)
         assertTrue(text.length <= 900)
         assertFalse(text.contains("HISTORIA WYKONANIA AGENTÓW"))
@@ -29,8 +44,8 @@ class AiMemoryStoreTest {
     }
 
     @Test fun relevantMemoriesAreRankedAheadOfUnrelatedRecentRules() {
-        AiMemoryStore.addMemory(context, "Zasada dotycząca fotografii i obróbki zdjęć.")
-        AiMemoryStore.addMemory(context, "Przy Kotlinie uruchamiaj testy jednostkowe i sprawdzaj null safety.")
+        mutateAdd(context, "Zasada dotycząca fotografii i obróbki zdjęć.")
+        mutateAdd(context, "Przy Kotlinie uruchamiaj testy jednostkowe i sprawdzaj null safety.")
         val text = AiMemoryStore.contextString(context, "Popraw kod Kotlin i testy", maxChars = 2_000)
         assertTrue(text.indexOf("Kotlinie") < text.indexOf("fotografii") || !text.contains("fotografii"))
     }
@@ -39,14 +54,14 @@ class AiMemoryStoreTest {
         val prefs = context.getSharedPreferences("ai_master_memory_store_v1", Context.MODE_PRIVATE)
         val corrupt = """["valid memory",{"unexpected":"object"}]"""
         assertTrue(prefs.edit().putString("memories", corrupt).commit())
-        AiMemoryStore.addMemory(context, "Nowa zatwierdzona zasada pamięci.")
-        AiMemoryStore.removeMemory(context, "valid memory")
+        mutateAdd(context, "Nowa zatwierdzona zasada pamięci.")
+        mutateRemove(context, "valid memory")
         assertEquals(corrupt, prefs.getString("memories", null))
     }
 
     @Test fun validMemoryMutationIsCommittedAndReadable() {
         val prefs = context.getSharedPreferences("ai_master_memory_store_v1", Context.MODE_PRIVATE)
-        assertTrue(AiMemoryStore.addMemory(context, "Zatwierdzona pamięć do testu trwałego zapisu."))
+        assertTrue(mutateAdd(context, "Zatwierdzona pamięć do testu trwałego zapisu."))
         assertTrue(prefs.getString("memories", null).orEmpty().contains("trwałego zapisu"))
         assertTrue(AiMemoryStore.getMemories(context).contains("Zatwierdzona pamięć do testu trwałego zapisu."))
     }
@@ -57,8 +72,8 @@ class AiMemoryStoreTest {
                 throw IllegalStateException("controlled memory preferences failure")
             }
         }
-        assertFalse(AiMemoryStore.addMemory(failingContext, "Nowa zasada nie może zostać utracona."))
-        assertFalse(AiMemoryStore.removeMemory(failingContext, "nieistniejąca zasada"))
+        assertFalse(mutateAdd(failingContext, "Nowa zasada nie może zostać utracona."))
+        assertFalse(mutateRemove(failingContext, "nieistniejąca zasada"))
         assertTrue(AiMemoryStore.getMemories(failingContext).isNotEmpty())
     }
 
@@ -71,9 +86,9 @@ class AiMemoryStoreTest {
 
     @Test fun ambiguousMemoryCommitBlocksFurtherMutation() {
         val failing = AmbiguousCommitContext(context, "ai_master_memory_store_v1")
-        assertFalse(AiMemoryStore.addMemory(failing, "Ambiguous write must not be trusted."))
-        assertFalse(AiMemoryStore.addMemory(context, "Second write must be blocked."))
-        assertFalse(AiMemoryStore.removeMemory(context, "anything"))
+        assertFalse(mutateAdd(failing, "Ambiguous write must not be trusted."))
+        assertFalse(mutateAdd(context, "Second write must be blocked."))
+        assertFalse(mutateRemove(context, "anything"))
         assertTrue(AiMemoryStore.getMemories(context).isNotEmpty())
     }
 }

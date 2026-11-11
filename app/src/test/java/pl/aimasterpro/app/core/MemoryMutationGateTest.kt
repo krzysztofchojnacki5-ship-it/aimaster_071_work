@@ -70,6 +70,18 @@ class MemoryMutationGateTest {
         assertEquals("MUTATION_FAILED", rows.last().outcome)
     }
 
+    @Test fun permitForOneMutationCannotBeReusedForAnotherStoreOperation() {
+        val request = request()
+        var storeMutationResult = true
+        assertTrue(MemoryMutationGate.execute(context, request) { permit ->
+            storeMutationResult = AiMemoryStore.removeMemory(context, "unrelated", permit)
+            true
+        })
+        assertFalse(storeMutationResult)
+        val rows = MemoryAuditLog.readVerified(context)!!
+        assertEquals(MemoryAuditLog.Phase.COMMITTED, rows.last().phase)
+    }
+
     @Test fun missingApprovalBlocksMutationBeforeIntent() {
         var invoked = false
         assertFalse(MemoryMutationGate.execute(context, request(approvalRef = "")) {

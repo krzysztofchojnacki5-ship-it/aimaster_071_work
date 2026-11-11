@@ -77,7 +77,12 @@ class QualityLearningStoreTest {
         )
         assertTrue(QualityLearningStore.setProposalStatus(context, proposal.id, "APPROVED", "test-approval:${proposal.id}"))
         val memoryEntry = "[UCZENIE ZATWIERDZONE ${proposal.id.take(8)}; dowody=${proposal.evidenceCount}; pewność=${proposal.confidence}] ${proposal.text}".take(1000)
-        assertTrue(AiMemoryStore.removeMemory(context, memoryEntry))
+        val removeRequest = MemoryGovernance.Request(MemoryGovernance.Actor.SYSTEM_RECOVERY,
+            MemoryGovernance.Mutation.RECONCILE_APPROVED_PROPOSAL, proposal.id,
+            "Test simulates an interrupted approval write", "proposal:${proposal.id}")
+        assertTrue(MemoryMutationGate.execute(context, removeRequest) { permit ->
+            AiMemoryStore.removeMemory(context, memoryEntry, permit)
+        })
         assertFalse(AiMemoryStore.getMemories(context).contains(memoryEntry))
         QualityLearningStore.syncApprovedAgentMemories(context)
         assertTrue(AiMemoryStore.getMemories(context).contains(memoryEntry))
