@@ -58,6 +58,26 @@ class MasterTaskQueueStoreTest {
         assertEquals(MasterTaskQueueStore.Status.QUEUED, MasterTaskQueueStore.snapshot(context).tasks.single().status)
     }
 
+    @Test fun enabledCustomAgentCanBeAssignedAndDisabledCustomAgentIsRejected() {
+        val custom = pl.aimasterpro.app.agents.AgentSpec(
+            id = "custom-queue-auditor",
+            name = "Audytor kolejki",
+            category = "Jakość i bezpieczeństwo",
+            responsibility = "Analizuje zadania przypisane przez MASTER-a.",
+            keywords = listOf("kolejka", "audyt"),
+            systemPromptOverride = "Nie ujawniaj sekretów."
+        )
+        assertTrue(AgentManagerStore.addCustomAgent(context, custom))
+        assertTrue(MasterTaskQueueStore.enqueue(context, "task-custom-001", "Zadanie własnego agenta", "Sprawdź kolejkę.", now = 35L))
+        assertTrue(MasterTaskQueueStore.assign(context, "task-custom-001", listOf(custom.id), now = 36L))
+        assertEquals(listOf(custom.id), MasterTaskQueueStore.snapshot(context).tasks.single().assignedAgentIds)
+
+        assertTrue(AgentManagerStore.setEnabled(context, custom.id, false))
+        assertTrue(MasterTaskQueueStore.enqueue(context, "task-custom-002", "Zadanie wyłączonego agenta", "Nie uruchamiaj.", now = 37L))
+        assertFalse(MasterTaskQueueStore.assign(context, "task-custom-002", listOf(custom.id), now = 38L))
+        assertEquals(MasterTaskQueueStore.Status.QUEUED, MasterTaskQueueStore.snapshot(context).tasks.last().status)
+    }
+
     @Test fun dependenciesMustBeCompletedBeforeDependentTaskCanBeEnqueuedOrAssigned() {
         assertTrue(MasterTaskQueueStore.enqueue(context, "task-004", "Pierwsze", "Cel.", now = 40L))
         assertFalse(MasterTaskQueueStore.enqueue(context, "task-005", "Drugie", "Cel.",
