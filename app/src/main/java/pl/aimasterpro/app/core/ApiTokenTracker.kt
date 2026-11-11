@@ -56,6 +56,26 @@ data class CatalogModelPrice(
     val cacheWriteInput1hPer1MUsd: Double? = null
 )
 
+data class ModelTokenLimitConfig(
+    val providerId: String,
+    val baseUrl: String,
+    val modelName: String,
+    val dailyLimitTokens: Long,
+    val warningPercent: Int = 90,
+    val enabled: Boolean = true
+)
+
+data class ModelTokenUsage(
+    val config: ModelTokenLimitConfig?,
+    val usedTokens: Long,
+    val reservedTokens: Long,
+    val limitTokens: Long,
+    val remainingTokens: Long,
+    val usagePercent: Int,
+    val warningReached: Boolean,
+    val limitReached: Boolean
+)
+
 data class BudgetRequest(
     val taskId: String,
     val agentId: String,
@@ -78,6 +98,7 @@ object ApiTokenTracker {
     private const val PREFS_NAME = "api_token_tracker_records_v1"
     private const val PRICING_PREFS = "api_token_pricing_v1"
     private const val LIMITS_PREFS = "api_token_limits_v1"
+    private const val MODEL_LIMITS_PREFS = "api_model_token_limits_v1"
 
     private val sessionRecords = mutableListOf<TokenRecord>()
     // Session means the current app process, not an in-memory list that disappears from the monitor.
@@ -85,6 +106,90 @@ object ApiTokenTracker {
     private data class ActiveReservationTask(val taskId: String, val agentId: String, val providerId: String, val baseUrl: String, val modelName: String, var tokensRemaining: Long, var costPlnRemaining: Double, var completed: Boolean = false)
     private data class ActiveReservation(val id: String, val tasks: MutableList<ActiveReservationTask>, var globalTokensRemaining: Long, val globalReserveAgentId: String = "", val globalReserveCostPln: Double = 0.0, var releaseRequested: Boolean = false)
     private val activeReservations = linkedMapOf<String, ActiveReservation>()
+
+    private fun modelBudgetKey(providerId: String, baseUrl: String, modelName: String): String =
+        listOf(
+            providerId.trim().lowercase(Locale.ROOT),
+            baseUrl.trim().trimEnd('/').lowercase(Locale.ROOT),
+            modelName.trim().lowercase(Locale.ROOT)
+        ).joinToString("|")
+
+    private fun readModelLimits(context: Context): Map<String, ModelTokenLimitConfig> {
+        val raw = context.getSharedPreferences(MODEL_LIMITS_PREFS, Context.MODE_PRIVATE)
+            .getString("limits", null) ?: return emptyMap()
+        val array = JSONArray(raw)
+        val result = linkedMapOf<String, ModelTokenLimitConfig>()
+        for (i in 0 until array.length()) {
+            val item = array.getJSONObject(i)
+            val config = ModelTokenLimitConfig(
+                providerId = item.getString("providerId"),
+                baseUrl = item.getString("baseUrl"),
+                modelName = item.getString("modelName"),
+                dailyLimitTokens = item.getLong("dailyLimitTokens"),
+                warningPercent = item.optInt("warningPercent", 90),
+                enabled = item.optBoolean("enabled", true)
+            )
+            require(config.providerId.isNotBlank() && config.baseUrl.isNotBlank() &&
+                config.modelName.isNotBlank() && config.dailyLimitTokens > 0L &&
+                config.warningPercent in 1..99) { "Nieprawidłowa konfiguracja limitu modelu." }
+            result[modelBudgetKey(config.providerId, config.baseUrl, config.modelName)] = config
+        }
+        return result
+    }
+
+    @Synchronized
+    fun getModelTokenLimit(
+        context: Context, providerId: String, baseUrl: String, modelName: String
+    ): ModelTokenLimitConfig? = readModelLimits(context)[modelBudgetKey(providerId, baseUrl, modelName)]
+
+    @Synchronized
+    fun setModelTokenLimit(context: Context, config: ModelTokenLimitConfig): Boolean {
+        require(config.providerId.isNotBlank() && config.providerId.length <= 128)
+        require(config.baseUrl.isNotBlank() && config.baseUrl.length <= 2048)
+        require(config.modelName.isNotBlank() && config.modelName.length <= 256)
+        require(config.dailyLimitTokens > 0L && config.warningPercent in 1..99)
+        val all = readModelLimits(context).toMutableMap()
+        all[modelBudgetKey(config.providerId, config.baseUrl, config.modelName)] = config
+        val array = JSONArray()
+        all.values.forEach { item ->
+            array.put(JSONObject()
+                .put("providerId", item.providerId)
+                .put("baseUrl", item.baseUrl)
+                .put("modelName", item.modelName)
+                .put("dailyLimitTokens", item.dailyLimitTokens)
+                .put("warningPercent", item.warningPercent)
+                .put("enabled", item.enabled))
+        }
+        return context.getSharedPreferences(MODEL_LIMITS_PREFS, Context.MODE_PRIVATE)
+            .edit().putString("limits", array.toString()).commit()
+    }
+
+    @Synchronized
+    fun getModelTokenUsage(
+        context: Context, providerId: String, baseUrl: String, modelName: String
+    ): ModelTokenUsage {
+        val config = getModelTokenLimit(context, providerId, baseUrl, modelName)
+        val identity = modelBudgetKey(providerId, baseUrl, modelName)
+        val records = loadAllRecordsFromStorage(context)
+        val used = sumTokenCounts(filterRecords(records, "Dzisiaj").filter {
+            modelBudgetKey(it.providerId, it.baseUrl, it.modelName) == identity
+        }.map { it.totalTokens })
+        val reserved = sumTokenCounts(activeReservations.values.flatMap { it.tasks }.filter {
+            modelBudgetKey(it.providerId, it.baseUrl, it.modelName) == identity
+        }.map { it.tokensRemaining })
+        val limit = config?.takeIf { it.enabled }?.dailyLimitTokens ?: 0L
+        val total = addTokenCounts(used, reserved)
+        val percent = if (limit > 0L) ((total.toDouble() / limit.toDouble()) * 100.0)
+            .coerceAtMost(Int.MAX_VALUE.toDouble()).toInt() else 0
+        return ModelTokenUsage(
+            config = config, usedTokens = used, reservedTokens = reserved,
+            limitTokens = limit,
+            remainingTokens = if (limit > 0L) (limit - total).coerceAtLeast(0L) else 0L,
+            usagePercent = percent,
+            warningReached = limit > 0L && percent >= (config?.warningPercent ?: 90),
+            limitReached = limit > 0L && total >= limit
+        )
+    }
 
     private fun addTokenCounts(left: Long, right: Long): Long {
         val a = left.coerceAtLeast(0L)
