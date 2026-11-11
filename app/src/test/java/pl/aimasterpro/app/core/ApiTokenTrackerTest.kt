@@ -1409,6 +1409,44 @@ class ApiTokenTrackerTest {
         assertTrue(restoredUsage.warningReached)
     }
 
+    @Test fun perModelWarningStartsAtExactlyNinetyPercentNotBelowIt() {
+        val provider = "model-warning-boundary"
+        val endpoint = "https://model-warning.example/v1"
+        val belowModel = "vendor/model-89"
+        val warningModel = "vendor/model-90"
+        ApiTokenTracker.replaceCatalogPricingForProvider(
+            context, provider, endpoint,
+            listOf(
+                CatalogModelPrice(belowModel, 0.0, 0.0, explicitlyFree = true),
+                CatalogModelPrice(warningModel, 0.0, 0.0, explicitlyFree = true)
+            )
+        )
+        assertTrue(ApiTokenTracker.setModelTokenLimit(
+            context, ModelTokenLimitConfig(provider, endpoint, belowModel, 100L, warningPercent = 90)
+        ))
+        assertTrue(ApiTokenTracker.setModelTokenLimit(
+            context, ModelTokenLimitConfig(provider, endpoint, warningModel, 100L, warningPercent = 90)
+        ))
+        ApiTokenTracker.recordQuery(
+            context, provider, belowModel, "MASTER", "model-warning-89",
+            inputTokens = 45L, outputTokens = 44L, status = "REAL",
+            baseUrl = endpoint, idempotencyKey = "model-warning-89"
+        )
+        ApiTokenTracker.recordQuery(
+            context, provider, warningModel, "MASTER", "model-warning-90",
+            inputTokens = 45L, outputTokens = 45L, status = "REAL",
+            baseUrl = endpoint, idempotencyKey = "model-warning-90"
+        )
+
+        val below = ApiTokenTracker.getModelTokenUsage(context, provider, endpoint, belowModel)
+        val atThreshold = ApiTokenTracker.getModelTokenUsage(context, provider, endpoint, warningModel)
+        assertEquals(89, below.usagePercent)
+        assertFalse(below.warningReached)
+        assertEquals(90, atThreshold.usagePercent)
+        assertTrue(atThreshold.warningReached)
+        assertFalse(atThreshold.limitReached)
+    }
+
     @Test fun perModelLimitBlocksReservationsAndIsolatedByProviderEndpointAndModel() {
         val provider = "model-cap-provider"
         val endpoint = "https://model-cap.example/v1"
