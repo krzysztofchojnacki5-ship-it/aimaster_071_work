@@ -14,13 +14,15 @@ object AgentManagerStore {
     private const val MAX_DISABLED = 120
     private const val MAX_CUSTOM = 24
     private const val MAX_KEYWORDS = 20
+    private const val MAX_REMOVED = 500
 
     enum class ReadStatus { AVAILABLE, CORRUPT, UNAVAILABLE }
     data class Snapshot(
         val status: ReadStatus,
         val disabledIds: Set<String> = emptySet(),
         val customAgents: List<AgentSpec> = emptyList(),
-        val errorCode: String = ""
+        val errorCode: String = "",
+        val removedCustomIds: Set<String> = emptySet()
     )
 
     fun snapshot(context: Context): Snapshot {
@@ -39,6 +41,12 @@ object AgentManagerStore {
                 val disabled = (0 until disabledArray.length()).map { disabledArray.getString(it) }
                 require(disabled.all { it.matches(ID_PATTERN) } && disabled.distinct().size == disabled.size) {
                     "AGENT_MANAGER_DISABLED_IDS"
+                }
+                val removedArray = root.optJSONArray("removedCustomIds") ?: JSONArray()
+                require(removedArray.length() <= MAX_REMOVED) { "AGENT_MANAGER_REMOVED_LIMIT" }
+                val removed = (0 until removedArray.length()).map { removedArray.getString(it) }
+                require(removed.all { it.matches(ID_PATTERN) } && removed.distinct().size == removed.size) {
+                    "AGENT_MANAGER_REMOVED_IDS"
                 }
                 val customArray = root.optJSONArray("customAgents") ?: JSONArray()
                 require(customArray.length() <= MAX_CUSTOM) { "AGENT_MANAGER_CUSTOM_LIMIT" }
@@ -59,7 +67,8 @@ object AgentManagerStore {
                 }
                 require(custom.map { it.id }.distinct().size == custom.size) { "AGENT_MANAGER_CUSTOM_DUPLICATE" }
                 require(custom.none { AgentCatalog.find(it.id) != null }) { "AGENT_MANAGER_CUSTOM_BUILTIN_COLLISION" }
-                Snapshot(ReadStatus.AVAILABLE, disabled.toSet(), custom)
+                require(custom.none { it.id in removed }) { "AGENT_MANAGER_REMOVED_CUSTOM_REAPPEARED" }
+                Snapshot(ReadStatus.AVAILABLE, disabled.toSet(), custom, removedCustomIds = removed.toSet())
             }
         }.getOrElse { Snapshot(ReadStatus.CORRUPT, errorCode = "AGENT_MANAGER_READ_FAILED:${it.javaClass.simpleName}") }
     }
@@ -83,15 +92,16 @@ object AgentManagerStore {
         if (AgentCatalog.find(agentId) == null && state.customAgents.none { it.id == agentId }) return false
         val disabled = state.disabledIds.toMutableSet()
         if (enabled) disabled.remove(agentId) else disabled.add(agentId)
-        return write(context, disabled, state.customAgents)
+        return write(context, disabled, state.customAgents, state.removedCustomIds)
     }
 
     fun addCustomAgent(context: Context, agent: AgentSpec): Boolean {
         if (!validCustom(agent)) return false
         val state = snapshot(context)
         if (state.status != ReadStatus.AVAILABLE || state.customAgents.size >= MAX_CUSTOM) return false
-        if (AgentCatalog.find(agent.id) != null || state.customAgents.any { it.id == agent.id }) return false
-        return write(context, state.disabledIds, state.customAgents + agent)
+        if (AgentCatalog.find(agent.id) != null || agent.id in state.removedCustomIds ||
+            state.customAgents.any { it.id == agent.id }) return false
+        return write(context, state.disabledIds, state.customAgents + agent, state.removedCustomIds)
     }
 
     fun updateCustomAgent(context: Context, agent: AgentSpec): Boolean {
@@ -100,13 +110,18 @@ object AgentManagerStore {
         if (state.status != ReadStatus.AVAILABLE || state.customAgents.none { it.id == agent.id }) return false
         return write(context, state.disabledIds, state.customAgents.map { current ->
             if (current.id == agent.id) agent else current
-        })
+        }, state.removedCustomIds)
     }
 
     fun removeCustomAgent(context: Context, agentId: String): Boolean {
         val state = snapshot(context)
         if (state.status != ReadStatus.AVAILABLE || state.customAgents.none { it.id == agentId }) return false
-        return write(context, state.disabledIds - agentId, state.customAgents.filterNot { it.id == agentId })
+        if (state.removedCustomIds.size >= MAX_REMOVED) return false
+        return write(
+            context, state.disabledIds - agentId,
+            state.customAgents.filterNot { it.id == agentId },
+            state.removedCustomIds + agentId
+        )
     }
 
     private fun validCustom(agent: AgentSpec): Boolean =
@@ -118,9 +133,16 @@ object AgentManagerStore {
             agent.keywords.all { it.isNotBlank() && it.length <= 80 } &&
             agent.systemPromptOverride.isNotBlank() && agent.systemPromptOverride.length <= 4_000
 
-    private fun write(context: Context, disabledIds: Set<String>, customAgents: List<AgentSpec>): Boolean {
+    private fun write(
+        context: Context,
+        disabledIds: Set<String>,
+        customAgents: List<AgentSpec>,
+        removedCustomIds: Set<String>
+    ): Boolean {
         if (SharedPreferencesWriteHealth.isUncertain(PREFS) ||
             disabledIds.size > MAX_DISABLED || customAgents.size > MAX_CUSTOM ||
+            removedCustomIds.size > MAX_REMOVED || removedCustomIds.any { !it.matches(ID_PATTERN) } ||
+            customAgents.any { it.id in removedCustomIds } ||
             customAgents.any { !validCustom(it) } ||
             customAgents.map { it.id }.distinct().size != customAgents.size) return false
         val disabled = JSONArray().also { array -> disabledIds.sorted().forEach(array::put) }
@@ -135,7 +157,9 @@ object AgentManagerStore {
                     .put("systemPrompt", agent.systemPromptOverride))
             }
         }
-        val raw = JSONObject().put("version", VERSION).put("disabled", disabled).put("customAgents", custom).toString()
+        val removed = JSONArray().also { array -> removedCustomIds.sorted().forEach(array::put) }
+        val raw = JSONObject().put("version", VERSION).put("disabled", disabled)
+            .put("customAgents", custom).put("removedCustomIds", removed).toString()
         if (raw.length > 256_000) return false
         return SharedPreferencesWriteHealth.commit(
             PREFS,
