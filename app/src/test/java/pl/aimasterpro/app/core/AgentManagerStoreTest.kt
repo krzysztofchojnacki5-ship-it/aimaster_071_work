@@ -80,6 +80,16 @@ class AgentManagerStoreTest {
         assertFalse(AgentManagerStore.updateCustomAgent(context, custom(id = "custom-not-saved")))
     }
 
+    @Test fun removedCustomAgentIdIsRememberedAndCannotBeReimported() {
+        val removed = custom(id = "custom-removed-auditor")
+        assertTrue(AgentManagerStore.addCustomAgent(context, removed))
+        assertTrue(AgentManagerStore.removeCustomAgent(context, removed.id))
+        val snapshot = AgentManagerStore.snapshot(context)
+        assertTrue(removed.id in snapshot.removedCustomIds)
+        assertFalse(AgentManagerStore.addCustomAgent(context, removed))
+        assertTrue(AgentManagerStore.addCustomAgent(context, custom(id = "custom-new-auditor")))
+    }
+
     @Test fun invalidOrDuplicateCustomAgentIsRejected() {
         assertFalse(AgentManagerStore.addCustomAgent(context, custom(id = "bad id")))
         assertTrue(AgentManagerStore.addCustomAgent(context, custom()))
