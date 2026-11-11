@@ -46,7 +46,9 @@ data class TeamTaskResult(
  */
 class TeamRunEngine(
     private val client: ProviderClient,
-    private val maxParallel: Int = 4
+    private val maxParallel: Int = 4,
+    /** Snapshot of agents enabled by the local manager for this run. */
+    private val agentCatalog: List<AgentSpec> = AgentCatalog.all
 ) : AutoCloseable {
 
     fun runBatch(
@@ -84,7 +86,7 @@ class TeamRunEngine(
         val workerStates = tasks.map { AtomicInteger(0) } // 0=queued, 1=running, 2=finished/cancelled-before-start
         var taskScopes: List<ProviderClient.RequestScope> = emptyList()
         return try {
-            validate(tasks, mode)
+            validate(tasks, mode, agentCatalog)
             // Every agent gets a child request scope: cancelling one timed-out agent
             // disconnects only its HTTP connection and leaves sibling agents untouched.
             val batchScope = requestScope ?: client.beginRequestScope()
@@ -108,7 +110,7 @@ class TeamRunEngine(
                         var usageAccountingPending = false
                         var actualProviderId = ""
                         var actualModel = ""
-                        val agent = AgentCatalog.find(task.agentId)
+                        val agent = agentCatalog.firstOrNull { it.id == task.agentId }
                             ?: return@Callable TeamTaskResult(task.id, task.agentId, TeamTaskResult.Status.BLOCKED, "Nieznany agent: ${task.agentId}", System.currentTimeMillis() - taskStartedAt, reviewOfAgentId = task.reviewOfAgentId)
 
                         runCatching { onTaskState(task, "RUNNING", "", "", "", 0) }
@@ -563,14 +565,14 @@ class TeamRunEngine(
         }
     }
 
-    private fun validate(tasks: List<TeamTask>, mode: WorkMode) {
+    private fun validate(tasks: List<TeamTask>, mode: WorkMode, agentCatalog: List<AgentSpec>) {
         require(tasks.isNotEmpty()) { "Batch musi zawierać co najmniej jedno zadanie." }
         require(tasks.map { it.id }.distinct().size == tasks.size) { "Identyfikatory zadań muszą być unikalne." }
         tasks.forEach { task ->
             require(task.id.isNotBlank() && task.agentId.isNotBlank() && task.goal.isNotBlank() && task.prompt.isNotBlank()) {
                 "Każde zadanie wymaga id, agenta, celu i promptu."
             }
-            require(AgentCatalog.find(task.agentId) != null) { "Nieznany agent: ${task.agentId}" }
+            require(agentCatalog.any { it.id == task.agentId }) { "Nieznany agent: ${task.agentId}" }
             require(task.writeScope.none { it.isBlank() }) { "writeScope nie może zawierać pustych ścieżek." }
             if (!mode.allowsWriteScopes) require(task.writeScope.isEmpty()) {
                 "Tryb ${mode.label} dopuszcza wyłącznie zadania tylko do odczytu."
