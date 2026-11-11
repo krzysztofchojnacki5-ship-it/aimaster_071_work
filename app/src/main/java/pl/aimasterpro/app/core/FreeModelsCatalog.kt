@@ -122,8 +122,11 @@ object FreeModelsCatalog {
     )
 
     fun isLocalOllamaEndpoint(baseUrl: String): Boolean {
-        val parsed = runCatching { java.net.URL(baseUrl) }.getOrNull() ?: return false
-        if (parsed.port != 11434) return false
+        val parsed = runCatching { java.net.URI(baseUrl.trim()) }.getOrNull() ?: return false
+        if (!(parsed.scheme.equals("http", true) || parsed.scheme.equals("https", true)) ||
+            parsed.port != 11434 || parsed.host.isNullOrBlank() ||
+            parsed.rawUserInfo != null || parsed.rawQuery != null || parsed.rawFragment != null ||
+            parsed.path.orEmpty().trimEnd('/').let { it.isNotEmpty() && it != "/v1" }) return false
         val host = parsed.host.lowercase(Locale.ROOT).removePrefix("[").removeSuffix("]")
         val secondOctet = host.split(".").getOrNull(1)?.toIntOrNull()
         return host == "localhost" || host.endsWith(".local") || host == "::1" ||
