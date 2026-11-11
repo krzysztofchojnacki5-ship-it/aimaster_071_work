@@ -96,6 +96,17 @@ class AgentManagerStoreTest {
         assertFalse(AgentManagerStore.addCustomAgent(context, custom()))
     }
 
+    @Test fun wrongJsonTypesInAgentStateFailClosedInsteadOfDroppingDisabledOrRemovedIds() {
+        val prefs = context.getSharedPreferences("aiforteca_agent_manager_v1", Context.MODE_PRIVATE)
+        val corrupt = """{"version":1,"disabled":"critical-reviewer","customAgents":[],"removedCustomIds":[]}"""
+        assertTrue(prefs.edit().putString("state", corrupt).commit())
+        val state = AgentManagerStore.snapshot(context)
+        assertEquals(AgentManagerStore.ReadStatus.CORRUPT, state.status)
+        assertTrue(AgentManagerStore.enabledCatalog(context).isEmpty())
+        assertFalse(AgentManagerStore.setEnabled(context, "critical-reviewer", true))
+        assertEquals(corrupt, prefs.getString("state", null))
+    }
+
     @Test fun corruptCatalogDoesNotSilentlyReenableAgentsOrOverwriteState() {
         val prefs = context.getSharedPreferences("aiforteca_agent_manager_v1", Context.MODE_PRIVATE)
         prefs.edit().putString("state", "{broken").commit()
