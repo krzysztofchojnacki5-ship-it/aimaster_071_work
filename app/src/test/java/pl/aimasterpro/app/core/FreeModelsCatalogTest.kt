@@ -40,8 +40,25 @@ class FreeModelsCatalogTest {
     }
 
     @Test
+    fun ollamaNameAloneNeverProvesLocalOrFreeEndpoint() {
+        val publicEndpoint = "https://ollama.example:11434/v1"
+        assertFalse(FreeModelsCatalog.isFreeModel("ollama", "llama3", publicEndpoint))
+        assertEquals(
+            FreeStatus.UNKNOWN,
+            FreeModelsCatalog.classifyDiscoveredModel("ollama", "llama3", "Ollama", "ollama", publicEndpoint).freeStatus
+        )
+        assertEquals(
+            FreeStatus.FREE,
+            FreeModelsCatalog.classifyDiscoveredModel(
+                "ollama", "llama3", "Ollama", "ollama", "http://127.0.0.1:11434/v1"
+            ).freeStatus
+        )
+        assertTrue(FreeModelsCatalog.isFreeModel("ollama", "llama3", "http://127.0.0.1:11434/v1"))
+    }
+
+    @Test
     fun localOllamaModelsAreFreeButCloudUnknownsStayUnknown() {
-        assertTrue(FreeModelsCatalog.isFreeModel("ollama", "llama3"))
+        assertFalse(FreeModelsCatalog.isFreeModel("ollama", "llama3"))
         assertTrue(FreeModelsCatalog.isFreeModel("custom", "llama3", "http://10.0.2.2:11434/v1"))
         assertEquals(FreeStatus.UNKNOWN, FreeModelsCatalog.classifyDiscoveredModel("groq", "some-model").freeStatus)
         assertEquals(FreeStatus.FREE_TIER, FreeModelsCatalog.classifyDiscoveredModel("openrouter", "some/model:free").freeStatus)
