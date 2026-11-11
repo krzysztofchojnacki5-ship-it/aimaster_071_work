@@ -879,7 +879,9 @@ object ApiTokenTracker {
         for (pricing in defaultPricing) {
             if (lower.contains(pricing.modelKey)) return pricing.copy()
         }
-        return defaultPricing.last().copy()
+        throw UnknownModelPricingException(
+            "Katalog cen nie zawiera kompletnej stawki wejścia i wyjścia dla modelu $modelName."
+        )
     }
 
     private fun hasUnknownPriceApproval(
