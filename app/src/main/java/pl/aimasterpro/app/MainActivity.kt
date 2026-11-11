@@ -6065,7 +6065,7 @@ class MainActivity : Activity() {
         action("◇  DOSTAWCY I MODELE", departmentsCard) { navigate("Modele") }
         action("✉  OTWÓRZ CZAT MASTER-A", departmentsCard) { navigate("Czat") }
         card("Stan wykonania", "Status: ${if (isThinking) "PRACA W TOKU" else "GOTOWY"}\n${if (isThinking) thinkingLabel else "Brak aktywnego zadania."}\nAgenci z historią: ${agentStats.size} • katalog agentów: ${pl.aimasterpro.app.agents.AgentCatalog.all.size}\nZdarzenia dziennika: ${events.size} • ostatnie 5 awarii/blokad: ${recentFailures.size}\nCheckpointy zadań: ${taskStates.size} • przerwane/nieudane: ${interruptedTasks.size}")
-        card("Budżet API", "Dzisiaj: ${budget.recordedTodayTokens} zużytych + ${budget.activeReservedTokens} zarezerwowanych / ${budget.dailyLimitTokens} tokenów\nPozostało: ${budget.remainingTokens}\nKoszt 30 dni: ${"%.4f".format(java.util.Locale.US, budget.recorded30DayCostPln)} zł / ${"%.2f".format(java.util.Locale.US, budget.monthlyCostLimitPln)} zł\nRezerwa kosztów: ${"%.4f".format(java.util.Locale.US, budget.activeReservedCostPln)} zł")
+        card("Budżet API", "Dzisiaj: ${budget.recordedTodayTokens} zużytych + ${budget.activeReservedTokens} zarezerwowanych / ${budget.dailyLimitTokens} tokenów\nPozostało: ${budget.remainingTokens}\nKoszt znany 30 dni: ${"%.4f".format(java.util.Locale.US, budget.recorded30DayCostPln)} zł / ${"%.2f".format(java.util.Locale.US, budget.monthlyCostLimitPln)} zł\nRekordy z nieznanym kosztem: ${budget.unknownCostRecords} (nie są traktowane jako 0 zł)\nRezerwa kosztów: ${"%.4f".format(java.util.Locale.US, budget.activeReservedCostPln)} zł")
         card("Jakość i pamięć", "Oceny: ${quality.total} • pozytywne: ${quality.positive} • negatywne: ${quality.negative}\nAgenci ocenieni przez użytkownika: ${quality.ratedAgents}\nZatwierdzone wnioski jakościowe: ${quality.approved}\nPamięć operacyjna per agent: ${memories.size}/300 wpisów")
         card("Dostawcy i limity", if (cooldowns.isEmpty()) "Brak aktywnych trwałych cooldownów po HTTP 429." else cooldowns.joinToString("\n") { state ->
             val seconds = ((state.until - now).coerceAtLeast(0L) / 1000L)
@@ -6569,7 +6569,7 @@ class MainActivity : Activity() {
         val percent = (used * 100.0 / usage.dailyLimitTokens.coerceAtLeast(1L)).toInt().coerceIn(0, 999)
         card("Centrum diagnostyczne", "Szybka kontrola lokalnego budżetu, rezerwacji i konfiguracji. Klucze API nie są wyświetlane ani kopiowane.")
         addCompanionTrustCard()
-        card("Smart Budget — stan dzienny", "Zużyto według API: ${usage.recordedTodayTokens} tokenów\nAktywne rezerwacje: ${usage.activeReservedTokens} tokenów\nŁącznie zajęte: $used / ${usage.dailyLimitTokens} ($percent%)\nPozostało do rezerwacji: ${usage.remainingTokens} tokenów\nLimit na jednego agenta: ${usage.perAgentLimitTokens} tokenów\nKoszt zapisany z 30 dni: ${String.format(java.util.Locale.US, "%.4f", usage.recorded30DayCostPln)} PLN\nAktywny koszt zarezerwowany: ${String.format(java.util.Locale.US, "%.4f", usage.activeReservedCostPln)} PLN\nLimit kosztów: ${if (usage.monthlyCostLimitPln > 0.0) "${usage.monthlyCostLimitPln} PLN" else "wyłączony"}")
+        card("Smart Budget — stan dzienny", "Zużyto według API: ${usage.recordedTodayTokens} tokenów\nAktywne rezerwacje: ${usage.activeReservedTokens} tokenów\nŁącznie zajęte: $used / ${usage.dailyLimitTokens} ($percent%)\nPozostało do rezerwacji: ${usage.remainingTokens} tokenów\nLimit na jednego agenta: ${usage.perAgentLimitTokens} tokenów\nKoszt znany z 30 dni: ${String.format(java.util.Locale.US, "%.4f", usage.recorded30DayCostPln)} PLN\nRekordy z nieznanym kosztem: ${usage.unknownCostRecords} (nie są liczone jako 0 PLN)\nAktywny koszt zarezerwowany: ${String.format(java.util.Locale.US, "%.4f", usage.activeReservedCostPln)} PLN\nLimit kosztów: ${if (usage.monthlyCostLimitPln > 0.0) "${usage.monthlyCostLimitPln} PLN" else "wyłączony"}")
         action("Otwórz Monitor API i limity budżetowe", onClick = {
             selectedMonitorPeriod = "Dzisiaj"
             showShell("Monitor API")
@@ -6585,6 +6585,7 @@ class MainActivity : Activity() {
                 appendLine("Pozostało: ${usage.remainingTokens}")
                 appendLine("Limit agenta: ${usage.perAgentLimitTokens}")
                 appendLine("Koszt 30 dni: ${String.format(java.util.Locale.US, "%.4f", usage.recorded30DayCostPln)} PLN")
+                appendLine("Rekordy z nieznanym kosztem 30 dni: ${usage.unknownCostRecords}")
                 appendLine("Aktywny koszt rezerwacji: ${String.format(java.util.Locale.US, "%.4f", usage.activeReservedCostPln)} PLN")
                 appendLine("Limit kosztów: ${usage.monthlyCostLimitPln} PLN (0 = wyłączony)")
                 appendLine("\nUwaga: darmowy model API nadal zużywa tokeny i może podlegać limitom dostawcy.")
@@ -7241,6 +7242,7 @@ class MainActivity : Activity() {
         val estimatedCount = filtered.count { it.status.equals("ESTIMATED", true) }
         val unavailableCount = filtered.count { it.status.equals("UNAVAILABLE", true) }
         val unknownCount = filtered.size - realCount - estimatedCount - unavailableCount
+        val unknownCostCount = filtered.count { !it.costKnown }
 
         val header = card("Monitor API", "Lokalny rejestr zużycia z odpowiedzi API. Dane REAL pochodzą z usage zwróconego przez dostawcę; ESTIMATED to szacunek, gdy API nie podało liczników.")
         val headerActions = LinearLayout(this).apply {
@@ -7270,6 +7272,7 @@ class MainActivity : Activity() {
                 appendLine("REAL: $realCount | ESTIMATED: $estimatedCount | UNAVAILABLE: $unavailableCount | inne: $unknownCount")
                 appendLine("Reasoning: ${stats.reasoningTokens} | Cached: ${stats.cachedTokens}")
                 appendLine("Koszt szacowany: ${'$'}${String.format(java.util.Locale.US, "%.6f", stats.costUsd)} USD / ${String.format(java.util.Locale.US, "%.4f", stats.costPln)} PLN")
+                appendLine("Rekordy z nieznanym kosztem: $unknownCostCount (nie są traktowane jako 0)")
                 appendLine()
                 filtered.take(100).forEach { r ->
                     appendLine("${java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.getDefault()).format(java.util.Date(r.timestamp))} | ${r.providerId} | ${r.modelName} | ${r.agentId} | ${r.totalTokens} tok | ${r.status}")
@@ -7337,13 +7340,13 @@ class MainActivity : Activity() {
         statTile(totalsRow, "Tokeny łącznie", String.format(java.util.Locale.US, "%,d", stats.totalTokens), "In ${stats.inputTokens} • Out ${stats.outputTokens}")
         col.addView(totalsRow)
         val costRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-        statTile(costRow, "Koszt szacowany", "${String.format(java.util.Locale.US, "%.2f", stats.costPln)} zł", "${'$'}${String.format(java.util.Locale.US, "%.4f", stats.costUsd)} USD")
+        statTile(costRow, "Koszt znany", "${String.format(java.util.Locale.US, "%.2f", stats.costPln)} zł", "${'$'}${String.format(java.util.Locale.US, "%.4f", stats.costUsd)} USD • nieznany koszt: $unknownCostCount wpisów")
         statTile(costRow, "Dane REAL", realCount.toString(), "ESTIMATED: $estimatedCount")
         col.addView(costRow)
 
-        val qualityCard = card("Jakość danych", "REAL = liczniki zwrócone przez API. ESTIMATED = przybliżenie z długości tekstu. UNAVAILABLE = brak wiarygodnego pomiaru.")
+        val qualityCard = card("Jakość danych", "REAL = liczniki zwrócone przez API. ESTIMATED = przybliżenie z długości tekstu. UNAVAILABLE = brak wiarygodnego pomiaru. Nieznany koszt nie oznacza bezpłatnego użycia.")
         qualityCard.addView(TextView(this).apply {
-            text = "REAL: $realCount     ESTIMATED: $estimatedCount     UNAVAILABLE: $unavailableCount     Inne: $unknownCount"
+            text = "REAL: $realCount     ESTIMATED: $estimatedCount     UNAVAILABLE: $unavailableCount     Inne: $unknownCount\nKoszt nieznany: $unknownCostCount"
             textSize = 12f
             setTextColor(white)
             setPadding(0, dp(5), 0, 0)
@@ -7359,7 +7362,8 @@ class MainActivity : Activity() {
         }
 
         fun addBreakdown(title: String, keyOf: (pl.aimasterpro.app.core.TokenRecord) -> String) {
-            val groups = filtered.groupBy(keyOf).mapValues { pl.aimasterpro.app.core.ApiTokenTracker.calculateSummary(it.value) }
+            val groupedRecords = filtered.groupBy(keyOf)
+            val groups = groupedRecords.mapValues { pl.aimasterpro.app.core.ApiTokenTracker.calculateSummary(it.value) }
             val breakdown = card(title, if (groups.isEmpty()) "Brak danych w tym okresie." else "Posortowano według łącznego zużycia tokenów.")
             groups.entries.sortedByDescending { it.value.totalTokens }.take(12).forEach { (name, summary) ->
                 val line = LinearLayout(this).apply {
@@ -7374,7 +7378,8 @@ class MainActivity : Activity() {
                     maxLines = 2
                 }, LinearLayout.LayoutParams(0, -2, 1f))
                 line.addView(TextView(this).apply {
-                    text = "${String.format(java.util.Locale.US, "%,d", summary.totalTokens)} tok\n${summary.totalQueries} zapyt. • ${String.format(java.util.Locale.US, "%.2f", summary.costPln)} zł"
+                    val unknownInGroup = groupedRecords[name].orEmpty().count { !it.costKnown }
+                    text = "${String.format(java.util.Locale.US, "%,d", summary.totalTokens)} tok\n${summary.totalQueries} zapyt. • koszt znany: ${String.format(java.util.Locale.US, "%.2f", summary.costPln)} zł${if (unknownInGroup > 0) " • nieznany: $unknownInGroup" else ""}"
                     textSize = 11f
                     setTextColor(muted)
                     gravity = Gravity.END
@@ -7426,9 +7431,10 @@ class MainActivity : Activity() {
         val today = pl.aimasterpro.app.core.ApiTokenTracker.filterRecords(allRecords, "Dzisiaj")
         val todayTokens = today.sumOf { it.totalTokens.coerceAtLeast(0L) }
         val monthRecords = pl.aimasterpro.app.core.ApiTokenTracker.filterRecords(allRecords, "30 dni")
-        val monthCost = monthRecords.sumOf { it.costPln.coerceAtLeast(0.0) }
+        val monthCost = monthRecords.filter { it.costKnown }.sumOf { it.costPln.coerceAtLeast(0.0) }
+        val unknownMonthCostCount = monthRecords.count { !it.costKnown }
         val activeReservations = pl.aimasterpro.app.core.ApiTokenTracker.activeReservationStats()
-        val limitCard = card("Limity i wykorzystanie", "Dzienny limit: ${limits.dailyTokenLimit} tokenów\nWykorzystano dzisiaj: $todayTokens (${(todayTokens * 100.0 / limits.dailyTokenLimit.coerceAtLeast(1L)).toInt().coerceIn(0, 999)}%)\nAktywne rezerwacje: ${activeReservations.tokens} tokenów / ${activeReservations.tasks} zadań\nMiesięczny limit kosztów: ${if (limits.monthlyCostPlnLimit > 0.0) "${limits.monthlyCostPlnLimit} PLN" else "wyłączony"}\nKoszt z ostatnich 30 dni: ${String.format(java.util.Locale.US, "%.4f", monthCost)} PLN\nLimit dzienny na agenta: ${limits.agentTokenLimit} tokenów")
+        val limitCard = card("Limity i wykorzystanie", "Dzienny limit: ${limits.dailyTokenLimit} tokenów\nWykorzystano dzisiaj: $todayTokens (${(todayTokens * 100.0 / limits.dailyTokenLimit.coerceAtLeast(1L)).toInt().coerceIn(0, 999)}%)\nAktywne rezerwacje: ${activeReservations.tokens} tokenów / ${activeReservations.tasks} zadań\nMiesięczny limit kosztów: ${if (limits.monthlyCostPlnLimit > 0.0) "${limits.monthlyCostPlnLimit} PLN" else "wyłączony"}\nKoszt znany z ostatnich 30 dni: ${String.format(java.util.Locale.US, "%.4f", monthCost)} PLN\nRekordy z nieznanym kosztem: $unknownMonthCostCount\nLimit dzienny na agenta: ${limits.agentTokenLimit} tokenów")
         action("⚙️ Skonfiguruj limity", limitCard) { showLimitsDialog() }
 
         val historyCard = card("Historia zapytań (${filtered.size})", "Najnowsze wpisy na początku. Dotknij wpisu, aby zobaczyć szczegóły.")
@@ -7438,13 +7444,13 @@ class MainActivity : Activity() {
             filtered.take(50).forEach { record ->
                 val timestamp = java.text.SimpleDateFormat("dd.MM HH:mm:ss", java.util.Locale.getDefault()).format(java.util.Date(record.timestamp))
                 val row = TextView(this).apply {
-                    text = "$timestamp  •  ${record.agentId}\n${record.providerId} / ${record.modelName}\n${String.format(java.util.Locale.US, "%,d", record.totalTokens)} tokenów  •  ${record.status}  •  ~${String.format(java.util.Locale.US, "%.4f", record.costPln)} zł"
+                    text = "$timestamp  •  ${record.agentId}\n${record.providerId} / ${record.modelName}\n${String.format(java.util.Locale.US, "%,d", record.totalTokens)} tokenów  •  ${record.status}  •  ${if (record.costKnown) "~${String.format(java.util.Locale.US, "%.4f", record.costPln)} zł" else "KOSZT NIEZNANY"}"
                     textSize = 11.5f
                     setTextColor(white)
                     setPadding(dp(4), dp(9), dp(4), dp(9))
                     setTextIsSelectable(true)
                     setOnClickListener {
-                        val details = "Data: $timestamp\nDostawca: ${record.providerId}\nModel: ${record.modelName}\nAgent: ${record.agentId}\nZadanie: ${record.taskId}\nWejście: ${record.inputTokens}\nWyjście: ${record.outputTokens}\nReasoning: ${record.reasoningTokens}\nCached: ${record.cachedTokens}\nRazem: ${record.totalTokens}\nStatus pomiaru: ${record.status}\nKoszt szacowany: ${record.costUsd} USD / ${record.costPln} PLN"
+                        val details = "Data: $timestamp\nDostawca: ${record.providerId}\nModel: ${record.modelName}\nAgent: ${record.agentId}\nZadanie: ${record.taskId}\nWejście: ${record.inputTokens}\nWyjście: ${record.outputTokens}\nReasoning: ${record.reasoningTokens}\nCached: ${record.cachedTokens}\nRazem: ${record.totalTokens}\nStatus pomiaru: ${record.status}\nKoszt: ${if (record.costKnown) "${record.costUsd} USD / ${record.costPln} PLN" else "NIEZNANY — brak kompletnej stawki API; nie oznacza 0 PLN"}"
                         AlertDialog.Builder(this@MainActivity).setTitle("Szczegóły zapytania").setMessage(details)
                             .setPositiveButton("Kopiuj") { _, _ -> copyText(details) }
                             .setNegativeButton("Zamknij", null).show()
@@ -7455,7 +7461,7 @@ class MainActivity : Activity() {
             }
         }
         action("Kopiuj historię okresu", historyCard) {
-            val report = filtered.joinToString("\n") { "${it.timestamp}|${it.providerId}|${it.modelName}|${it.agentId}|${it.inputTokens}|${it.outputTokens}|${it.status}|${it.costPln}" }
+            val report = filtered.joinToString("\n") { "${it.timestamp}|${it.providerId}|${it.modelName}|${it.agentId}|${it.inputTokens}|${it.outputTokens}|${it.status}|${if (it.costKnown) it.costPln else "UNKNOWN"}" }
             copyText(report.ifBlank { "Brak danych" })
         }
         action("Wyczyść historię Monitor API", historyCard) {
