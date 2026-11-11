@@ -62,6 +62,13 @@ class QualityLearningStoreTest {
         assertTrue(QualityLearningStore.setProposalStatus(
             context, proposal.id, "APPROVED", "test-approval:${proposal.id}"
         ))
+        val memoryEntry = "[UCZENIE ZATWIERDZONE ${proposal.id.take(8)}; dowody=${proposal.evidenceCount}; pewność=${proposal.confidence}] ${proposal.text}".take(1000)
+        val request = MemoryGovernance.Request(MemoryGovernance.Actor.SYSTEM_RECOVERY,
+            MemoryGovernance.Mutation.RECONCILE_APPROVED_PROPOSAL, proposal.id,
+            "Test simulates missing shared memory", "proposal:${proposal.id}")
+        assertTrue(MemoryMutationGate.execute(context, request) { permit ->
+            AiMemoryStore.removeMemory(context, memoryEntry, permit)
+        })
         assertEquals(1, QualityLearningStore.syncApprovedAgentMemories(context))
         val records = MemoryAuditLog.readVerified(context)!!
         val recovery = records.filter { it.actor == "SYSTEM_RECOVERY" && it.objectId == proposal.id }
@@ -87,6 +94,40 @@ class QualityLearningStoreTest {
         QualityLearningStore.syncApprovedAgentMemories(context)
         assertTrue(AiMemoryStore.getMemories(context).contains(memoryEntry))
         assertTrue(AgentOperationalMemoryStore.all(context).any { "proposal:${proposal.id}" in it.sourceTaskIds })
+    }
+
+    @Test fun recoveryClosesOriginalInterruptedUserIntentAndDoesNotRepeatOnNextStartup() {
+        val proposal = QualityLearningStore.addProposal(
+            context, "Reguła zatwierdzona przed przerwaniem procesu", 9, "wstępna",
+            listOf("task-original-intent"), listOf("coder"), emptyList()
+        )
+        val intent = MemoryAuditLog.Event(
+            actor = MemoryGovernance.Actor.USER.name,
+            mutation = MemoryGovernance.Mutation.APPROVE_PROPOSAL.name,
+            objectId = proposal.id,
+            reason = "Użytkownik zatwierdził propozycję przed przerwaniem procesu.",
+            approvalRef = "ui-confirmation:${proposal.id}",
+            phase = MemoryAuditLog.Phase.INTENT,
+            outcome = "AUTHORIZED"
+        )
+        assertTrue(MemoryAuditLog.append(context, intent))
+
+        // Simulate a crash after the proposal ledger was updated but before memory was written.
+        val prefs = context.getSharedPreferences("ai_quality_learning_v1", Context.MODE_PRIVATE)
+        val raw = prefs.getString("proposals", null)!!
+        assertTrue(prefs.edit().putString("proposals", raw.replace("\\"status\\":\\"PROPOSAL\\"", "\\"status\\":\\"APPROVED\\"")).commit())
+
+        assertEquals(1, QualityLearningStore.syncApprovedAgentMemories(context))
+        assertFalse(MemoryAuditLog.hasUnresolvedIntent(context, "USER", "APPROVE_PROPOSAL", proposal.id))
+        val resolved = MemoryAuditLog.readVerified(context)!!.last()
+        assertEquals("USER", resolved.actor)
+        assertEquals("APPROVE_PROPOSAL", resolved.mutation)
+        assertEquals(MemoryAuditLog.Phase.COMMITTED, resolved.phase)
+        assertEquals("RECOVERED_SUCCESS", resolved.outcome)
+
+        val countAfterRecovery = MemoryAuditLog.readVerified(context)!!.size
+        assertEquals(0, QualityLearningStore.syncApprovedAgentMemories(context))
+        assertEquals(countAfterRecovery, MemoryAuditLog.readVerified(context)!!.size)
     }
 
     @Test fun reconciliationRemovesRevokedMemoriesAfterInterruptedRejection() {

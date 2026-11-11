@@ -63,10 +63,48 @@ object MemoryAuditLog {
         val matching = readRecords(context) ?: return true
         val latest = matching.lastOrNull {
             it.actor == actor && it.mutation == mutation && it.objectId == objectId &&
-                (it.phase == Phase.INTENT || it.outcome == "SUCCESS" || it.outcome == "MUTATION_FAILED")
+                !it.outcome.startsWith("DENIED_")
         } ?: return false
-        // Only COMMITTED proves completion. MUTATION_FAILED can still follow a partial store write.
+        // A verified recovery terminal record also resolves the original operation.
         return latest.phase != Phase.COMMITTED
+    }
+
+    /**
+     * Returns the latest unresolved record for each operation identity. A null result means
+     * the journal cannot be trusted and recovery must stop without changing any store.
+     */
+    @Synchronized
+    internal fun unresolvedOperations(context: Context, objectId: String? = null): List<Record>? {
+        val records = readRecords(context) ?: return null
+        val latestByIdentity = linkedMapOf<Triple<String, String, String>, Record>()
+        records.forEach { record ->
+            if (record.outcome.startsWith("DENIED_")) return@forEach
+            if (objectId != null && record.objectId != objectId) return@forEach
+            latestByIdentity[Triple(record.actor, record.mutation, record.objectId)] = record
+        }
+        return latestByIdentity.values.filter { it.phase != Phase.COMMITTED }
+    }
+
+    /**
+     * Closes an unresolved operation only after its desired durable state has been verified.
+     * The terminal event keeps the original operation identity and explicitly records recovery.
+     */
+    @Synchronized
+    internal fun resolveUnresolved(context: Context, pending: Record, reason: String): Boolean {
+        if (pending.actor !in setOf("USER", "SYSTEM_RECOVERY") || reason.isBlank()) return false
+        val latest = unresolvedOperations(context, pending.objectId)?.lastOrNull {
+            it.actor == pending.actor && it.mutation == pending.mutation && it.objectId == pending.objectId
+        } ?: return false
+        if (latest.sequence != pending.sequence || latest.phase == Phase.COMMITTED) return false
+        return append(context, Event(
+            actor = pending.actor,
+            mutation = pending.mutation,
+            objectId = pending.objectId,
+            reason = reason.take(MAX_TEXT_CHARS),
+            approvalRef = pending.approvalRef,
+            phase = Phase.COMMITTED,
+            outcome = "RECOVERED_SUCCESS"
+        ))
     }
 
     /**

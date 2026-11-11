@@ -28,6 +28,21 @@ object AgentOperationalMemoryStore {
 
     @Synchronized fun all(context: Context): List<Entry> = read(context) ?: emptyList()
 
+    /** Null means the operational-memory ledger is unreadable. */
+    @Synchronized
+    internal fun hasApprovedSource(context: Context, agentId: String, text: String, sourceTaskId: String): Boolean? {
+        val cleanAgent = agentId.trim()
+        val cleanText = text.trim().replace(Regex("[\\t ]+"), " ").take(MAX_ENTRY_CHARS)
+        return read(context)?.any { entry ->
+            entry.agentId.equals(cleanAgent, true) && entry.text == cleanText && sourceTaskId in entry.sourceTaskIds
+        }
+    }
+
+    /** Checks for any lesson still carrying a proposal provenance marker. */
+    @Synchronized
+    internal fun hasAnySource(context: Context, sourceTaskId: String): Boolean? =
+        read(context)?.any { sourceTaskId in it.sourceTaskIds }
+
     @Synchronized internal fun addApproved(
         context: Context, agentId: String, text: String, permit: MemoryMutationPermit,
         category: String = "", sourceTaskIds: List<String> = emptyList(), confidence: String = "zatwierdzona"

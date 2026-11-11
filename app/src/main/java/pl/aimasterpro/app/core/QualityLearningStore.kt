@@ -182,6 +182,55 @@ object QualityLearningStore {
             val memoryEntry = "[UCZENIE ZATWIERDZONE ${proposal.id.take(8)}; dowody=${proposal.evidenceCount}; pewność=${proposal.confidence}] ${proposal.text}".take(1000)
             val sourceRef = "proposal:${proposal.id}"
             val approved = proposal.status == "APPROVED"
+            val sharedPresent = AiMemoryStore.containsExactMemory(context, memoryEntry)
+            val agentStates = proposal.affectedAgents.map { agentId ->
+                AgentOperationalMemoryStore.hasApprovedSource(context, agentId, proposal.text, sourceRef)
+            }
+            val anyAgentSource = AgentOperationalMemoryStore.hasAnySource(context, sourceRef)
+            if (sharedPresent == null || agentStates.any { it == null } || anyAgentSource == null) {
+                android.util.Log.e("AIMasterQuality", "Pominięto uzgadnianie propozycji ${proposal.id}: co najmniej jeden magazyn pamięci jest nieczytelny.")
+                return@forEach
+            }
+            val needsRepair = if (approved) {
+                sharedPresent != true || agentStates.any { it != true }
+            } else {
+                sharedPresent == true || anyAgentSource == true
+            }
+            val unresolved = MemoryAuditLog.unresolvedOperations(context, proposal.id)
+            if (unresolved == null) {
+                android.util.Log.e("AIMasterQuality", "Pominięto uzgadnianie propozycji ${proposal.id}: dziennik audytu jest nieczytelny.")
+                return@forEach
+            }
+            val pendingUser = unresolved.filter {
+                it.actor == MemoryGovernance.Actor.USER.name &&
+                    it.mutation in setOf(
+                        MemoryGovernance.Mutation.APPROVE_PROPOSAL.name,
+                        MemoryGovernance.Mutation.REJECT_PROPOSAL.name
+                    )
+            }
+            val pendingRecovery = unresolved.filter { it.actor == MemoryGovernance.Actor.SYSTEM_RECOVERY.name }
+
+            // If a prior recovery itself was interrupted, never replay it automatically.
+            // It may only be closed when the durable stores already match the proposal ledger.
+            if (pendingRecovery.isNotEmpty()) {
+                if (!needsRepair) {
+                    pendingRecovery.forEach { pending ->
+                        if (!MemoryAuditLog.resolveUnresolved(context, pending,
+                                "Odzyskiwanie zweryfikowane względem trwałego rejestru propozycji.")) {
+                            android.util.Log.e("AIMasterQuality", "Nie udało się zamknąć audytu odzyskiwania dla propozycji ${proposal.id}.")
+                        }
+                    }
+                    pendingUser.forEach { pending ->
+                        MemoryAuditLog.resolveUnresolved(context, pending,
+                            "Stan propozycji i magazynów został zweryfikowany po odzyskiwaniu.")
+                    }
+                } else {
+                    android.util.Log.e("AIMasterQuality", "Propozycja ${proposal.id} wymaga ręcznej kontroli: poprzednie odzyskiwanie pozostało nierozstrzygnięte.")
+                }
+                return@forEach
+            }
+            if (!needsRepair && pendingUser.isEmpty()) return@forEach
+
             val request = MemoryGovernance.Request(
                 actor = MemoryGovernance.Actor.SYSTEM_RECOVERY,
                 mutation = if (approved) MemoryGovernance.Mutation.RECONCILE_APPROVED_PROPOSAL
@@ -199,22 +248,29 @@ object QualityLearningStore {
                             category = "wniosek jakościowy", sourceTaskIds = listOf(sourceRef),
                             confidence = proposal.confidence) != null
                     }
-                    if (!sharedSaved || agentSaves.any { !it }) {
-                        AiMemoryStore.removeMemory(context, memoryEntry, permit)
-                        AgentOperationalMemoryStore.removeBySource(context, sourceRef, permit)
-                        false
-                    } else {
-                        synchronized++
-                        true
-                    }
+                    sharedSaved && agentSaves.all { it } &&
+                        AiMemoryStore.containsExactMemory(context, memoryEntry) == true &&
+                        proposal.affectedAgents.all { agentId ->
+                            AgentOperationalMemoryStore.hasApprovedSource(context, agentId, proposal.text, sourceRef) == true
+                        }
                 } else {
                     val sharedRemoved = AiMemoryStore.removeMemory(context, memoryEntry, permit)
                     val agentRemoved = AgentOperationalMemoryStore.removeBySource(context, sourceRef, permit)
-                    sharedRemoved && agentRemoved
+                    sharedRemoved && agentRemoved &&
+                        AiMemoryStore.containsExactMemory(context, memoryEntry) == false &&
+                        AgentOperationalMemoryStore.hasAnySource(context, sourceRef) == false
                 }
             }
-            if (!recovered) {
-                android.util.Log.e("AIMasterQuality", "Nie udało się uzgodnić pamięci dla propozycji ${proposal.id}.")
+            if (recovered) {
+                if (approved && needsRepair) synchronized++
+                pendingUser.forEach { pending ->
+                    if (!MemoryAuditLog.resolveUnresolved(context, pending,
+                            "Stan pamięci został uzgodniony i zweryfikowany względem trwałego rejestru propozycji.")) {
+                        android.util.Log.e("AIMasterQuality", "Nie udało się zamknąć pierwotnej operacji ${pending.mutation} dla propozycji ${proposal.id}.")
+                    }
+                }
+            } else {
+                android.util.Log.e("AIMasterQuality", "Nie udało się uzgodnić pamięci dla propozycji ${proposal.id}; operacja pozostaje nierozstrzygnięta.")
             }
         }
         return synchronized

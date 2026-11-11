@@ -51,6 +51,11 @@ object AiMemoryStore {
         }
     }.getOrNull()
 
+    /** Null means the persisted memory list is unreadable; false means the exact entry is absent. */
+    @Synchronized
+    internal fun containsExactMemory(context: Context, exactMemory: String): Boolean? =
+        readStoredMemories(context)?.contains(exactMemory)
+
     @Synchronized
     internal fun addMemory(context: Context, memory: String, permit: MemoryMutationPermit): Boolean {
         if (!MemoryMutationGate.isValid(permit, setOf(
