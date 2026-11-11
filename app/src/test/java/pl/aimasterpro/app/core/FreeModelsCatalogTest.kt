@@ -35,6 +35,10 @@ class FreeModelsCatalogTest {
     fun cloudProviderNamesCannotSpoofFreeTierWithoutOfficialEndpointHost() {
         assertFalse(FreeModelsCatalog.isFreeModel("groq", "openai/gpt-oss-20b"))
         assertFalse(FreeModelsCatalog.isFreeModel("openrouter", "qwen/model:free"))
+        assertFalse(FreeModelsCatalog.isFreeModel("groq", "openai/gpt-oss-20b", "https://api.groq.com:8443/openai/v1"))
+        assertFalse(FreeModelsCatalog.isFreeModel("groq", "openai/gpt-oss-20b", "http://api.groq.com/openai/v1"))
+        assertFalse(FreeModelsCatalog.isFreeModel("openrouter", "qwen/model:free", "https://openrouter.ai.example/api/v1"))
+        assertFalse(FreeModelsCatalog.isFreeModel("openrouter", "qwen/model:free", "https://openrouter.ai:8443/api/v1"))
         assertEquals(
             FreeStatus.UNKNOWN,
             FreeModelsCatalog.classifyDiscoveredModel("groq", "openai/gpt-oss-20b", "Groq", "groq", "https://groq.example/v1").freeStatus
