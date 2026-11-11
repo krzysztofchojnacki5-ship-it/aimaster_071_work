@@ -1510,8 +1510,7 @@ class MainActivity : Activity() {
     }
 
     private fun isVerifiedFreeConfig(config: ProviderConfig): Boolean {
-        if (config.id.equals("ollama", true) || config.baseUrl.contains("11434") ||
-            config.baseUrl.contains("localhost") || config.baseUrl.contains("127.0.0.1")) return true
+        if (pl.aimasterpro.app.core.FreeModelsCatalog.isLocalOllamaEndpoint(config.baseUrl)) return true
         val baseId = config.parentProviderId.ifBlank { config.id }
         val entry = readModelCatalogEntries().firstOrNull {
             it.providerId == baseId && it.info.id == config.model &&
@@ -1534,8 +1533,7 @@ class MainActivity : Activity() {
     }
 
     private fun isUnknownPriceCatalogEntry(entry: CatalogEntry): Boolean {
-        if (entry.providerId.equals("ollama", true) || entry.baseUrl.contains("11434") ||
-            entry.baseUrl.contains("localhost") || entry.baseUrl.contains("127.0.0.1")) return false
+        if (pl.aimasterpro.app.core.FreeModelsCatalog.isLocalOllamaEndpoint(entry.baseUrl)) return false
         val error = runCatching {
             pl.aimasterpro.app.core.ApiTokenTracker.getPricing(
                 this, entry.info.id, entry.providerId, entry.baseUrl
