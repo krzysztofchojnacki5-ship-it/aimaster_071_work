@@ -68,6 +68,13 @@ class FreeModelsCatalogTest {
         assertFalse(FreeModelsCatalog.isLocalOllamaEndpoint("http://public.example:11434/v1"))
         assertFalse(FreeModelsCatalog.isLocalOllamaEndpoint("http://127.attacker.example:11434/v1"))
         assertFalse(FreeModelsCatalog.isLocalOllamaEndpoint("http://10.attacker.example:11434/v1"))
+        assertFalse(FreeModelsCatalog.isLocalOllamaEndpoint("http://fc-attacker.example:11434/v1"))
+        assertFalse(FreeModelsCatalog.isLocalOllamaEndpoint("http://fd-attacker.example:11434/v1"))
+        assertTrue(FreeModelsCatalog.isLocalOllamaEndpoint("http://[fc00::1]:11434/v1"))
+        assertTrue(FreeModelsCatalog.isLocalOllamaEndpoint("http://[fd12:3456::1]:11434/v1"))
+        assertTrue(FreeModelsCatalog.isLocalOllamaEndpoint("http://[fe80::1]:11434/v1"))
+        assertFalse(FreeModelsCatalog.isLocalOllamaEndpoint("http://[2001:4860:4860::8888]:11434/v1"))
+        assertFalse(FreeModelsCatalog.isLocalOllamaEndpoint("http://[fe80::1%25eth0]:11434/v1"))
     }
 
     @Test
