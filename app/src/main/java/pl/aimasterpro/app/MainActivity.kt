@@ -2094,13 +2094,21 @@ class MainActivity : Activity() {
                         mode.systemInstruction.length.toLong() + 8_000L
                     val masterSynthesisReserve = ((synthesisInputReserveChars + 2L) / 3L) +
                         maxOf(adaptivePlan.synthesisReserveTokens, 4_096L)
-                    val synthesisPricing = pl.aimasterpro.app.core.ApiTokenTracker.getPricing(
-                        this, safeConfig.model, safeConfig.id, safeConfig.baseUrl
-                    )
-                    val synthesisExchangeRate = pl.aimasterpro.app.core.ApiTokenTracker.getExchangeRate(this)
-                    // Conservative cost hold: price the whole synthesis token allowance at the
-                    // higher of input/output rates so parallel stages cannot consume its monthly budget.
-                    val masterSynthesisReserveCostPln =
+                    val synthesisPricing = try {
+                        pl.aimasterpro.app.core.ApiTokenTracker.getPricing(
+                            this, safeConfig.model, safeConfig.id, safeConfig.baseUrl
+                        )
+                    } catch (error: pl.aimasterpro.app.core.UnknownModelPricingException) {
+                        if (pl.aimasterpro.app.core.ApiTokenTracker.getLimits(this).monthlyCostPlnLimit > 0.0) throw error
+                        null
+                    }
+                    // Unknown pricing does not disable token reservations. When no financial
+                    // cap is configured, reserve synthesis tokens and leave monetary cost unknown.
+                    val masterSynthesisReserveCostPln = if (synthesisPricing == null) 0.0 else {
+                        val synthesisExchangeRate = pl.aimasterpro.app.core.ApiTokenTracker.getExchangeRate(this)
+                        require(synthesisExchangeRate.isFinite() && synthesisExchangeRate > 0.0) {
+                            "Nieprawidłowy kurs USD/PLN; rezerwacja syntezy MASTER-a została wstrzymana."
+                        }
                         (masterSynthesisReserve.toDouble() * maxOf(
                             maxOf(
                                 maxOf(
@@ -2117,6 +2125,7 @@ class MainActivity : Activity() {
                                 synthesisPricing.internalReasoningPer1MUsd ?: synthesisPricing.outputPer1MUsd
                             )
                         ) * synthesisExchangeRate) / 1_000_000.0
+                    }
                     val budgetPlan = pl.aimasterpro.app.core.ApiTokenTracker.planBatch(
                         this, budgetRequests, globalReserveTokens = masterSynthesisReserve,
                         globalReserveAgentId = "MASTER", globalReserveCostPln = masterSynthesisReserveCostPln
