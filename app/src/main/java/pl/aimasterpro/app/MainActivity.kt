@@ -630,10 +630,7 @@ class MainActivity : Activity() {
 
     private fun providerReady(config: ProviderConfig?): Boolean {
         if (config == null || config.model.isBlank() || config.baseUrl.isBlank()) return false
-        val localNoAuth = config.id.equals("ollama", true) ||
-            config.baseUrl.contains("127.0.0.1:11434") ||
-            config.baseUrl.contains("localhost:11434") ||
-            config.baseUrl.contains("10.0.2.2:11434")
+        val localNoAuth = pl.aimasterpro.app.core.FreeModelsCatalog.isLocalOllamaEndpoint(config.baseUrl)
         return localNoAuth || config.apiKey.isNotBlank()
     }
 
@@ -2958,7 +2955,7 @@ class MainActivity : Activity() {
         val configs = store.allConfigs().mapNotNull { j -> runCatching { loadProvider(j.optString("id")) }.getOrNull() }
             .filter { providerReady(it) && isModelPresentInCatalog(it) && isProviderAllowedForRouting(it) }
         configs.forEach { p ->
-            val sub = p.model + if (p.apiKey.isBlank() && !p.id.equals("ollama", true)) " • brak klucza API" else if (p.id.equals("ollama", true)) " • lokalny / bez klucza" else ""
+            val sub = p.model + if (p.apiKey.isBlank() && !pl.aimasterpro.app.core.FreeModelsCatalog.isLocalOllamaEndpoint(p.baseUrl)) " • brak klucza API" else if (pl.aimasterpro.app.core.FreeModelsCatalog.isLocalOllamaEndpoint(p.baseUrl)) " • lokalny / bez klucza" else ""
             box.addView(pickerRow(p.name, sub, p.id == resolvedMasterProviderId()) {
                 if (!persistAgentProviderAssignment(AgentRole.MASTER, p.id)) return@pickerRow
                 dialog.dismiss(); navigate("Czat")
@@ -4169,7 +4166,7 @@ class MainActivity : Activity() {
             val entries = readModelCatalogEntries().filter { entry ->
                 val hay = "${entry.providerName} ${entry.info.name} ${entry.info.id}".lowercase()
                 val matchesQuery = query.isBlank() || hay.contains(query.lowercase())
-                val local = entry.providerId.contains("ollama", true) || entry.baseUrl.contains("11434")
+                val local = pl.aimasterpro.app.core.FreeModelsCatalog.isLocalOllamaEndpoint(entry.baseUrl)
                 val unknownPrice = !local && isUnknownPriceCatalogEntry(entry)
                 val matchesFilter = when (filter) {
                     1 -> local || entry.info.freeByPricing == true
@@ -4179,7 +4176,7 @@ class MainActivity : Activity() {
                 }
                 matchesQuery && matchesFilter
             }.sortedBy { entry ->
-                val local = entry.providerId.contains("ollama", true) || entry.baseUrl.contains("11434")
+                val local = pl.aimasterpro.app.core.FreeModelsCatalog.isLocalOllamaEndpoint(entry.baseUrl)
                 when {
                     local || entry.info.freeByPricing == true -> 0
                     isUnknownPriceCatalogEntry(entry) -> 1
@@ -4202,7 +4199,7 @@ class MainActivity : Activity() {
             })
             entries.take(80).forEach { entry ->
                 val info = entry.info
-                val isLocal = entry.providerId.contains("ollama", true) || entry.baseUrl.contains("11434")
+                val isLocal = pl.aimasterpro.app.core.FreeModelsCatalog.isLocalOllamaEndpoint(entry.baseUrl)
                 val unknownPrice = !isLocal && isUnknownPriceCatalogEntry(entry)
                 val approvedUnknownPrice = unknownPrice && pl.aimasterpro.app.core.UnknownPriceApprovalStore.isApproved(
                     this, entry.providerId, entry.baseUrl, info.id
@@ -4309,7 +4306,7 @@ class MainActivity : Activity() {
         val providersCard = card("Dostawcy i klucze API", "Klucze są szyfrowane przez Android Keystore. Profil dostawcy przechowuje połączenie; profile modeli powstają z listy powyżej.")
         baseProfiles.forEach { p ->
             val usage = TokenTracker.getUsage(this, p.id)
-            val hasKey = p.apiKey.isNotBlank() || p.id.equals("ollama", true) || p.baseUrl.contains("11434")
+            val hasKey = p.apiKey.isNotBlank() || pl.aimasterpro.app.core.FreeModelsCatalog.isLocalOllamaEndpoint(p.baseUrl)
             val statusText = if (!hasKey) "Brak klucza API" else if (p.baseUrl.isBlank()) "Uzupełnij Base URL" else "Dane dostawcy zapisane"
             val box = LinearLayout(this).apply {
                 orientation = LinearLayout.VERTICAL; setPadding(dp(12), dp(10), dp(12), dp(10)); background = rounded(cardBg, 12, border)
@@ -4581,7 +4578,7 @@ class MainActivity : Activity() {
 
     private fun providerCredentialsReady(config: ProviderConfig): Boolean {
         if (config.baseUrl.isBlank()) return false
-        val local = config.id.equals("ollama", true) || config.baseUrl.contains("11434") || config.baseUrl.contains("localhost") || config.baseUrl.contains("127.0.0.1")
+        val local = pl.aimasterpro.app.core.FreeModelsCatalog.isLocalOllamaEndpoint(config.baseUrl)
         return local || config.apiKey.isNotBlank()
     }
 
