@@ -151,6 +151,8 @@ class MasterTaskQueueStoreTest {
         assertEquals(MasterTaskQueueStore.Status.RUNNING, state.tasks.single().status)
         assertTrue(state.tasks.single().currentStep.contains("REQUESTING"))
         assertEquals("AGENT_PROGRESS", state.events.last().operation)
+        assertEquals("provider-free", state.events.last().providerId)
+        assertEquals("model-free", state.events.last().model)
         assertFalse(MasterTaskQueueStore.recordAgentProgress(context, "task-011", "unit-test-engineer",
             "RUNNING", "Obcy agent.", now = 104L))
     }

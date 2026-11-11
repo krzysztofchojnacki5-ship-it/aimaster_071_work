@@ -3992,6 +3992,8 @@ class MainActivity : Activity() {
             return
         }
         val titles = snapshot.tasks.associate { it.id to it.title }
+        val agentIdsByName = pl.aimasterpro.app.core.AgentManagerStore.enabledCatalog(this)
+            .associate { it.name to it.id }
         val events = snapshot.events.filter { it.operation == "AGENT_MESSAGE" }.takeLast(120).asReversed()
         if (events.isEmpty()) {
             val empty = TextView(this).apply {
@@ -4004,7 +4006,14 @@ class MainActivity : Activity() {
         }
         val formatter = java.text.SimpleDateFormat("dd.MM HH:mm:ss", java.util.Locale.getDefault())
         events.forEach { event ->
-            val provider = listOf(event.providerId, event.model).filter { it.isNotBlank() }.joinToString(" / ")
+            val senderId = agentIdsByName[event.actor] ?: event.actor
+            val actualProgress = snapshot.events.lastOrNull {
+                it.taskId == event.taskId && it.operation == "AGENT_PROGRESS" &&
+                    it.actor == "agent:$senderId" && it.providerId.isNotBlank()
+            }
+            val providerId = actualProgress?.providerId?.ifBlank { event.providerId } ?: event.providerId
+            val model = actualProgress?.model?.ifBlank { event.model } ?: event.model
+            val provider = listOf(providerId, model).filter { it.isNotBlank() }.joinToString(" / ")
                 .ifBlank { "profil modelu nieustalony" }
             val stamp = formatter.format(java.util.Date(event.timestamp))
             val row = TextView(this).apply {
