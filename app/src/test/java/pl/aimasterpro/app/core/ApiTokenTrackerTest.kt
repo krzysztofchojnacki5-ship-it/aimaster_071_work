@@ -1341,4 +1341,49 @@ class ApiTokenTrackerTest {
         assertEquals(0L, otherEndpointUsage.limitTokens)
     }
 
+
+    @Test fun perModelLimitCountsReservationsAcrossBatchesAndAllowsExactBoundary() {
+        val provider = "model-reservation-provider"
+        val endpoint = "https://model-reservation.example/v1"
+        val model = "vendor/reservation-model"
+        ApiTokenTracker.replaceCatalogPricingForProvider(
+            context, provider, endpoint,
+            listOf(CatalogModelPrice(model, 0.0, 0.0, explicitlyFree = true))
+        )
+        assertTrue(ApiTokenTracker.setModelTokenLimit(
+            context, ModelTokenLimitConfig(provider, endpoint, model, 100L, 90)
+        ))
+
+        val first = ApiTokenTracker.planBatch(context, listOf(
+            BudgetRequest("reservation-exact", "MASTER", provider, endpoint, model, 60L, 40L)
+        ))
+        assertEquals("A reservation that lands exactly on the cap is allowed",
+            setOf("reservation-exact"), first.allowedTaskIds)
+        assertTrue(first.reservationId.isNotBlank())
+
+        val whileReserved = ApiTokenTracker.getModelTokenUsage(context, provider, endpoint, model)
+        assertEquals(100L, whileReserved.reservedTokens)
+        assertEquals(0L, whileReserved.remainingTokens)
+        assertTrue(whileReserved.limitReached)
+        assertTrue(whileReserved.warningReached)
+
+        val second = ApiTokenTracker.planBatch(context, listOf(
+            BudgetRequest("reservation-over", "SPECIALIST", provider, endpoint, model, 1L, 0L)
+        ))
+        assertTrue("A second batch must see the first batch's active model reservation",
+            second.allowedTaskIds.isEmpty())
+        assertTrue(second.blockedReasons["reservation-over"]?.contains("limit tokenów") == true)
+
+        ApiTokenTracker.releaseBatchReservation(first.reservationId)
+        val afterRelease = ApiTokenTracker.getModelTokenUsage(context, provider, endpoint, model)
+        assertEquals(0L, afterRelease.reservedTokens)
+        assertEquals(100L, afterRelease.remainingTokens)
+
+        val retry = ApiTokenTracker.planBatch(context, listOf(
+            BudgetRequest("reservation-after-release", "MASTER", provider, endpoint, model, 100L, 0L)
+        ))
+        assertEquals(setOf("reservation-after-release"), retry.allowedTaskIds)
+        ApiTokenTracker.releaseBatchReservation(retry.reservationId)
+    }
+
 }
