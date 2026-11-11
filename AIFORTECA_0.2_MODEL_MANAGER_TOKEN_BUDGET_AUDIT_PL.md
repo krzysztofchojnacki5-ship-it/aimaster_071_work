@@ -81,6 +81,22 @@ Menedżer ma działać jak panel operacyjny IDE:
 5. **Integracja routingu:** wyłącznie aktywne i zatwierdzone profile; kontrolowany fallback.
 6. **CI i APK:** build + pełne testy; dopiero po potwierdzeniu wyników oznaczyć etap jako zakończony.
 
+## 5A. Implementacja indywidualnych limitów tokenów — pierwsza iteracja
+
+Plik: `app/src/main/java/pl/aimasterpro/app/core/ApiTokenTracker.kt`
+
+- Dodano trwały magazyn konfiguracji limitów per dokładna tożsamość: provider ID + znormalizowany endpoint + model.
+- Każdy model może otrzymać własny dzienny limit tokenów i próg ostrzeżenia (domyślnie 90%).
+- Dodano snapshot użycia modelu: tokeny zapisane, tokeny zarezerwowane, limit, pozostało, procent, ostrzeżenie i stan osiągnięcia limitu.
+- Rezerwacja zadań uwzględnia wykorzystanie zapisane oraz aktywne rezerwacje; zadanie przekraczające limit modelu jest blokowane.
+- Rejestr użycia zapisuje endpoint, dzięki czemu ten sam identyfikator modelu u dwóch dostawców lub na dwóch endpointach nie miesza statystyk.
+- Stare rekordy bez endpointu pozostają czytelne, ale nie są automatycznie przypisywane do nowego limitu endpointu — unikamy błędnego łączenia historii.
+
+Testy dodane w `ApiTokenTrackerTest.kt`:
+- próg 90% i trwałość konfiguracji/odczytu po restarcie,
+- blokowanie rezerwacji przekraczającej limit,
+- izolacja statystyk od innego endpointu.
+
 ## 6. Status po tym audycie
 
 - [x] Odczytano aktualny kod rejestru tokenów i ekranu katalogu modeli.
@@ -93,7 +109,7 @@ Menedżer ma działać jak panel operacyjny IDE:
 - [x] Nieznana cena nie może być zatwierdzona, gdy aktywny jest miesięczny limit finansowy.
 - [x] Planowanie zadań blokuje się przy aktywnym limicie finansowym, jeśli w ostatnich 30 dniach występuje rekord o nieznanym koszcie.
 - [x] Dodano testy: domyślna blokada, jawna zgoda przy wyłączonym limicie finansowym, trwałość flagi po restarcie oraz zgodność ze starymi rekordami.
-- [ ] CI dla najnowszego commitu jest w toku; wyniki testów/builda nie są jeszcze potwierdzone.
+- [ ] CI dla limitów per model jest w toku; wyniki testów/builda nie są jeszcze potwierdzone.
 - [ ] Nie przygotowano nowego APK.
 
 Następny krok: implementacja punktu 1 w `ApiTokenTracker` z testami, bez zmiany numeru wersji 0.2 i bez naruszania istniejących danych użytkownika.
