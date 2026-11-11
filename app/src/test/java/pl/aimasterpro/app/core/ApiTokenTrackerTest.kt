@@ -1238,6 +1238,16 @@ class ApiTokenTrackerTest {
         }
         assertTrue("Unknown pricing must remain blocked unless explicitly approved", blockedByDefault.isFailure)
         assertTrue(ApiTokenTracker.loadAllRecordsFromStorage(context).isEmpty())
+        val unknownWhileMoneyLimitActive = runCatching {
+            ApiTokenTracker.recordQuery(
+                context, "unknown-price-provider", "vendor/unpriced-model", "MASTER", "unknown-price-money-limit",
+                inputTokens = 10L, outputTokens = 10L, status = "REAL",
+                baseUrl = "https://unknown-price.example/v1", idempotencyKey = "unknown-price-money-limit",
+                allowUnknownPricing = true
+            )
+        }
+        assertTrue("Unknown cost must not bypass an active monthly money limit", unknownWhileMoneyLimitActive.isFailure)
+        ApiTokenTracker.setLimits(context, daily = 100_000L, monthly = 0.0, perAgent = 50_000L)
 
         val approved = ApiTokenTracker.recordQuery(
             context, "unknown-price-provider", "vendor/unpriced-model", "MASTER", "unknown-price-approved",
