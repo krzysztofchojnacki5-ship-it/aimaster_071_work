@@ -11,8 +11,10 @@ on:
 permissions:
   contents: read
 
+# A push and its matching pull_request event must share one concurrency slot.
+# This prevents two identical builds from occupying the Actions queue.
 concurrency:
-  group: aiforteca-android-${{ github.ref }}
+  group: aiforteca-android-${{ github.workflow }}-${{ github.head_ref || github.ref_name }}
   cancel-in-progress: true
 
 jobs:
@@ -79,8 +81,6 @@ jobs:
           echo "AIFORTECA_KEYSTORE_PATH=$KEYSTORE_PATH" >> "$GITHUB_ENV"
           echo "configured=true" >> "$GITHUB_OUTPUT"
       - name: Assemble release APK
-        # Do not leak a partial set of signing variables into Gradle when signing
-        # is unavailable (for example on pull requests or when the keystore blob is absent).
         env:
           AIFORTECA_KEYSTORE_PATH: ${{ steps.signing.outputs.configured == 'true' && env.AIFORTECA_KEYSTORE_PATH || '' }}
           AIFORTECA_KEYSTORE_PASSWORD: ${{ steps.signing.outputs.configured == 'true' && secrets.AIFORTECA_KEYSTORE_PASSWORD || '' }}

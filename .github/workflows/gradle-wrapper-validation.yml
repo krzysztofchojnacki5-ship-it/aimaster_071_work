@@ -11,6 +11,11 @@ on:
 permissions:
   contents: read
 
+# Keep push and pull_request validation for the same head branch in one slot.
+concurrency:
+  group: aiforteca-wrapper-${{ github.workflow }}-${{ github.head_ref || github.ref_name }}
+  cancel-in-progress: true
+
 jobs:
   validation:
     runs-on: ubuntu-latest
