@@ -288,18 +288,9 @@ object ApiTokenTracker {
                 val upgradePricing = try {
                     getPricing(context, modelName, providerId, baseUrl)
                 } catch (error: UnknownModelPricingException) {
-                    val unavailableAccounting = existing.status == "UNAVAILABLE"
-                    if (!unavailableAccounting) {
-                        require(hasUnknownPriceApproval(context, providerId, baseUrl, modelName)) {
-                            "Nieznana cena wymaga osobnej zgody dla tego dostawcy, endpointu i modelu."
-                        }
-                        require(hasMatchingActiveReservation(
-                            reservationId, taskId, agentId, providerId, baseUrl, modelName
-                        )) { "Nieznana cena wymaga aktywnej rezerwacji tokenów dla dokładnej tożsamości modelu." }
-                        require(getLimits(context).monthlyCostPlnLimit == 0.0) {
-                            "Nieznany koszt modelu wymaga wyłączenia limitu finansowego; limit tokenów nadal obowiązuje."
-                        }
-                    }
+                    // This branch only upgrades an earlier UNAVAILABLE record for the same POST.
+                    // It is bookkeeping, so a later consent revocation or financial-cap change must
+                    // not prevent durable reconciliation of an already processed provider request.
                     null
                 }
                 val upgradeRate = getExchangeRate(context)
@@ -354,12 +345,12 @@ object ApiTokenTracker {
         } catch (error: UnknownModelPricingException) {
             val unavailableAccounting = status == "UNAVAILABLE"
             if (!unavailableAccounting) {
-                require(hasUnknownPriceApproval(context, providerId, baseUrl, modelName)) {
-                    "Nieznana cena wymaga osobnej zgody dla tego dostawcy, endpointu i modelu."
-                }
+                // planBatch/retargetReservationTask require explicit consent before the HTTP call.
+                // The matching live reservation preserves that authorization if the user revokes
+                // consent while an already-started request is still returning billable usage.
                 require(hasMatchingActiveReservation(
                     reservationId, taskId, agentId, providerId, baseUrl, modelName
-                )) { "Nieznana cena wymaga aktywnej rezerwacji tokenów dla dokładnej tożsamości modelu." }
+                )) { "Nieznana cena wymaga aktywnej rezerwacji tokenów utworzonej po świadomej zgodzie." }
                 require(getLimits(context).monthlyCostPlnLimit == 0.0) {
                     "Nieznany koszt modelu wymaga wyłączenia limitu finansowego; limit tokenów nadal obowiązuje."
                 }
