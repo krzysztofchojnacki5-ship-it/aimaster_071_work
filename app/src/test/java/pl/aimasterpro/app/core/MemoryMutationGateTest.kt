@@ -64,7 +64,7 @@ class MemoryMutationGateTest {
     }
 
     @Test fun failedMutationLeavesIntentAndFailureRecord() {
-        assertFalse(MemoryMutationGate.execute(context, request()) { false })
+        assertFalse(MemoryMutationGate.execute(context, request()) { _: MemoryMutationPermit -> false })
         val rows = MemoryAuditLog.readVerified(context)!!
         assertEquals(listOf(MemoryAuditLog.Phase.INTENT, MemoryAuditLog.Phase.FAILED), rows.map { it.phase })
         assertEquals("MUTATION_FAILED", rows.last().outcome)
