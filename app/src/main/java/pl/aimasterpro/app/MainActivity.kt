@@ -7599,10 +7599,12 @@ class MainActivity : Activity() {
         }
 
         profiles.forEach { cfg ->
-            val usage = pl.aimasterpro.app.core.ApiTokenTracker.getModelTokenUsage(
-                this, cfg.id, cfg.baseUrl, cfg.model
-            )
-            val enabledLimit = usage.config?.takeIf { it.enabled }
+            val usage = runCatching {
+                pl.aimasterpro.app.core.ApiTokenTracker.getModelTokenUsage(
+                    this, cfg.id, cfg.baseUrl, cfg.model
+                )
+            }.getOrNull()
+            val enabledLimit = usage?.config?.takeIf { it.enabled }
             val item = LinearLayout(this).apply {
                 orientation = LinearLayout.VERTICAL
                 setPadding(dp(11), dp(10), dp(11), dp(10))
@@ -7620,17 +7622,17 @@ class MainActivity : Activity() {
                 setTextColor(muted); textSize = 10f; setTextIsSelectable(true)
                 setPadding(0, dp(3), 0, dp(5))
             })
-            val limitText = if (enabledLimit == null) {
-                if (usage.config == null) "Limit indywidualny: nieustawiony" else "Limit indywidualny: wyłączony"
-            } else {
-                "Dzisiaj: ${usage.usedTokens} użytych + ${usage.reservedTokens} zarezerwowanych / ${enabledLimit.dailyLimitTokens} tokenów • ${usage.usagePercent}%"
+            val limitText = when {
+                usage == null -> "Nie można bezpiecznie odczytać zużycia tokenów. Nie traktuję tego jako 0."
+                enabledLimit == null -> if (usage.config == null) "Limit indywidualny: nieustawiony" else "Limit indywidualny: wyłączony"
+                else -> "Dzisiaj: ${usage.usedTokens} użytych + ${usage.reservedTokens} zarezerwowanych / ${enabledLimit.dailyLimitTokens} tokenów • ${usage.usagePercent}%"
             }
             item.addView(TextView(this).apply {
                 text = limitText
-                setTextColor(if (usage.limitReached) Color.RED else if (usage.warningReached) orange else muted)
+                setTextColor(if (usage == null || usage.limitReached) Color.RED else if (usage.warningReached) orange else muted)
                 textSize = 11f
             })
-            if (enabledLimit != null) {
+            if (usage != null && enabledLimit != null) {
                 item.addView(android.widget.ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply {
                     max = 100
                     progress = usage.usagePercent.coerceIn(0, 100)
@@ -7646,7 +7648,7 @@ class MainActivity : Activity() {
                     setTextColor(if (usage.limitReached) Color.RED else if (usage.warningReached) orange else Color.rgb(65, 205, 120))
                     textSize = 11f
                 })
-            } else {
+            } else if (usage != null) {
                 item.addView(TextView(this).apply {
                     text = "Użycie dzisiaj: ${usage.usedTokens} tokenów • rezerwacje: ${usage.reservedTokens}"
                     setTextColor(muted); textSize = 11f
@@ -7654,13 +7656,13 @@ class MainActivity : Activity() {
             }
             val actions = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
             val edit = TextView(this).apply {
-                text = if (usage.config == null) "USTAW LIMIT" else "EDYTUJ LIMIT"
+                text = if (usage?.config == null) "USTAW LIMIT" else "EDYTUJ LIMIT"
                 setTextColor(white); textSize = 11f; gravity = Gravity.CENTER
                 setPadding(dp(12), dp(8), dp(12), dp(8)); background = ripple(panel, 9)
-                setOnClickListener { showModelTokenLimitDialog(cfg, usage.config) }
+                setOnClickListener { showModelTokenLimitDialog(cfg, usage?.config) }
             }
             actions.addView(edit, LinearLayout.LayoutParams(0, -2, 1f).apply { rightMargin = dp(6) })
-            if (usage.config?.enabled == true) {
+            if (usage?.config?.enabled == true) {
                 val disable = TextView(this).apply {
                     text = "WYŁĄCZ"
                     setTextColor(white); textSize = 11f; gravity = Gravity.CENTER
