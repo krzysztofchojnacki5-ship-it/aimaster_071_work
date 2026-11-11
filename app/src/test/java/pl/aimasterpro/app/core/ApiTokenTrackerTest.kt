@@ -1676,6 +1676,9 @@ class ApiTokenTrackerTest {
         assertEquals(1, ApiTokenTracker.loadAllRecordsFromStorage(context).count {
             it.queryId == "recovery-unpriced-usage"
         })
+        assertEquals(1, ApiTokenTracker.budgetUsageSnapshot(context).unknownCostRecords)
+        assertFalse("Unknown-cost usage must make an active financial cap fail closed",
+            ApiTokenTracker.checkLimits(context, "MASTER", 1L).allowed)
         assertEquals(50.0, ApiTokenTracker.getLimits(context).monthlyCostPlnLimit, 0.0)
     }
 }
