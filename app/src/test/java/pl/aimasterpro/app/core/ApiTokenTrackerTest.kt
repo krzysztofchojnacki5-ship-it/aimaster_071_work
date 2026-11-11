@@ -1543,7 +1543,7 @@ class ApiTokenTrackerTest {
             listOf(CatalogModelPrice(primaryModel, 0.0, 0.0, explicitlyFree = true))
         )
         val pricingPrefs = context.getSharedPreferences("api_token_pricing_v1", Context.MODE_PRIVATE)
-        val incomplete = """[{"providerId":"primary-free","modelName":"primary-free-model","baseUrl":"https://primary-free.example/v1","inputPer1MUsd":0.0,"outputPer1MUsd":0.0,"explicitlyFree":true},{"providerId":"unknown-price-fallback","modelName":"vendor/unpriced-fallback","baseUrl":"https://unknown-price-fallback.example/v1","inputPer1MUsd":null,"outputPer1MUsd":0.8,"explicitlyFree":false}]"""
+        val incomplete = """[{"providerId":"known-price-primary","modelName":"primary-free","baseUrl":"https://known-price-primary.example/v1","inputPer1MUsd":0.0,"outputPer1MUsd":0.0,"explicitlyFree":true},{"providerId":"unknown-price-fallback","modelName":"vendor/unpriced-fallback","baseUrl":"https://unknown-price-fallback.example/v1","inputPer1MUsd":null,"outputPer1MUsd":0.8,"explicitlyFree":false}]"""
         assertTrue(pricingPrefs.edit().putString("catalog_model_prices", incomplete).commit())
         assertTrue(ApiTokenTracker.setModelTokenLimit(
             context, ModelTokenLimitConfig(primaryProvider, primaryEndpoint, primaryModel, 300L, 90)
