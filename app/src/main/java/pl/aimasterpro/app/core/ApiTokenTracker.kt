@@ -1176,7 +1176,8 @@ object ApiTokenTracker {
         val activeReservedCostPln: Double,
         val monthlyCostLimitPln: Double,
         val perAgentLimitTokens: Long,
-        val ledgerHealthy: Boolean = true
+        val ledgerHealthy: Boolean = true,
+        val unknownCostRecords: Int = 0
     )
 
     @Synchronized
@@ -1196,7 +1197,9 @@ object ApiTokenTracker {
         val limits = getLimits(context)
         val records = loadAllRecordsFromStorage(context)
         val todayTokens = sumTokenCounts(filterRecords(records, "Dzisiaj").map { it.totalTokens })
-        val recentCost = sumNonNegativeCosts(filterRecords(records, "30 dni").map { it.costPln })
+        val recentRecords = filterRecords(records, "30 dni")
+        val recentCost = sumNonNegativeCosts(recentRecords.filter { it.costKnown }.map { it.costPln })
+        val unknownCostRecords = recentRecords.count { !it.costKnown }
         val reservations = activeReservationStats()
         val ledgerIsHealthy = readPersistedRecords(context) != null
         val usedIncludingReservations = addTokenCounts(todayTokens, reservations.tokens)
@@ -1209,7 +1212,8 @@ object ApiTokenTracker {
             activeReservedCostPln = reservations.costPln,
             monthlyCostLimitPln = limits.monthlyCostPlnLimit,
             perAgentLimitTokens = limits.agentTokenLimit,
-            ledgerHealthy = ledgerIsHealthy
+            ledgerHealthy = ledgerIsHealthy,
+            unknownCostRecords = unknownCostRecords
         )
     }
 
@@ -1302,6 +1306,9 @@ object ApiTokenTracker {
 
         if (exceedsTokenLimit(todayTokens, estimatedTokens, limits.dailyTokenLimit)) {
             return LimitCheckResult(false, "Osiągnięto dzienny limit tokenów (${limits.dailyTokenLimit}). Zapytanie zostało wstrzymane dla agenta $agentId.")
+        }
+        if (limits.monthlyCostPlnLimit > 0.0 && monthlyRecords.any { !it.costKnown }) {
+            return LimitCheckResult(false, "W rejestrze istnieje użycie z nieznanym kosztem. Miesięcznego limitu finansowego nie można bezpiecznie zweryfikować.")
         }
         if (limits.monthlyCostPlnLimit > 0.0 && monthlyCost >= limits.monthlyCostPlnLimit) {
             return LimitCheckResult(false, "Osiągnięto miesięczny limit kosztów (${limits.monthlyCostPlnLimit} PLN).")
