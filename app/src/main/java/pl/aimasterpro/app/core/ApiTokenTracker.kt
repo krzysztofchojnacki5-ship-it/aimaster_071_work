@@ -290,7 +290,7 @@ object ApiTokenTracker {
                 val upgradePricing = try {
                     getPricing(context, modelName, providerId, baseUrl)
                 } catch (error: UnknownModelPricingException) {
-                    if (!allowUnknownPricing) throw error
+                    if (!allowUnknownPricing && reservationId.isBlank()) throw error
                     require(getLimits(context).monthlyCostPlnLimit == 0.0) {
                         "Nieznany koszt modelu wymaga wyłączenia limitu finansowego i świadomej zgody; limit tokenów nadal obowiązuje."
                     }
@@ -346,7 +346,7 @@ object ApiTokenTracker {
         val pricing = try {
             getPricing(context, modelName, providerId, baseUrl)
         } catch (error: UnknownModelPricingException) {
-            if (!allowUnknownPricing) throw error
+            if (!allowUnknownPricing && reservationId.isBlank()) throw error
             require(getLimits(context).monthlyCostPlnLimit == 0.0) {
                 "Nieznany koszt modelu wymaga wyłączenia limitu finansowego i świadomej zgody; limit tokenów nadal obowiązuje."
             }
@@ -506,19 +506,29 @@ object ApiTokenTracker {
         if (modelLimit > 0L && exceedsTokenLimit(targetUsed, task.tokensRemaining, modelLimit)) return false
 
         if (task.tokensRemaining != addTokenCounts(task.estimatedInputTokens, task.estimatedOutputTokens)) return false
-        val pricing = runCatching { getPricing(context, modelName, providerId, baseUrl) }.getOrNull() ?: return false
-        val inputRate = maxOf(
-            pricing.inputPer1MUsd,
-            pricing.cachedInputPer1MUsd ?: pricing.inputPer1MUsd,
-            pricing.cacheWriteInputPer1MUsd ?: pricing.inputPer1MUsd,
-            pricing.cacheWriteInput1hPer1MUsd ?: pricing.cacheWriteInputPer1MUsd ?: pricing.inputPer1MUsd
-        )
-        val outputRate = maxOf(pricing.outputPer1MUsd, pricing.internalReasoningPer1MUsd ?: pricing.outputPer1MUsd)
-        val estimatedUsd = (task.estimatedInputTokens * inputRate.coerceAtLeast(0.0) +
-            task.estimatedOutputTokens * outputRate.coerceAtLeast(0.0)) / 1_000_000.0
-        val exchangeRate = getExchangeRate(context)
-        val targetCost = estimatedUsd * exchangeRate
-        if (!targetCost.isFinite() || targetCost < 0.0 || !exchangeRate.isFinite() || exchangeRate <= 0.0) return false
+        val pricing = try {
+            getPricing(context, modelName, providerId, baseUrl)
+        } catch (error: UnknownModelPricingException) {
+            if (limits.monthlyCostPlnLimit > 0.0) return false
+            null
+        }
+        val targetCost = if (pricing == null) {
+            0.0
+        } else {
+            val inputRate = maxOf(
+                pricing.inputPer1MUsd,
+                pricing.cachedInputPer1MUsd ?: pricing.inputPer1MUsd,
+                pricing.cacheWriteInputPer1MUsd ?: pricing.inputPer1MUsd,
+                pricing.cacheWriteInput1hPer1MUsd ?: pricing.cacheWriteInputPer1MUsd ?: pricing.inputPer1MUsd
+            )
+            val outputRate = maxOf(pricing.outputPer1MUsd, pricing.internalReasoningPer1MUsd ?: pricing.outputPer1MUsd)
+            val estimatedUsd = (task.estimatedInputTokens * inputRate.coerceAtLeast(0.0) +
+                task.estimatedOutputTokens * outputRate.coerceAtLeast(0.0)) / 1_000_000.0
+            val exchangeRate = getExchangeRate(context)
+            val calculated = estimatedUsd * exchangeRate
+            if (!calculated.isFinite() || calculated < 0.0 || !exchangeRate.isFinite() || exchangeRate <= 0.0) return false
+            calculated
+        }
 
         if (limits.monthlyCostPlnLimit > 0.0) {
             if (recent.any { !it.costKnown }) return false
@@ -1018,33 +1028,48 @@ object ApiTokenTracker {
             val modelKey = modelBudgetKey(request.providerId, request.baseUrl, request.modelName)
             val modelLimit = modelLimits[modelKey]?.takeIf { it.enabled }?.dailyLimitTokens ?: 0L
             val modelUsed = modelTokensUsed[modelKey] ?: 0L
-            val pricing = getPricing(context, request.modelName, request.providerId, request.baseUrl)
+            val pricing = try {
+                getPricing(context, request.modelName, request.providerId, request.baseUrl)
+            } catch (error: UnknownModelPricingException) {
+                if (limits.monthlyCostPlnLimit > 0.0) {
+                    blocked[request.taskId] = "Wstrzymano: cena modelu jest nieznana, a miesięczny limit finansowy jest aktywny."
+                    return@forEach
+                }
+                null
+            }
             // Reserve against the most expensive published input path. Automatic/provider
             // caching can turn part of this prompt into cache writes with a premium rate.
-            val conservativeInputRate = maxOf(
-                maxOf(
-                    pricing.inputPer1MUsd,
+            // With no financial cap, token reservations do not depend on the price catalogue.
+            val estimatedPln = if (pricing == null) {
+                0.0
+            } else {
+                val conservativeInputRate = maxOf(
                     maxOf(
-                        pricing.cachedInputPer1MUsd ?: pricing.inputPer1MUsd,
-                        pricing.cacheWriteInputPer1MUsd ?: pricing.inputPer1MUsd
-                    )
-                ),
-                pricing.cacheWriteInput1hPer1MUsd ?: pricing.cacheWriteInputPer1MUsd ?: pricing.inputPer1MUsd
-            )
-            val conservativeOutputRate = maxOf(
-                pricing.outputPer1MUsd,
-                pricing.internalReasoningPer1MUsd ?: pricing.outputPer1MUsd
-            )
-            val usd = (request.estimatedInputTokens.coerceAtLeast(0L) * conservativeInputRate +
-                request.estimatedOutputTokens.coerceAtLeast(0L) * conservativeOutputRate) / 1_000_000.0
-            val exchangeRate = getExchangeRate(context)
-            val estimatedPln = usd * exchangeRate
-            val nextMonthlyCost = if (estimatedPln.isFinite() && estimatedPln >= 0.0)
-                tryAddNonNegativeCosts(monthlyCostUsed, estimatedPln) else null
-            val nextBatchReserveCost = if (estimatedPln.isFinite() && estimatedPln >= 0.0)
-                tryAddNonNegativeCosts(reservedCost, estimatedPln) else null
+                        pricing.inputPer1MUsd,
+                        maxOf(
+                            pricing.cachedInputPer1MUsd ?: pricing.inputPer1MUsd,
+                            pricing.cacheWriteInputPer1MUsd ?: pricing.inputPer1MUsd
+                        )
+                    ),
+                    pricing.cacheWriteInput1hPer1MUsd ?: pricing.cacheWriteInputPer1MUsd ?: pricing.inputPer1MUsd
+                )
+                val conservativeOutputRate = maxOf(
+                    pricing.outputPer1MUsd,
+                    pricing.internalReasoningPer1MUsd ?: pricing.outputPer1MUsd
+                )
+                val usd = (request.estimatedInputTokens.coerceAtLeast(0L) * conservativeInputRate +
+                    request.estimatedOutputTokens.coerceAtLeast(0L) * conservativeOutputRate) / 1_000_000.0
+                val exchangeRate = getExchangeRate(context)
+                val value = usd * exchangeRate
+                if (!exchangeRate.isFinite() || exchangeRate <= 0.0 || !value.isFinite() || value < 0.0) {
+                    blocked[request.taskId] = "Wstrzymano: nieprawidłowy kurs waluty lub wycena modelu."
+                    return@forEach
+                }
+                value
+            }
+            val nextMonthlyCost = tryAddNonNegativeCosts(monthlyCostUsed, estimatedPln)
+            val nextBatchReserveCost = tryAddNonNegativeCosts(reservedCost, estimatedPln)
             val reason = when {
-                !exchangeRate.isFinite() || exchangeRate <= 0.0 || !estimatedPln.isFinite() || estimatedPln < 0.0 -> "Wstrzymano: nieprawidłowy kurs waluty lub wycena modelu; nie można bezpiecznie obliczyć kosztu."
                 nextMonthlyCost == null || nextBatchReserveCost == null -> "Pominięto: łączna wycena zadań i rezerw przekroczyłaby zakres bezpiecznej reprezentacji kosztu."
                 exceedsTokenLimit(dailyUsed, estimate, limits.dailyTokenLimit) -> "Pominięto: brak dziennego budżetu tokenów."
                 exceedsTokenLimit(agentUsed, estimate, limits.agentTokenLimit) -> "Pominięto: agent przekroczyłby dzienny limit tokenów."
