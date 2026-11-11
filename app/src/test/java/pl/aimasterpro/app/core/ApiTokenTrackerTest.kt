@@ -1431,4 +1431,62 @@ class ApiTokenTrackerTest {
         ApiTokenTracker.releaseBatchReservation(exactRemainder.reservationId)
     }
 
+
+    @Test fun fallbackRetargetChecksTargetModelLimitAndMovesReservationWithoutDoubleGlobalCharge() {
+        val primaryProvider = "fallback-primary"
+        val primaryEndpoint = "https://primary-fallback.example/v1"
+        val primaryModel = "primary-free"
+        val backupProvider = "fallback-backup"
+        val backupEndpoint = "https://backup-fallback.example/v1"
+        val backupModel = "backup-free"
+        ApiTokenTracker.replaceCatalogPricingForProvider(
+            context, primaryProvider, primaryEndpoint,
+            listOf(CatalogModelPrice(primaryModel, 0.0, 0.0, explicitlyFree = true))
+        )
+        ApiTokenTracker.replaceCatalogPricingForProvider(
+            context, backupProvider, backupEndpoint,
+            listOf(CatalogModelPrice(backupModel, 0.0, 0.0, explicitlyFree = true))
+        )
+        assertTrue(ApiTokenTracker.setModelTokenLimit(
+            context, ModelTokenLimitConfig(primaryProvider, primaryEndpoint, primaryModel, 200L, 90)
+        ))
+        assertTrue(ApiTokenTracker.setModelTokenLimit(
+            context, ModelTokenLimitConfig(backupProvider, backupEndpoint, backupModel, 99L, 90)
+        ))
+        val plan = ApiTokenTracker.planBatch(context, listOf(
+            BudgetRequest("fallback-task", "MASTER", primaryProvider, primaryEndpoint, primaryModel, 60L, 40L)
+        ))
+        assertEquals(setOf("fallback-task"), plan.allowedTaskIds)
+        val beforeGlobal = ApiTokenTracker.budgetUsageSnapshot(context).activeReservedTokens
+        assertEquals(100L, ApiTokenTracker.getModelTokenUsage(context, primaryProvider, primaryEndpoint, primaryModel).reservedTokens)
+
+        assertFalse(ApiTokenTracker.retargetReservationTask(
+            context, plan.reservationId, "fallback-task", "MASTER",
+            backupProvider, backupEndpoint, backupModel
+        ))
+        assertEquals(100L, ApiTokenTracker.getModelTokenUsage(context, primaryProvider, primaryEndpoint, primaryModel).reservedTokens)
+
+        assertTrue(ApiTokenTracker.setModelTokenLimit(
+            context, ModelTokenLimitConfig(backupProvider, backupEndpoint, backupModel, 100L, 90)
+        ))
+        assertTrue(ApiTokenTracker.retargetReservationTask(
+            context, plan.reservationId, "fallback-task", "MASTER",
+            backupProvider, backupEndpoint, backupModel
+        ))
+        assertEquals(0L, ApiTokenTracker.getModelTokenUsage(context, primaryProvider, primaryEndpoint, primaryModel).reservedTokens)
+        assertEquals(100L, ApiTokenTracker.getModelTokenUsage(context, backupProvider, backupEndpoint, backupModel).reservedTokens)
+        assertEquals(beforeGlobal, ApiTokenTracker.budgetUsageSnapshot(context).activeReservedTokens)
+
+        ApiTokenTracker.recordQuery(
+            context, backupProvider, backupModel, "MASTER", "fallback-task",
+            inputTokens = 20L, outputTokens = 10L, status = "REAL",
+            baseUrl = backupEndpoint, reservationId = plan.reservationId,
+            idempotencyKey = "fallback-retarget-actual-usage"
+        )
+        assertEquals(30L, ApiTokenTracker.getModelTokenUsage(context, backupProvider, backupEndpoint, backupModel).usedTokens)
+        assertEquals(70L, ApiTokenTracker.getModelTokenUsage(context, backupProvider, backupEndpoint, backupModel).reservedTokens)
+        ApiTokenTracker.releaseBatchReservation(plan.reservationId)
+        assertEquals(0L, ApiTokenTracker.getModelTokenUsage(context, backupProvider, backupEndpoint, backupModel).reservedTokens)
+    }
+
 }
