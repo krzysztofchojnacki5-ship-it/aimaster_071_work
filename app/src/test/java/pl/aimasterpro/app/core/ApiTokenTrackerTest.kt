@@ -1603,6 +1603,9 @@ class ApiTokenTrackerTest {
         val provider = "recovery-unpriced-provider"
         val endpoint = "https://recovery-unpriced.example/v1"
         val model = "vendor/model-with-unknown-price"
+        val pricingPrefs = context.getSharedPreferences("api_token_pricing_v1", Context.MODE_PRIVATE)
+        val incomplete = """[{"providerId":"recovery-unpriced-provider","modelName":"vendor/model-with-unknown-price","baseUrl":"https://recovery-unpriced.example/v1","inputPer1MUsd":null,"outputPer1MUsd":0.8,"explicitlyFree":false}]"""
+        check(pricingPrefs.edit().putString("catalog_model_prices", incomplete).commit())
         ApiTokenTracker.setLimits(context, daily = 10_000L, monthly = 50.0, perAgent = 5_000L)
 
         val recovered = ApiTokenTracker.recordQuery(
