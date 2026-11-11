@@ -1518,6 +1518,33 @@ class MainActivity : Activity() {
         return pl.aimasterpro.app.core.FreeModelsCatalog.isFreeModel(baseId, config.model, config.baseUrl)
     }
 
+    private fun isUnknownPriceCatalogEntry(entry: CatalogEntry): Boolean {
+        if (entry.providerId.equals("ollama", true) || entry.baseUrl.contains("11434") ||
+            entry.baseUrl.contains("localhost") || entry.baseUrl.contains("127.0.0.1")) return false
+        val error = runCatching {
+            pl.aimasterpro.app.core.ApiTokenTracker.getPricing(
+                this, entry.info.id, entry.providerId, entry.baseUrl
+            )
+        }.exceptionOrNull()
+        return error is pl.aimasterpro.app.core.UnknownModelPricingException
+    }
+
+    private fun isApprovedUnknownPriceConfig(config: ProviderConfig): Boolean {
+        if (isVerifiedFreeConfig(config)) return false
+        val baseId = config.parentProviderId.ifBlank { config.id }
+        val entry = readModelCatalogEntries().firstOrNull {
+            it.providerId == baseId && it.info.id == config.model &&
+                it.baseUrl.trimEnd('/').equals(config.baseUrl.trimEnd('/'), true)
+        } ?: return false
+        if (!isUnknownPriceCatalogEntry(entry)) return false
+        return pl.aimasterpro.app.core.UnknownPriceApprovalStore.isApproved(
+            this, baseId, config.baseUrl, config.model
+        )
+    }
+
+    private fun isProviderAllowedForRouting(config: ProviderConfig): Boolean =
+        isVerifiedFreeConfig(config) || isApprovedUnknownPriceConfig(config)
+
     private fun chatWithFallback(config: ProviderConfig, systemPrompt: String, userText: String, mime: String, b64: String,
                                  requestTaskId: String, requestAgentId: String, requestChatId: String,
                                  requestScope: ProviderClient.RequestScope, budgetReservationId: String = ""): ChatResponse {
@@ -1529,19 +1556,19 @@ class MainActivity : Activity() {
         }
         val allConfigs = store.allConfigs().mapNotNull { j -> runCatching { loadProvider(j.optString("id")) }.getOrNull() }
         val primaryBaseId = config.parentProviderId.ifBlank { config.id }
-        val freeBackups = allConfigs.filter {
-            it.id != config.id && providerReady(it) && isVerifiedFreeConfig(it) &&
+        val allowedBackups = allConfigs.filter {
+            it.id != config.id && providerReady(it) && isProviderAllowedForRouting(it) &&
                 !(it.model == config.model && it.parentProviderId.ifBlank { it.id } == primaryBaseId)
         }.distinctBy { "${it.parentProviderId.ifBlank { it.id }}:${it.model}" }
-        val primaryIsFree = isVerifiedFreeConfig(config)
+        val primaryAllowed = isProviderAllowedForRouting(config)
         val ordered = pl.aimasterpro.app.core.ModelHealthTracker.rank(
-            this, (if (primaryIsFree) listOf(config) else emptyList()) + freeBackups
+            this, (if (primaryAllowed) listOf(config) else emptyList()) + allowedBackups
         )
-        if (!primaryIsFree) {
-            logAgentForChat(requestChatId, "⛔ Zabezpieczenie kosztów: profil ${config.name} / ${config.model} nie ma potwierdzonego darmowego statusu. Pomijam go i sprawdzam wyłącznie zweryfikowane darmowe profile.")
+        if (!primaryAllowed) {
+            logAgentForChat(requestChatId, "⛔ Zabezpieczenie kosztów: profil ${config.name} / ${config.model} nie jest zweryfikowany jako darmowy ani jawnie zatwierdzony jako model z nieznaną ceną. Pomijam go.")
         }
         if (ordered.isEmpty()) {
-            throw IllegalStateException("Brak skonfigurowanego, zweryfikowanego darmowego modelu. Nie wysłano żądania do płatnego lub niezweryfikowanego API.")
+            throw IllegalStateException("Brak modelu dozwolonego przez politykę kosztów. Nie wysłano żądania do płatnego lub niezatwierdzonego API.")
         }
         var ownedBudgetReservationId = ""
         var effectiveBudgetReservationId = budgetReservationId
@@ -2160,6 +2187,7 @@ class MainActivity : Activity() {
                             agentProvidersMap = batchAgentConfigsMap,
                             fallbackProviders = listOf(safeConfig),
                             isFreeProvider = { candidate -> isVerifiedFreeConfig(candidate) },
+                            isProviderAllowed = { candidate -> isProviderAllowedForRouting(candidate) },
                             mode = mode,
                             projectContext = projectContext,
                             attachmentMime = sendMime,
@@ -2380,6 +2408,7 @@ class MainActivity : Activity() {
                                     agentProvidersMap = batchAgentConfigsMap,
                                     fallbackProviders = listOf(safeConfig),
                                     isFreeProvider = { candidate -> isVerifiedFreeConfig(candidate) },
+                            isProviderAllowed = { candidate -> isProviderAllowedForRouting(candidate) },
                                     mode = mode,
                                     projectContext = projectContext,
                                     attachmentMime = "",
@@ -5808,6 +5837,7 @@ class MainActivity : Activity() {
                         agentProvidersMap = configByAgent,
                         fallbackProviders = emptyList(),
                         isFreeProvider = { candidate -> isVerifiedFreeConfig(candidate) },
+                            isProviderAllowed = { candidate -> isProviderAllowedForRouting(candidate) },
                         mode = reviewMode,
                         projectContext = "Recenzja patcha dla pliku $path. Treść diffu znajduje się w poleceniu recenzenta.",
                         onLog = { sender, recipient, message, eventStatus ->
@@ -6771,6 +6801,7 @@ class MainActivity : Activity() {
                         agentProvidersMap = configs,
                         fallbackProviders = listOf(fallback),
                         isFreeProvider = { candidate -> isVerifiedFreeConfig(candidate) },
+                            isProviderAllowed = { candidate -> isProviderAllowedForRouting(candidate) },
                         mode = mode,
                         projectContext = projectContext,
                         onLog = { sender, recipient, message, eventStatus ->
