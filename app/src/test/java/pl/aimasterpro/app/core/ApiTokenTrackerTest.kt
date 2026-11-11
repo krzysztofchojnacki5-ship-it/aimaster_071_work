@@ -1270,6 +1270,50 @@ class ApiTokenTrackerTest {
         assertEquals(200L, restored.totalTokens)
     }
 
+
+    @Test fun tokenBudgetReservationsDoNotRequirePricingWhenFinancialLimitIsDisabled() {
+        val provider = "unknown-price-budget-provider"
+        val endpoint = "https://unknown-budget.example/v1"
+        val model = "vendor/unpriced-budget-model"
+        val pricingPrefs = context.getSharedPreferences("api_token_pricing_v1", Context.MODE_PRIVATE)
+        val incomplete = """[{"providerId":"unknown-price-budget-provider","modelName":"vendor/unpriced-budget-model","baseUrl":"https://unknown-budget.example/v1","inputPer1MUsd":null,"outputPer1MUsd":0.8,"explicitlyFree":false}]"""
+        assertTrue(pricingPrefs.edit().putString("catalog_model_prices", incomplete).commit())
+        assertTrue(ApiTokenTracker.setModelTokenLimit(
+            context, ModelTokenLimitConfig(provider, endpoint, model, 250L, 90)
+        ))
+
+        ApiTokenTracker.setLimits(context, daily = 100_000L, monthly = 50.0, perAgent = 50_000L)
+        val financialCapPlan = ApiTokenTracker.planBatch(context, listOf(
+            BudgetRequest("unknown-price-money-cap", "MASTER", provider, endpoint, model, 150L, 100L)
+        ))
+        assertTrue("An unknown price must remain blocked while the monthly financial cap is active",
+            financialCapPlan.allowedTaskIds.isEmpty())
+        assertTrue(financialCapPlan.blockedReasons["unknown-price-money-cap"]?.contains("cena modelu jest nieznana") == true)
+
+        ApiTokenTracker.setLimits(context, daily = 100_000L, monthly = 0.0, perAgent = 50_000L)
+        val tokenOnlyPlan = ApiTokenTracker.planBatch(context, listOf(
+            BudgetRequest("unknown-price-token-cap", "MASTER", provider, endpoint, model, 150L, 100L)
+        ))
+        assertEquals(setOf("unknown-price-token-cap"), tokenOnlyPlan.allowedTaskIds)
+        assertEquals(250L, tokenOnlyPlan.estimatedReservedTokens)
+        assertTrue(tokenOnlyPlan.reservationId.isNotBlank())
+
+        val usage = ApiTokenTracker.recordQuery(
+            context, provider, model, "MASTER", "unknown-price-token-cap",
+            inputTokens = 140L, outputTokens = 60L, status = "REAL",
+            baseUrl = endpoint, reservationId = tokenOnlyPlan.reservationId,
+            idempotencyKey = "unknown-price-token-cap-usage"
+        )
+        assertEquals(200L, usage.totalTokens)
+        assertFalse("Unknown pricing must never be persisted as a verified zero price", usage.costKnown)
+        val modelUsage = ApiTokenTracker.getModelTokenUsage(context, provider, endpoint, model)
+        assertEquals(200L, modelUsage.usedTokens)
+        assertEquals(50L, modelUsage.reservedTokens)
+
+        ApiTokenTracker.releaseBatchReservation(tokenOnlyPlan.reservationId)
+        assertEquals(0L, ApiTokenTracker.getModelTokenUsage(context, provider, endpoint, model).reservedTokens)
+    }
+
     @Test fun legacyUsageRowsWithoutCostKnownFlagRemainKnownCostRows() {
         val prefs = context.getSharedPreferences("api_token_tracker_records_v1", Context.MODE_PRIVATE)
         val legacy = """[{"qId":"legacy-known-cost","ts":1,"prov":"p","model":"m","agent":"MASTER","task":"legacy","in":10,"out":2,"tot":12,"reas":0,"cache":0,"status":"REAL","usd":0.01,"pln":0.04}]"""
