@@ -40,7 +40,7 @@ class MemoryMutationGateTest {
 
     @Test fun deniedAgentNeverRunsMutationAndIsAudited() {
         var invoked = false
-        assertFalse(MemoryMutationGate.execute(context, request(MemoryGovernance.Actor.AGENT)) {
+        assertFalse(MemoryMutationGate.execute(context, request(MemoryGovernance.Actor.AGENT)) { _: MemoryMutationPermit ->
             invoked = true
             true
         })
@@ -53,7 +53,7 @@ class MemoryMutationGateTest {
 
     @Test fun authorizedMutationRequiresIntentAndCommittedRecords() {
         var invoked = false
-        assertTrue(MemoryMutationGate.execute(context, request()) {
+        assertTrue(MemoryMutationGate.execute(context, request()) { _: MemoryMutationPermit ->
             invoked = true
             true
         })
@@ -84,7 +84,7 @@ class MemoryMutationGateTest {
 
     @Test fun missingApprovalBlocksMutationBeforeIntent() {
         var invoked = false
-        assertFalse(MemoryMutationGate.execute(context, request(approvalRef = "")) {
+        assertFalse(MemoryMutationGate.execute(context, request(approvalRef = "")) { _: MemoryMutationPermit ->
             invoked = true
             true
         })
