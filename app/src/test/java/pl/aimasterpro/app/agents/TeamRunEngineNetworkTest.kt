@@ -198,7 +198,9 @@ class TeamRunEngineNetworkTest {
                 onTaskResult = { false },
                 onTaskState = { _, state, _, _, _, _ -> if (state == "RESULT_PERSIST_PENDING") pendingState = state }
             ).single()
-            assertEquals(TeamTaskResult.Status.COMPLETED, notPersisted.status)
+            assertEquals(TeamTaskResult.Status.BLOCKED, notPersisted.status)
+            assertEquals("result-pending-task", notPersisted.taskId)
+            assertTrue(notPersisted.report.isNotBlank())
             assertEquals("RESULT_PERSIST_PENDING", pendingState)
         } finally {
             ProviderQuotaScheduler.resetForTests()
@@ -237,7 +239,7 @@ class TeamRunEngineNetworkTest {
                 onTaskFinished = { lifecycle.add("finished") }
             ).single()
 
-            assertEquals(TeamTaskResult.Status.COMPLETED, result.status)
+            assertEquals(TeamTaskResult.Status.BLOCKED, result.status)
             assertEquals("valid-agent-report", result.report)
             assertEquals("A successful response must not trigger a second provider request", 1, server.requestCount.get())
             assertTrue("The local accounting failure must remain visible", logs.any { it.contains("USAGE_RECORD_FAILED") })
