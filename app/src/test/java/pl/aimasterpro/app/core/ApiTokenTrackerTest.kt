@@ -23,6 +23,7 @@ class ApiTokenTrackerTest {
         SharedPreferencesWriteHealth.resetForTests("api_token_tracker_records_v1")
         ApiTokenTracker.clearRecords(context)
         context.getSharedPreferences("api_token_pricing_v1", Context.MODE_PRIVATE).edit().clear().commit()
+        context.getSharedPreferences("api_model_token_limits_v1", Context.MODE_PRIVATE).edit().clear().commit()
         ApiTokenTracker.setLimits(context, 100_000L, 50.0, 50_000L)
     }
 
@@ -1276,6 +1277,68 @@ class ApiTokenTrackerTest {
         val row = ApiTokenTracker.loadAllRecordsFromStorage(context).single()
         assertTrue("Legacy rows must retain their historical known-cost interpretation", row.costKnown)
         assertEquals(0.04, ApiTokenTracker.calculateSummary(listOf(row)).costPln, 0.000001)
+    }
+
+
+    @Test fun perModelDailyLimitWarnsAtNinetyPercentAndPersistsAcrossRestart() {
+        val provider = "model-budget-provider"
+        val endpoint = "https://model-budget.example/v1"
+        val model = "vendor/budget-model"
+        ApiTokenTracker.replaceCatalogPricingForProvider(
+            context, provider, endpoint,
+            listOf(CatalogModelPrice(model, 0.0, 0.0, explicitlyFree = true))
+        )
+        val config = ModelTokenLimitConfig(provider, endpoint, model, 100L, warningPercent = 90)
+        assertTrue(ApiTokenTracker.setModelTokenLimit(context, config))
+        ApiTokenTracker.recordQuery(
+            context, provider, model, "MASTER", "model-budget-90",
+            inputTokens = 55L, outputTokens = 36L, status = "REAL",
+            baseUrl = endpoint, idempotencyKey = "model-budget-90"
+        )
+        val usage = ApiTokenTracker.getModelTokenUsage(context, provider, endpoint, model)
+        assertEquals(91L, usage.usedTokens)
+        assertEquals(100L, usage.limitTokens)
+        assertEquals(9L, usage.remainingTokens)
+        assertEquals(91, usage.usagePercent)
+        assertTrue("90% threshold must be surfaced by the usage snapshot", usage.warningReached)
+        assertFalse(usage.limitReached)
+
+        ApiTokenTracker.resetInMemoryStateForTests()
+        val restoredConfig = ApiTokenTracker.getModelTokenLimit(context, provider, endpoint, model)
+        assertEquals(config, restoredConfig)
+        val restoredUsage = ApiTokenTracker.getModelTokenUsage(context, provider, endpoint, model)
+        assertEquals(91L, restoredUsage.usedTokens)
+        assertTrue(restoredUsage.warningReached)
+    }
+
+    @Test fun perModelLimitBlocksReservationsAndIsolatedByProviderEndpointAndModel() {
+        val provider = "model-cap-provider"
+        val endpoint = "https://model-cap.example/v1"
+        val model = "vendor/capped-model"
+        ApiTokenTracker.replaceCatalogPricingForProvider(
+            context, provider, endpoint,
+            listOf(CatalogModelPrice(model, 0.0, 0.0, explicitlyFree = true))
+        )
+        assertTrue(ApiTokenTracker.setModelTokenLimit(
+            context, ModelTokenLimitConfig(provider, endpoint, model, 100L, 90)
+        ))
+        ApiTokenTracker.recordQuery(
+            context, provider, model, "MASTER", "model-cap-used",
+            inputTokens = 40L, outputTokens = 40L, status = "REAL",
+            baseUrl = endpoint, idempotencyKey = "model-cap-used"
+        )
+        val plan = ApiTokenTracker.planBatch(context, listOf(
+            BudgetRequest("model-cap-over", "MASTER", provider, endpoint, model, 15L, 10L)
+        ))
+        assertTrue("A request exceeding this model's remaining daily budget must be blocked",
+            plan.allowedTaskIds.isEmpty())
+        assertTrue(plan.blockedReasons["model-cap-over"]?.contains("limit tokenów") == true)
+
+        val otherEndpointUsage = ApiTokenTracker.getModelTokenUsage(
+            context, provider, "https://other-endpoint.example/v1", model
+        )
+        assertEquals(0L, otherEndpointUsage.usedTokens)
+        assertEquals(0L, otherEndpointUsage.limitTokens)
     }
 
 }
