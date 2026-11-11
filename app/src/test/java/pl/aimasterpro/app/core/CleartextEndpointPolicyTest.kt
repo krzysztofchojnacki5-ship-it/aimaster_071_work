@@ -33,9 +33,9 @@ class CleartextEndpointPolicyTest {
         assertFalse(CleartextEndpointPolicy.isPrivateLanIpv6("192.168.1.10"))
     }
 
-    @Test fun doesNotTreatIpv6OrLookalikeNamesAsAllowed() {
-        assertFalse(CleartextEndpointPolicy.isAllowedHost("::1"))
-        assertFalse(CleartextEndpointPolicy.isAllowedHost("[::1]"))
+    @Test fun doesNotTreatNonLoopbackIpv6OrLookalikeNamesAsAllowed() {
+        assertFalse(CleartextEndpointPolicy.isAllowedHost("2001:4860:4860::8888"))
+        assertFalse(CleartextEndpointPolicy.isAllowedHost("[2001:4860:4860::8888]"))
         assertFalse(CleartextEndpointPolicy.isAllowedHost("localhost.attacker.example"))
         assertFalse(CleartextEndpointPolicy.isAllowedHost("notlocalhost"))
         assertFalse(CleartextEndpointPolicy.isAllowedHost("10.0.2.2.attacker.example"))

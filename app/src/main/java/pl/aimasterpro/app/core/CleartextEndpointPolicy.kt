@@ -6,7 +6,7 @@ package pl.aimasterpro.app.core
  * ProviderEndpointPolicy before a connection is opened.
  */
 object CleartextEndpointPolicy {
-    private val allowedHosts = setOf("localhost", "127.0.0.1", "10.0.2.2")
+    private val allowedHosts = setOf("localhost", "127.0.0.1", "::1", "10.0.2.2")
 
     fun isAllowedHost(rawHost: String): Boolean {
         val host = rawHost.removePrefix("[").removeSuffix("]")
