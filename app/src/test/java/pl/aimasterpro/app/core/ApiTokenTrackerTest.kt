@@ -965,12 +965,12 @@ class ApiTokenTrackerTest {
 
     @Test fun staleUnavailableRecoveryCannotDowngradeCanonicalRealUsage() {
         ApiTokenTracker.replaceCatalogPricingForProvider(
-            context, "gateway", "", listOf(CatalogModelPrice("canonical-model-v2", 0.2, 0.4))
+            context, "gateway", "https://gateway.example/v1", listOf(CatalogModelPrice("canonical-model-v2", 0.2, 0.4))
         )
         val key = "team:task-canonical-replay:gateway"
         val actual = ApiTokenTracker.recordQuery(
             context, "gateway", "canonical-model-v2", "RESEARCHER", "task-canonical-replay",
-            310L, 145L, status = "REAL", idempotencyKey = key
+            310L, 145L, status = "REAL", baseUrl = "https://gateway.example/v1", idempotencyKey = key
         )
         val replayed = ApiTokenTracker.recordQuery(
             context, "gateway", "requested-alias", "RESEARCHER", "task-canonical-replay",
@@ -1203,14 +1203,14 @@ class ApiTokenTrackerTest {
 
     @Test fun ambiguousUsageLedgerCommitQuarantinesBudgetAndFurtherWrites() {
         ApiTokenTracker.replaceCatalogPricingForProvider(
-            context, "provider", "", listOf(CatalogModelPrice("model", 0.2, 0.4))
+            context, "provider", "https://provider.invalid/v1", listOf(CatalogModelPrice("model", 0.2, 0.4))
         )
         val failing = AmbiguousCommitContext(context, "api_token_tracker_records_v1")
         val result = runCatching {
             ApiTokenTracker.recordQuery(
                 failing, "provider", "model", "MASTER", "ambiguous-usage",
                 inputTokens = 40L, outputTokens = 20L, status = "REAL",
-                idempotencyKey = "ambiguous-usage-key"
+                baseUrl = "https://provider.invalid/v1", idempotencyKey = "ambiguous-usage-key"
             )
         }
         assertTrue("An ambiguous durable usage write must be reported", result.isFailure)
