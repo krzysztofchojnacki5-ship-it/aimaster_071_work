@@ -290,7 +290,9 @@ object ApiTokenTracker {
                 val upgradePricing = try {
                     getPricing(context, modelName, providerId, baseUrl)
                 } catch (error: UnknownModelPricingException) {
-                    if (!allowUnknownPricing && reservationId.isBlank()) throw error
+                    if (!allowUnknownPricing && !hasMatchingActiveReservation(
+                        reservationId, taskId, agentId, providerId, baseUrl, modelName
+                    )) throw error
                     require(getLimits(context).monthlyCostPlnLimit == 0.0) {
                         "Nieznany koszt modelu wymaga wyłączenia limitu finansowego i świadomej zgody; limit tokenów nadal obowiązuje."
                     }
@@ -417,6 +419,27 @@ object ApiTokenTracker {
         val extraCost = (upgraded.costPln - previous.costPln).coerceAtLeast(0.0)
         task.tokensRemaining = (task.tokensRemaining - extraTokens).coerceAtLeast(0L)
         task.costPlnRemaining = (task.costPlnRemaining - extraCost).coerceAtLeast(0.0)
+    }
+
+    private fun hasMatchingActiveReservation(
+        reservationId: String,
+        taskId: String,
+        agentId: String,
+        providerId: String,
+        baseUrl: String,
+        modelName: String
+    ): Boolean {
+        if (reservationId.isBlank() || taskId.isBlank() || taskId == "general" ||
+            agentId.isBlank() || providerId.isBlank() || baseUrl.isBlank() || modelName.isBlank()) return false
+        val reservation = activeReservations[reservationId] ?: return false
+        return reservation.tasks.any { task ->
+            !task.completed &&
+                task.taskId == taskId &&
+                task.agentId.equals(agentId, true) &&
+                task.providerId.equals(providerId, true) &&
+                task.baseUrl.trim().trimEnd('/').equals(baseUrl.trim().trimEnd('/'), true) &&
+                task.modelName.equals(modelName, true)
+        }
     }
 
     private fun consumeActiveReservation(record: TokenRecord, reservationId: String, baseUrl: String = "") {
