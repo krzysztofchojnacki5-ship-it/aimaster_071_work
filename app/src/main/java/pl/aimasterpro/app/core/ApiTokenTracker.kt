@@ -348,7 +348,9 @@ object ApiTokenTracker {
         val pricing = try {
             getPricing(context, modelName, providerId, baseUrl)
         } catch (error: UnknownModelPricingException) {
-            if (!allowUnknownPricing && reservationId.isBlank()) throw error
+            if (!allowUnknownPricing && !hasMatchingActiveReservation(
+                reservationId, taskId, agentId, providerId, baseUrl, modelName
+            )) throw error
             require(getLimits(context).monthlyCostPlnLimit == 0.0) {
                 "Nieznany koszt modelu wymaga wyłączenia limitu finansowego i świadomej zgody; limit tokenów nadal obowiązuje."
             }
