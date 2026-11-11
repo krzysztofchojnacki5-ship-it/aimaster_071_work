@@ -63,12 +63,9 @@ class QualityLearningStoreTest {
             context, proposal.id, "APPROVED", "test-approval:${proposal.id}"
         ))
         val memoryEntry = "[UCZENIE ZATWIERDZONE ${proposal.id.take(8)}; dowody=${proposal.evidenceCount}; pewność=${proposal.confidence}] ${proposal.text}".take(1000)
-        val request = MemoryGovernance.Request(MemoryGovernance.Actor.SYSTEM_RECOVERY,
-            MemoryGovernance.Mutation.RECONCILE_APPROVED_PROPOSAL, proposal.id,
-            "Test simulates missing shared memory", "proposal:${proposal.id}")
-        assertTrue(MemoryMutationGate.execute(context, request) { permit ->
-            AiMemoryStore.removeMemory(context, memoryEntry, permit)
-        })
+        // Simulate process death after the proposal status commit but before shared-memory persistence.
+        assertTrue(context.getSharedPreferences("ai_master_memory_store_v1", Context.MODE_PRIVATE)
+            .edit().putString("memories", "[]").commit())
         assertEquals(1, QualityLearningStore.syncApprovedAgentMemories(context))
         val records = MemoryAuditLog.readVerified(context)!!
         val recovery = records.filter { it.actor == "SYSTEM_RECOVERY" && it.objectId == proposal.id }
@@ -123,7 +120,7 @@ class QualityLearningStoreTest {
         assertEquals("USER", resolved.actor)
         assertEquals("APPROVE_PROPOSAL", resolved.mutation)
         assertEquals(MemoryAuditLog.Phase.COMMITTED, resolved.phase)
-        assertEquals("RECOVERED_SUCCESS", resolved.outcome)
+        assertEquals("RECOVERED_STATE", resolved.outcome)
 
         val countAfterRecovery = MemoryAuditLog.readVerified(context)!!.size
         assertEquals(0, QualityLearningStore.syncApprovedAgentMemories(context))

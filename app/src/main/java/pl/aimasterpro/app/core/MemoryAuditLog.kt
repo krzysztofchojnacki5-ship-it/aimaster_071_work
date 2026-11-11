@@ -103,7 +103,7 @@ object MemoryAuditLog {
             reason = reason.take(MAX_TEXT_CHARS),
             approvalRef = pending.approvalRef,
             phase = Phase.COMMITTED,
-            outcome = "RECOVERED_SUCCESS"
+            outcome = "RECOVERED_STATE"
         ))
     }
 
