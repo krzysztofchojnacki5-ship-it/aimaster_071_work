@@ -1510,12 +1510,27 @@ class MainActivity : Activity() {
     }
 
     private fun isVerifiedFreeConfig(config: ProviderConfig): Boolean {
-        if (config.id.equals("ollama", true) || config.baseUrl.contains("11434") || config.baseUrl.contains("localhost") || config.baseUrl.contains("127.0.0.1")) return true
+        if (config.id.equals("ollama", true) || config.baseUrl.contains("11434") ||
+            config.baseUrl.contains("localhost") || config.baseUrl.contains("127.0.0.1")) return true
         val baseId = config.parentProviderId.ifBlank { config.id }
-        val entry = readModelCatalogEntries().firstOrNull { it.providerId == baseId && it.info.id == config.model }
-        val pricingFree = entry?.info?.freeByPricing
-        if (pricingFree != null) return pricingFree
-        return pl.aimasterpro.app.core.FreeModelsCatalog.isFreeModel(baseId, config.model, config.baseUrl)
+        val entry = readModelCatalogEntries().firstOrNull {
+            it.providerId == baseId && it.info.id == config.model &&
+                it.baseUrl.trimEnd('/').equals(config.baseUrl.trimEnd('/'), true)
+        }
+        when (entry?.info?.freeByPricing) {
+            false -> return false
+            true -> {
+                val pricing = runCatching {
+                    pl.aimasterpro.app.core.ApiTokenTracker.getPricing(this, config.model, baseId, config.baseUrl)
+                }.getOrNull() ?: return false
+                return pricing.inputPer1MUsd == 0.0 && pricing.outputPer1MUsd == 0.0 &&
+                    (pricing.cachedInputPer1MUsd == null || pricing.cachedInputPer1MUsd == 0.0) &&
+                    (pricing.cacheWriteInputPer1MUsd == null || pricing.cacheWriteInputPer1MUsd == 0.0) &&
+                    (pricing.cacheWriteInput1hPer1MUsd == null || pricing.cacheWriteInput1hPer1MUsd == 0.0) &&
+                    (pricing.internalReasoningPer1MUsd == null || pricing.internalReasoningPer1MUsd == 0.0)
+            }
+            null -> return pl.aimasterpro.app.core.FreeModelsCatalog.isFreeModel(baseId, config.model, config.baseUrl)
+        }
     }
 
     private fun isUnknownPriceCatalogEntry(entry: CatalogEntry): Boolean {
