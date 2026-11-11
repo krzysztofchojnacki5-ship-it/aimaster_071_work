@@ -1598,4 +1598,25 @@ class ApiTokenTrackerTest {
         assertEquals(0L, ApiTokenTracker.getModelTokenUsage(context, backupProvider, backupEndpoint, backupModel).reservedTokens)
     }
 
+
+    @Test fun unavailableUsageRecoveryPersistsUnknownPriceEvenWithFinancialCapEnabled() {
+        val provider = "recovery-unpriced-provider"
+        val endpoint = "https://recovery-unpriced.example/v1"
+        val model = "vendor/model-with-unknown-price"
+        ApiTokenTracker.setLimits(context, daily = 10_000L, monthly = 50.0, perAgent = 5_000L)
+
+        val recovered = ApiTokenTracker.recordQuery(
+            context, provider, model, "MASTER", "recovered-unknown-price-task",
+            inputTokens = 120L, outputTokens = 80L, status = "UNAVAILABLE",
+            baseUrl = endpoint, idempotencyKey = "recovery-unpriced-usage"
+        )
+
+        assertFalse(recovered.costKnown)
+        assertEquals("UNAVAILABLE", recovered.status)
+        assertEquals(200L, recovered.totalTokens)
+        assertEquals(1, ApiTokenTracker.loadAllRecordsFromStorage(context).count {
+            it.queryId == "recovery-unpriced-usage"
+        })
+        assertEquals(50.0, ApiTokenTracker.getLimits(context).monthlyCostPlnLimit, 0.0)
+    }
 }
