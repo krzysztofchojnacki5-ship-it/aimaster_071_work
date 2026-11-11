@@ -8,7 +8,10 @@ package pl.aimasterpro.app.core
 object CleartextEndpointPolicy {
     private val allowedHosts = setOf("localhost", "127.0.0.1", "::1", "10.0.2.2")
 
-    fun isAllowedHost(host: String): Boolean = allowedHosts.any { it.equals(host, ignoreCase = true) }
+    fun isAllowedHost(rawHost: String): Boolean {
+        val host = rawHost.removePrefix("[").removeSuffix("]")
+        return allowedHosts.any { it.equals(host, ignoreCase = true) }
+    }
 
     /** RFC 1918 IPv4 only; strict decimal parsing prevents ambiguous or abbreviated forms. */
     fun isPrivateLanIpv4(host: String): Boolean {
