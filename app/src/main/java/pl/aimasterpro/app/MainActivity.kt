@@ -2058,7 +2058,7 @@ class MainActivity : Activity() {
                     // when the profile is complete and allowed by the cost policy (verified free
                     // or explicitly approved unknown price). TeamRunEngine repeats this guard.
                     val batchAgentConfigsMap = tasks.mapNotNull { task ->
-                        val spec = AgentCatalog.find(task.agentId) ?: return@mapNotNull null
+                        val spec = activeAgentCatalog.firstOrNull { it.id == task.agentId } ?: return@mapNotNull null
                         val role = AgentProviderRouting.roleFor(spec)
                         val assignedId = agentProviders[role.name] ?: resolvedMasterProviderId().orEmpty()
                         val assigned = loadProvider(assignedId)
@@ -2201,7 +2201,7 @@ class MainActivity : Activity() {
                     logAgentForChat(chatId, "🧠 Smart Budget: cache=${cachedResults.size}, nowe wywołania=${budgetedTasks.size}/${tasksToRun.size}; rezerwa=${budgetPlan.estimatedReservedTokens} tokenów + synteza MASTER-a.")
 
                     val freshResults = try {
-                        if (budgetedTasks.isEmpty()) emptyList() else TeamRunEngine(client, maxParallel = adaptivePlan.maxAgents.coerceAtLeast(1)).runBatch(
+                        if (budgetedTasks.isEmpty()) emptyList() else TeamRunEngine(client, maxParallel = adaptivePlan.maxAgents.coerceAtLeast(1), agentCatalog = activeAgentCatalog).runBatch(
                             tasks = budgetedTasks,
                             provider = safeConfig,
                             agentProvidersMap = batchAgentConfigsMap,
@@ -2354,7 +2354,7 @@ class MainActivity : Activity() {
                                 providerId = result.providerId, model = result.model, status = result.status.name,
                                 durationMs = result.durationMs, attempts = result.attempts,
                                 category = if (result.status == pl.aimasterpro.app.agents.TeamTaskResult.Status.COMPLETED)
-                                    (AgentCatalog.find(result.agentId)?.category ?: "") else "agent_failure",
+                                    (activeAgentCatalog.firstOrNull { it.id == result.agentId }?.category ?: "") else "agent_failure",
                                 taskId = result.taskId,
                                 inputTokens = recordedTokenRows.filter { it.taskId == result.taskId }.sumOf { it.inputTokens.coerceAtLeast(0L) },
                                 outputTokens = recordedTokenRows.filter { it.taskId == result.taskId }.sumOf { it.outputTokens.coerceAtLeast(0L) }
@@ -2422,7 +2422,7 @@ class MainActivity : Activity() {
                         } else {
                             logAgentForChat(chatId, "🤝 Peer Review: uruchamiam ${allowedReviews.size}/${peerReviewTasks.size} niezależnych recenzji. Każdy recenzent otrzymuje raport innego agenta; dodatkowe wywołania są objęte Smart Budget.")
                             try {
-                                TeamRunEngine(client, maxParallel = minOf(2, adaptivePlan.maxAgents.coerceAtLeast(1))).runBatch(
+                                TeamRunEngine(client, maxParallel = minOf(2, adaptivePlan.maxAgents.coerceAtLeast(1)), agentCatalog = activeAgentCatalog).runBatch(
                                     tasks = allowedReviews,
                                     provider = safeConfig,
                                     agentProvidersMap = batchAgentConfigsMap,
@@ -6726,7 +6726,7 @@ class MainActivity : Activity() {
                 if (task.status in setOf(pl.aimasterpro.app.core.MasterTaskQueueStore.Status.QUEUED,
                         pl.aimasterpro.app.core.MasterTaskQueueStore.Status.PAUSED)) {
                     action("PRZYDZIEL AGENTÓW", box) {
-                        val catalog = pl.aimasterpro.app.core.AgentManagerStore.enabledCatalog(this).filter { pl.aimasterpro.app.agents.AgentCatalog.find(it.id) != null }
+                        val catalog = pl.aimasterpro.app.core.AgentManagerStore.enabledCatalog(this)
                         if (catalog.isEmpty()) { toast("Brak aktywnych agentów albo magazyn katalogu jest niedostępny."); return@action }
                         val selected = BooleanArray(catalog.size) { catalog[it].id in task.assignedAgentIds }
                         AlertDialog.Builder(this).setTitle("Przydział: ${task.title}")
@@ -6829,10 +6829,9 @@ class MainActivity : Activity() {
             }
             activeQueueTaskId = taskId
         }
+        val enabledAgentCatalog = pl.aimasterpro.app.core.AgentManagerStore.enabledCatalog(this)
         val specs = task.assignedAgentIds.mapNotNull { id ->
-            pl.aimasterpro.app.agents.AgentCatalog.find(id)?.takeIf {
-                pl.aimasterpro.app.core.AgentManagerStore.isEnabled(this, id)
-            }
+            enabledAgentCatalog.firstOrNull { it.id == id }
         }
         if (specs.size != task.assignedAgentIds.size) {
             activeQueueTaskId = ""
@@ -6863,7 +6862,7 @@ class MainActivity : Activity() {
             )
         }
         val budgetRequests = teamTasks.map { teamTask ->
-            val spec = pl.aimasterpro.app.agents.AgentCatalog.find(teamTask.agentId)
+            val spec = enabledAgentCatalog.firstOrNull { it.id == teamTask.agentId }
             val cfg = configs.getValue(teamTask.agentId)
             val chars = (spec?.systemPrompt.orEmpty().length + mode.systemInstruction.length +
                 projectContextBase.length + 18_000 + teamTask.prompt.length + 1_800)
@@ -6911,7 +6910,7 @@ class MainActivity : Activity() {
                         append("\n\n").append(sourceContextResult.contextText)
                     }
                 }
-                val results = TeamRunEngine(client, maxParallel = minOf(4, allowed.size.coerceAtLeast(1))).use { engine ->
+                val results = TeamRunEngine(client, maxParallel = minOf(4, allowed.size.coerceAtLeast(1)), agentCatalog = enabledAgentCatalog).use { engine ->
                     engine.runBatch(
                         tasks = allowed,
                         provider = fallback,
