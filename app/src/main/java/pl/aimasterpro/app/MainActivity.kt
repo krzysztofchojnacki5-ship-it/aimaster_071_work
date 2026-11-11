@@ -2957,7 +2957,8 @@ class MainActivity : Activity() {
             })
         }
         box.addView(pickerHeader("Model dla MASTER"))
-        val configs = store.allConfigs().mapNotNull { j -> runCatching { loadProvider(j.optString("id")) }.getOrNull() }.filter { providerReady(it) && isModelPresentInCatalog(it) }
+        val configs = store.allConfigs().mapNotNull { j -> runCatching { loadProvider(j.optString("id")) }.getOrNull() }
+            .filter { providerReady(it) && isModelPresentInCatalog(it) && isProviderAllowedForRouting(it) }
         configs.forEach { p ->
             val sub = p.model + if (p.apiKey.isBlank() && !p.id.equals("ollama", true)) " • brak klucza API" else if (p.id.equals("ollama", true)) " • lokalny / bez klucza" else ""
             box.addView(pickerRow(p.name, sub, p.id == resolvedMasterProviderId()) {
@@ -5040,7 +5041,7 @@ class MainActivity : Activity() {
         }
         val configs = store.allConfigs().mapNotNull { j -> runCatching { loadProvider(j.optString("id")) }.getOrNull() }.filter { providerReady(it) && isModelPresentInCatalog(it) }
         if (configs.isEmpty()) {
-            val missing = card("Brak gotowych profili modeli", "Najpierw otwórz MODELE, skonfiguruj dostawcę, pobierz jego listę i utwórz profil wybranego modelu. Wróć tutaj, aby przypisać go agentom.")
+            val missing = card("Brak gotowych profili modeli", "Najpierw otwórz MODELE, skonfiguruj dostawcę, pobierz jego listę i utwórz profil modelu. Wybór obejmuje zweryfikowane modele darmowe oraz modele z nieznaną ceną, dla których jawnie zapisano zgodę. Wróć tutaj, aby przypisać model agentom.")
             action("OTWÓRZ KATALOG MODELI", missing) { navigate("Modele") }
         }
         AgentRole.values().forEach { role ->
