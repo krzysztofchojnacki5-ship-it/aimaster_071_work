@@ -1342,6 +1342,9 @@ class ApiTokenTrackerTest {
         assertEquals(setOf("unknown-price-token-cap"), tokenOnlyPlan.allowedTaskIds)
         assertEquals(250L, tokenOnlyPlan.estimatedReservedTokens)
         assertTrue(tokenOnlyPlan.reservationId.isNotBlank())
+        // Revocation stops future reservations/fallbacks, but must not lose accounting for
+        // a request whose explicitly approved reservation is already active.
+        assertTrue(UnknownPriceApprovalStore.setApproved(context, provider, endpoint, model, false))
 
         val usage = ApiTokenTracker.recordQuery(
             context, provider, model, "MASTER", "unknown-price-token-cap",
