@@ -290,10 +290,11 @@ object ApiTokenTracker {
                 val upgradePricing = try {
                     getPricing(context, modelName, providerId, baseUrl)
                 } catch (error: UnknownModelPricingException) {
-                    if (!allowUnknownPricing && !hasMatchingActiveReservation(
+                    val unavailableAccounting = status == "UNAVAILABLE"
+                    if (!unavailableAccounting && !allowUnknownPricing && !hasMatchingActiveReservation(
                         reservationId, taskId, agentId, providerId, baseUrl, modelName
                     )) throw error
-                    require(getLimits(context).monthlyCostPlnLimit == 0.0) {
+                    if (!unavailableAccounting) require(getLimits(context).monthlyCostPlnLimit == 0.0) {
                         "Nieznany koszt modelu wymaga wyłączenia limitu finansowego i świadomej zgody; limit tokenów nadal obowiązuje."
                     }
                     null
@@ -348,13 +349,14 @@ object ApiTokenTracker {
         val pricing = try {
             getPricing(context, modelName, providerId, baseUrl)
         } catch (error: UnknownModelPricingException) {
-            if (!allowUnknownPricing && !hasMatchingActiveReservation(
-                reservationId, taskId, agentId, providerId, baseUrl, modelName
-            )) throw error
-            require(getLimits(context).monthlyCostPlnLimit == 0.0) {
-                "Nieznany koszt modelu wymaga wyłączenia limitu finansowego i świadomej zgody; limit tokenów nadal obowiązuje."
-            }
-            null
+            val unavailableAccounting = status == "UNAVAILABLE"
+                    if (!unavailableAccounting && !allowUnknownPricing && !hasMatchingActiveReservation(
+                        reservationId, taskId, agentId, providerId, baseUrl, modelName
+                    )) throw error
+                    if (!unavailableAccounting) require(getLimits(context).monthlyCostPlnLimit == 0.0) {
+                        "Nieznany koszt modelu wymaga wyłączenia limitu finansowego i świadomej zgody; limit tokenów nadal obowiązuje."
+                    }
+                    null
         }
         val exchangeRate = getExchangeRate(context)
         require(exchangeRate.isFinite() && exchangeRate > 0.0) { "Nieprawidłowy kurs USD/PLN; rozliczenie API wstrzymano." }
