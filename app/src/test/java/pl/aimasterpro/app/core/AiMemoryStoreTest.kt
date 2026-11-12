@@ -91,4 +91,40 @@ class AiMemoryStoreTest {
         assertFalse(mutateRemove(context, "anything"))
         assertTrue(AiMemoryStore.getMemories(context).isNotEmpty())
     }
+    @Test fun memoryLibraryRejectsOversizedBlankAndDuplicatePersistedEntriesWithoutOverwrite() {
+        val prefs = context.getSharedPreferences("ai_master_memory_store_v1", Context.MODE_PRIVATE)
+        val invalidRows = listOf(
+            org.json.JSONArray().put("x".repeat(2001)).toString(),
+            org.json.JSONArray().put(" ").toString(),
+            org.json.JSONArray().put("duplicate rule").put("duplicate rule").toString()
+        )
+        invalidRows.forEach { raw ->
+            assertTrue(prefs.edit().putString("memories", raw).commit())
+            assertTrue(AiMemoryStore.getMemories(context).isNotEmpty())
+            assertFalse(mutateAdd(context, "Nowa reguła nie może nadpisać błędnego magazynu."))
+            assertEquals(raw, prefs.getString("memories", null))
+            SharedPreferencesWriteHealth.resetForTests("ai_master_memory_store_v1")
+        }
+    }
+
+    @Test fun addingMemoryRejectsOversizedInputAndFullLibraryWithoutDroppingOldEntries() {
+        val prefs = context.getSharedPreferences("ai_master_memory_store_v1", Context.MODE_PRIVATE)
+        assertFalse(mutateAdd(context, "x".repeat(2001)))
+        val rows = (1..100).map { "Reguła pamięci numer $it zachowuje ważny kontekst." }
+        assertTrue(prefs.edit().putString("memories", org.json.JSONArray(rows).toString()).commit())
+        val original = prefs.getString("memories", null)
+        assertFalse(mutateAdd(context, "Sto pierwsza reguła nie może usunąć żadnej poprzedniej."))
+        assertEquals(original, prefs.getString("memories", null))
+        assertEquals(rows.toSet(), AiMemoryStore.getMemories(context).toSet())
+    }
+
+    @Test fun removingDefaultMemoryPersistsRemovalAndUnknownRemovalReturnsFalse() {
+        val prefs = context.getSharedPreferences("ai_master_memory_store_v1", Context.MODE_PRIVATE)
+        val defaultRule = AiMemoryStore.getMemories(context).first()
+        assertTrue(mutateRemove(context, defaultRule))
+        assertFalse(AiMemoryStore.getMemories(context).contains(defaultRule))
+        assertTrue(prefs.getString("memories", null).orEmpty().isNotBlank())
+        assertFalse(mutateRemove(context, "Nieistniejąca reguła pamięci."))
+    }
+
 }
