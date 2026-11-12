@@ -270,6 +270,14 @@ class QualityLearningStoreTest {
                     override fun edit(): SharedPreferences.Editor {
                         val delegateEditor = delegatePrefs.edit()
                         return object : SharedPreferences.Editor by delegateEditor {
+                            // Editor mutators normally return the delegated editor instance.
+                            // Override putString so the subsequent commit is routed through this
+                            // fault-injecting wrapper instead of bypassing it.
+                            override fun putString(key: String, value: String?): SharedPreferences.Editor {
+                                delegateEditor.putString(key, value)
+                                return this
+                            }
+
                             override fun commit(): Boolean {
                                 // Persist the write, then report failure: this is the ambiguous
                                 // outcome SharedPreferencesWriteHealth must quarantine.
