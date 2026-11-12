@@ -150,7 +150,7 @@ object TaskCheckpointStore {
                         return (value as Number).toLong()
                     }
                     val id = exactString("task")
-                    require(id.isNotBlank()) { "Checkpoint row has no task id." }
+                    require(id.isNotBlank() && id.length <= 512) { "Checkpoint row has an invalid task id." }
                     val estimatedInput = exactLong("estimatedInputTokens")
                     val estimatedOutput = exactLong("estimatedOutputTokens")
                     val attempts = exactLong("attempts")
