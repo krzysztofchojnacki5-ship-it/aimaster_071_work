@@ -161,6 +161,58 @@ class AgentHandoffStoreTest {
         assertFalse(snapshot.messages.any { it.id == "handoff-full-400" })
     }
 
+    @Test fun interruptedClaimCanOnlyBeManuallyResolvedAsUnknownWhileExactRunIsBlocked() {
+        val runId = runningTask()
+        assertTrue(AgentHandoffStore.send(context, "handoff-task-01", runId, "handoff-msg-manual-01",
+            "critical-reviewer", "unit-test-engineer", "Raport o niepewnym wyniku.", 60L))
+        assertNotNull(AgentHandoffStore.claim(context, "handoff-task-01", runId, "handoff-msg-manual-01",
+            "unit-test-engineer", 61L))
+
+        assertFalse(AgentHandoffStore.resolveUncertainClaim(context, "handoff-task-01", runId,
+            "handoff-msg-manual-01", "USER", "Nie wolno rozstrzygać aktywnego przebiegu.", 62L))
+        assertTrue(MasterTaskQueueStore.transition(context, "handoff-task-01", "USER",
+            MasterTaskQueueStore.Status.BLOCKED, "Przerwano przebieg.", 63L))
+        assertFalse(AgentHandoffStore.resolveUncertainClaim(context, "handoff-task-01", runId,
+            "handoff-msg-manual-01", "agent:unit-test-engineer", "Nieuprawniony aktor.", 64L))
+        assertFalse(AgentHandoffStore.resolveUncertainClaim(context, "handoff-task-01", runId,
+            "handoff-msg-manual-01", "USER", " ", 64L))
+        assertTrue(AgentHandoffStore.resolveUncertainClaim(context, "handoff-task-01", runId,
+            "handoff-msg-manual-01", "USER", "Wynik zewnętrzny pozostaje nieznany.", 65L))
+
+        val resolved = AgentHandoffStore.snapshot(context).messages.single()
+        assertEquals(AgentHandoffStore.State.MANUALLY_RESOLVED, resolved.state)
+        assertEquals(65L, resolved.resolvedAt)
+        assertEquals("USER", resolved.resolutionActor)
+        assertEquals("Wynik zewnętrzny pozostaje nieznany.", resolved.resolutionReason)
+        assertFalse(AgentHandoffStore.acknowledge(context, "handoff-task-01", runId,
+            "handoff-msg-manual-01", "unit-test-engineer", 66L))
+        assertNull(AgentHandoffStore.claim(context, "handoff-task-01", runId,
+            "handoff-msg-manual-01", "unit-test-engineer", 66L))
+    }
+
+    @Test fun manualResolutionCannotClosePendingOrPreviousRunHandoff() {
+        val runId = runningTask()
+        assertTrue(AgentHandoffStore.send(context, "handoff-task-01", runId, "handoff-msg-manual-02",
+            "critical-reviewer", "unit-test-engineer", "Raport oczekujący.", 70L))
+        assertTrue(MasterTaskQueueStore.transition(context, "handoff-task-01", "USER",
+            MasterTaskQueueStore.Status.BLOCKED, "Przerwano przed przejęciem.", 71L))
+        assertFalse(AgentHandoffStore.resolveUncertainClaim(context, "handoff-task-01", runId,
+            "handoff-msg-manual-02", "USER", "Nie wolno zamknąć PENDING.", 72L))
+
+        assertTrue(MasterTaskQueueStore.transition(context, "handoff-task-01", "USER",
+            MasterTaskQueueStore.Status.QUEUED, "Ponowienie po ręcznej decyzji.", 73L))
+        assertTrue(MasterTaskQueueStore.assign(context, "handoff-task-01",
+            listOf("critical-reviewer", "unit-test-engineer"), 74L))
+        assertTrue(MasterTaskQueueStore.transition(context, "handoff-task-01", "MASTER",
+            MasterTaskQueueStore.Status.RUNNING, "Nowy przebieg.", 75L))
+        val newRunId = MasterTaskQueueStore.snapshot(context).tasks.single().runId
+        assertTrue(newRunId > runId)
+        assertFalse(AgentHandoffStore.resolveUncertainClaim(context, "handoff-task-01", runId,
+            "handoff-msg-manual-02", "USER", "Stary przebieg.", 76L))
+        assertEquals(AgentHandoffStore.State.PENDING,
+            AgentHandoffStore.snapshot(context).messages.single().state)
+    }
+
     @Test fun staleRunAndUnassignedRecipientsAreRejected() {
         val runId = runningTask()
         assertFalse(AgentHandoffStore.send(context, "handoff-task-01", runId - 1, "handoff-msg-004",

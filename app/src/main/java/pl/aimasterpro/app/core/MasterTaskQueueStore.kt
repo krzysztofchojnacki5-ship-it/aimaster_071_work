@@ -94,6 +94,19 @@ object MasterTaskQueueStore {
         return operation()
     }
 
+    /**
+     * Runs a short durable side-effect only for the exact interrupted run while it is BLOCKED.
+     * Shares the queue monitor with transitions, so a retry cannot race a manual resolution.
+     */
+    @Synchronized
+    fun <T> withBlockedRun(context: Context, taskId: String, runId: Int, operation: () -> T): T? {
+        if (runId <= 0 || SharedPreferencesWriteHealth.isUncertain(PREFS)) return null
+        val current = snapshot(context)
+        val task = current.tasks.firstOrNull { it.id == taskId }
+        if (current.status != ReadStatus.AVAILABLE || task?.status != Status.BLOCKED || task.runId != runId) return null
+        return operation()
+    }
+
     /** Creates a task in QUEUED state. Task content is bounded and never contains provider secrets. */
     @Synchronized
     fun enqueue(

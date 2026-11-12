@@ -6797,8 +6797,10 @@ class MainActivity : Activity() {
             val claimedCount = handoffDiagnostics.messages.count {
                 it.state == pl.aimasterpro.app.core.AgentHandoffStore.State.CLAIMED
             }
+            val manuallyResolved = handoffDiagnostics.messages
+                .filter { it.state == pl.aimasterpro.app.core.AgentHandoffStore.State.MANUALLY_RESOLVED }
             card("Skrzynka przekazań agentów",
-                "Oczekujące: $pendingCount • Przejęte bez potwierdzenia: $claimedCount")
+                "Oczekujące: $pendingCount • Przejęte bez potwierdzenia: $claimedCount • Ręcznie zamknięte jako nieznane: ${manuallyResolved.size}")
             if (unresolved.isEmpty()) {
                 card("Brak nierozstrzygniętych przekazań",
                     "Wszystkie zapisane przekazania mają stan końcowy.")
@@ -6816,9 +6818,43 @@ class MainActivity : Activity() {
                     val taskTitle = queueDiagnostics.tasks.firstOrNull { it.id == handoff.taskId }?.title ?: handoff.taskId
                     card(stateLabel,
                         "$taskTitle • ${handoff.senderAgentId} → ${handoff.recipientAgentId} • przebieg #${handoff.runId}\n" +
-                            "Utworzono: ${handoffTime.format(java.util.Date(handoff.createdAt))} • " +
+                            "ID: ${handoff.id} • Utworzono: ${handoffTime.format(java.util.Date(handoff.createdAt))} • " +
                             "Aktualizacja: ${handoffTime.format(java.util.Date(handoff.updatedAt))}")
+                    if (handoff.state == pl.aimasterpro.app.core.AgentHandoffStore.State.CLAIMED &&
+                        taskStates[handoff.taskId] == pl.aimasterpro.app.core.MasterTaskQueueStore.Status.BLOCKED) {
+                        action("Rozstrzygnij ręcznie — wynik nieznany") {
+                            android.app.AlertDialog.Builder(this)
+                                .setTitle("Zamknąć niepewne przekazanie?")
+                                .setMessage(
+                                    "To przekazanie zostało przejęte, ale nie potwierdzono odbioru. " +
+                                    "Nie wiadomo, czy agent wykonał żądanie zewnętrzne. " +
+                                    "Najpierw sprawdź historię API.\n\n" +
+                                    "Ręczne zamknięcie NIE oznacza wykonania, NIE potwierdza odbioru " +
+                                    "i NIE uruchamia ponownie żądania."
+                                )
+                                .setNegativeButton("Anuluj", null)
+                                .setPositiveButton("Zamknij jako nierozstrzygnięte") { _, _ ->
+                                    val saved = pl.aimasterpro.app.core.AgentHandoffStore.resolveUncertainClaim(
+                                        this, handoff.taskId, handoff.runId, handoff.id, "USER",
+                                        "Ręczne zamknięcie przez użytkownika jako wynik nieznany; brak potwierdzenia wykonania."
+                                    )
+                                    toast(if (saved) "Zapisano ręczne rozstrzygnięcie. Wynik nadal pozostaje nieznany."
+                                        else "Nie zapisano decyzji. Stan zadania lub przekazania mógł się zmienić.")
+                                    showShell("Diagnostyka")
+                                    showDiagnostics()
+                                }
+                                .show()
+                        }
+                    }
                 }
+            }
+            manuallyResolved.takeLast(5).asReversed().forEach { handoff ->
+                val taskTitle = queueDiagnostics.tasks.firstOrNull { it.id == handoff.taskId }?.title ?: handoff.taskId
+                card("RĘCZNIE ZAMKNIĘTE — WYNIK NIEZNANY",
+                    "$taskTitle • ${handoff.senderAgentId} → ${handoff.recipientAgentId} • przebieg #${handoff.runId}\n" +
+                        "ID: ${handoff.id} • Decyzja: ${handoff.resolutionActor} • " +
+                        handoffTime.format(java.util.Date(handoff.resolvedAt)) + "\n" +
+                        handoff.resolutionReason)
             }
         }
 
