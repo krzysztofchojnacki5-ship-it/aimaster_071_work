@@ -83,8 +83,8 @@ class MemoryMutationGateTest {
     }
 
     @Test fun distinctApprovalReferenceCanAuthorizeANewMutationForSameObject() {
-        assertTrue(MemoryMutationGate.execute(context, request(approvalRef = "ui-confirmation:first")) { true })
-        assertTrue(MemoryMutationGate.execute(context, request(approvalRef = "ui-confirmation:second")) { true })
+        assertTrue(MemoryMutationGate.execute(context, request(approvalRef = "ui-confirmation:first")) { _: MemoryMutationPermit -> true })
+        assertTrue(MemoryMutationGate.execute(context, request(approvalRef = "ui-confirmation:second")) { _: MemoryMutationPermit -> true })
         val rows = MemoryAuditLog.readVerified(context)!!
         assertEquals(4, rows.size)
         assertEquals(2, rows.count { it.phase == MemoryAuditLog.Phase.INTENT })
