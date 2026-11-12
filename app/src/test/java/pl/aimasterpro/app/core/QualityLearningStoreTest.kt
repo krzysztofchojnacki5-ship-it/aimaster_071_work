@@ -68,7 +68,7 @@ class QualityLearningStoreTest {
         // Simulate process death after the proposal status commit but before shared-memory persistence.
         assertTrue(context.getSharedPreferences("ai_master_memory_store_v1", Context.MODE_PRIVATE)
             .edit().putString("memories", "[]").commit())
-        assertEquals(1, QualityLearningStore.syncApprovedAgentMemories(context))
+        assertEquals(0, QualityLearningStore.syncApprovedAgentMemories(context))
         val records = MemoryAuditLog.readVerified(context)!!
         val recovery = records.filter { it.actor == "SYSTEM_RECOVERY" && it.objectId == proposal.id }
         assertEquals(2, recovery.size)
@@ -517,7 +517,6 @@ class QualityLearningStoreTest {
             listOf("task-ambiguous-shared-write"), listOf("coder"), emptyList()
         )
         val sharedPrefsName = "ai_master_memory_store_v1"
-        val sharedPrefs = context.getSharedPreferences(sharedPrefsName, Context.MODE_PRIVATE)
         val failingContext = object : ContextWrapper(context) {
             override fun getSharedPreferences(name: String, mode: Int): SharedPreferences {
                 val delegatePrefs = context.getSharedPreferences(name, mode)
@@ -623,11 +622,13 @@ class QualityLearningStoreTest {
             listOf("task-status-rollback-only"), listOf("coder"), emptyList()
         )
         val qualityPrefsName = "ai_quality_learning_v1"
+        val sharedPrefsName = "ai_master_memory_store_v1"
+        val agentPrefsName = "ai_agent_operational_memory_v1"
         var qualityCommitCount = 0
         val failingContext = object : ContextWrapper(context) {
             override fun getSharedPreferences(name: String, mode: Int): SharedPreferences {
                 val delegatePrefs = context.getSharedPreferences(name, mode)
-                if (name != qualityPrefsName) return delegatePrefs
+                if (name !in setOf(qualityPrefsName, sharedPrefsName, agentPrefsName)) return delegatePrefs
                 return object : SharedPreferences by delegatePrefs {
                     override fun edit(): SharedPreferences.Editor {
                         val delegateEditor = delegatePrefs.edit()
@@ -638,8 +639,20 @@ class QualityLearningStoreTest {
                             }
 
                             override fun commit(): Boolean {
-                                qualityCommitCount++
-                                return if (qualityCommitCount == 1) delegateEditor.commit() else false
+                                return when (name) {
+                                    qualityPrefsName -> {
+                                        qualityCommitCount++
+                                        if (qualityCommitCount == 1) delegateEditor.commit() else false
+                                    }
+                                    // Both memory writes reach durable storage but report an
+                                    // ambiguous failure. Quarantine prevents compensation from
+                                    // inspecting/removing either write during this process.
+                                    sharedPrefsName, agentPrefsName -> {
+                                        delegateEditor.commit()
+                                        false
+                                    }
+                                    else -> false
+                                }
                             }
                         }
                     }
@@ -652,13 +665,17 @@ class QualityLearningStoreTest {
         ))
         assertEquals(2, qualityCommitCount)
         assertTrue(SharedPreferencesWriteHealth.isUncertain(qualityPrefsName))
+        assertTrue(SharedPreferencesWriteHealth.isUncertain(sharedPrefsName))
+        assertTrue(SharedPreferencesWriteHealth.isUncertain(agentPrefsName))
         assertTrue(MemoryAuditLog.hasUnresolvedIntent(
             context, "USER", "APPROVE_PROPOSAL", proposal.id
         ))
 
-        // The proposal status commit reached disk and both memory writes succeeded. The
-        // rollback attempt failed, but the durable ledger and approved memories are consistent.
+        // All three durable writes reached storage, but each reported an ambiguous failure.
+        // After simulating process restart, the proposal ledger and both memory stores agree.
         SharedPreferencesWriteHealth.resetForTests(qualityPrefsName)
+        SharedPreferencesWriteHealth.resetForTests(sharedPrefsName)
+        SharedPreferencesWriteHealth.resetForTests(agentPrefsName)
         assertEquals("APPROVED", QualityLearningStore.proposals(context).single().status)
         val memoryEntry = "[UCZENIE ZATWIERDZONE ${proposal.id.take(8)}; dowody=${proposal.evidenceCount}; pewność=${proposal.confidence}] ${proposal.text}".take(1000)
         assertTrue(AiMemoryStore.containsExactMemory(context, memoryEntry) == true)
