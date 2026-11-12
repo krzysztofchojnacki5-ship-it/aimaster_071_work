@@ -160,7 +160,8 @@ object MasterTaskQueueStore {
             result !in setOf(Status.COMPLETED, Status.FAILED, Status.BLOCKED) ||
             detail.length > 500 || now < 0L) return@mutate null
         val alreadyReported = events.any {
-            it.taskId == taskId && it.actor == "agent:$agentId" && it.operation == "AGENT_RESULT"
+            it.taskId == taskId && it.actor == "agent:$agentId" &&
+                it.operation == "AGENT_RESULT" && it.runId == current.runId
         }
         if (alreadyReported) return@mutate null
         val nextEvents = events + event(taskId, "agent:$agentId", "AGENT_RESULT", Status.RUNNING.name,

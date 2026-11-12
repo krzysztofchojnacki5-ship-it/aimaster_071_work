@@ -7125,7 +7125,10 @@ class MainActivity : Activity() {
                 val current = queueStore.snapshot(this).tasks.firstOrNull { it.id == taskId }
                 if (current?.status == pl.aimasterpro.app.core.MasterTaskQueueStore.Status.RUNNING) {
                     current.assignedAgentIds.filter { agentId ->
-                        queueStore.snapshot(this).events.none { it.taskId == taskId && it.actor == "agent:$agentId" && it.operation == "AGENT_RESULT" }
+                        queueStore.snapshot(this).events.none {
+                            it.taskId == taskId && it.actor == "agent:$agentId" &&
+                                it.operation == "AGENT_RESULT" && it.runId == current.runId
+                        }
                     }.forEach { agentId ->
                         queueStore.recordAgentResult(this, taskId, agentId, pl.aimasterpro.app.core.MasterTaskQueueStore.Status.FAILED,
                             "Błąd wykonania: ${error.message.orEmpty().take(400)}")
