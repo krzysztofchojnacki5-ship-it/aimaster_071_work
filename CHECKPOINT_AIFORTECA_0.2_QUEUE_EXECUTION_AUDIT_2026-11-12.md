@@ -55,3 +55,12 @@ The earlier foundation-plan backlog statement that the MASTER queue was not conn
 - The 0.2 technical foundation and real queue execution path are implemented and CI-green at the audited SHA.
 - The 0.3 release is **not yet ready**: direct agent-to-agent coordination, unified diagnostics/event console, complete storage governance, result inspection/workspace polish and physical-device acceptance remain.
 - No fixed completion date is asserted. Version bump and APK handoff wait for the above acceptance gates and explicit verification.
+
+
+## Follow-up — durable queue event validation (2026-11-12)
+- Audited MasterTaskQueueStore.read(): task records were validated, but event-journal rows were only deserialized. Negative timestamps/run IDs, non-integer run IDs, wrong optional-field types, and oversized event fields could pass the read boundary.
+- Prepared a fail-closed correction: event rows now require exact integer timestamp/run ID values, correctly typed string fields, bounded lengths, non-negative timestamp/run ID, and a valid task ID. Task validation also rejects blank/oversized assigned-agent IDs and malformed dependency IDs.
+- Added malformedQueueEventsFailClosedAndAreNeverOverwritten, covering negative timestamp, negative/string run ID, blank actor, oversized detail and wrong provider-ID type. The test verifies the queue reports CORRUPT, refuses mutation, and preserves the original raw journal.
+- Code commit prepared: 79dfbbb60373aa93820868576e53b3c59c746068; based on 1ad82d1a1d1df7f63faed6a0dbbee4117c03dda6. Prior CI runs have now completed, so the branch can advance.
+- Prior commit 1ad82d1 CI verification: Android Build run 43277555611 SUCCESS (unit tests, release assembly, source archive, unsigned APK artifact); Android Build run 43277543873 SUCCESS (unit tests, release assembly, source archive, signed APK artifact). These runs verify the parent commit only, not the queue-validation change.
+- Physical-device tests remain NOT RUN. App version remains 0.2 / versionCode 3. No APK/ZIP delivered to the user.

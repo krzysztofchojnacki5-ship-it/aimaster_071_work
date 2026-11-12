@@ -464,10 +464,45 @@ object MasterTaskQueueStore {
             require(tasks.map { it.id }.distinct().size == tasks.size)
             val events = (0 until eventArray.length()).map { i ->
                 val o = eventArray.getJSONObject(i)
-                Event(o.getString("id"), o.getString("taskId"), o.getString("actor"),
-                    o.getString("operation"), o.getString("from"), o.getString("to"),
-                    o.getString("detail"), o.getLong("timestamp"),
-                    o.optString("recipient"), o.optString("providerId"), o.optString("model"), o.optInt("runId", 0))
+                fun requiredString(key: String): String {
+                    val value = o.opt(key)
+                    require(value is String) { "Queue event field '$key' is not a string." }
+                    return value
+                }
+                fun optionalString(key: String): String {
+                    if (!o.has(key)) return ""
+                    val value = o.opt(key)
+                    require(value is String) { "Queue event field '$key' is not a string." }
+                    return value
+                }
+                val timestampValue = o.opt("timestamp")
+                require(timestampValue is Int || timestampValue is Long) {
+                    "Queue event timestamp is not an exact integer."
+                }
+                val runIdValue = if (o.has("runId")) o.opt("runId") else 0
+                require(runIdValue is Int || runIdValue is Long) {
+                    "Queue event run ID is not an exact integer."
+                }
+                val runIdLong = (runIdValue as Number).toLong()
+                require(runIdLong in 0L..Int.MAX_VALUE.toLong()) {
+                    "Queue event run ID is outside the supported range."
+                }
+                val event = Event(
+                    requiredString("id"),
+                    requiredString("taskId"),
+                    requiredString("actor"),
+                    requiredString("operation"),
+                    requiredString("from"),
+                    requiredString("to"),
+                    requiredString("detail"),
+                    (timestampValue as Number).toLong(),
+                    optionalString("recipient"),
+                    optionalString("providerId"),
+                    optionalString("model"),
+                    runIdLong.toInt()
+                )
+                require(valid(event))
+                event
             }
             require(events.map { it.id }.distinct().size == events.size)
             Snapshot(ReadStatus.AVAILABLE, tasks, events)
@@ -482,10 +517,22 @@ object MasterTaskQueueStore {
     private fun valid(t: Task): Boolean =
         t.id.matches(idPattern) && t.title.isNotBlank() && t.title.length <= 180 &&
             t.objective.isNotBlank() && t.objective.length <= 1200 &&
-            t.assignedAgentIds.size <= 8 && t.assignedAgentIds.distinct().size == t.assignedAgentIds.size &&
-            t.dependencies.size <= 20 && t.dependencies.distinct().size == t.dependencies.size &&
+            t.assignedAgentIds.size <= 8 && t.assignedAgentIds.all { it.isNotBlank() && it.length <= 100 } &&
+            t.assignedAgentIds.distinct().size == t.assignedAgentIds.size &&
+            t.dependencies.size <= 20 && t.dependencies.all { it.matches(idPattern) } &&
+            t.dependencies.distinct().size == t.dependencies.size &&
             t.priority in 0..4 && t.currentStep.length <= 500 &&
             t.createdAt >= 0L && t.updatedAt >= t.createdAt && t.runId >= 0
+
+    private fun valid(event: Event): Boolean =
+        event.id.isNotBlank() && event.id.length <= 80 &&
+            event.taskId.matches(idPattern) &&
+            event.actor.isNotBlank() && event.actor.length <= 140 &&
+            event.operation.isNotBlank() && event.operation.length <= 40 &&
+            event.fromStatus.length <= 40 && event.toStatus.length <= 40 &&
+            event.detail.length <= 500 && event.timestamp >= 0L &&
+            event.recipient.length <= 100 && event.providerId.length <= 80 &&
+            event.model.length <= 120 && event.runId >= 0
 
     private fun write(context: Context, tasks: List<Task>, events: List<Event>): Boolean = runCatching {
         val taskArray = JSONArray()

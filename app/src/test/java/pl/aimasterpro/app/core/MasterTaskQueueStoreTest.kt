@@ -512,6 +512,47 @@ class MasterTaskQueueStoreTest {
         assertTrue(state.events.size <= 810)
     }
 
+
+    @Test fun malformedQueueEventsFailClosedAndAreNeverOverwritten() {
+        val prefs = context.getSharedPreferences("aiforteca_master_task_queue_v1", Context.MODE_PRIVATE)
+        val validEvent = org.json.JSONObject()
+            .put("id", "event-001")
+            .put("taskId", "task-event-001")
+            .put("actor", "MASTER")
+            .put("operation", "CREATE")
+            .put("from", "")
+            .put("to", "QUEUED")
+            .put("detail", "Utworzono zadanie.")
+            .put("timestamp", 100L)
+            .put("recipient", "")
+            .put("providerId", "")
+            .put("model", "")
+            .put("runId", 0)
+        val malformedEvents = listOf(
+            org.json.JSONObject(validEvent.toString()).put("timestamp", -1L),
+            org.json.JSONObject(validEvent.toString()).put("runId", -1),
+            org.json.JSONObject(validEvent.toString()).put("runId", "1"),
+            org.json.JSONObject(validEvent.toString()).put("actor", ""),
+            org.json.JSONObject(validEvent.toString()).put("detail", "x".repeat(501)),
+            org.json.JSONObject(validEvent.toString()).put("providerId", 7)
+        )
+
+        malformedEvents.forEachIndexed { index, event ->
+            val raw = org.json.JSONObject()
+                .put("version", 1)
+                .put("tasks", org.json.JSONArray())
+                .put("events", org.json.JSONArray().put(event))
+                .toString()
+            assertTrue("Fixture must be written: $index", prefs.edit().putString("state", raw).commit())
+
+            assertEquals("Malformed event $index must be rejected",
+                MasterTaskQueueStore.ReadStatus.CORRUPT, MasterTaskQueueStore.snapshot(context).status)
+            assertFalse("Malformed event $index must block mutation",
+                MasterTaskQueueStore.enqueue(context, "task-after-event-$index", "Nowe", "Cel.", now = 200L))
+            assertEquals("Corrupt event data must remain intact", raw, prefs.getString("state", null))
+        }
+    }
+
     @Test fun terminalTaskCannotBeReopenedAndCorruptStorageFailsClosed() {
         assertTrue(MasterTaskQueueStore.enqueue(context, "task-006", "Final", "Cel.", now = 50L))
         assertTrue(MasterTaskQueueStore.transition(context, "task-006", "MASTER",
