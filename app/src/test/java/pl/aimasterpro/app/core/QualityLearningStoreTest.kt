@@ -510,4 +510,77 @@ class QualityLearningStoreTest {
         assertEquals(originalFeedback, prefs.getString("feedback", null))
         assertEquals(originalProposals, prefs.getString("proposals", null))
     }
+
+    @Test fun failedApprovalCompensationLeavesDurableLedgerForExplicitStartupRecovery() {
+        val proposal = QualityLearningStore.addProposal(
+            context, "Reguła po nieudanym rollbacku statusu", 9, "wysoka",
+            listOf("task-approval-rollback"), listOf("coder"), emptyList()
+        )
+        val qualityPrefsName = "ai_quality_learning_v1"
+        val agentPrefsName = "ai_agent_operational_memory_v1"
+        val agentPrefs = context.getSharedPreferences(agentPrefsName, Context.MODE_PRIVATE)
+        assertTrue(agentPrefs.edit().putString("entries", "not-json").commit())
+
+        // First quality-ledger commit persists APPROVED; the second (compensating rollback)
+        // fails. The wrapper returns itself from putString so commit interception is reliable.
+        var qualityCommitCount = 0
+        val failingContext = object : ContextWrapper(context) {
+            override fun getSharedPreferences(name: String, mode: Int): SharedPreferences {
+                val delegatePrefs = context.getSharedPreferences(name, mode)
+                if (name != qualityPrefsName) return delegatePrefs
+                return object : SharedPreferences by delegatePrefs {
+                    override fun edit(): SharedPreferences.Editor {
+                        val delegateEditor = delegatePrefs.edit()
+                        return object : SharedPreferences.Editor by delegateEditor {
+                            override fun putString(key: String, value: String?): SharedPreferences.Editor {
+                                delegateEditor.putString(key, value)
+                                return this
+                            }
+
+                            override fun commit(): Boolean {
+                                qualityCommitCount++
+                                return if (qualityCommitCount == 1) {
+                                    delegateEditor.commit()
+                                } else {
+                                    false
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        assertFalse(QualityLearningStore.setProposalStatus(
+            failingContext, proposal.id, "APPROVED", "test-rollback-failure:${proposal.id}"
+        ))
+        assertEquals(2, qualityCommitCount)
+        assertTrue(SharedPreferencesWriteHealth.isUncertain(qualityPrefsName))
+        assertTrue(MemoryAuditLog.hasUnresolvedIntent(
+            context, "USER", "APPROVE_PROPOSAL", proposal.id
+        ))
+
+        // The status write was durable although the API correctly returned false.
+        // After repairing the unreadable agent ledger, startup reconciliation follows the
+        // durable proposal ledger and completes the explicitly user-authorized approval.
+        SharedPreferencesWriteHealth.resetForTests(qualityPrefsName)
+        assertEquals("APPROVED", QualityLearningStore.proposals(context).single().status)
+        assertTrue(agentPrefs.edit().putString("entries", "[]").commit())
+        assertEquals(1, QualityLearningStore.syncApprovedAgentMemories(context))
+        val memoryEntry = "[UCZENIE ZATWIERDZONE ${proposal.id.take(8)}; dowody=${proposal.evidenceCount}; pewność=${proposal.confidence}] ${proposal.text}".take(1000)
+        assertTrue(AiMemoryStore.containsExactMemory(context, memoryEntry) == true)
+        assertTrue(AgentOperationalMemoryStore.hasApprovedSource(
+            context, "coder", proposal.text, "proposal:${proposal.id}"
+        ) == true)
+        assertFalse(MemoryAuditLog.hasUnresolvedIntent(
+            context, "USER", "APPROVE_PROPOSAL", proposal.id
+        ))
+        val audit = MemoryAuditLog.readVerified(context)!!
+        assertTrue(audit.any {
+            it.actor == "SYSTEM_RECOVERY" && it.objectId == proposal.id &&
+                it.phase == MemoryAuditLog.Phase.COMMITTED && it.outcome == "SUCCESS"
+        })
+        assertEquals(0, QualityLearningStore.syncApprovedAgentMemories(context))
+    }
+
 }
