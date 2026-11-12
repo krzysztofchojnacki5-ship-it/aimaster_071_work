@@ -6822,6 +6822,26 @@ class MainActivity : Activity() {
                 val relatedEvents = queue.events.filter { it.taskId == task.id }.takeLast(5).asReversed()
                     .joinToString("\n") { "${it.actor} • ${it.fromStatus.ifBlank { "—" }} → ${it.toStatus} • ${it.detail}" }
                 val box = card("${task.title}  •  P${task.priority}", "Status: ${task.status}\nID: ${task.id}\nCel: ${task.objective}\nAgenci: $assigned\nZależności: $deps\nBieżący krok: ${task.currentStep}\nAktualizacja: $stamp")
+                if (task.runId > 0 && task.assignedAgentIds.isNotEmpty()) {
+                    val archive = pl.aimasterpro.app.core.TaskResultArchive
+                    if (!archive.isArchiveReadable(this)) {
+                        card("ARCHIWUM RAPORTÓW NIEDOSTĘPNE", "Nie można bezpiecznie odczytać raportów dla przebiegu ${task.runId}. Zachowano dane; nie pokazuję skrótów jako pełnych raportów.")
+                    } else {
+                        val archivedReports = task.assignedAgentIds.mapNotNull { agentId ->
+                            val reportId = archive.executionTaskId(task.id, agentId, task.runId)
+                            archive.get(this, reportId)?.let { agentId to it }
+                        }
+                        if (archivedReports.isNotEmpty()) {
+                            card("RAPORTY AGENTÓW • PRZEBIEG ${task.runId}",
+                                "Dostępne pełne raporty: ${archivedReports.size}/${task.assignedAgentIds.size}. Każdy raport jest przypisany do konkretnego agenta i numeru przebiegu.")
+                            archivedReports.forEach { (agentId, entry) ->
+                                action("📄 OTWÓRZ PEŁNY RAPORT • $agentId", box) {
+                                    showQueueAgentReport(task.title, agentId, entry)
+                                }
+                            }
+                        }
+                    }
+                }
                 if (task.status in setOf(pl.aimasterpro.app.core.MasterTaskQueueStore.Status.QUEUED,
                         pl.aimasterpro.app.core.MasterTaskQueueStore.Status.PAUSED)) {
                     action("PRZYDZIEL AGENTÓW", box) {
@@ -6906,6 +6926,41 @@ class MainActivity : Activity() {
         }
     }
 
+    /** Opens the complete sanitized report for one agent and one exact queue execution. */
+    private fun showQueueAgentReport(
+        taskTitle: String,
+        agentId: String,
+        entry: pl.aimasterpro.app.core.TaskResultArchive.Entry
+    ) {
+        val createdAt = java.text.SimpleDateFormat("dd.MM.yyyy HH:mm:ss", java.util.Locale.getDefault())
+            .format(java.util.Date(entry.createdAt))
+        val reportText = buildString {
+            append("Zadanie: ").append(taskTitle).append("\\n")
+            append("Agent: ").append(agentId).append("\\n")
+            append("Dostawca/model: ").append(entry.providerId).append(" / ").append(entry.model).append("\\n")
+            append("Zapisano: ").append(createdAt).append("\\n")
+            append("ID raportu: ").append(entry.taskId).append("\\n\\n")
+            append(entry.report)
+        }
+        val reportView = TextView(this).apply {
+            text = reportText
+            textSize = 14f
+            setTextColor(white)
+            setTextIsSelectable(true)
+            setPadding(dp(4), dp(8), dp(4), dp(12))
+            setLineSpacing(dp(3).toFloat(), 1f)
+        }
+        val scroll = ScrollView(this).apply {
+            isFillViewport = false
+            addView(reportView, ScrollView.LayoutParams(-1, -2))
+        }
+        AlertDialog.Builder(this)
+            .setTitle("Pełny raport • $agentId")
+            .setView(scroll, dp(20), dp(8), dp(20), dp(0))
+            .setPositiveButton("Zamknij", null)
+            .show()
+    }
+
     /**
      * Executes a durable queue item through the same provider routing, cost-policy guard,
      * Smart Budget, usage ledger, checkpoints and result archive used by MASTER chat.
@@ -6956,7 +7011,7 @@ class MainActivity : Activity() {
         val outputTokens = 1_400L
         val teamTasks = specs.map { spec ->
             pl.aimasterpro.app.agents.TeamTask(
-                id = "q-${task.id.take(42)}-${spec.id.take(32)}-r$executionRunId",
+                id = pl.aimasterpro.app.core.TaskResultArchive.executionTaskId(task.id, spec.id, executionRunId),
                 agentId = spec.id,
                 goal = task.title,
                 prompt = "Zadanie MASTER-a: ${task.title}\n\nCel i kryteria wykonania:\n${task.objective}\n\nPrzeanalizuj cel, wykonaj przydzieloną pracę na podstawie dostępnego kontekstu i zwróć raport z ustaleniami, ograniczeniami oraz weryfikacją. Nie twierdź, że zmieniłeś pliki ani wykonałeś operacje, do których nie masz narzędzi."

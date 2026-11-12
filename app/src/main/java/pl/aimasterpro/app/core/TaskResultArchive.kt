@@ -26,6 +26,15 @@ object TaskResultArchive {
     private const val MAX_ENTRIES = 80
     private const val MAX_REPORT_CHARS = 32_000
 
+    /**
+     * Stable archive key shared by queue execution and the task workspace UI.
+     * The run epoch prevents a retry from displaying a previous attempt's report.
+     */
+    fun executionTaskId(parentTaskId: String, agentId: String, runId: Int): String {
+        require(parentTaskId.isNotBlank() && agentId.isNotBlank() && runId > 0)
+        return "q-${parentTaskId.take(42)}-${agentId.take(32)}-r$runId"
+    }
+
     @Synchronized
     fun put(
         context: Context,

@@ -32,6 +32,16 @@ class TaskResultArchiveTest {
         assertTrue(ChatHistoryStore.writeRoot(context, root))
     }
 
+    @Test fun queueExecutionArchiveIdsAreStableAndIsolatedByAgentAndRun() {
+        val first = TaskResultArchive.executionTaskId("task-parent-123", "researcher", 1)
+        assertEquals("q-task-parent-123-researcher-r1", first)
+        assertEquals(first, TaskResultArchive.executionTaskId("task-parent-123", "researcher", 1))
+        assertNotEquals(first, TaskResultArchive.executionTaskId("task-parent-123", "developer", 1))
+        assertNotEquals(first, TaskResultArchive.executionTaskId("task-parent-123", "researcher", 2))
+        assertTrue(runCatching { TaskResultArchive.executionTaskId("", "researcher", 1) }.isFailure)
+        assertTrue(runCatching { TaskResultArchive.executionTaskId("task-parent", "researcher", 0) }.isFailure)
+    }
+
     @Test fun successfulReportIsDurableAndAddressableByTaskId() {
         assertTrue(TaskResultArchive.put(
             context, "task-1", "developer", "Pełny raport agenta.", "provider-a", "model-a", 1_000L
