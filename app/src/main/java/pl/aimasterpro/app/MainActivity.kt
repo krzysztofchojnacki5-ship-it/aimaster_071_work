@@ -2835,6 +2835,15 @@ class MainActivity : Activity() {
                     assistantTaskIds.add(requestTaskId)
                     persistMessages()
                 } else appendToStoredChat(chatId, "assistant", reply, requestTaskId)
+                if (chatResultPersisted) {
+                    val acknowledged = runCatching {
+                        pl.aimasterpro.app.core.ChatResponseArchive.acknowledgePersisted(this, requestTaskId)
+                    }.getOrDefault(false)
+                    if (!acknowledged) android.util.Log.w(
+                        "AIMasterRecovery",
+                        "Odpowiedź $requestTaskId jest w historii, ale wpis archiwum pozostaje do ponownego uzgodnienia."
+                    )
+                }
                 val hasMasterJournal = pl.aimasterpro.app.core.MasterWorkJournalStore.get(this, requestTaskId) != null
                 val qualityGateBlocked = masterQualityGateEvaluation?.completionAllowed == false
                 val blockedGateNames = masterQualityGateEvaluation?.results.orEmpty().filter {

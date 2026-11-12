@@ -331,6 +331,85 @@ class ChatResponseArchiveTest {
         assertEquals(corrupt, archivePrefs.getString("responses", null))
     }
 
+    @Test fun acknowledgementRemovesOnlyThePersistedTaskAndIsIdempotent() {
+        val chatId = "chat-ack"
+        createChat(chatId)
+        assertTrue(ChatHistoryStore.updateRoot(context) { root ->
+            val chat = root.getJSONObject("chats").getJSONObject(chatId)
+            chat.getJSONArray("messages").put(JSONObject().put("role", "assistant").put("text", "First answer"))
+            chat.getJSONArray("assistantTaskIds").put("ack-task-1")
+            true
+        })
+        assertTrue(ChatResponseArchive.put(
+            context, "ack-task-1", chatId, "MASTER", "First answer",
+            "provider-a", "model-a", 70_001L
+        ))
+        assertTrue(ChatResponseArchive.put(
+            context, "ack-task-2", chatId, "MASTER", "Second answer",
+            "provider-a", "model-a", 70_002L
+        ))
+
+        assertTrue(ChatResponseArchive.acknowledgePersisted(context, "ack-task-1"))
+        assertEquals(listOf("ack-task-2"), ChatResponseArchive.latest(context).map { it.taskId })
+        assertTrue(ChatResponseArchive.acknowledgePersisted(context, "ack-task-1"))
+        assertEquals(listOf("ack-task-2"), ChatResponseArchive.latest(context).map { it.taskId })
+    }
+
+    @Test fun acknowledgementCannotDiscardAnAnswerWithoutItsDurableHistoryMarker() {
+        val chatId = "chat-ack-without-marker"
+        createChat(chatId)
+        assertTrue(ChatResponseArchive.put(
+            context, "uncommitted-ack-task", chatId, "MASTER", "Not yet persisted",
+            "provider-a", "model-a", 70_150L
+        ))
+
+        assertFalse(ChatResponseArchive.acknowledgePersisted(context, "uncommitted-ack-task"))
+        assertNotNull(ChatResponseArchive.get(context, "uncommitted-ack-task"))
+    }
+
+    @Test fun successfulReplayAcknowledgesCommittedAnswersButRetainsOrphanedEntries() {
+        val chatId = "chat-response-ack-replay"
+        createChat(chatId)
+        assertTrue(ChatResponseArchive.put(
+            context, "ack-replay-task", chatId, "MASTER", "Committed answer",
+            "provider-a", "model-a", 70_100L
+        ))
+        assertTrue(ChatResponseArchive.put(
+            context, "orphan-after-replay", "deleted-chat", "MASTER", "Orphan answer",
+            "provider-a", "model-a", 70_101L
+        ))
+
+        assertEquals(1, ChatResponseArchive.restoreArchivedResponses(context))
+        assertNull(ChatResponseArchive.get(context, "ack-replay-task"))
+        assertNotNull(ChatResponseArchive.get(context, "orphan-after-replay"))
+        assertEquals(0, ChatResponseArchive.restoreArchivedResponses(context))
+    }
+
+    @Test fun ambiguousAcknowledgementKeepsArchiveQuarantinedForRestartReconciliation() {
+        val chatId = "chat-ack-ambiguous"
+        createChat(chatId)
+        assertTrue(ChatHistoryStore.updateRoot(context) { root ->
+            val chat = root.getJSONObject("chats").getJSONObject(chatId)
+            chat.getJSONArray("messages").put(JSONObject().put("role", "assistant").put("text", "Durable answer"))
+            chat.getJSONArray("assistantTaskIds").put("ack-ambiguous-task")
+            true
+        })
+        assertTrue(ChatResponseArchive.put(
+            context, "ack-ambiguous-task", chatId, "MASTER", "Durable answer",
+            "provider-a", "model-a", 70_200L
+        ))
+        val failing = AmbiguousCommitContext(
+            context, "chat_response_archive_v1", applyBeforeFailure = false
+        )
+        assertFalse(ChatResponseArchive.acknowledgePersisted(failing, "ack-ambiguous-task"))
+        assertFalse(ChatResponseArchive.isArchiveReadable(context))
+
+        SharedPreferencesWriteHealth.resetForTests("chat_response_archive_v1")
+        assertNotNull(ChatResponseArchive.get(context, "ack-ambiguous-task"))
+        assertTrue(ChatResponseArchive.acknowledgePersisted(context, "ack-ambiguous-task"))
+        assertNull(ChatResponseArchive.get(context, "ack-ambiguous-task"))
+    }
+
     @Test fun putRejectsOversizedArchiveMetadataBeforeWriting() {
         assertFalse(ChatResponseArchive.put(
             context, "t".repeat(513), "chat", "MASTER", "Answer", "provider-a", "model-a", 1_000L

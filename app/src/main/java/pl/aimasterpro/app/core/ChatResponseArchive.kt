@@ -108,6 +108,7 @@ object ChatResponseArchive {
         val entries = latest(context)
         if (entries.isEmpty()) return 0
         var restored = 0
+        val acknowledgedTaskIds = linkedSetOf<String>()
         val updated = ChatHistoryStore.updateRoot(context) { root ->
             val chats = root.optJSONObject("chats") ?: return@updateRoot false
             entries.asReversed().forEach { entry ->
@@ -121,7 +122,10 @@ object ChatResponseArchive {
                     (0 until storedIds.length()).map { storedIds.optString(it) },
                     assistantCount
                 )
-                if (entry.taskId in alignedIds) return@forEach
+                if (entry.taskId in alignedIds) {
+                    acknowledgedTaskIds += entry.taskId
+                    return@forEach
+                }
 
                 messages.put(JSONObject().put("role", "assistant").put("text", entry.response))
                 val nextIds = JSONArray()
@@ -130,6 +134,7 @@ object ChatResponseArchive {
                 chat.put("messages", messages)
                     .put("assistantTaskIds", nextIds)
                     .put("updatedAt", maxOf(chat.optLong("updatedAt"), entry.createdAt))
+                acknowledgedTaskIds += entry.taskId
                 restored++
             }
             restored > 0
@@ -137,7 +142,60 @@ object ChatResponseArchive {
         if (!updated) {
             throw IllegalStateException("Nie udało się trwale odtworzyć odpowiedzi czatu z archiwum.")
         }
+        // The archive is a write-ahead log, not a permanent duplicate of committed history.
+        // Acknowledge only after the canonical chat snapshot is durable; orphaned entries remain.
+        acknowledgedTaskIds.forEach { taskId ->
+            if (!acknowledgePersisted(context, taskId)) {
+                android.util.Log.w("AIMasterChatArchive", "Odpowiedź $taskId została zapisana w historii, ale nie udało się potwierdzić jej w archiwum.")
+            }
+        }
         return restored
+    }
+
+    /**
+     * Removes one write-ahead entry only after its assistant message and task marker are durable
+     * in ChatHistoryStore. Repeated acknowledgement is intentionally idempotent.
+     */
+    @Synchronized
+    fun acknowledgePersisted(context: Context, taskId: String): Boolean {
+        if (taskId.isBlank() || taskId.length > MAX_TASK_ID_CHARS) return false
+        return runCatching {
+            // Verify the canonical message marker before touching the write-ahead entry.
+            // Read the two stores in separate critical sections to avoid cross-store lock inversion.
+            val old = read(context) ?: return@runCatching false
+            val archived = (0 until old.length()).asSequence()
+                .map { old.getJSONObject(it) }
+                .firstOrNull { it.getString("taskId") == taskId }
+                ?: return@runCatching true
+            val history = ChatHistoryStore.readRoot(context) ?: return@runCatching false
+            val chat = history.optJSONObject("chats")?.optJSONObject(archived.getString("chatId"))
+                ?: return@runCatching false
+            val ids = chat.optJSONArray("assistantTaskIds") ?: return@runCatching false
+            if ((0 until ids.length()).none { ids.optString(it) == taskId }) {
+                return@runCatching false
+            }
+
+            SharedPreferencesWriteHealth.withHealthyAccess(PREFS) {
+                val current = read(context) ?: return@withHealthyAccess false
+                val next = JSONArray()
+                var found = false
+                for (i in 0 until current.length()) {
+                    val row = current.getJSONObject(i)
+                    if (row.getString("taskId") == taskId &&
+                        row.getString("chatId") == archived.getString("chatId")) {
+                        found = true
+                    } else {
+                        next.put(row)
+                    }
+                }
+                if (!found) return@withHealthyAccess true
+                SharedPreferencesWriteHealth.commit(
+                    PREFS,
+                    context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
+                        .putString(KEY, next.toString())
+                )
+            }
+        }.getOrDefault(false)
     }
 
     private fun encode(entry: Entry): JSONObject = JSONObject()
