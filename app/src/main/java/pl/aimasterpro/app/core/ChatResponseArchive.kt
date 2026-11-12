@@ -24,6 +24,10 @@ object ChatResponseArchive {
     private const val PREFS = "chat_response_archive_v1"
     private const val KEY = "responses"
     private const val MAX_ENTRIES = 25
+    private const val MAX_TASK_ID_CHARS = 512
+    private const val MAX_AGENT_ID_CHARS = 120
+    private const val MAX_PROVIDER_ID_CHARS = 200
+    private const val MAX_MODEL_CHARS = 240
     private const val MAX_RESPONSE_CHARS = 32_000
 
     @Synchronized
@@ -38,8 +42,11 @@ object ChatResponseArchive {
         createdAt: Long = System.currentTimeMillis()
     ): Boolean = runCatching { SharedPreferencesWriteHealth.withHealthyAccess(PREFS) {
         if (SharedPreferencesWriteHealth.isUncertain(PREFS) ||
-            taskId.isBlank() || chatId.isBlank() || chatId.length > 200 ||
-            agentId.isBlank() || providerId.isBlank() || model.isBlank() ||
+            taskId.isBlank() || taskId.length > MAX_TASK_ID_CHARS ||
+            chatId.isBlank() || chatId.length > 200 ||
+            agentId.isBlank() || agentId.length > MAX_AGENT_ID_CHARS ||
+            providerId.isBlank() || providerId.length > MAX_PROVIDER_ID_CHARS ||
+            model.isBlank() || model.length > MAX_MODEL_CHARS ||
             response.isBlank() || response.length > MAX_RESPONSE_CHARS || createdAt < 0L
         ) return@withHealthyAccess false
 
@@ -158,6 +165,7 @@ object ChatResponseArchive {
         } ?: return@runCatching JSONArray()
         runCatching {
             val source = JSONArray(raw)
+            require(source.length() <= MAX_ENTRIES) { "Response archive exceeds its capacity." }
             val seen = hashSetOf<String>()
             for (i in 0 until source.length()) {
                 val row = source.getJSONObject(i)
@@ -172,10 +180,12 @@ object ChatResponseArchive {
                 val response = row.getString("response")
                 val providerId = row.getString("providerId")
                 val model = row.getString("model")
-                require(taskId.isNotBlank() && seen.add(taskId))
-                require(chatId.isNotBlank() && chatId.length <= 200 && agentId.isNotBlank())
+                require(taskId.isNotBlank() && taskId.length <= MAX_TASK_ID_CHARS && seen.add(taskId))
+                require(chatId.isNotBlank() && chatId.length <= 200)
+                require(agentId.isNotBlank() && agentId.length <= MAX_AGENT_ID_CHARS)
                 require(response.isNotBlank() && response.length <= MAX_RESPONSE_CHARS)
-                require(providerId.isNotBlank() && model.isNotBlank())
+                require(providerId.isNotBlank() && providerId.length <= MAX_PROVIDER_ID_CHARS)
+                require(model.isNotBlank() && model.length <= MAX_MODEL_CHARS)
                 require((timestamp as Number).toLong() >= 0L)
             }
             source

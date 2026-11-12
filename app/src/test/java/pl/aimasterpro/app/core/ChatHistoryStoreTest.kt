@@ -505,4 +505,21 @@ class ChatHistoryStoreTest {
         assertNull(ChatHistoryStore.readAssistantChatId(failingContext))
     }
 
+
+    @Test fun duplicateNonBlankAssistantTaskIdsRejectReadAndWriteWithoutOverwritingHistory() {
+        val duplicateChat = JSONObject()
+            .put("messages", JSONArray()
+                .put(JSONObject().put("role", "assistant").put("text", "First"))
+                .put(JSONObject().put("role", "assistant").put("text", "Second")))
+            .put("assistantTaskIds", JSONArray().put("same-task").put("same-task"))
+        val candidate = JSONObject().put("chats", JSONObject().put("duplicate-chat", duplicateChat))
+        assertFalse(ChatHistoryStore.writeRoot(context, candidate))
+        assertNull(prefs.getString("chats_v2", null))
+
+        val corrupt = candidate.toString()
+        assertTrue(prefs.edit().putString("chats_v2", corrupt).commit())
+        assertNull(ChatHistoryStore.readRoot(context))
+        assertEquals(corrupt, prefs.getString("chats_v2", null))
+    }
+
 }

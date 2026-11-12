@@ -47,8 +47,15 @@ object ChatHistoryStore {
                     if (chat.has("assistantTaskIds")) {
                         val taskIds = chat.optJSONArray("assistantTaskIds")
                             ?: error("Chat history contains invalid assistant task IDs.")
-                        for (i in 0 until taskIds.length()) require(taskIds.opt(i) is String) {
-                            "Chat history contains a non-text assistant task ID."
+                        val seenTaskIds = hashSetOf<String>()
+                        for (i in 0 until taskIds.length()) {
+                            val taskId = taskIds.opt(i)
+                            require(taskId is String) {
+                                "Chat history contains a non-text assistant task ID."
+                            }
+                            require(taskId.length <= 512 && (taskId.isBlank() || seenTaskIds.add(taskId))) {
+                                "Chat history contains an oversized or duplicate assistant task ID."
+                            }
                         }
                     }
                     if (chat.has("agentActivity")) {
@@ -210,7 +217,14 @@ object ChatHistoryStore {
             }
             if (chat.has("assistantTaskIds")) {
                 val ids = chat.optJSONArray("assistantTaskIds") ?: error("Invalid assistant task IDs.")
-                for (i in 0 until ids.length()) require(ids.opt(i) is String)
+                val seenTaskIds = hashSetOf<String>()
+                for (i in 0 until ids.length()) {
+                    val taskId = ids.opt(i)
+                    require(taskId is String)
+                    require(taskId.length <= 512 && (taskId.isBlank() || seenTaskIds.add(taskId))) {
+                        "Invalid or duplicate assistant task ID."
+                    }
+                }
             }
             if (chat.has("agentActivity")) {
                 val activity = chat.optJSONArray("agentActivity") ?: error("Invalid agent activity.")

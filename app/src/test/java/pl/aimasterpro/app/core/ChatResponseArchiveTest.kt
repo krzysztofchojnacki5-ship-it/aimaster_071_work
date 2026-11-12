@@ -308,4 +308,58 @@ class ChatResponseArchiveTest {
         assertEquals("task-locked-response", ChatResponseArchive.latest(context).single().taskId)
     }
 
+ 
+    @Test fun archiveReaderRejectsRowsBeyondCapacityWithoutRewritingData() {
+        val rows = JSONArray()
+        repeat(26) { index ->
+            rows.put(JSONObject()
+                .put("taskId", "overflow-task-$index")
+                .put("chatId", "chat-overflow")
+                .put("agentId", "MASTER")
+                .put("response", "Answer $index")
+                .put("providerId", "provider-a")
+                .put("model", "model-a")
+                .put("createdAt", 40_000L + index))
+        }
+        val corrupt = rows.toString()
+        assertTrue(archivePrefs.edit().putString("responses", corrupt).commit())
+
+        assertFalse(ChatResponseArchive.isArchiveReadable(context))
+        assertFalse(ChatResponseArchive.put(
+            context, "new-task", "chat-overflow", "MASTER", "New answer", "provider-a", "model-a", 50_000L
+        ))
+        assertEquals(corrupt, archivePrefs.getString("responses", null))
+    }
+
+    @Test fun putRejectsOversizedArchiveMetadataBeforeWriting() {
+        assertFalse(ChatResponseArchive.put(
+            context, "t".repeat(513), "chat", "MASTER", "Answer", "provider-a", "model-a", 1_000L
+        ))
+        assertFalse(ChatResponseArchive.put(
+            context, "task-agent-long", "chat", "a".repeat(121), "Answer", "provider-a", "model-a", 1_000L
+        ))
+        assertFalse(ChatResponseArchive.put(
+            context, "task-provider-long", "chat", "MASTER", "Answer", "p".repeat(201), "model-a", 1_000L
+        ))
+        assertFalse(ChatResponseArchive.put(
+            context, "task-model-long", "chat", "MASTER", "Answer", "provider-a", "m".repeat(241), 1_000L
+        ))
+        assertTrue(ChatResponseArchive.latest(context).isEmpty())
+    }
+
+    @Test fun archiveReaderRejectsOversizedMetadataWithoutRewritingData() {
+        val corrupt = JSONArray().put(JSONObject()
+            .put("taskId", "task-metadata")
+            .put("chatId", "chat")
+            .put("agentId", "MASTER")
+            .put("response", "Answer")
+            .put("providerId", "provider-a")
+            .put("model", "m".repeat(241))
+            .put("createdAt", 1_000L)).toString()
+        assertTrue(archivePrefs.edit().putString("responses", corrupt).commit())
+
+        assertFalse(ChatResponseArchive.isArchiveReadable(context))
+        assertEquals(corrupt, archivePrefs.getString("responses", null))
+    }
+
 }
