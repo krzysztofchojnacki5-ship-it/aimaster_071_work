@@ -66,14 +66,14 @@ class MemoryMutationGateTest {
     @Test fun replayOfCommittedApprovalReferenceIsRejectedWithoutMutation() {
         val approvedRequest = request()
         var firstInvoked = false
-        assertTrue(MemoryMutationGate.execute(context, approvedRequest) {
+        assertTrue(MemoryMutationGate.execute(context, approvedRequest) { _: MemoryMutationPermit ->
             firstInvoked = true
             true
         })
         assertTrue(firstInvoked)
 
         var replayInvoked = false
-        assertFalse(MemoryMutationGate.execute(context, approvedRequest) {
+        assertFalse(MemoryMutationGate.execute(context, approvedRequest) { _: MemoryMutationPermit ->
             replayInvoked = true
             true
         })
