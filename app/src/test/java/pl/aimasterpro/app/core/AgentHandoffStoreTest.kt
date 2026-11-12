@@ -83,6 +83,29 @@ class AgentHandoffStoreTest {
             AgentHandoffStore.snapshot(context).messages.single().state)
     }
 
+    @Test fun claimAndAcknowledgementRejectTimestampsThatMoveBackwards() {
+        val runId = runningTask()
+        assertTrue(AgentHandoffStore.send(context, "handoff-task-01", runId, "handoff-time-001",
+            "critical-reviewer", "unit-test-engineer", "Raport z kontrolą czasu.", 100L))
+
+        assertNull(AgentHandoffStore.claim(context, "handoff-task-01", runId, "handoff-time-001",
+            "unit-test-engineer", 99L))
+        assertEquals(AgentHandoffStore.State.PENDING,
+            AgentHandoffStore.snapshot(context).messages.single().state)
+
+        assertNotNull(AgentHandoffStore.claim(context, "handoff-task-01", runId, "handoff-time-001",
+            "unit-test-engineer", 101L))
+        assertFalse(AgentHandoffStore.acknowledge(context, "handoff-task-01", runId, "handoff-time-001",
+            "unit-test-engineer", 100L))
+        assertEquals(AgentHandoffStore.State.CLAIMED,
+            AgentHandoffStore.snapshot(context).messages.single().state)
+
+        assertTrue(AgentHandoffStore.acknowledge(context, "handoff-task-01", runId, "handoff-time-001",
+            "unit-test-engineer", 102L))
+        assertEquals(AgentHandoffStore.State.ACKNOWLEDGED,
+            AgentHandoffStore.snapshot(context).messages.single().state)
+    }
+
     @Test fun claimedMessageIsNotReplayedAfterStoreIsReadAgain() {
         val runId = runningTask()
         assertTrue(AgentHandoffStore.send(context, "handoff-task-01", runId, "handoff-msg-003",
