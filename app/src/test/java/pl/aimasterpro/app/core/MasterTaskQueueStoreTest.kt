@@ -175,6 +175,35 @@ class MasterTaskQueueStoreTest {
         assertTrue(event.detail.contains("Raport testowy"))
     }
 
+    @Test fun communicationRejectsUnassignedSendersAndRecipients() {
+        assertTrue(MasterTaskQueueStore.enqueue(context, "task-comms-auth", "Autoryzacja komunikacji", "Test granic zespołu.", now = 74L))
+        assertTrue(MasterTaskQueueStore.assign(context, "task-comms-auth",
+            listOf("critical-reviewer", "unit-test-engineer"), now = 75L))
+        assertTrue(MasterTaskQueueStore.transition(context, "task-comms-auth", "MASTER",
+            MasterTaskQueueStore.Status.RUNNING, "Start.", 76L))
+
+        assertFalse(MasterTaskQueueStore.recordAgentMessage(
+            context, "task-comms-auth", "debugger", "MASTER", "REPORT",
+            "Nadawca spoza przydziału.", now = 77L
+        ))
+        assertFalse(MasterTaskQueueStore.recordAgentMessage(
+            context, "task-comms-auth", "critical-reviewer", "debugger", "MESSAGE",
+            "Odbiorca spoza przydziału.", now = 78L
+        ))
+        assertTrue(MasterTaskQueueStore.recordAgentMessage(
+            context, "task-comms-auth", "critical-reviewer", "unit-test-engineer", "HANDOFF",
+            "Przekazuję ustalenia do drugiego agenta.", now = 79L
+        ))
+        assertTrue(MasterTaskQueueStore.recordAgentMessage(
+            context, "task-comms-auth", "SYSTEM", "critical-reviewer", "PROGRESS",
+            "Systemowy wpis do przypisanego agenta.", now = 80L
+        ))
+        val messages = MasterTaskQueueStore.snapshot(context).events.filter { it.operation == "AGENT_MESSAGE" }
+        assertEquals(2, messages.size)
+        assertEquals("critical-reviewer", messages[0].actor)
+        assertEquals("unit-test-engineer", messages[0].recipient)
+    }
+
     @Test fun interruptedRunningTasksRecoverAsBlockedWithoutAutomaticReplay() {
         assertTrue(MasterTaskQueueStore.enqueue(context, "task-010", "Przerwane", "Sprawdź wynik.", now = 80L))
         assertTrue(MasterTaskQueueStore.assign(context, "task-010", listOf("critical-reviewer"), now = 81L))
