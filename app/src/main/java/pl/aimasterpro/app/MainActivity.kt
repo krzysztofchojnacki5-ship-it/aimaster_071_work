@@ -6749,7 +6749,12 @@ class MainActivity : Activity() {
                 val eventTime = java.text.SimpleDateFormat("dd.MM HH:mm:ss", java.util.Locale.getDefault())
                 recentEvents.forEach { event ->
                     val kind = when (event.operation) {
-                        "AGENT_TRACE" -> "ŚLAD TECHNICZNY AGENTA"
+                        "AGENT_TRACE" -> when (event.toStatus) {
+                            "HANDOFF_SENT" -> "PRZEKAZANIE RAPORTU"
+                            "HANDOFF_CLAIMED" -> "PRZEJĘCIE PRZEKAZANIA"
+                            "HANDOFF_ACKNOWLEDGED" -> "POTWIERDZENIE ODBIORU"
+                            else -> "ŚLAD TECHNICZNY AGENTA"
+                        }
                         "AGENT_MESSAGE" -> "WIADOMOŚĆ"
                         "AGENT_PROGRESS" -> "POSTĘP AGENTA"
                         "AGENT_RESULT" -> "WYNIK AGENTA"
@@ -7216,16 +7221,31 @@ class MainActivity : Activity() {
                                 val inboundId = if (index > 0) {
                                     "h-${taskId.take(30)}-$executionRunId-${allowed[index - 1].agentId.take(20)}-${result.agentId.take(20)}"
                                 } else ""
-                                val inboundAcknowledged = inboundId.isBlank() ||
-                                    pl.aimasterpro.app.core.AgentHandoffStore.acknowledge(
+                                val previous = allowed.getOrNull(index - 1)
+                                val inboundAcknowledged = if (inboundId.isBlank()) true else {
+                                    val acknowledged = pl.aimasterpro.app.core.AgentHandoffStore.acknowledge(
                                         this, taskId, executionRunId, inboundId, result.agentId
                                     )
+                                    acknowledged && previous != null &&
+                                        queueStore.recordAgentTrace(
+                                            this, taskId, "agent:${previous.agentId}", "agent:${result.agentId}",
+                                            "HANDOFF_ACKNOWLEDGED", "Odbiorca trwale zarchiwizował raport i potwierdził przekazanie.",
+                                            expectedRunId = executionRunId
+                                        )
+                                }
                                 val next = allowed.getOrNull(index + 1)
-                                val outboundSent = if (next == null) true else {
+                                val outboundSent = if (!inboundAcknowledged || next == null) {
+                                    next == null && inboundAcknowledged
+                                } else {
                                     val messageId = "h-${taskId.take(30)}-$executionRunId-${result.agentId.take(20)}-${next.agentId.take(20)}"
-                                    pl.aimasterpro.app.core.AgentHandoffStore.send(
+                                    val sent = pl.aimasterpro.app.core.AgentHandoffStore.send(
                                         this, taskId, executionRunId, messageId,
                                         result.agentId, next.agentId, result.report.take(8_000)
+                                    )
+                                    sent && queueStore.recordAgentTrace(
+                                        this, taskId, "agent:${result.agentId}", "agent:${next.agentId}",
+                                        "HANDOFF_SENT", "Trwałe przekazanie raportu zapisane w skrzynce odbiorczej.",
+                                        expectedRunId = executionRunId
                                     )
                                 }
                                 inboundAcknowledged && outboundSent
@@ -7240,6 +7260,14 @@ class MainActivity : Activity() {
                                     this, taskId, executionRunId, messageId, item.agentId
                                 ) ?: throw IllegalStateException(
                                     "Brak możliwego do przejęcia przekazania od agenta ${previous.agentId}; żądanie API odbiorcy nie zostanie wysłane."
+                                )
+                                val claimAudited = queueStore.recordAgentTrace(
+                                    this, taskId, "agent:${previous.agentId}", "agent:${item.agentId}",
+                                    "HANDOFF_CLAIMED", "Odbiorca przejął przekazanie przed wysłaniem własnego żądania API.",
+                                    expectedRunId = executionRunId
+                                )
+                                if (!claimAudited) throw IllegalStateException(
+                                    "Nie udało się trwale zapisać śladu przejęcia przekazania; żądanie API odbiorcy nie zostanie wysłane."
                                 )
                                 "Nadawca: ${claimed.senderAgentId}\nOdbiorca: ${claimed.recipientAgentId}\n\nRaport poprzedniego agenta:\n${claimed.payload}"
                             }

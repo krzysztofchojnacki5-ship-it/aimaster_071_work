@@ -229,6 +229,46 @@ class MasterTaskQueueStoreTest {
         assertTrue(trace.detail.contains("NETWORK_FAILOVER"))
     }
 
+
+    @Test fun handoffLifecycleTracesAreDurableAndBoundToAssignedAgentsAndRun() {
+        val taskId = "task-handoff-audit"
+        assertTrue(MasterTaskQueueStore.enqueue(context, taskId, "Audyt przekazania", "Zapisz cykl przekazania raportu.", now = 91L))
+        assertTrue(MasterTaskQueueStore.assign(context, taskId,
+            listOf("critical-reviewer", "unit-test-engineer"), now = 92L))
+        assertTrue(MasterTaskQueueStore.transition(context, taskId, "MASTER",
+            MasterTaskQueueStore.Status.RUNNING, "Start.", 93L))
+        val runId = MasterTaskQueueStore.snapshot(context).tasks.single().runId
+
+        assertTrue(MasterTaskQueueStore.recordAgentTrace(
+            context, taskId, "agent:critical-reviewer", "agent:unit-test-engineer",
+            "HANDOFF_SENT", "Raport przekazany.", now = 94L, expectedRunId = runId
+        ))
+        assertTrue(MasterTaskQueueStore.recordAgentTrace(
+            context, taskId, "agent:critical-reviewer", "agent:unit-test-engineer",
+            "HANDOFF_CLAIMED", "Odbiorca przejął raport.", now = 95L, expectedRunId = runId
+        ))
+        assertTrue(MasterTaskQueueStore.recordAgentTrace(
+            context, taskId, "agent:critical-reviewer", "agent:unit-test-engineer",
+            "HANDOFF_ACKNOWLEDGED", "Odbiorca potwierdził zapis raportu.", now = 96L, expectedRunId = runId
+        ))
+        assertFalse(MasterTaskQueueStore.recordAgentTrace(
+            context, taskId, "agent:critical-reviewer", "agent:debugger",
+            "HANDOFF_SENT", "Odbiorca spoza przydziału.", now = 97L, expectedRunId = runId
+        ))
+        assertFalse(MasterTaskQueueStore.recordAgentTrace(
+            context, taskId, "agent:critical-reviewer", "agent:unit-test-engineer",
+            "HANDOFF_ACKNOWLEDGED", "Stary przebieg.", now = 98L, expectedRunId = runId - 1
+        ))
+
+        val events = MasterTaskQueueStore.snapshot(context).events.filter {
+            it.taskId == taskId && it.operation == "AGENT_TRACE"
+        }
+        assertEquals(listOf("HANDOFF_SENT", "HANDOFF_CLAIMED", "HANDOFF_ACKNOWLEDGED"),
+            events.map { it.toStatus })
+        assertTrue(events.all { it.recipient == "agent:unit-test-engineer" })
+        assertTrue(events.all { it.runId == runId })
+    }
+
     @Test fun communicationRejectsUnassignedSendersAndRecipients() {
         assertTrue(MasterTaskQueueStore.enqueue(context, "task-comms-auth", "Autoryzacja komunikacji", "Test granic zespołu.", now = 74L))
         assertTrue(MasterTaskQueueStore.assign(context, "task-comms-auth",
