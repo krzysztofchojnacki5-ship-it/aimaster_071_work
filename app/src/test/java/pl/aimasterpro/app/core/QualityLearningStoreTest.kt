@@ -254,6 +254,50 @@ class QualityLearningStoreTest {
         assertEquals(corrupt, memoryPrefs.getString("memories", null))
     }
 
+    @Test fun rejectionPartialCleanupFailureIsRecoveredFromApprovedLedgerAfterStoreRepair() {
+        val proposal = QualityLearningStore.addProposal(
+            context, "Reguła odzyskiwana po niepełnym cofnięciu", 8, "wysoka",
+            listOf("task-reject-compensation"), listOf("coder"), emptyList()
+        )
+        assertTrue(QualityLearningStore.setProposalStatus(
+            context, proposal.id, "APPROVED", "test-approve:${proposal.id}"
+        ))
+        val memoryEntry = "[UCZENIE ZATWIERDZONE ${proposal.id.take(8)}; dowody=${proposal.evidenceCount}; pewność=${proposal.confidence}] ${proposal.text}".take(1000)
+        val agentPrefs = context.getSharedPreferences("ai_agent_operational_memory_v1", Context.MODE_PRIVATE)
+        val originalAgentLedger = agentPrefs.getString("entries", null)!!
+        assertTrue(AiMemoryStore.containsExactMemory(context, memoryEntry) == true)
+        assertTrue(AgentOperationalMemoryStore.hasApprovedSource(
+            context, "coder", proposal.text, "proposal:${proposal.id}"
+        ) == true)
+
+        // Make the agent ledger unreadable after approval. Rejection can remove shared memory,
+        // but cannot safely determine or remove agent provenance from the damaged store.
+        assertTrue(agentPrefs.edit().putString("entries", "not-json").commit())
+        assertFalse(QualityLearningStore.setProposalStatus(
+            context, proposal.id, "REJECTED", "test-reject:${proposal.id}"
+        ))
+
+        // Compensation restores APPROVED status, but shared-memory removal already succeeded.
+        // The failed USER rejection remains unresolved until recovery.
+        assertEquals("APPROVED", QualityLearningStore.proposals(context).single().status)
+        assertFalse(AiMemoryStore.containsExactMemory(context, memoryEntry) == true)
+        assertTrue(MemoryAuditLog.hasUnresolvedIntent(
+            context, "USER", "REJECT_PROPOSAL", proposal.id
+        ))
+
+        // Repair the damaged agent store, then verify startup reconciliation restores
+        // the approved state and closes the original failed USER operation.
+        assertTrue(agentPrefs.edit().putString("entries", originalAgentLedger).commit())
+        assertEquals(1, QualityLearningStore.syncApprovedAgentMemories(context))
+        assertTrue(AiMemoryStore.containsExactMemory(context, memoryEntry) == true)
+        assertTrue(AgentOperationalMemoryStore.hasApprovedSource(
+            context, "coder", proposal.text, "proposal:${proposal.id}"
+        ) == true)
+        assertFalse(MemoryAuditLog.hasUnresolvedIntent(
+            context, "USER", "REJECT_PROPOSAL", proposal.id
+        ))
+        assertEquals(0, QualityLearningStore.syncApprovedAgentMemories(context))
+    }
     @Test fun revokingApprovalRemovesThePreviouslyInjectedRule() {
         val proposal = QualityLearningStore.addProposal(context, "Reguła do cofnięcia", 6, "wstępna", emptyList(), emptyList(), emptyList())
         QualityLearningStore.setProposalStatus(context, proposal.id, "APPROVED", "test-approval:${proposal.id}")

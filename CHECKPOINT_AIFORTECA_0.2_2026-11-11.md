@@ -62,3 +62,12 @@
 - Added `approvedProposalScopeNormalizationDoesNotTriggerRepeatedRecovery`: verifies the normalized scope and that repeated startup reconciliation adds no audit events.
 - This follow-up change is prepared against the verified HEAD above; CI must be run for its resulting commit before it is considered verified.
 - Next audit: compensation failures in approval/rejection multi-store writes, then durable journal/recovery fault injection. SharedPreferences files remain non-atomic across stores.
+
+
+## Verified follow-up — current HEAD and compensation fault injection
+- Commit `cd5f5cdc0f40954855d15e24e6bf7970d7f62216`: Android Build SUCCESS (unit tests, release APK assembly, source packaging, unsigned APK artifact upload); Gradle Wrapper Validation SUCCESS. This is CI evidence for this exact SHA, not physical-device testing.
+- Confirmed branch HEAD and PR #3 head both point to `cd5f5cdc0f40954855d15e24e6bf7970d7f62216`; PR remains open/draft.
+- Source audit of `setProposalStatusRaw` confirmed that a failed rejection cleanup rolls the proposal ledger back to APPROVED but does not immediately restore a shared-memory entry already removed. Startup reconciliation can restore it only when all stores become readable; it deliberately fails closed while the agent ledger is unreadable.
+- Added `rejectionPartialCleanupFailureIsRecoveredFromApprovedLedgerAfterStoreRepair`: approve a proposal, corrupt the agent ledger, attempt rejection, verify shared-memory removal plus proposal-status rollback and unresolved USER intent, restore the agent ledger, then verify reconciliation restores both approved memory stores and closes the original intent. This is a targeted regression test; it awaits CI on the new commit.
+- No production behavior was changed in this test-only step. The observed partial state is recoverable after the unreadable store is repaired; cross-file atomicity is still not claimed.
+- Next: verify this test on CI, then continue fault injection for approval rollback failures and durable audit/proposal journal write failures.
