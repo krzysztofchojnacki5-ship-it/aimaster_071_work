@@ -1040,6 +1040,109 @@ class QualityLearningStoreTest {
     }
 
 
+    @Test fun recoveryTerminalPersistedButReportedFailedIsNotReplayedAfterRestart() {
+        val proposal = QualityLearningStore.addProposal(
+            context, "Reguła po niejednoznacznym terminalu odzyskiwania", 9, "wysoka",
+            listOf("task-recovery-terminal-ambiguous"), listOf("coder"), emptyList()
+        )
+        assertTrue(QualityLearningStore.setProposalStatus(
+            context, proposal.id, "APPROVED", "test-initial-approval:${proposal.id}"
+        ))
+        val memoryEntry = "[UCZENIE ZATWIERDZONE ${proposal.id.take(8)}; dowody=${proposal.evidenceCount}; pewność=${proposal.confidence}] ${proposal.text}".take(1000)
+
+        // Preserve the approved agent copy but simulate process death before shared-memory persistence.
+        assertTrue(context.getSharedPreferences("ai_master_memory_store_v1", Context.MODE_PRIVATE)
+            .edit().putString("memories", "[]").commit())
+        assertFalse(AiMemoryStore.containsExactMemory(context, memoryEntry) == true)
+        assertTrue(AgentOperationalMemoryStore.hasApprovedSource(
+            context, "coder", proposal.text, "proposal:${proposal.id}"
+        ) == true)
+        assertTrue(MemoryAuditLog.append(context, MemoryAuditLog.Event(
+            actor = "USER", mutation = "APPROVE_PROPOSAL", objectId = proposal.id,
+            reason = "Użytkownik zatwierdził propozycję przed przerwaniem procesu.",
+            approvalRef = "test-recovery-terminal:${proposal.id}",
+            phase = MemoryAuditLog.Phase.INTENT, outcome = "AUTHORIZED"
+        )))
+
+        val auditPrefsName = "ai_memory_audit_log_v1"
+        var auditCommitCalls = 0
+        val failingContext = object : ContextWrapper(context) {
+            override fun getSharedPreferences(name: String, mode: Int): SharedPreferences {
+                val delegate = context.getSharedPreferences(name, mode)
+                if (name != auditPrefsName) return delegate
+                return object : SharedPreferences by delegate {
+                    override fun edit(): SharedPreferences.Editor {
+                        val editor = delegate.edit()
+                        return object : SharedPreferences.Editor by editor {
+                            override fun putString(key: String, value: String?): SharedPreferences.Editor {
+                                editor.putString(key, value)
+                                return this
+                            }
+
+                            override fun commit(): Boolean {
+                                auditCommitCalls++
+                                return if (auditCommitCalls == 2) {
+                                    // The SYSTEM_RECOVERY COMMITTED record is durable, but the
+                                    // failed return value quarantines the audit store in-process.
+                                    editor.commit()
+                                    false
+                                } else editor.commit()
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        assertEquals(0, QualityLearningStore.syncApprovedAgentMemories(failingContext))
+        assertEquals(2, auditCommitCalls) // recovery INTENT, then ambiguous COMMITTED terminal
+        assertTrue(SharedPreferencesWriteHealth.isUncertain(auditPrefsName))
+        assertTrue(AiMemoryStore.containsExactMemory(context, memoryEntry) == true)
+        assertTrue(AgentOperationalMemoryStore.hasApprovedSource(
+            context, "coder", proposal.text, "proposal:${proposal.id}"
+        ) == true)
+        assertTrue(MemoryAuditLog.hasUnresolvedIntent(
+            context, "USER", "APPROVE_PROPOSAL", proposal.id
+        ))
+
+        // Restart: the persisted recovery terminal must be recognized, not replayed.
+        SharedPreferencesWriteHealth.resetForTests(auditPrefsName)
+        val afterAmbiguousCommit = MemoryAuditLog.readVerified(context)!!
+        val recoveryRows = afterAmbiguousCommit.filter {
+            it.actor == "SYSTEM_RECOVERY" &&
+                it.mutation == "RECONCILE_APPROVED_PROPOSAL" && it.objectId == proposal.id
+        }
+        assertEquals(listOf(MemoryAuditLog.Phase.INTENT, MemoryAuditLog.Phase.COMMITTED),
+            recoveryRows.map { it.phase })
+        assertEquals(0, QualityLearningStore.syncApprovedAgentMemories(context))
+
+        val afterRestart = MemoryAuditLog.readVerified(context)!!
+        assertEquals(afterAmbiguousCommit.size + 1, afterRestart.size)
+        assertEquals(2, afterRestart.count {
+            it.actor == "SYSTEM_RECOVERY" &&
+                it.mutation == "RECONCILE_APPROVED_PROPOSAL" && it.objectId == proposal.id
+        })
+        assertEquals(1, afterRestart.count {
+            it.actor == "USER" && it.mutation == "APPROVE_PROPOSAL" &&
+                it.objectId == proposal.id && it.phase == MemoryAuditLog.Phase.COMMITTED &&
+                it.outcome == "RECOVERED_STATE"
+        })
+        assertFalse(MemoryAuditLog.hasUnresolvedIntent(
+            context, "SYSTEM_RECOVERY", "RECONCILE_APPROVED_PROPOSAL", proposal.id
+        ))
+        assertFalse(MemoryAuditLog.hasUnresolvedIntent(
+            context, "USER", "APPROVE_PROPOSAL", proposal.id
+        ))
+        assertEquals(1, AiMemoryStore.getMemories(context).count { it == memoryEntry })
+        assertEquals(1, AgentOperationalMemoryStore.all(context).count {
+            it.sourceTaskIds.contains("proposal:${proposal.id}")
+        })
+        val closedJournalSize = afterRestart.size
+        assertEquals(0, QualityLearningStore.syncApprovedAgentMemories(context))
+        assertEquals(closedJournalSize, MemoryAuditLog.readVerified(context)!!.size)
+    }
+
+
     @Test fun proposalApprovalWithPersistedButReportedFailedTerminalAuditIsNotReplayed() {
         val proposal = QualityLearningStore.addProposal(
             context, "Reguła po niejednoznacznym terminalnym audycie", 9, "wysoka",
