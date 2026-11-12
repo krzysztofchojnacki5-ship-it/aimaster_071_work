@@ -1,6 +1,8 @@
 package pl.aimasterpro.app.core
 
 import android.content.Context
+import org.json.JSONArray
+import org.json.JSONObject
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -10,6 +12,7 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
+import java.security.MessageDigest
 
 @RunWith(RobolectricTestRunner::class)
 class MemoryMutationGateTest {
@@ -37,6 +40,44 @@ class MemoryMutationGateTest {
         reason = "Użytkownik potwierdził zapis w interfejsie",
         approvalRef = approvalRef
     )
+
+    private fun seedCommittedJournal(count: Int) {
+        val rows = JSONArray()
+        var previousHash = "GENESIS"
+        for (sequence in 1..count) {
+            val actor = "SYSTEM_RECOVERY"
+            val mutation = "SEED"
+            val objectId = "seed-$sequence"
+            val reason = "seed record"
+            val approvalRef = ""
+            val phase = MemoryAuditLog.Phase.COMMITTED.name
+            val outcome = "SEED"
+            val timestamp = 1_800_000_000_000L + sequence
+            val values = listOf(
+                sequence.toString(), actor, mutation, objectId, reason, approvalRef,
+                phase, outcome, timestamp.toString(), previousHash
+            )
+            val canonical = values.joinToString("") { "${it.length}:$it" }
+            val hash = MessageDigest.getInstance("SHA-256")
+                .digest(canonical.toByteArray(Charsets.UTF_8))
+                .joinToString("") { "%02x".format(it) }
+            rows.put(JSONObject()
+                .put("sequence", sequence.toLong())
+                .put("actor", actor)
+                .put("mutation", mutation)
+                .put("objectId", objectId)
+                .put("reason", reason)
+                .put("approvalRef", approvalRef)
+                .put("phase", phase)
+                .put("outcome", outcome)
+                .put("timestamp", timestamp)
+                .put("previousHash", previousHash)
+                .put("hash", hash))
+            previousHash = hash
+        }
+        assertTrue(context.getSharedPreferences("ai_memory_audit_log_v1", Context.MODE_PRIVATE)
+            .edit().putString("events", rows.toString()).commit())
+    }
 
     @Test fun deniedAgentNeverRunsMutationAndIsAudited() {
         var invoked = false
@@ -206,4 +247,16 @@ class MemoryMutationGateTest {
         assertFalse(invoked)
         assertEquals("DENIED_USER_APPROVAL_REQUIRED", MemoryAuditLog.readVerified(context)!!.single().outcome)
     }
+    @Test fun mutationIsNotInvokedWhenJournalCannotReserveFailureAndRecoverySlots() {
+        seedCommittedJournal(4_998)
+        var invoked = false
+
+        assertFalse(MemoryMutationGate.execute(context, request()) { _: MemoryMutationPermit ->
+            invoked = true
+            true
+        })
+        assertFalse("Mutation must not run without guaranteed audit completion capacity", invoked)
+        assertEquals(4_998, MemoryAuditLog.readVerified(context)!!.size)
+    }
+
 }

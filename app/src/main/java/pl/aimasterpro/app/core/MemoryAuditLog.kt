@@ -143,7 +143,7 @@ object MemoryAuditLog {
         if (SharedPreferencesWriteHealth.isUncertain(PREFS_NAME)) return@runCatching false
 
         val existing = readRecords(context) ?: return@runCatching false
-        if (existing.size >= MAX_EVENTS) return@runCatching false
+        if (!hasReservedCapacity(existing, event)) return@runCatching false
         val previousHash = existing.lastOrNull()?.hash ?: GENESIS_HASH
         val record = Record(
             sequence = existing.size.toLong() + 1L,
@@ -170,6 +170,45 @@ object MemoryAuditLog {
             PREFS_NAME, prefs.edit().putString(EVENTS_KEY, rows.toString())
         )
     }.getOrDefault(false)
+
+    /**
+     * Keeps enough journal capacity to finish every accepted governed operation.
+     *
+     * An INTENT may be followed by FAILED and, after store repair, RECOVERED_STATE:
+     * reserve two future records while INTENT is latest. FAILED remains unresolved,
+     * but has consumed one of those records, so it retains one recovery slot.
+     * A COMMITTED record resolves the reservation. Denial records never replace an
+     * earlier unresolved operation. The calculation is made under append's monitor,
+     * so concurrent append callers cannot consume another operation's reserved slots.
+     */
+    private fun hasReservedCapacity(existing: List<Record>, event: Event): Boolean {
+        val latestByIdentity = linkedMapOf<Triple<String, String, String>, Phase>()
+        existing.forEach { record ->
+            if (!record.outcome.startsWith("DENIED_")) {
+                latestByIdentity[Triple(record.actor, record.mutation, record.objectId)] = record.phase
+            }
+        }
+
+        if (!event.outcome.startsWith("DENIED_")) {
+            val identity = Triple(event.actor, event.mutation, event.objectId)
+            val previous = latestByIdentity[identity]
+            // A second INTENT for an unresolved identity would create an ambiguous
+            // reservation and is rejected; callers must resolve the earlier attempt first.
+            if (event.phase == Phase.INTENT && previous != null && previous != Phase.COMMITTED) {
+                return false
+            }
+            latestByIdentity[identity] = event.phase
+        }
+
+        val reservedSlots = latestByIdentity.values.sumOf { phase ->
+            when (phase) {
+                Phase.INTENT -> 2
+                Phase.FAILED -> 1
+                Phase.COMMITTED -> 0
+            }
+        }
+        return existing.size + 1 + reservedSlots <= MAX_EVENTS
+    }
 
     private fun readRecords(context: Context): List<Record>? = runCatching {
         if (SharedPreferencesWriteHealth.isUncertain(PREFS_NAME)) return@runCatching null
