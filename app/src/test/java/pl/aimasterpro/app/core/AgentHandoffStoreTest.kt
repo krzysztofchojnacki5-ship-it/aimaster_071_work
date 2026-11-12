@@ -331,4 +331,14 @@ class AgentHandoffStoreTest {
         assertNull(AgentHandoffStore.claim(context, "handoff-task-01", runId, "handoff-fault-001",
             "unit-test-engineer", 91L))
     }
+    @Test fun oversizedRawInboxIsRejectedBeforeJsonParsingAndPreserved() {
+        val prefs = context.getSharedPreferences("aiforteca_agent_handoff_v1", Context.MODE_PRIVATE)
+        val oversized = " ".repeat(4_000_001)
+        assertTrue(prefs.edit().putString("messages", oversized).commit())
+        assertEquals(AgentHandoffStore.ReadStatus.CORRUPT, AgentHandoffStore.snapshot(context).status)
+        assertFalse(AgentHandoffStore.send(context, "handoff-task-01", 1, "handoff-new-001",
+            "critical-reviewer", "unit-test-engineer", "Nie nadpisuj uszkodzonej skrzynki.", 100L))
+        assertEquals(oversized, prefs.getString("messages", null))
+    }
+
 }

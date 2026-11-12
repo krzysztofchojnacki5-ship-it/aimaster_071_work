@@ -15,6 +15,7 @@ object AgentHandoffStore {
     private const val PREFS = "aiforteca_agent_handoff_v1"
     private const val KEY = "messages"
     private const val MAX_MESSAGES = 400
+    private const val MAX_RAW_CHARS = 4_000_000
     private const val MAX_ID = 120
     private const val MAX_PAYLOAD = 8_000
     private val idPattern = Regex("[A-Za-z0-9][A-Za-z0-9._:-]{2,119}")
@@ -256,10 +257,12 @@ object AgentHandoffStore {
                 .put("claimedAt", m.claimedAt).put("resolvedAt", m.resolvedAt)
                 .put("resolutionActor", m.resolutionActor).put("resolutionReason", m.resolutionReason))
         }
+        val serialized = array.toString()
+        if (serialized.length > MAX_RAW_CHARS) return false
         return SharedPreferencesWriteHealth.commit(
             PREFS,
             context.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-                .edit().putString(KEY, array.toString())
+                .edit().putString(KEY, serialized)
         )
     }
 }

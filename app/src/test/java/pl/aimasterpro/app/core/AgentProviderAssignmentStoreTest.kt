@@ -329,4 +329,14 @@ class AgentProviderAssignmentStoreTest {
         assertEquals("groq", prefs.getString("selected_provider", null))
     }
 
+    @Test fun oversizedRoleAndProviderIdsAreRejectedWithoutMutation() {
+        assertFalse(AgentProviderAssignmentStore.save(context, "R".repeat(81), "gemini"))
+        assertFalse(AgentProviderAssignmentStore.save(context, "MASTER", "P".repeat(161)))
+        assertNull(prefs.getString("agent_provider_MASTER", null))
+        assertNull(AgentProviderAssignmentStore.reconcileExistingAssignments(
+            context, defaults, setOf("P".repeat(161)), "gemini"
+        ))
+        assertTrue(runCatching { AgentProviderAssignmentStore.read(context, mapOf("R".repeat(81) to "gemini")) }.isFailure)
+    }
+
 }
