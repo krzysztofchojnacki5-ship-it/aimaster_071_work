@@ -46,6 +46,8 @@ object AgentHandoffStore {
             if (!valid(taskId) || !valid(messageId) || !valid(senderAgentId) ||
                 !valid(recipientAgentId) || senderAgentId == recipientAgentId ||
                 payload.isBlank() || payload.length > MAX_PAYLOAD || now < 0L) return@synchronized false
+            if (!isAssigned(context, taskId, runId, senderAgentId) ||
+                !isAssigned(context, taskId, runId, recipientAgentId)) return@synchronized false
             val safe = CommunicationLogSanitizer.sanitize(payload).take(MAX_PAYLOAD)
             if (safe.isBlank()) return@synchronized false
             val current = read(context)
@@ -69,6 +71,7 @@ object AgentHandoffStore {
     ): Handoff? = MasterTaskQueueStore.withActiveRun(context, taskId, runId) {
         synchronized(this) {
             if (!valid(taskId) || !valid(messageId) || !valid(recipientAgentId) || now < 0L) return@synchronized null
+            if (!isAssigned(context, taskId, runId, recipientAgentId)) return@synchronized null
             val current = read(context)
             if (current.status != ReadStatus.AVAILABLE) return@synchronized null
             val message = current.messages.firstOrNull { it.id == messageId } ?: return@synchronized null
@@ -86,6 +89,7 @@ object AgentHandoffStore {
     ): Boolean = MasterTaskQueueStore.withActiveRun(context, taskId, runId) {
         synchronized(this) {
             if (!valid(taskId) || !valid(messageId) || !valid(recipientAgentId) || now < 0L) return@synchronized false
+            if (!isAssigned(context, taskId, runId, recipientAgentId)) return@synchronized false
             val current = read(context)
             if (current.status != ReadStatus.AVAILABLE) return@synchronized false
             val message = current.messages.firstOrNull { it.id == messageId } ?: return@synchronized false
@@ -101,6 +105,15 @@ object AgentHandoffStore {
 
     @Synchronized
     fun snapshot(context: Context): Snapshot = read(context)
+
+    private fun isAssigned(context: Context, taskId: String, runId: Int, agentId: String): Boolean {
+        val queue = MasterTaskQueueStore.snapshot(context)
+        if (queue.status != MasterTaskQueueStore.ReadStatus.AVAILABLE) return false
+        val task = queue.tasks.firstOrNull { it.id == taskId } ?: return false
+        return task.status == MasterTaskQueueStore.Status.RUNNING &&
+            task.runId == runId && agentId in task.assignedAgentIds
+    }
+
 
     private fun valid(value: String): Boolean = value.length <= MAX_ID && idPattern.matches(value)
 
