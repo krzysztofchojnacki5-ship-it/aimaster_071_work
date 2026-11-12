@@ -115,6 +115,52 @@ class AgentHandoffStoreTest {
         assertEquals(AgentHandoffStore.State.PENDING, snapshot.messages.single().state)
     }
 
+    @Test fun oldestAcknowledgedHandoffsArePrunedBeforeRejectingNewWork() {
+        val runId = runningTask()
+        val firstId = "handoff-msg-000"
+        assertTrue(AgentHandoffStore.send(context, "handoff-task-01", runId, firstId,
+            "critical-reviewer", "unit-test-engineer", "Raport zakończony.", 100L))
+        assertNotNull(AgentHandoffStore.claim(context, "handoff-task-01", runId, firstId,
+            "unit-test-engineer", 101L))
+        assertTrue(AgentHandoffStore.acknowledge(context, "handoff-task-01", runId, firstId,
+            "unit-test-engineer", 102L))
+
+        for (index in 1 until 400) {
+            val id = "handoff-msg-${index.toString().padStart(3, '0')}"
+            assertTrue("Could not add $id", AgentHandoffStore.send(
+                context, "handoff-task-01", runId, id, "critical-reviewer",
+                "unit-test-engineer", "Raport oczekujący $index.", 102L + index
+            ))
+        }
+        assertEquals(400, AgentHandoffStore.snapshot(context).messages.size)
+
+        assertTrue(AgentHandoffStore.send(context, "handoff-task-01", runId, "handoff-msg-400",
+            "critical-reviewer", "unit-test-engineer", "Nowe przekazanie.", 600L))
+        val snapshot = AgentHandoffStore.snapshot(context)
+        assertEquals(400, snapshot.messages.size)
+        assertFalse(snapshot.messages.any { it.id == firstId })
+        assertTrue(snapshot.messages.any { it.id == "handoff-msg-001" })
+        assertTrue(snapshot.messages.any { it.id == "handoff-msg-400" })
+        assertEquals(399, snapshot.messages.count { it.state == AgentHandoffStore.State.PENDING })
+    }
+
+    @Test fun inboxNeverEvictsPendingOrClaimedHandoffsToMakeRoom() {
+        val runId = runningTask()
+        for (index in 0 until 400) {
+            val id = "handoff-full-${index.toString().padStart(3, '0')}"
+            assertTrue("Could not add $id", AgentHandoffStore.send(
+                context, "handoff-task-01", runId, id, "critical-reviewer",
+                "unit-test-engineer", "Nierozstrzygnięte przekazanie $index.", 700L + index
+            ))
+        }
+        assertFalse(AgentHandoffStore.send(context, "handoff-task-01", runId, "handoff-full-400",
+            "critical-reviewer", "unit-test-engineer", "Nie wolno usunąć oczekujących.", 1_200L))
+        val snapshot = AgentHandoffStore.snapshot(context)
+        assertEquals(400, snapshot.messages.size)
+        assertTrue(snapshot.messages.all { it.state == AgentHandoffStore.State.PENDING })
+        assertFalse(snapshot.messages.any { it.id == "handoff-full-400" })
+    }
+
     @Test fun staleRunAndUnassignedRecipientsAreRejected() {
         val runId = runningTask()
         assertFalse(AgentHandoffStore.send(context, "handoff-task-01", runId - 1, "handoff-msg-004",

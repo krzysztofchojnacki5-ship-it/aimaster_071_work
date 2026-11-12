@@ -56,8 +56,22 @@ object AgentHandoffStore {
             if (existing != null) return@synchronized existing.taskId == taskId && existing.runId == runId &&
                 existing.senderAgentId == senderAgentId && existing.recipientAgentId == recipientAgentId &&
                 existing.payload == safe
-            if (current.messages.size >= MAX_MESSAGES) return@synchronized false
-            write(context, current.messages + Handoff(
+            // Keep the inbox bounded without letting old terminal records permanently
+            // exhaust capacity. Never evict PENDING or CLAIMED work: CLAIMED may represent
+            // an external provider request whose outcome is uncertain.
+            val retained = if (current.messages.size >= MAX_MESSAGES) {
+                val removableCount = current.messages.size - MAX_MESSAGES + 1
+                val removableIds = current.messages
+                    .asSequence()
+                    .filter { it.state == State.ACKNOWLEDGED || it.state == State.REJECTED }
+                    .sortedWith(compareBy<Handoff> { it.updatedAt }.thenBy { it.createdAt })
+                    .take(removableCount)
+                    .map { it.id }
+                    .toSet()
+                if (removableIds.size < removableCount) return@synchronized false
+                current.messages.filterNot { it.id in removableIds }
+            } else current.messages
+            write(context, retained + Handoff(
                 messageId, taskId, runId, senderAgentId, recipientAgentId,
                 safe, State.PENDING, now, now
             ))
