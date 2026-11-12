@@ -11,6 +11,8 @@ object ProviderCooldownStore {
     private const val PREFS = "provider_cooldowns_v1"
     private const val KEY = "states"
     private const val MAX_STATES = 100
+    private const val MAX_RAW_CHARS = 64_000
+    private const val MAX_KEY_CHARS = 512
     private const val MAX_COOLDOWN_MS = 15 * 60_000L
 
     data class State(val key: String, val consecutive429: Int, val until: Long, val updatedAt: Long)
@@ -65,6 +67,7 @@ object ProviderCooldownStore {
         val raw = SharedPreferencesWriteHealth.withHealthyAccess(PREFS) {
             context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString(KEY, null)
         } ?: return@runCatching emptyList()
+        require(raw.length <= MAX_RAW_CHARS) { "Cooldown journal exceeds its supported raw size." }
         val array = JSONArray(raw)
         require(array.length() <= MAX_STATES) { "Too many cooldown rows." }
         val seen = mutableSetOf<String>()
@@ -100,9 +103,11 @@ object ProviderCooldownStore {
             array.put(JSONObject().put("key", state.key).put("count", state.consecutive429)
                 .put("until", state.until).put("updated", state.updatedAt))
         }
+        val serialized = array.toString()
+        if (serialized.length > MAX_RAW_CHARS) return false
         if (SharedPreferencesWriteHealth.isUncertain(PREFS)) return false
         val editor = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-            .edit().putString(KEY, array.toString())
+            .edit().putString(KEY, serialized)
         return SharedPreferencesWriteHealth.commit(PREFS, editor)
     }
 }
