@@ -240,8 +240,8 @@ object QualityLearningStore {
                 android.util.Log.e("AIMasterQuality", "Propozycja ${proposal.id} wymaga ręcznej kontroli: poprzednie odzyskiwanie pozostało nierozstrzygnięte.")
                 return@forEach
             }
-            if (pendingUser.isEmpty()) return@forEach
-
+            // Startup reconciliation is also required when stores disagree with the
+            // durable proposal ledger but no USER intent remains unresolved.
             val request = MemoryGovernance.Request(
                 actor = MemoryGovernance.Actor.SYSTEM_RECOVERY,
                 mutation = if (approved) MemoryGovernance.Mutation.RECONCILE_APPROVED_PROPOSAL
