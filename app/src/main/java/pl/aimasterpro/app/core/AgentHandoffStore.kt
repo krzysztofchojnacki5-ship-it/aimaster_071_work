@@ -197,8 +197,9 @@ object AgentHandoffStore {
             }
             if (messages.any {
                 !valid(it.id) || !valid(it.taskId) || !valid(it.senderAgentId) ||
-                    !valid(it.recipientAgentId) || it.runId <= 0 || it.payload.isBlank() ||
-                    it.payload.length > MAX_PAYLOAD || it.createdAt < 0L ||
+                    !valid(it.recipientAgentId) || it.senderAgentId == it.recipientAgentId ||
+                    it.runId <= 0 || it.payload.isBlank() || it.payload.length > MAX_PAYLOAD ||
+                    CommunicationLogSanitizer.sanitize(it.payload) != it.payload || it.createdAt < 0L ||
                     it.updatedAt < it.createdAt || it.claimedAt < 0L || it.resolvedAt < 0L ||
                     it.resolutionActor.length > 100 || it.resolutionReason.length > 300 ||
                     (it.state == State.PENDING && it.claimedAt != 0L) ||
