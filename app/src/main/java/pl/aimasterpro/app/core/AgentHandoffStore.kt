@@ -177,46 +177,56 @@ object AgentHandoffStore {
     private fun valid(value: String): Boolean = value.length <= MAX_ID && idPattern.matches(value)
 
     private fun read(context: Context): Snapshot {
-        val raw = context.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-            .getString(KEY, null) ?: return Snapshot(ReadStatus.AVAILABLE)
+        if (SharedPreferencesWriteHealth.isUncertain(PREFS)) {
+            return Snapshot(ReadStatus.UNAVAILABLE)
+        }
         return try {
-            val array = JSONArray(raw)
-            if (array.length() > MAX_MESSAGES) return Snapshot(ReadStatus.CORRUPT)
-            val messages = (0 until array.length()).map { index ->
-                val item = array.getJSONObject(index)
-                Handoff(
-                    item.getString("id"), item.getString("taskId"), item.getInt("runId"),
-                    item.getString("senderAgentId"), item.getString("recipientAgentId"),
-                    item.getString("payload"), State.valueOf(item.getString("state")),
-                    item.getLong("createdAt"), item.getLong("updatedAt"),
-                    item.optLong("claimedAt", 0L),
-                    item.optLong("resolvedAt", 0L),
-                    item.optString("resolutionActor", ""),
-                    item.optString("resolutionReason", "")
-                )
+            SharedPreferencesWriteHealth.withHealthyAccess(PREFS) {
+                val raw = context.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+                    .getString(KEY, null) ?: return@withHealthyAccess Snapshot(ReadStatus.AVAILABLE)
+                try {
+                    val array = JSONArray(raw)
+                    if (array.length() > MAX_MESSAGES) return@withHealthyAccess Snapshot(ReadStatus.CORRUPT)
+                    val messages = (0 until array.length()).map { index ->
+                        val item = array.getJSONObject(index)
+                        Handoff(
+                            item.getString("id"), item.getString("taskId"), item.getInt("runId"),
+                            item.getString("senderAgentId"), item.getString("recipientAgentId"),
+                            item.getString("payload"), State.valueOf(item.getString("state")),
+                            item.getLong("createdAt"), item.getLong("updatedAt"),
+                            item.optLong("claimedAt", 0L),
+                            item.optLong("resolvedAt", 0L),
+                            item.optString("resolutionActor", ""),
+                            item.optString("resolutionReason", "")
+                        )
+                    }
+                    if (messages.any {
+                        !valid(it.id) || !valid(it.taskId) || !valid(it.senderAgentId) ||
+                            !valid(it.recipientAgentId) || it.senderAgentId == it.recipientAgentId ||
+                            it.runId <= 0 || it.payload.isBlank() || it.payload.length > MAX_PAYLOAD ||
+                            CommunicationLogSanitizer.sanitize(it.payload) != it.payload || it.createdAt < 0L ||
+                            it.updatedAt < it.createdAt || it.claimedAt < 0L || it.resolvedAt < 0L ||
+                            it.resolutionActor.length > 100 || it.resolutionReason.length > 300 ||
+                            (it.state == State.PENDING && it.claimedAt != 0L) ||
+                            (it.state in setOf(State.CLAIMED, State.ACKNOWLEDGED, State.REJECTED) &&
+                                (it.claimedAt <= 0L || it.updatedAt < it.claimedAt)) ||
+                            (it.state == State.MANUALLY_RESOLVED &&
+                                (it.claimedAt <= 0L || it.resolvedAt <= 0L ||
+                                    it.resolvedAt < it.claimedAt || it.resolvedAt < it.createdAt ||
+                                    it.resolutionActor !in setOf("MASTER", "USER") ||
+                                    it.resolutionReason.isBlank() || it.resolvedAt != it.updatedAt)) ||
+                            (it.state != State.MANUALLY_RESOLVED &&
+                                (it.resolvedAt != 0L || it.resolutionActor.isNotEmpty() || it.resolutionReason.isNotEmpty()))
+                    } || messages.map { it.id }.distinct().size != messages.size) {
+                        Snapshot(ReadStatus.CORRUPT)
+                    } else Snapshot(ReadStatus.AVAILABLE, messages)
+                } catch (_: Exception) {
+                    Snapshot(ReadStatus.CORRUPT)
+                }
             }
-            if (messages.any {
-                !valid(it.id) || !valid(it.taskId) || !valid(it.senderAgentId) ||
-                    !valid(it.recipientAgentId) || it.senderAgentId == it.recipientAgentId ||
-                    it.runId <= 0 || it.payload.isBlank() || it.payload.length > MAX_PAYLOAD ||
-                    CommunicationLogSanitizer.sanitize(it.payload) != it.payload || it.createdAt < 0L ||
-                    it.updatedAt < it.createdAt || it.claimedAt < 0L || it.resolvedAt < 0L ||
-                    it.resolutionActor.length > 100 || it.resolutionReason.length > 300 ||
-                    (it.state == State.PENDING && it.claimedAt != 0L) ||
-                    (it.state in setOf(State.CLAIMED, State.ACKNOWLEDGED, State.REJECTED) &&
-                        (it.claimedAt <= 0L || it.updatedAt < it.claimedAt)) ||
-                    (it.state == State.MANUALLY_RESOLVED &&
-                        (it.claimedAt <= 0L || it.resolvedAt <= 0L ||
-                            it.resolvedAt < it.claimedAt || it.resolvedAt < it.createdAt ||
-                            it.resolutionActor !in setOf("MASTER", "USER") ||
-                            it.resolutionReason.isBlank() || it.resolvedAt != it.updatedAt)) ||
-                    (it.state != State.MANUALLY_RESOLVED &&
-                        (it.resolvedAt != 0L || it.resolutionActor.isNotEmpty() || it.resolutionReason.isNotEmpty()))
-            } || messages.map { it.id }.distinct().size != messages.size) {
-                Snapshot(ReadStatus.CORRUPT)
-            } else Snapshot(ReadStatus.AVAILABLE, messages)
-        } catch (_: Exception) {
-            Snapshot(ReadStatus.CORRUPT)
+        } catch (_: IllegalStateException) {
+            if (SharedPreferencesWriteHealth.isUncertain(PREFS)) Snapshot(ReadStatus.UNAVAILABLE)
+            else Snapshot(ReadStatus.CORRUPT)
         }
     }
 
@@ -232,7 +242,10 @@ object AgentHandoffStore {
                 .put("claimedAt", m.claimedAt).put("resolvedAt", m.resolvedAt)
                 .put("resolutionActor", m.resolutionActor).put("resolutionReason", m.resolutionReason))
         }
-        return context.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-            .edit().putString(KEY, array.toString()).commit()
+        return SharedPreferencesWriteHealth.commit(
+            PREFS,
+            context.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+                .edit().putString(KEY, array.toString())
+        )
     }
 }

@@ -1,6 +1,7 @@
 package pl.aimasterpro.app.core
 
 import android.content.Context
+import android.content.SharedPreferences
 import org.junit.Assert.*
 import org.junit.Before
 import org.junit.Test
@@ -21,6 +22,7 @@ class AgentHandoffStoreTest {
         context.getSharedPreferences("aiforteca_agent_handoff_v1", Context.MODE_PRIVATE)
             .edit().clear().commit()
         SharedPreferencesWriteHealth.resetForTests("aiforteca_master_task_queue_v1")
+        SharedPreferencesWriteHealth.resetForTests("aiforteca_agent_handoff_v1")
         AgentManagerStore.resetStorageHealthForTests()
     }
 
@@ -290,4 +292,19 @@ class AgentHandoffStoreTest {
         assertEquals(AgentHandoffStore.ReadStatus.CORRUPT, AgentHandoffStore.snapshot(context).status)
     }
 
+
+    @Test fun ambiguousCommitQuarantinesHandoffInboxAndRejectsFurtherWrites() {
+        val runId = runningTask()
+        val prefs = context.getSharedPreferences("aiforteca_agent_handoff_v1", Context.MODE_PRIVATE)
+        val failingEditor = object : SharedPreferences.Editor by prefs.edit().putString("messages", "[]") {
+            override fun commit(): Boolean = false
+        }
+
+        assertFalse(SharedPreferencesWriteHealth.commit("aiforteca_agent_handoff_v1", failingEditor))
+        assertEquals(AgentHandoffStore.ReadStatus.UNAVAILABLE, AgentHandoffStore.snapshot(context).status)
+        assertFalse(AgentHandoffStore.send(context, "handoff-task-01", runId, "handoff-fault-001",
+            "critical-reviewer", "unit-test-engineer", "Nie wolno potwierdzać niepewnego zapisu.", 90L))
+        assertNull(AgentHandoffStore.claim(context, "handoff-task-01", runId, "handoff-fault-001",
+            "unit-test-engineer", 91L))
+    }
 }
