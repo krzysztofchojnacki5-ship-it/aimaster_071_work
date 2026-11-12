@@ -370,9 +370,13 @@ object MasterTaskQueueStore {
                 }
             }
             val recoveryEvents = running.map { task ->
+                // Recovery must not make the durable task timeline move backwards when the
+                // device clock was corrected or a caller supplied an older timestamp.
+                val recoveryAt = maxOf(now, task.updatedAt)
                 event(task.id, "MASTER_RECOVERY", "RECOVER_INTERRUPTED", Status.RUNNING.name,
                     Status.BLOCKED.name,
-                    "Proces aplikacji zakończył się podczas pracy. Nie wznowiono automatycznie, aby uniknąć duplikowania żądań API.", now)
+                    "Proces aplikacji zakończył się podczas pracy. Nie wznowiono automatycznie, aby uniknąć duplikowania żądań API.",
+                    recoveryAt, runId = task.runId)
             }
             Triple(updated, events + recoveryEvents, true)
         }
