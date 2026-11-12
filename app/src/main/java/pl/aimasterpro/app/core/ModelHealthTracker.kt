@@ -13,6 +13,11 @@ object ModelHealthTracker {
     private const val PREFS = "model_health_history_v1"
     private const val KEY = "events"
     private const val MAX_EVENTS = 300
+    private const val MAX_RAW_CHARS = 512_000
+    private const val MAX_PROVIDER_CHARS = 160
+    private const val MAX_HOST_CHARS = 255
+    private const val MAX_MODEL_CHARS = 200
+    private const val MAX_CATEGORY_CHARS = 80
 
     data class Event(
         val timestamp: Long,
@@ -43,7 +48,9 @@ object ModelHealthTracker {
             json.put(JSONObject().put("ts", e.timestamp).put("provider", e.providerId).put("host", e.host)
                 .put("model", e.model).put("ok", e.success).put("category", e.category).put("latency", e.latencyMs))
         }
-        check(context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putString(KEY, json.toString()).commit()) {
+        val serialized = json.toString()
+        check(serialized.length <= MAX_RAW_CHARS) { "Historia kondycji przekracza obsługiwany rozmiar." }
+        check(context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putString(KEY, serialized).commit()) {
             "Nie udało się trwale zapisać historii kondycji modeli."
         }
     }
@@ -68,6 +75,7 @@ object ModelHealthTracker {
         val raw = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString(KEY, null)
             ?: return emptyList()
         return try {
+            require(raw.length <= MAX_RAW_CHARS) { "Historia kondycji przekracza bezpieczny rozmiar surowy." }
             val arr = JSONArray(raw)
             require(arr.length() <= MAX_EVENTS) { "Historia kondycji przekracza bezpieczny rozmiar." }
             (0 until arr.length()).map { index ->
@@ -78,8 +86,10 @@ object ModelHealthTracker {
                 val model = o.opt("model") as? String
                 val category = o.opt("category") as? String
                 val success = o.opt("ok") as? Boolean
-                require(!provider.isNullOrBlank() && !host.isNullOrBlank() && !model.isNullOrBlank() &&
-                    category != null && success != null) {
+                require(!provider.isNullOrBlank() && provider.length <= MAX_PROVIDER_CHARS &&
+                    !host.isNullOrBlank() && host.length <= MAX_HOST_CHARS &&
+                    !model.isNullOrBlank() && model.length <= MAX_MODEL_CHARS &&
+                    category != null && category.length <= MAX_CATEGORY_CHARS && success != null) {
                     "Historia kondycji zawiera niekompletną tożsamość lub metadane."
                 }
                 Event(

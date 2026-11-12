@@ -11,6 +11,13 @@ object AgentEfficiencyTracker {
     private const val PREFS = "agent_efficiency_history_v1"
     private const val KEY = "outcomes"
     private const val MAX_ITEMS = 500
+    private const val MAX_RAW_CHARS = 1_000_000
+    private const val MAX_TASK_CHARS = 160
+    private const val MAX_AGENT_CHARS = 100
+    private const val MAX_STATUS_CHARS = 40
+    private const val MAX_PROVIDER_CHARS = 100
+    private const val MAX_MODEL_CHARS = 160
+    private const val MAX_ERROR_CHARS = 80
 
     data class Outcome(
         val timestamp: Long,
@@ -46,9 +53,14 @@ object AgentEfficiencyTracker {
                 .put("status", o.status).put("duration", o.durationMs).put("attempts", o.attempts)
                 .put("provider", o.providerId).put("model", o.model).put("error", o.errorCategory))
         }
+        val serialized = json.toString()
+        if (serialized.length > MAX_RAW_CHARS) {
+            android.util.Log.e("AIMasterEfficiency", "Nie zapisano wyniku: historia przekracza obsługiwany rozmiar.")
+            return
+        }
         val saved = runCatching {
             context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
-                .putString(KEY, json.toString()).commit()
+                .putString(KEY, serialized).commit()
         }.getOrDefault(false)
         if (!saved) android.util.Log.e("AIMasterEfficiency", "Nie udało się trwale zapisać historii efektywności.")
     }
@@ -60,6 +72,7 @@ object AgentEfficiencyTracker {
     private fun readStrict(context: Context): List<Outcome>? = runCatching {
         val raw = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString(KEY, null)
             ?: return@runCatching emptyList()
+        require(raw.length <= MAX_RAW_CHARS) { "Efficiency history exceeds its supported raw size." }
         val arr = JSONArray(raw)
         require(arr.length() <= MAX_ITEMS) { "Efficiency history exceeds its supported size." }
         (0 until arr.length()).map { i ->
@@ -90,7 +103,11 @@ object AgentEfficiencyTracker {
             val provider = requiredText("provider")
             val model = requiredText("model")
             val error = requiredText("error")
-            require(task.isNotBlank() && agent.isNotBlank() && status.isNotBlank()) {
+            require(task.isNotBlank() && task.length <= MAX_TASK_CHARS &&
+                agent.isNotBlank() && agent.length <= MAX_AGENT_CHARS &&
+                status.isNotBlank() && status.length <= MAX_STATUS_CHARS &&
+                provider.length <= MAX_PROVIDER_CHARS && model.length <= MAX_MODEL_CHARS &&
+                error.length <= MAX_ERROR_CHARS) {
                 "Efficiency history row is missing task, agent, or status identity."
             }
             Outcome(timestamp, task, agent, status, duration, attemptsLong.toInt(), provider, model, error)

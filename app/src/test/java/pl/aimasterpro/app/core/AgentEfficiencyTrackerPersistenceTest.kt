@@ -74,4 +74,14 @@ class AgentEfficiencyTrackerPersistenceTest {
         assertEquals(2, rows.size)
         assertEquals("task-2", rows.first().taskId)
     }
+    @Test fun oversizedRawEfficiencyHistoryIsRejectedAndPreserved() {
+        val oversized = " ".repeat(1_000_001)
+        prefs.edit().putString("outcomes", oversized).commit()
+        assertTrue(AgentEfficiencyTracker.load(context).isEmpty())
+        AgentEfficiencyTracker.record(context, AgentEfficiencyTracker.Outcome(
+            12L, "task-3", "agent-a", "COMPLETED", 20L, 1, "p", "m", ""
+        ))
+        assertEquals(oversized, prefs.getString("outcomes", null))
+    }
+
 }

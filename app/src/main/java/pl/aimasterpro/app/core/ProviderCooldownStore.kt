@@ -94,6 +94,7 @@ object ProviderCooldownStore {
     }
 
     private fun save(context: Context, rows: List<State>): Boolean {
+        if (rows.size > MAX_STATES || rows.any { it.key.isBlank() || it.key.length > MAX_KEY_CHARS }) return false
         val array = JSONArray()
         rows.distinctBy { it.key }.take(MAX_STATES).forEach { state ->
             array.put(JSONObject().put("key", state.key).put("count", state.consecutive429)
