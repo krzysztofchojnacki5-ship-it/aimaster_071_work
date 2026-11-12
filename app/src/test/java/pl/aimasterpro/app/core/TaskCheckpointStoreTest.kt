@@ -114,6 +114,22 @@ class TaskCheckpointStoreTest {
         assertTrue(prefs.getString("events", null)?.contains("ambiguous-write") == true)
     }
 
+    @Test fun checkpointFromOlderQueueRunCannotOverwriteNewerRun() {
+        assertTrue(TaskCheckpointStore.record(context, TaskCheckpointStore.Event(
+            taskId = "queue-task-agent-r2", agentId = "RESEARCHER", status = "RUNNING", detail = "new run",
+            timestamp = 200L, providerId = "provider-new", model = "model-new", attempts = 1, runId = 2
+        )))
+        assertTrue(TaskCheckpointStore.record(context, TaskCheckpointStore.Event(
+            taskId = "queue-task-agent-r2", agentId = "RESEARCHER", status = "FAILED", detail = "late old callback",
+            timestamp = 300L, providerId = "provider-old", model = "model-old", attempts = 1, runId = 1
+        )))
+        val latest = TaskCheckpointStore.latest(context).single()
+        assertEquals(2, latest.runId)
+        assertEquals("RUNNING", latest.status)
+        assertEquals("provider-new", latest.providerId)
+        assertEquals("new run", latest.detail)
+    }
+
     @Test fun safeCheckpointBaseUrlPreservesExplicitPortAndExcludesSensitiveUrlParts() {
         assertEquals(
             "http://127.0.0.1:11434",

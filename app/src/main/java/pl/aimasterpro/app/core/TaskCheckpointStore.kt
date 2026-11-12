@@ -37,7 +37,8 @@ object TaskCheckpointStore {
         val estimatedInputTokens: Long = 0L,
         val estimatedOutputTokens: Long = 0L,
         val idempotencyKey: String = "",
-        val baseUrl: String = ""
+        val baseUrl: String = "",
+        val runId: Int = 0
     )
 
     /**
@@ -54,15 +55,18 @@ object TaskCheckpointStore {
         // A late worker callback must not overwrite a terminal result already recorded by
         // the coordinator (for example TIMED_OUT followed by the worker's CANCELLED callback).
         val current = rows.firstOrNull { it.taskId == event.taskId }
+        // Old worker callbacks must not overwrite a checkpoint from a newer queue retry.
+        if (current != null && event.runId < current.runId) return true
+        val sameRun = current?.runId == event.runId
         // REQUESTING means the provider may already have processed and billed the POST.
         // Do not let UI/worker finalization hide a failed USAGE_RECORDED/USAGE_PENDING write
         // behind a terminal state. Startup recovery is the only path allowed to close it.
-        if (current?.status == "REQUESTING" &&
+        if (sameRun && current?.status == "REQUESTING" &&
             event.status in setOf("COMPLETED", "FAILED", "BLOCKED")) {
             val isRecoveryTransition = current.processId != processId && event.processId == processId
             if (!isRecoveryTransition) return true
         }
-        if (current?.status?.let { it in TERMINAL_STATUSES } == true) {
+        if (sameRun && current?.status?.let { it in TERMINAL_STATUSES } == true) {
             // A timeout/cancellation can race with a worker that has already committed its report.
             // Permit only archive-backed reconciliation for that exact task; never trust a late
             // callback alone to rewrite a terminal checkpoint.
@@ -95,16 +99,17 @@ object TaskCheckpointStore {
                 agentId = event.agentId.take(100),
                 status = event.status.take(30),
                 detail = event.detail.take(500),
-                providerId = event.providerId.ifBlank { current?.providerId.orEmpty() }.take(100),
-                model = event.model.ifBlank { current?.model.orEmpty() }.take(160),
+                providerId = event.providerId.ifBlank { current?.takeIf { sameRun }?.providerId.orEmpty() }.take(100),
+                model = event.model.ifBlank { current?.takeIf { sameRun }?.model.orEmpty() }.take(160),
                 attempts = event.attempts.coerceAtLeast(0),
                 processId = event.processId.ifBlank { processId },
                 estimatedInputTokens = event.estimatedInputTokens.coerceAtLeast(0L)
-                    .takeIf { it > 0L } ?: current?.estimatedInputTokens ?: 0L,
+                    .takeIf { it > 0L } ?: current?.takeIf { sameRun }?.estimatedInputTokens ?: 0L,
                 estimatedOutputTokens = event.estimatedOutputTokens.coerceAtLeast(0L)
-                    .takeIf { it > 0L } ?: current?.estimatedOutputTokens ?: 0L,
-                idempotencyKey = event.idempotencyKey.ifBlank { current?.idempotencyKey.orEmpty() }.take(240),
-                baseUrl = event.baseUrl.ifBlank { current?.baseUrl.orEmpty() }.take(300)
+                    .takeIf { it > 0L } ?: current?.takeIf { sameRun }?.estimatedOutputTokens ?: 0L,
+                idempotencyKey = event.idempotencyKey.ifBlank { current?.takeIf { sameRun }?.idempotencyKey.orEmpty() }.take(240),
+                baseUrl = event.baseUrl.ifBlank { current?.takeIf { sameRun }?.baseUrl.orEmpty() }.take(300),
+                runId = event.runId
             )
         )
         return save(context, rows.take(MAX_EVENTS))
@@ -148,7 +153,8 @@ object TaskCheckpointStore {
                     val estimatedOutput = exactLong("estimatedOutputTokens")
                     val attempts = exactLong("attempts")
                     val timestamp = exactLong("ts")
-                    require(estimatedInput >= 0L && estimatedOutput >= 0L &&
+                    val runId = exactLong("runId")
+                    require(estimatedInput >= 0L && estimatedOutput >= 0L && runId in 0L..Int.MAX_VALUE.toLong() &&
                         attempts in 0L..Int.MAX_VALUE.toLong() && timestamp >= 0L) {
                         "Checkpoint row has invalid token estimates, timestamp or attempt count."
                     }
@@ -170,7 +176,8 @@ object TaskCheckpointStore {
                         estimatedInputTokens = estimatedInput,
                         estimatedOutputTokens = estimatedOutput,
                         idempotencyKey = exactString("idempotencyKey"),
-                        baseUrl = exactString("baseUrl")
+                        baseUrl = exactString("baseUrl"),
+                        runId = runId.toInt()
                     )
                 }
             }
@@ -309,6 +316,7 @@ object TaskCheckpointStore {
                     .put("estimatedOutputTokens", e.estimatedOutputTokens)
                     .put("idempotencyKey", e.idempotencyKey)
                     .put("baseUrl", e.baseUrl)
+                    .put("runId", e.runId)
             )
         }
         val editor = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()

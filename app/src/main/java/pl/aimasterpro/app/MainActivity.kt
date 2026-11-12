@@ -6917,7 +6917,8 @@ class MainActivity : Activity() {
         }
         val queueStore = pl.aimasterpro.app.core.MasterTaskQueueStore
         val task = queueStore.snapshot(this).tasks.firstOrNull { it.id == taskId }
-        if (task == null || task.status != pl.aimasterpro.app.core.MasterTaskQueueStore.Status.ASSIGNED || task.assignedAgentIds.isEmpty()) {
+        if (task == null || task.status != pl.aimasterpro.app.core.MasterTaskQueueStore.Status.ASSIGNED ||
+            task.assignedAgentIds.isEmpty() || task.runId == Int.MAX_VALUE) {
             toast("Zadanie nie jest gotowe do uruchomienia.")
             return
         }
@@ -6928,6 +6929,7 @@ class MainActivity : Activity() {
             }
             activeQueueTaskId = taskId
         }
+        val executionRunId = task.runId + 1
         val enabledAgentCatalog = pl.aimasterpro.app.core.AgentManagerStore.enabledCatalog(this)
         val specs = task.assignedAgentIds.mapNotNull { id ->
             enabledAgentCatalog.firstOrNull { it.id == id }
@@ -6954,7 +6956,7 @@ class MainActivity : Activity() {
         val outputTokens = 1_400L
         val teamTasks = specs.map { spec ->
             pl.aimasterpro.app.agents.TeamTask(
-                id = "q-${task.id.take(45)}-${spec.id.take(35)}",
+                id = "q-${task.id.take(42)}-${spec.id.take(32)}-r$executionRunId",
                 agentId = spec.id,
                 goal = task.title,
                 prompt = "Zadanie MASTER-a: ${task.title}\n\nCel i kryteria wykonania:\n${task.objective}\n\nPrzeanalizuj cel, wykonaj przydzieloną pracę na podstawie dostępnego kontekstu i zwróć raport z ustaleniami, ograniczeniami oraz weryfikacją. Nie twierdź, że zmieniłeś pliki ani wykonałeś operacje, do których nie masz narzędzi."
@@ -6992,6 +6994,13 @@ class MainActivity : Activity() {
             toast("Nie udało się trwale rozpocząć zadania. Nie wysłano żądań.")
             return
         }
+        val startedTask = queueStore.snapshot(this).tasks.firstOrNull { it.id == taskId }
+        if (startedTask?.status != pl.aimasterpro.app.core.MasterTaskQueueStore.Status.RUNNING || startedTask.runId != executionRunId) {
+            pl.aimasterpro.app.core.ApiTokenTracker.releaseBatchReservation(budgetPlan.reservationId)
+            activeQueueTaskId = ""
+            toast("Nie udało się potwierdzić numeru przebiegu kolejki. Nie wysłano żądań.")
+            return
+        }
         blocked.forEach { item ->
             queueStore.recordAgentResult(this, taskId, item.agentId, pl.aimasterpro.app.core.MasterTaskQueueStore.Status.BLOCKED,
                 budgetPlan.blockedReasons[item.id] ?: "Zablokowano przez Smart Budget.")
@@ -7024,7 +7033,7 @@ class MainActivity : Activity() {
                             val senderConfig = senderSpec?.let { configs[it.id] }
                             val logged = queueStore.recordAgentMessage(this, taskId, sender, recipient,
                                 eventStatus, message, providerId = senderConfig?.id.orEmpty(),
-                                model = senderConfig?.model.orEmpty())
+                                model = senderConfig?.model.orEmpty(), expectedRunId = executionRunId)
                             if (!logged) android.util.Log.w("AiFORTecaQueue", "Nie zapisano komunikatu $taskId • $sender → $recipient")
                             android.util.Log.i("AiFORTecaQueue", "$taskId • $sender → $recipient • $eventStatus • ${message.take(350)}")
                             if (screen == "Rozmowy") runOnUiThread { refreshQueueCommunicationTimeline() }
@@ -7064,12 +7073,13 @@ class MainActivity : Activity() {
                             val saved = pl.aimasterpro.app.core.TaskCheckpointStore.record(
                                 this, pl.aimasterpro.app.core.TaskCheckpointStore.Event(
                                     item.id, item.agentId, state, detail, System.currentTimeMillis(),
-                                    providerId, model, attempts
+                                    providerId, model, attempts, runId = executionRunId
                                 )
                             )
                             if (!saved) android.util.Log.e("AiFORTecaQueue", "Nie zapisano checkpointu $taskId/${item.agentId} • $state")
                             val progressSaved = queueStore.recordAgentProgress(
-                                this, taskId, item.agentId, state, detail, providerId, model, attempts
+                                this, taskId, item.agentId, state, detail, providerId, model, attempts,
+                                expectedRunId = executionRunId
                             )
                             if (!progressSaved) android.util.Log.w("AiFORTecaQueue", "Nie zapisano postępu kolejki $taskId/${item.agentId} • $state")
                         },
@@ -7087,7 +7097,8 @@ class MainActivity : Activity() {
                                     System.currentTimeMillis(), actualProvider.id, actualProvider.model, attempts,
                                     estimatedInputTokens = estimatedInput, estimatedOutputTokens = estimatedOutput,
                                     idempotencyKey = idempotencyKey,
-                                    baseUrl = pl.aimasterpro.app.core.TaskCheckpointStore.safeBaseUrlForCheckpoint(actualProvider.baseUrl)
+                                    baseUrl = pl.aimasterpro.app.core.TaskCheckpointStore.safeBaseUrlForCheckpoint(actualProvider.baseUrl),
+                                    runId = executionRunId
                                 )
                             )
                         },
@@ -7104,13 +7115,13 @@ class MainActivity : Activity() {
                         pl.aimasterpro.app.agents.TeamTaskResult.Status.BLOCKED -> pl.aimasterpro.app.core.MasterTaskQueueStore.Status.BLOCKED
                     }
                     val saved = queueStore.recordAgentResult(this, taskId, result.agentId, queueResult,
-                        "${result.status}: ${result.report.take(420)}")
+                        "${result.status}: ${result.report.take(420)}", expectedRunId = executionRunId)
                     if (!saved) android.util.Log.e("AiFORTecaQueue", "Nie zapisano wyniku agenta ${result.agentId} dla $taskId.")
                 }
                 val returned = results.map { it.agentId }.toSet()
                 allowed.filterNot { it.agentId in returned }.forEach { item ->
                     queueStore.recordAgentResult(this, taskId, item.agentId, pl.aimasterpro.app.core.MasterTaskQueueStore.Status.FAILED,
-                        "TeamRunEngine nie zwrócił wyniku dla tego agenta.")
+                        "TeamRunEngine nie zwrócił wyniku dla tego agenta.", expectedRunId = executionRunId)
                 }
                 runOnUiThread {
                     if (!isFinishing) {
@@ -7131,7 +7142,7 @@ class MainActivity : Activity() {
                         }
                     }.forEach { agentId ->
                         queueStore.recordAgentResult(this, taskId, agentId, pl.aimasterpro.app.core.MasterTaskQueueStore.Status.FAILED,
-                            "Błąd wykonania: ${error.message.orEmpty().take(400)}")
+                            "Błąd wykonania: ${error.message.orEmpty().take(400)}", expectedRunId = executionRunId)
                     }
                 }
                 runOnUiThread {

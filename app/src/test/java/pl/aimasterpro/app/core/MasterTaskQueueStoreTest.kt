@@ -235,6 +235,29 @@ class MasterTaskQueueStoreTest {
         assertEquals(2, state.tasks.single().runId)
     }
 
+    @Test fun callbacksFromPreviousRunCannotPolluteRetryProgressMessagesOrResults() {
+        val taskId = "task-stale-callback"
+        val agent = "critical-reviewer"
+        assertTrue(MasterTaskQueueStore.enqueue(context, taskId, "Retry epoch", "Reject stale callbacks.", now = 310L))
+        assertTrue(MasterTaskQueueStore.assign(context, taskId, listOf(agent), now = 311L))
+        assertTrue(MasterTaskQueueStore.transition(context, taskId, "MASTER", MasterTaskQueueStore.Status.RUNNING, "Run 1", 312L))
+        val firstRun = MasterTaskQueueStore.snapshot(context).tasks.single().runId
+        assertTrue(MasterTaskQueueStore.transition(context, taskId, "MASTER", MasterTaskQueueStore.Status.BLOCKED, "Block run 1", 313L))
+        assertTrue(MasterTaskQueueStore.transition(context, taskId, "MASTER", MasterTaskQueueStore.Status.QUEUED, "Retry", 314L))
+        assertTrue(MasterTaskQueueStore.assign(context, taskId, listOf(agent), now = 315L))
+        assertTrue(MasterTaskQueueStore.transition(context, taskId, "MASTER", MasterTaskQueueStore.Status.RUNNING, "Run 2", 316L))
+        val secondRun = MasterTaskQueueStore.snapshot(context).tasks.single().runId
+        assertTrue(secondRun > firstRun)
+        assertFalse(MasterTaskQueueStore.recordAgentProgress(context, taskId, agent, "RUNNING", "late progress", expectedRunId = firstRun))
+        assertFalse(MasterTaskQueueStore.recordAgentMessage(context, taskId, agent, "MASTER", "DONE", "late message", expectedRunId = firstRun))
+        assertFalse(MasterTaskQueueStore.recordAgentResult(context, taskId, agent, MasterTaskQueueStore.Status.COMPLETED, "late result", expectedRunId = firstRun))
+        val state = MasterTaskQueueStore.snapshot(context)
+        assertEquals(MasterTaskQueueStore.Status.RUNNING, state.tasks.single().status)
+        assertEquals(secondRun, state.tasks.single().runId)
+        assertFalse(state.events.any { it.taskId == taskId && it.runId == secondRun && it.detail.contains("late") })
+        assertTrue(MasterTaskQueueStore.recordAgentResult(context, taskId, agent, MasterTaskQueueStore.Status.COMPLETED, "fresh result", expectedRunId = secondRun))
+    }
+
     @Test fun lateAgentResultAfterUserCancellationIsRejected() {
         assertTrue(MasterTaskQueueStore.enqueue(context, "task-cancel-race", "Anulowanie", "Test spóźnionego wyniku.", now = 320L))
         assertTrue(MasterTaskQueueStore.assign(context, "task-cancel-race", listOf("critical-reviewer"), now = 321L))

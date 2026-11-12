@@ -153,10 +153,12 @@ object MasterTaskQueueStore {
         agentId: String,
         result: Status,
         detail: String,
-        now: Long = System.currentTimeMillis()
+        now: Long = System.currentTimeMillis(),
+        expectedRunId: Int? = null
     ): Boolean = mutate(context) { tasks, events ->
         val current = tasks.firstOrNull { it.id == taskId } ?: return@mutate null
-        if (current.status != Status.RUNNING || agentId !in current.assignedAgentIds ||
+        if (current.status != Status.RUNNING || (expectedRunId != null && current.runId != expectedRunId) ||
+            agentId !in current.assignedAgentIds ||
             result !in setOf(Status.COMPLETED, Status.FAILED, Status.BLOCKED) ||
             detail.length > 500 || now < 0L) return@mutate null
         val alreadyReported = events.any {
@@ -193,10 +195,12 @@ object MasterTaskQueueStore {
         providerId: String = "",
         model: String = "",
         attempts: Int = 0,
-        now: Long = System.currentTimeMillis()
+        now: Long = System.currentTimeMillis(),
+        expectedRunId: Int? = null
     ): Boolean = mutate(context) { tasks, events ->
         val current = tasks.firstOrNull { it.id == taskId } ?: return@mutate null
-        if (current.status != Status.RUNNING || agentId !in current.assignedAgentIds ||
+        if (current.status != Status.RUNNING || (expectedRunId != null && current.runId != expectedRunId) ||
+            agentId !in current.assignedAgentIds ||
             state.isBlank() || state.length > 40 || detail.length > 500 ||
             providerId.length > 120 || model.length > 180 || attempts !in 0..100 ||
             now < 0L) return@mutate null
@@ -222,10 +226,12 @@ object MasterTaskQueueStore {
         message: String,
         now: Long = System.currentTimeMillis(),
         providerId: String = "",
-        model: String = ""
+        model: String = "",
+        expectedRunId: Int? = null
     ): Boolean = mutate(context) { tasks, events ->
         val current = tasks.firstOrNull { it.id == taskId } ?: return@mutate null
-        if (current.status != Status.RUNNING || sender.isBlank() || sender.length > 100 ||
+        if (current.status != Status.RUNNING || (expectedRunId != null && current.runId != expectedRunId) ||
+            sender.isBlank() || sender.length > 100 ||
             recipient.isBlank() || recipient.length > 100 || status.length > 30 ||
             message.isBlank() || message.length > 8_000 || now < 0L ||
             providerId.length > 120 || model.length > 180) return@mutate null
