@@ -50,6 +50,26 @@ object MemoryAuditLog {
     fun readVerified(context: Context): List<Record>? = readRecords(context)
 
     /**
+     * Detects a previously committed USER request with the same approval identity.
+     * An unreadable journal is treated as a duplicate so callers fail closed.
+     */
+    @Synchronized
+    internal fun hasCompletedRequest(
+        context: Context,
+        actor: String,
+        mutation: String,
+        objectId: String,
+        approvalRef: String
+    ): Boolean {
+        if (actor != "USER") return false
+        val records = readRecords(context) ?: return true
+        return records.any {
+            it.actor == actor && it.mutation == mutation && it.objectId == objectId &&
+                it.approvalRef == approvalRef && it.phase == Phase.COMMITTED
+        }
+    }
+
+    /**
      * Detects an operation whose durable INTENT has no terminal record.
      * Stable identity excludes the reason and approval reference, which can change on retry.
      */

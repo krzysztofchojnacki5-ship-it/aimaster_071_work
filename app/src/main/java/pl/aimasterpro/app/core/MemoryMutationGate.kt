@@ -34,6 +34,21 @@ object MemoryMutationGate {
                 context, request.actor.name, request.mutation.name, request.objectId
             )) return false
 
+        // A completed USER approval reference is an idempotency key: replaying the same
+        // request must not execute a second durable mutation. Recovery remains repeatable.
+        if (request.actor == MemoryGovernance.Actor.USER &&
+            MemoryAuditLog.hasCompletedRequest(
+                context, request.actor.name, request.mutation.name,
+                request.objectId, request.approvalRef
+            )
+        ) {
+            MemoryAuditLog.append(
+                context,
+                auditEvent(request, MemoryAuditLog.Phase.FAILED, "DENIED_DUPLICATE_REQUEST")
+            )
+            return false
+        }
+
         if (!MemoryAuditLog.append(
                 context,
                 auditEvent(request, MemoryAuditLog.Phase.INTENT, "AUTHORIZED")

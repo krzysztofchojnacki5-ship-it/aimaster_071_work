@@ -63,6 +63,34 @@ class MemoryMutationGateTest {
         assertEquals(listOf("AUTHORIZED", "SUCCESS"), rows.map { it.outcome })
     }
 
+    @Test fun replayOfCommittedApprovalReferenceIsRejectedWithoutMutation() {
+        val approvedRequest = request()
+        var firstInvoked = false
+        assertTrue(MemoryMutationGate.execute(context, approvedRequest) {
+            firstInvoked = true
+            true
+        })
+        assertTrue(firstInvoked)
+
+        var replayInvoked = false
+        assertFalse(MemoryMutationGate.execute(context, approvedRequest) {
+            replayInvoked = true
+            true
+        })
+        assertFalse(replayInvoked)
+        val rows = MemoryAuditLog.readVerified(context)!!
+        assertEquals(listOf("AUTHORIZED", "SUCCESS", "DENIED_DUPLICATE_REQUEST"), rows.map { it.outcome })
+    }
+
+    @Test fun distinctApprovalReferenceCanAuthorizeANewMutationForSameObject() {
+        assertTrue(MemoryMutationGate.execute(context, request(approvalRef = "ui-confirmation:first")) { true })
+        assertTrue(MemoryMutationGate.execute(context, request(approvalRef = "ui-confirmation:second")) { true })
+        val rows = MemoryAuditLog.readVerified(context)!!
+        assertEquals(4, rows.size)
+        assertEquals(2, rows.count { it.phase == MemoryAuditLog.Phase.INTENT })
+        assertEquals(2, rows.count { it.phase == MemoryAuditLog.Phase.COMMITTED })
+    }
+
     @Test fun unresolvedIntentBlocksReplayBeforeMutation() {
         val request = request()
         assertTrue(MemoryAuditLog.append(context, MemoryAuditLog.Event(
