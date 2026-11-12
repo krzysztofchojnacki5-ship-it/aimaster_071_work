@@ -893,4 +893,75 @@ class QualityLearningStoreTest {
         assertFalse(rows.any { it.actor == "SYSTEM_RECOVERY" && it.objectId == proposal.id })
     }
 
+
+    @Test fun ambiguousProposalLedgerApprovalCommitIsRecoveredExactlyOnce() {
+        val proposal = QualityLearningStore.addProposal(
+            context, "Reguła po niejednoznacznym zapisie rejestru propozycji", 9, "wysoka",
+            listOf("task-ambiguous-proposal-ledger"), listOf("coder"), emptyList()
+        )
+        val qualityPrefsName = "ai_quality_learning_v1"
+        var proposalCommitCalls = 0
+        val failingContext = object : ContextWrapper(context) {
+            override fun getSharedPreferences(name: String, mode: Int): SharedPreferences {
+                val delegate = context.getSharedPreferences(name, mode)
+                if (name != qualityPrefsName) return delegate
+                return object : SharedPreferences by delegate {
+                    override fun edit(): SharedPreferences.Editor {
+                        val editor = delegate.edit()
+                        return object : SharedPreferences.Editor by editor {
+                            override fun putString(key: String, value: String?): SharedPreferences.Editor {
+                                editor.putString(key, value)
+                                return this
+                            }
+
+                            override fun commit(): Boolean {
+                                proposalCommitCalls++
+                                // Persist APPROVED, but report failure to model an ambiguous durable write.
+                                return if (proposalCommitCalls == 1) {
+                                    editor.commit()
+                                    false
+                                } else {
+                                    editor.commit()
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        assertFalse(QualityLearningStore.setProposalStatus(
+            failingContext, proposal.id, "APPROVED", "test-ambiguous-proposal-ledger:${proposal.id}"
+        ))
+        assertEquals(1, proposalCommitCalls)
+        assertTrue(SharedPreferencesWriteHealth.isUncertain(qualityPrefsName))
+        assertTrue(MemoryAuditLog.hasUnresolvedIntent(
+            context, "USER", "APPROVE_PROPOSAL", proposal.id
+        ))
+
+        // Simulate process restart: the durable proposal ledger says APPROVED although
+        // the caller received false. Reconciliation must finish the authorized operation.
+        SharedPreferencesWriteHealth.resetForTests(qualityPrefsName)
+        assertEquals("APPROVED", QualityLearningStore.proposals(context).single().status)
+        val memoryEntry = "[UCZENIE ZATWIERDZONE ${proposal.id.take(8)}; dowody=${proposal.evidenceCount}; pewność=${proposal.confidence}] ${proposal.text}".take(1000)
+        assertFalse(AiMemoryStore.containsExactMemory(context, memoryEntry) == true)
+        assertEquals(1, QualityLearningStore.syncApprovedAgentMemories(context))
+        assertTrue(AiMemoryStore.containsExactMemory(context, memoryEntry) == true)
+        assertTrue(AgentOperationalMemoryStore.hasApprovedSource(
+            context, "coder", proposal.text, "proposal:${proposal.id}"
+        ) == true)
+        assertFalse(MemoryAuditLog.hasUnresolvedIntent(
+            context, "USER", "APPROVE_PROPOSAL", proposal.id
+        ))
+
+        val afterRecovery = MemoryAuditLog.readVerified(context)!!
+        assertEquals(1, afterRecovery.count {
+            it.actor == "SYSTEM_RECOVERY" && it.mutation == "RECONCILE_APPROVED_PROPOSAL" &&
+                it.objectId == proposal.id && it.phase == MemoryAuditLog.Phase.INTENT
+        })
+        val auditSize = afterRecovery.size
+        assertEquals(0, QualityLearningStore.syncApprovedAgentMemories(context))
+        assertEquals(auditSize, MemoryAuditLog.readVerified(context)!!.size)
+    }
+
 }
