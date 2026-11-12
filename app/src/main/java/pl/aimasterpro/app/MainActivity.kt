@@ -6956,7 +6956,7 @@ class MainActivity : Activity() {
         }
         AlertDialog.Builder(this)
             .setTitle("Pełny raport • $agentId")
-            .setView(scroll, dp(20), dp(8), dp(20), dp(0))
+            .setView(scroll)
             .setPositiveButton("Zamknij", null)
             .show()
     }
