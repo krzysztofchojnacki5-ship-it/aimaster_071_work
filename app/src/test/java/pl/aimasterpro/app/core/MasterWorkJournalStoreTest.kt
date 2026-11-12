@@ -95,6 +95,25 @@ class MasterWorkJournalStoreTest {
         }
     }
 
+    @Test fun delayedJournalWritesAndRecoveryCannotMoveUpdatedAtBackwards() {
+        assertTrue(MasterWorkJournalStore.save(context, record("clock-task", 100L)))
+        val updated = MasterWorkJournalStore.update(context, "clock-task") {
+            it.copy(currentStep = "Opóźniony zapis", updatedAt = 80L)
+        }
+        assertEquals(100L, updated?.updatedAt)
+
+        val replaced = MasterWorkJournalStore.save(context, record("clock-task", 70L).copy(status = "BLOCKED"))
+        assertTrue(replaced)
+        assertEquals(100L, MasterWorkJournalStore.get(context, "clock-task")?.updatedAt)
+
+        assertTrue(MasterWorkJournalStore.save(context, record("clock-active", 200L)))
+        assertEquals(1, MasterWorkJournalStore.pauseActive(context, 150L))
+        assertEquals(200L, MasterWorkJournalStore.get(context, "clock-active")?.updatedAt)
+
+        assertTrue(MasterWorkJournalStore.save(context, record("clock-target", 300L)))
+        assertEquals(300L, MasterWorkJournalStore.pauseActiveTask(context, "clock-target", 250L)?.updatedAt)
+    }
+
     @Test fun parallelProgressUpdatesDoNotLoseCompletedSteps() {
         assertTrue(MasterWorkJournalStore.save(context, record("shared-task")))
         val ready = java.util.concurrent.CountDownLatch(12)
