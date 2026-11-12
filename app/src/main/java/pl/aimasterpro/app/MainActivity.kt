@@ -6771,8 +6771,7 @@ class MainActivity : Activity() {
                         provider,
                         eventTime.format(java.util.Date(event.timestamp))
                     ).filter { it.isNotBlank() }.joinToString(" • ")
-                    card(kind, "${metadata}
-${event.detail.take(350)}")
+                    card(kind, "${metadata}\n${event.detail.take(350)}")
                 }
             }
         }
