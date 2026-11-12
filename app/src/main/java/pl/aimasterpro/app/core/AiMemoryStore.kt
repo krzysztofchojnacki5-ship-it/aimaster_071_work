@@ -12,6 +12,7 @@ object AiMemoryStore {
     private const val PREFS_NAME = "ai_master_memory_store_v1"
     private const val MAX_MEMORIES = 100
     private const val MAX_MEMORY_CHARS = 2_000
+    private const val MAX_MEMORY_RAW_CHARS = 250_000
     private const val DEFAULT_CONTEXT_LIMIT = 2_400
     private const val DEFAULT_CONTEXT_ITEMS = 8
     private val termRegex = Regex("[\\p{L}\\p{N}]{3,}")
@@ -21,20 +22,8 @@ object AiMemoryStore {
         "this", "that", "have", "will", "your", "into", "when", "what", "how"
     )
 
-    fun getMemories(context: Context): List<String> = runCatching {
-        if (SharedPreferencesWriteHealth.isUncertain(PREFS_NAME)) return@runCatching defaultMemories()
-        val raw = SharedPreferencesWriteHealth.withHealthyAccess(PREFS_NAME) {
-            context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).getString("memories", null)
-        } ?: return@runCatching defaultMemories()
-        val arr = JSONArray(raw)
-        val list = mutableListOf<String>()
-        for (i in 0 until arr.length()) {
-            val value = arr.get(i)
-            require(value is String) { "Memory entry must be a string." }
-            list.add(value)
-        }
-        list.ifEmpty { defaultMemories() }
-    }.getOrDefault(defaultMemories())
+    fun getMemories(context: Context): List<String> =
+        readStoredMemories(context)?.ifEmpty { defaultMemories() } ?: defaultMemories()
 
     /**
      * A missing preference is a valid first-run state. Corrupt JSON is not an empty memory
@@ -45,6 +34,7 @@ object AiMemoryStore {
         val raw = SharedPreferencesWriteHealth.withHealthyAccess(PREFS_NAME) {
             context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).getString("memories", null)
         } ?: return@runCatching defaultMemories()
+        require(raw.length <= MAX_MEMORY_RAW_CHARS) { "Memory library exceeds its raw size limit." }
         val arr = JSONArray(raw)
         require(arr.length() <= MAX_MEMORIES) { "Memory library exceeds its supported capacity." }
         val values = (0 until arr.length()).map { index ->

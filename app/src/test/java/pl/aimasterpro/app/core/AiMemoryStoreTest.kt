@@ -127,4 +127,24 @@ class AiMemoryStoreTest {
         assertFalse(mutateRemove(context, "Nieistniejąca reguła pamięci."))
     }
 
+
+    @Test fun memoryReadRejectsOversizedRawPayloadAndTooManyRowsWithoutExposingThem() {
+        val prefs = context.getSharedPreferences("ai_master_memory_store_v1", Context.MODE_PRIVATE)
+        val oversizedRaw = "[\"" + "x".repeat(250_001) + "\"]"
+        assertTrue(prefs.edit().putString("memories", oversizedRaw).commit())
+        val fallback = AiMemoryStore.getMemories(context)
+        assertTrue(fallback.isNotEmpty())
+        assertFalse(fallback.contains("x".repeat(100)))
+        assertFalse(AiMemoryStore.contextString(context, "x", maxChars = 2_400).contains("x".repeat(100)))
+        assertEquals(oversizedRaw, prefs.getString("memories", null))
+
+        val excessiveRows = org.json.JSONArray((1..101).map { "Injected rule $it" }).toString()
+        assertTrue(prefs.edit().putString("memories", excessiveRows).commit())
+        val boundedFallback = AiMemoryStore.getMemories(context)
+        assertTrue(boundedFallback.isNotEmpty())
+        assertFalse(boundedFallback.any { it.startsWith("Injected rule ") })
+        assertEquals(excessiveRows, prefs.getString("memories", null))
+    }
+
+
 }
