@@ -262,6 +262,61 @@ object MasterTaskQueueStore {
             recipient = recipient, providerId = providerId, model = model, runId = current.runId), true)
     }
 
+    /**
+     * Persists TeamRunEngine diagnostics as technical traces, never as agent-to-agent messages.
+     * Unknown endpoints are accepted only as explicitly tagged provider endpoints paired with
+     * an assigned agent; task/run binding and durable agent-catalog availability remain mandatory.
+     */
+    @Synchronized
+    fun recordAgentTrace(
+        context: Context,
+        taskId: String,
+        source: String,
+        target: String,
+        traceType: String,
+        detail: String,
+        now: Long = System.currentTimeMillis(),
+        providerId: String = "",
+        model: String = "",
+        expectedRunId: Int? = null
+    ): Boolean = mutate(context) { tasks, events ->
+        val current = tasks.firstOrNull { it.id == taskId } ?: return@mutate null
+        if (current.status != Status.RUNNING || (expectedRunId != null && current.runId != expectedRunId) ||
+            source.isBlank() || source.length > 140 ||
+            target.isBlank() || target.length > 140 ||
+            traceType.isBlank() || traceType.length > 40 ||
+            detail.isBlank() || detail.length > 8_000 || now < 0L ||
+            providerId.length > 120 || model.length > 180) return@mutate null
+
+        val catalogState = AgentManagerStore.snapshot(context)
+        if (catalogState.status != AgentManagerStore.ReadStatus.AVAILABLE) return@mutate null
+        val knownAgents = pl.aimasterpro.app.agents.AgentCatalog.all + catalogState.customAgents
+        fun resolveAgentId(endpoint: String): String? {
+            val token = endpoint.removePrefix("agent:")
+            return knownAgents.firstOrNull {
+                it.id.equals(token, ignoreCase = true) || it.name.equals(token, ignoreCase = true)
+            }?.id
+        }
+        val sourceId = resolveAgentId(source)
+        val targetId = resolveAgentId(target)
+        val sourceIsCoordinator = source.equals("MASTER", true) || source.equals("SYSTEM", true)
+        val targetIsCoordinator = target.equals("MASTER", true) || target.equals("SYSTEM", true)
+        val sourceIsProvider = source.startsWith("provider:", ignoreCase = true)
+        val targetIsProvider = target.startsWith("provider:", ignoreCase = true)
+        val sourceAllowed = sourceIsCoordinator ||
+            (sourceId != null && sourceId in current.assignedAgentIds) ||
+            (sourceIsProvider && targetId != null && targetId in current.assignedAgentIds)
+        val targetAllowed = targetIsCoordinator ||
+            (targetId != null && targetId in current.assignedAgentIds) ||
+            (targetIsProvider && sourceId != null && sourceId in current.assignedAgentIds)
+        if (!sourceAllowed || !targetAllowed) return@mutate null
+
+        val safe = CommunicationLogSanitizer.sanitize(detail).take(350)
+        val summary = "Do: $target • $traceType • $safe"
+        Triple(tasks, events + event(taskId, source, "AGENT_TRACE", "", traceType, summary, now,
+            recipient = target, providerId = providerId, model = model, runId = current.runId), true)
+    }
+
     /** Moves interrupted RUNNING tasks to BLOCKED after process restart; never auto-replays uncertain API work. */
     @Synchronized
     fun recoverInterruptedRuns(context: Context, now: Long = System.currentTimeMillis()): Int {

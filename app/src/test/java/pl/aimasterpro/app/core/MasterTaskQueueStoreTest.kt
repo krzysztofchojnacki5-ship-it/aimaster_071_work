@@ -175,6 +175,43 @@ class MasterTaskQueueStoreTest {
         assertTrue(event.detail.contains("Raport testowy"))
     }
 
+    @Test fun technicalAgentTraceIsSeparateFromMessagesAndBoundToCurrentRun() {
+        val taskId = "task-technical-trace"
+        assertTrue(MasterTaskQueueStore.enqueue(context, taskId, "Ślady techniczne", "Rozdziel komunikaty i logi.", now = 71L))
+        assertTrue(MasterTaskQueueStore.assign(context, taskId, listOf("critical-reviewer"), now = 72L))
+        assertTrue(MasterTaskQueueStore.transition(context, taskId, "MASTER",
+            MasterTaskQueueStore.Status.RUNNING, "Start.", 73L))
+        val runId = MasterTaskQueueStore.snapshot(context).tasks.single().runId
+
+        assertTrue(MasterTaskQueueStore.recordAgentTrace(
+            context, taskId, "provider:OpenRouter", "agent:critical-reviewer",
+            "NETWORK_FAILOVER", "Przełączenie po limicie dostawcy.",
+            now = 74L, providerId = "openrouter", model = "model-test", expectedRunId = runId
+        ))
+        assertTrue(MasterTaskQueueStore.recordAgentTrace(
+            context, taskId, "agent:critical-reviewer", "MASTER",
+            "REPORT", "Raport zapisany.", now = 75L, expectedRunId = runId
+        ))
+        assertFalse(MasterTaskQueueStore.recordAgentTrace(
+            context, taskId, "provider:OpenRouter", "MASTER",
+            "NETWORK_ERROR", "Niepowiązany ślad dostawcy.", now = 76L, expectedRunId = runId
+        ))
+        assertFalse(MasterTaskQueueStore.recordAgentTrace(
+            context, taskId, "agent:critical-reviewer", "MASTER",
+            "LATE", "Ślad ze starego przebiegu.", now = 77L, expectedRunId = runId - 1
+        ))
+
+        val events = MasterTaskQueueStore.snapshot(context).events.filter { it.taskId == taskId }
+        assertEquals(2, events.count { it.operation == "AGENT_TRACE" })
+        assertEquals(0, events.count { it.operation == "AGENT_MESSAGE" })
+        val trace = events.first { it.operation == "AGENT_TRACE" }
+        assertEquals("provider:OpenRouter", trace.actor)
+        assertEquals("agent:critical-reviewer", trace.recipient)
+        assertEquals("openrouter", trace.providerId)
+        assertEquals("model-test", trace.model)
+        assertTrue(trace.detail.contains("NETWORK_FAILOVER"))
+    }
+
     @Test fun communicationRejectsUnassignedSendersAndRecipients() {
         assertTrue(MasterTaskQueueStore.enqueue(context, "task-comms-auth", "Autoryzacja komunikacji", "Test granic zespołu.", now = 74L))
         assertTrue(MasterTaskQueueStore.assign(context, "task-comms-auth",

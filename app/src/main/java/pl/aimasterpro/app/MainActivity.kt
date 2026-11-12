@@ -7086,13 +7086,21 @@ class MainActivity : Activity() {
                         projectContext = projectContext,
                         onLog = { sender, recipient, message, eventStatus ->
                             val senderSpec = enabledAgentCatalog.firstOrNull { it.id == sender || it.name == sender }
+                            val recipientSpec = enabledAgentCatalog.firstOrNull { it.id == recipient || it.name == recipient }
+                            val senderEndpoint = senderSpec?.let { "agent:${it.id}" } ?: when {
+                                sender.equals("MASTER", true) || sender.equals("SYSTEM", true) -> sender
+                                else -> "provider:${sender.take(100)}"
+                            }
+                            val recipientEndpoint = recipientSpec?.let { "agent:${it.id}" } ?: when {
+                                recipient.equals("MASTER", true) || recipient.equals("SYSTEM", true) -> recipient
+                                else -> "provider:${recipient.take(100)}"
+                            }
                             val senderConfig = senderSpec?.let { configs[it.id] }
-                            val logged = queueStore.recordAgentMessage(this, taskId, sender, recipient,
+                            val traced = queueStore.recordAgentTrace(this, taskId, senderEndpoint, recipientEndpoint,
                                 eventStatus, message, providerId = senderConfig?.id.orEmpty(),
                                 model = senderConfig?.model.orEmpty(), expectedRunId = executionRunId)
-                            if (!logged) android.util.Log.w("AiFORTecaQueue", "Nie zapisano komunikatu $taskId • $sender → $recipient")
-                            android.util.Log.i("AiFORTecaQueue", "$taskId • $sender → $recipient • $eventStatus • ${message.take(350)}")
-                            if (screen == "Rozmowy") runOnUiThread { refreshQueueCommunicationTimeline() }
+                            if (!traced) android.util.Log.w("AiFORTecaQueue", "Nie zapisano śladu technicznego $taskId • $sender → $recipient")
+                            android.util.Log.i("AiFORTecaQueue", "$taskId • TRACE • $sender → $recipient • $eventStatus • ${message.take(350)}")
                         },
                         onUsage = { agentId, subTaskId, actualProvider, usage ->
                             pl.aimasterpro.app.core.ApiTokenTracker.recordQuery(
