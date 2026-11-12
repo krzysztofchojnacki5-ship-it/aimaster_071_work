@@ -4,6 +4,9 @@ import android.content.Context
 import org.junit.Assert.*
 import org.junit.Before
 import org.junit.Test
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
@@ -395,6 +398,50 @@ class MasterTaskQueueStoreTest {
         assertEquals(0, state.events.count { it.taskId == "task-cancel-race" && it.operation == "AGENT_RESULT" })
     }
 
+
+
+    @Test fun activeRunCriticalSectionSerializesHandoffAgainstCancellation() {
+        val taskId = "task-cancel-lock"
+        assertTrue(MasterTaskQueueStore.enqueue(context, taskId, "Wyścig", "Atomowość anulowania.", now = 340L))
+        assertTrue(MasterTaskQueueStore.assign(context, taskId, listOf("critical-reviewer"), now = 341L))
+        assertTrue(MasterTaskQueueStore.transition(context, taskId, "MASTER",
+            MasterTaskQueueStore.Status.RUNNING, "Start.", 342L))
+        val runId = MasterTaskQueueStore.snapshot(context).tasks.single().runId
+        val entered = CountDownLatch(1)
+        val release = CountDownLatch(1)
+        val cancelStarted = CountDownLatch(1)
+        val cancelFinished = CountDownLatch(1)
+        val actionCompleted = AtomicBoolean(false)
+        val actionThread = Thread {
+            val result = MasterTaskQueueStore.withActiveRun(context, taskId, runId) {
+                entered.countDown()
+                check(release.await(3, TimeUnit.SECONDS))
+                actionCompleted.set(true)
+                true
+            }
+            assertEquals(true, result)
+        }
+        actionThread.start()
+        assertTrue("Critical section did not start", entered.await(2, TimeUnit.SECONDS))
+        val cancelThread = Thread {
+            cancelStarted.countDown()
+            assertTrue(MasterTaskQueueStore.transition(context, taskId, "USER",
+                MasterTaskQueueStore.Status.CANCELLED, "Anulowano.", 343L))
+            cancelFinished.countDown()
+        }
+        cancelThread.start()
+        assertTrue(cancelStarted.await(2, TimeUnit.SECONDS))
+        assertFalse("Cancellation must wait for the in-flight durable handoff section",
+            cancelFinished.await(100, TimeUnit.MILLISECONDS))
+        release.countDown()
+        actionThread.join(2_000L)
+        cancelThread.join(2_000L)
+        assertFalse(actionThread.isAlive)
+        assertFalse(cancelThread.isAlive)
+        assertTrue(actionCompleted.get())
+        assertEquals(MasterTaskQueueStore.Status.CANCELLED, MasterTaskQueueStore.snapshot(context).tasks.single().status)
+        assertNull(MasterTaskQueueStore.withActiveRun(context, taskId, runId) { true })
+    }
 
     @Test fun allLateAgentCallbacksAfterUserCancellationAreRejected() {
         val taskId = "task-cancel-all-callbacks"

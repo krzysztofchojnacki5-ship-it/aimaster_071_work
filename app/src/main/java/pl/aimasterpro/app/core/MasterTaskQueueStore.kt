@@ -80,6 +80,20 @@ object MasterTaskQueueStore {
         return read(context)
     }
 
+    /**
+     * Runs a short durable side-effect while holding the same monitor as queue transitions.
+     * This makes checking the active run and writing its handoff one atomic operation relative
+     * to cancellation, recovery and other coordinator transitions.
+     */
+    @Synchronized
+    fun <T> withActiveRun(context: Context, taskId: String, runId: Int, operation: () -> T): T? {
+        if (runId <= 0 || SharedPreferencesWriteHealth.isUncertain(PREFS)) return null
+        val current = snapshot(context)
+        val task = current.tasks.firstOrNull { it.id == taskId }
+        if (current.status != ReadStatus.AVAILABLE || task?.status != Status.RUNNING || task.runId != runId) return null
+        return operation()
+    }
+
     /** Creates a task in QUEUED state. Task content is bounded and never contains provider secrets. */
     @Synchronized
     fun enqueue(
