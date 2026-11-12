@@ -96,6 +96,25 @@ class AgentHandoffStoreTest {
             "unit-test-engineer", 32L))
     }
 
+
+    @Test fun cancelledParentRejectsNewAndPendingHandoffCallbacks() {
+        val runId = runningTask()
+        assertTrue(AgentHandoffStore.send(context, "handoff-task-01", runId, "handoff-msg-cancel-01",
+            "critical-reviewer", "unit-test-engineer", "Raport przed anulowaniem.", 50L))
+        assertTrue(MasterTaskQueueStore.transition(context, "handoff-task-01", "USER",
+            MasterTaskQueueStore.Status.CANCELLED, "Użytkownik przerwał zadanie.", 51L))
+
+        assertFalse(AgentHandoffStore.send(context, "handoff-task-01", runId, "handoff-msg-cancel-02",
+            "critical-reviewer", "unit-test-engineer", "Nowe przekazanie po anulowaniu.", 52L))
+        assertNull(AgentHandoffStore.claim(context, "handoff-task-01", runId, "handoff-msg-cancel-01",
+            "unit-test-engineer", 53L))
+        assertFalse(AgentHandoffStore.acknowledge(context, "handoff-task-01", runId, "handoff-msg-cancel-01",
+            "unit-test-engineer", 54L))
+        val snapshot = AgentHandoffStore.snapshot(context)
+        assertEquals(1, snapshot.messages.size)
+        assertEquals(AgentHandoffStore.State.PENDING, snapshot.messages.single().state)
+    }
+
     @Test fun staleRunAndUnassignedRecipientsAreRejected() {
         val runId = runningTask()
         assertFalse(AgentHandoffStore.send(context, "handoff-task-01", runId - 1, "handoff-msg-004",

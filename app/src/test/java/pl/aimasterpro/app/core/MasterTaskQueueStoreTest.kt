@@ -395,6 +395,34 @@ class MasterTaskQueueStoreTest {
         assertEquals(0, state.events.count { it.taskId == "task-cancel-race" && it.operation == "AGENT_RESULT" })
     }
 
+
+    @Test fun allLateAgentCallbacksAfterUserCancellationAreRejected() {
+        val taskId = "task-cancel-all-callbacks"
+        val agent = "critical-reviewer"
+        assertTrue(MasterTaskQueueStore.enqueue(context, taskId, "Anulowanie", "Odrzuć wszystkie spóźnione callbacki.", now = 330L))
+        assertTrue(MasterTaskQueueStore.assign(context, taskId, listOf(agent), now = 331L))
+        assertTrue(MasterTaskQueueStore.transition(context, taskId, "MASTER",
+            MasterTaskQueueStore.Status.RUNNING, "Start.", 332L))
+        val runId = MasterTaskQueueStore.snapshot(context).tasks.single().runId
+        assertTrue(MasterTaskQueueStore.transition(context, taskId, "USER",
+            MasterTaskQueueStore.Status.CANCELLED, "Użytkownik anulował zadanie.", 333L))
+
+        assertFalse(MasterTaskQueueStore.recordAgentProgress(context, taskId, agent,
+            "RUNNING", "Spóźniony postęp.", expectedRunId = runId))
+        assertFalse(MasterTaskQueueStore.recordAgentMessage(context, taskId, agent, "MASTER",
+            "REPORT", "Spóźniona wiadomość.", expectedRunId = runId))
+        assertFalse(MasterTaskQueueStore.recordAgentTrace(context, taskId, "agent:$agent", "MASTER",
+            "LATE_TRACE", "Spóźniony ślad.", expectedRunId = runId))
+        assertFalse(MasterTaskQueueStore.recordAgentResult(context, taskId, agent,
+            MasterTaskQueueStore.Status.COMPLETED, "Spóźniony wynik.", expectedRunId = runId))
+
+        val state = MasterTaskQueueStore.snapshot(context)
+        assertEquals(MasterTaskQueueStore.Status.CANCELLED, state.tasks.single().status)
+        assertEquals(1, state.events.count { it.taskId == taskId && it.operation == "TRANSITION" && it.toStatus == "CANCELLED" })
+        assertFalse(state.events.any { it.taskId == taskId && it.operation in setOf(
+            "AGENT_PROGRESS", "AGENT_MESSAGE", "AGENT_TRACE", "AGENT_RESULT") })
+    }
+
     @Test fun currentRunAgentResultsSurviveRollingJournalRollover() {
         val agents = listOf("critical-reviewer", "unit-test-engineer")
         assertTrue(MasterTaskQueueStore.enqueue(context, "task-result-retention", "Trwałe wyniki", "Test rotacji dziennika.", now = 340L))
