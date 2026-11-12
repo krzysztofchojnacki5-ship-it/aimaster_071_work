@@ -11,6 +11,7 @@ object LearningJournalStore {
     private const val PREFS = "ai_learning_journal_v1"
     private const val KEY = "events"
     private const val MAX_EVENTS = 500
+    private const val MAX_RAW_CHARS = 500_000
 
     data class Event(
         val timestamp: Long,
@@ -53,11 +54,16 @@ object LearningJournalStore {
                 .put("category", e.category).put("taskId", e.taskId)
                 .put("inputTokens", e.inputTokens).put("outputTokens", e.outputTokens))
         }
+        val serialized = json.toString()
+        if (serialized.length > MAX_RAW_CHARS) {
+            android.util.Log.e("AIMasterLearning", "Nie zapisano zdarzenia: dziennik przekracza limit rozmiaru.")
+            return
+        }
         val saved = runCatching {
             if (SharedPreferencesWriteHealth.isUncertain(PREFS)) return@runCatching false
             SharedPreferencesWriteHealth.commit(
                 PREFS, context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
-                    .putString(KEY, json.toString())
+                    .putString(KEY, serialized)
             )
         }.getOrDefault(false)
         if (!saved) android.util.Log.e("AIMasterLearning", "Nie udało się trwale zapisać dziennika operacyjnego.")
@@ -74,6 +80,7 @@ object LearningJournalStore {
         val raw = SharedPreferencesWriteHealth.withHealthyAccess(PREFS) {
             context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString(KEY, null)
         } ?: return@runCatching emptyList()
+        require(raw.length <= MAX_RAW_CHARS) { "Learning journal exceeds its supported raw size." }
         runCatching {
             val arr = JSONArray(raw)
             require(arr.length() <= MAX_EVENTS) { "Learning journal exceeds its supported size." }

@@ -389,4 +389,15 @@ class TaskResultArchiveTest {
         assertEquals(corrupt, prefs.getString("entries", null))
     }
 
+    @Test fun archiveReaderRejectsOversizedRawPayloadBeforeParsingAndPreservesIt() {
+        val oversized = " ".repeat(3_000_001)
+        assertTrue(prefs.edit().putString("entries", oversized).commit())
+
+        assertFalse(TaskResultArchive.isArchiveReadable(context))
+        assertFalse(TaskResultArchive.put(
+            context, "new-task", "RESEARCHER", "New report", "provider-a", "model-a", 50_000L
+        ))
+        assertEquals(oversized, prefs.getString("entries", null))
+    }
+
 }

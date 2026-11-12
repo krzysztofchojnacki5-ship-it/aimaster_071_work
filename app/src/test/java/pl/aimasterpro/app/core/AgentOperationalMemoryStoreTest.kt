@@ -234,4 +234,14 @@ class AgentOperationalMemoryStoreTest {
         assertEquals(first.id, AgentOperationalMemoryStore.all(context).single().id)
     }
 
+    @Test fun oversizedRawOperationalMemoryIsRejectedBeforeParsingAndPreserved() {
+        val prefs = context.getSharedPreferences("ai_agent_operational_memory_v1", Context.MODE_PRIVATE)
+        val oversized = " ".repeat(1_000_001)
+        assertTrue(prefs.edit().putString("entries", oversized).commit())
+
+        assertTrue(AgentOperationalMemoryStore.all(context).isEmpty())
+        assertNull(addLesson(context, "tester", "Nowy wpis nie może nadpisać zbyt dużej pamięci."))
+        assertEquals(oversized, prefs.getString("entries", null))
+    }
+
 }

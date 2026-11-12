@@ -24,6 +24,7 @@ object TaskResultArchive {
     private const val PREFS = "task_result_archive_v1"
     private const val KEY = "entries"
     private const val MAX_ENTRIES = 80
+    private const val MAX_RAW_CHARS = 3_000_000
     private const val MAX_TASK_ID_CHARS = 512
     private const val MAX_AGENT_ID_CHARS = 120
     private const val MAX_PROVIDER_ID_CHARS = 200
@@ -73,10 +74,12 @@ object TaskResultArchive {
         }
         val trimmed = JSONArray()
         for (i in 0 until minOf(next.length(), MAX_ENTRIES)) trimmed.put(next.getJSONObject(i))
+        val serialized = trimmed.toString()
+        if (serialized.length > MAX_RAW_CHARS) return@withHealthyAccess false
         return@withHealthyAccess runCatching {
             SharedPreferencesWriteHealth.commit(
                 PREFS, context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
-                    .putString(KEY, trimmed.toString())
+                    .putString(KEY, serialized)
             )
         }.getOrDefault(false)
     
@@ -183,6 +186,7 @@ object TaskResultArchive {
         val raw = SharedPreferencesWriteHealth.withHealthyAccess(PREFS) {
             context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString(KEY, null)
         } ?: return@runCatching JSONArray()
+        require(raw.length <= MAX_RAW_CHARS) { "Task result archive exceeds its supported raw size." }
         runCatching {
             val source = JSONArray(raw)
             require(source.length() <= MAX_ENTRIES) { "Task result archive exceeds its capacity." }

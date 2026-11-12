@@ -134,4 +134,15 @@ class LearningJournalStoreTest {
         assertTrue(!LearningJournalStore.clear(context))
         assertEquals(original, prefs.getString("events", null))
     }
+    @Test fun oversizedRawJournalIsRejectedBeforeParsingAndPreserved() {
+        val prefs = context.getSharedPreferences("ai_learning_journal_v1", Context.MODE_PRIVATE)
+        val oversized = " ".repeat(500_001)
+        assertTrue(prefs.edit().putString("events", oversized).commit())
+
+        assertTrue(LearningJournalStore.load(context).isEmpty())
+        LearningJournalStore.record(
+            context, LearningJournalStore.Event(400L, "agent", "tester", "groq", "model", "COMPLETED", 100L, 1, "")
+        )
+        assertEquals(oversized, prefs.getString("events", null))
+    }
 }

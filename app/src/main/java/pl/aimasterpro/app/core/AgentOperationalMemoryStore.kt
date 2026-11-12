@@ -13,6 +13,7 @@ object AgentOperationalMemoryStore {
     private const val KEY = "entries"
     private const val MAX_ENTRIES = 300
     private const val MAX_ENTRY_CHARS = 1200
+    private const val MAX_RAW_CHARS = 1_000_000
     private val termRegex = Regex("[\\p{L}\\p{N}]{3,}")
     private val stopWords = setOf("oraz", "który", "która", "które", "jest", "być", "dla", "the", "and", "for", "with", "that", "this")
 
@@ -173,6 +174,7 @@ object AgentOperationalMemoryStore {
         val raw = SharedPreferencesWriteHealth.withHealthyAccess(PREFS) {
             context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString(KEY, null)
         } ?: "[]"
+        require(raw.length <= MAX_RAW_CHARS) { "Operational memory exceeds its supported raw size." }
         val array = JSONArray(raw)
         require(array.length() <= MAX_ENTRIES) { "Operational memory exceeds its supported size." }
         val seenIds = hashSetOf<String>()
@@ -242,8 +244,10 @@ object AgentOperationalMemoryStore {
                 .put("category", e.category).put("createdAt", e.createdAt)
                 .put("sourceTaskIds", JSONArray(e.sourceTaskIds)).put("confidence", e.confidence))
         }
+        val serialized = array.toString()
+        if (serialized.length > MAX_RAW_CHARS) return@runCatching false
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
-            .putString(KEY, array.toString()).let { SharedPreferencesWriteHealth.commit(PREFS, it) }
+            .putString(KEY, serialized).let { SharedPreferencesWriteHealth.commit(PREFS, it) }
     }.getOrDefault(false)
 
     private fun strings(array: JSONArray?): List<String> = if (array == null) emptyList() else
