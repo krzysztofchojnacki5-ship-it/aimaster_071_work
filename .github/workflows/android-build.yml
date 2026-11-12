@@ -11,10 +11,10 @@ on:
 permissions:
   contents: read
 
-# A push and its matching pull_request event must share one concurrency slot.
-# This prevents two identical builds from occupying the Actions queue.
+# Keep push and pull_request runs in separate concurrency groups.
+# The push run is required for release signing; a PR run must never cancel it.
 concurrency:
-  group: aiforteca-android-${{ github.workflow }}-${{ github.head_ref || github.ref_name }}
+  group: aiforteca-android-${{ github.workflow }}-${{ github.event_name }}-${{ github.head_ref || github.ref_name }}
   cancel-in-progress: true
 
 jobs:
