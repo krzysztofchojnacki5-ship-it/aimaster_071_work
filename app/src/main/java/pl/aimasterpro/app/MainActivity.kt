@@ -6935,11 +6935,11 @@ class MainActivity : Activity() {
         val createdAt = java.text.SimpleDateFormat("dd.MM.yyyy HH:mm:ss", java.util.Locale.getDefault())
             .format(java.util.Date(entry.createdAt))
         val reportText = buildString {
-            append("Zadanie: ").append(taskTitle).append("\\n")
-            append("Agent: ").append(agentId).append("\\n")
-            append("Dostawca/model: ").append(entry.providerId).append(" / ").append(entry.model).append("\\n")
-            append("Zapisano: ").append(createdAt).append("\\n")
-            append("ID raportu: ").append(entry.taskId).append("\\n\\n")
+            append("Zadanie: ").append(taskTitle).append("\n")
+            append("Agent: ").append(agentId).append("\n")
+            append("Dostawca/model: ").append(entry.providerId).append(" / ").append(entry.model).append("\n")
+            append("Zapisano: ").append(createdAt).append("\n")
+            append("ID raportu: ").append(entry.taskId).append("\n\n")
             append(entry.report)
         }
         val reportView = TextView(this).apply {
