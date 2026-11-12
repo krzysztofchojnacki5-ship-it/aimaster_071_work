@@ -214,26 +214,33 @@ object QualityLearningStore {
             }
             val pendingRecovery = unresolved.filter { it.actor == MemoryGovernance.Actor.SYSTEM_RECOVERY.name }
 
-            // If a prior recovery itself was interrupted, never replay it automatically.
-            // It may only be closed when the durable stores already match the proposal ledger.
-            if (pendingRecovery.isNotEmpty()) {
-                if (!needsRepair) {
-                    pendingRecovery.forEach { pending ->
+            // Never replay a repair when the durable stores already match the proposal ledger.
+            // Close any interrupted recovery first; only then may its originating USER intent close.
+            if (!needsRepair) {
+                var recoveryClosuresSucceeded = true
+                pendingRecovery.forEach { pending ->
+                    if (!MemoryAuditLog.resolveUnresolved(context, pending,
+                            "Odzyskiwanie zweryfikowane względem trwałego rejestru propozycji.")) {
+                        recoveryClosuresSucceeded = false
+                        android.util.Log.e("AIMasterQuality", "Nie udało się zamknąć audytu odzyskiwania dla propozycji ${proposal.id}.")
+                    }
+                }
+                if (recoveryClosuresSucceeded) {
+                    pendingUser.forEach { pending ->
                         if (!MemoryAuditLog.resolveUnresolved(context, pending,
-                                "Odzyskiwanie zweryfikowane względem trwałego rejestru propozycji.")) {
-                            android.util.Log.e("AIMasterQuality", "Nie udało się zamknąć audytu odzyskiwania dla propozycji ${proposal.id}.")
+                                "Stan propozycji i magazynów został zweryfikowany względem trwałego rejestru.")) {
+                            android.util.Log.e("AIMasterQuality", "Nie udało się zamknąć pierwotnej operacji ${pending.mutation} dla propozycji ${proposal.id}.")
                         }
                     }
-                    pendingUser.forEach { pending ->
-                        MemoryAuditLog.resolveUnresolved(context, pending,
-                            "Stan propozycji i magazynów został zweryfikowany po odzyskiwaniu.")
-                    }
-                } else {
-                    android.util.Log.e("AIMasterQuality", "Propozycja ${proposal.id} wymaga ręcznej kontroli: poprzednie odzyskiwanie pozostało nierozstrzygnięte.")
                 }
                 return@forEach
             }
-            if (!needsRepair && pendingUser.isEmpty()) return@forEach
+            // An interrupted recovery with stores that still disagree is not safe to replay.
+            if (pendingRecovery.isNotEmpty()) {
+                android.util.Log.e("AIMasterQuality", "Propozycja ${proposal.id} wymaga ręcznej kontroli: poprzednie odzyskiwanie pozostało nierozstrzygnięte.")
+                return@forEach
+            }
+            if (pendingUser.isEmpty()) return@forEach
 
             val request = MemoryGovernance.Request(
                 actor = MemoryGovernance.Actor.SYSTEM_RECOVERY,

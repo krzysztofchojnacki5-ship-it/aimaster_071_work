@@ -583,4 +583,132 @@ class QualityLearningStoreTest {
         assertEquals(0, QualityLearningStore.syncApprovedAgentMemories(context))
     }
 
+
+    @Test fun consistentStoresClosePendingUserIntentWithoutStartingRecovery() {
+        val proposal = QualityLearningStore.addProposal(
+            context, "Spójny stan bez ponownej naprawy", 7, "wstępna",
+            listOf("task-consistent-user-close"), listOf("coder"), emptyList()
+        )
+        assertTrue(MemoryAuditLog.append(context, MemoryAuditLog.Event(
+            actor = "USER", mutation = "APPROVE_PROPOSAL", objectId = proposal.id,
+            reason = "Test przerwania przed zmianą trwałego rejestru.",
+            approvalRef = "test:${proposal.id}", phase = MemoryAuditLog.Phase.INTENT,
+            outcome = "AUTHORIZED"
+        )))
+
+        val before = MemoryAuditLog.readVerified(context)!!.size
+        assertEquals(0, QualityLearningStore.syncApprovedAgentMemories(context))
+        val rows = MemoryAuditLog.readVerified(context)!!
+        assertEquals(before + 1, rows.size)
+        assertEquals("RECOVERED_STATE", rows.last().outcome)
+        assertEquals("USER", rows.last().actor)
+        assertFalse(rows.any { it.actor == "SYSTEM_RECOVERY" && it.objectId == proposal.id })
+        assertFalse(MemoryAuditLog.hasUnresolvedIntent(context, "USER", "APPROVE_PROPOSAL", proposal.id))
+    }
+
+    @Test fun failedRecoveryAuditClosureKeepsUserIntentOpenUntilRecoveryIsClosed() {
+        val proposal = QualityLearningStore.addProposal(
+            context, "Odzyskiwanie wymaga zamknięcia audytu", 9, "wstępna",
+            listOf("task-recovery-close-order"), listOf("coder"), emptyList()
+        )
+        assertTrue(QualityLearningStore.setProposalStatus(
+            context, proposal.id, "APPROVED", "test-approval:${proposal.id}"
+        ))
+        assertTrue(MemoryAuditLog.append(context, MemoryAuditLog.Event(
+            actor = "USER", mutation = "REJECT_PROPOSAL", objectId = proposal.id,
+            reason = "Test nierozstrzygniętego odrzucenia.", approvalRef = "test-reject:${proposal.id}",
+            phase = MemoryAuditLog.Phase.INTENT, outcome = "AUTHORIZED"
+        )))
+        assertTrue(MemoryAuditLog.append(context, MemoryAuditLog.Event(
+            actor = "SYSTEM_RECOVERY", mutation = "RECONCILE_APPROVED_PROPOSAL",
+            objectId = proposal.id, reason = "Test przerwanego zamknięcia odzyskiwania.",
+            approvalRef = "proposal:${proposal.id}", phase = MemoryAuditLog.Phase.INTENT,
+            outcome = "AUTHORIZED"
+        )))
+
+        val failingContext = object : ContextWrapper(context) {
+            override fun getSharedPreferences(name: String, mode: Int): SharedPreferences {
+                val delegate = context.getSharedPreferences(name, mode)
+                if (name != "ai_memory_audit_log_v1") return delegate
+                return object : SharedPreferences by delegate {
+                    override fun edit(): SharedPreferences.Editor {
+                        val editor = delegate.edit()
+                        return object : SharedPreferences.Editor by editor {
+                            override fun putString(key: String, value: String?): SharedPreferences.Editor {
+                                editor.putString(key, value)
+                                return this
+                            }
+                            override fun commit(): Boolean = false
+                        }
+                    }
+                }
+            }
+        }
+
+        assertEquals(0, QualityLearningStore.syncApprovedAgentMemories(failingContext))
+        assertTrue(MemoryAuditLog.hasUnresolvedIntent(
+            context, "SYSTEM_RECOVERY", "RECONCILE_APPROVED_PROPOSAL", proposal.id
+        ))
+        assertTrue(MemoryAuditLog.hasUnresolvedIntent(
+            context, "USER", "REJECT_PROPOSAL", proposal.id
+        ))
+
+        SharedPreferencesWriteHealth.resetForTests("ai_memory_audit_log_v1")
+        assertEquals(0, QualityLearningStore.syncApprovedAgentMemories(context))
+        val rows = MemoryAuditLog.readVerified(context)!!
+        assertFalse(MemoryAuditLog.hasUnresolvedIntent(
+            context, "SYSTEM_RECOVERY", "RECONCILE_APPROVED_PROPOSAL", proposal.id
+        ))
+        assertFalse(MemoryAuditLog.hasUnresolvedIntent(
+            context, "USER", "REJECT_PROPOSAL", proposal.id
+        ))
+        assertEquals(1, rows.count {
+            it.actor == "SYSTEM_RECOVERY" && it.mutation == "RECONCILE_APPROVED_PROPOSAL" &&
+                it.objectId == proposal.id && it.phase == MemoryAuditLog.Phase.INTENT
+        })
+    }
+
+    @Test fun failedUserAuditClosureDoesNotTriggerRedundantRecoveryOnNextStartup() {
+        val proposal = QualityLearningStore.addProposal(
+            context, "Ponowienie samego zamknięcia audytu", 7, "wstępna",
+            listOf("task-user-close-retry"), listOf("coder"), emptyList()
+        )
+        assertTrue(MemoryAuditLog.append(context, MemoryAuditLog.Event(
+            actor = "USER", mutation = "APPROVE_PROPOSAL", objectId = proposal.id,
+            reason = "Test przerwania przed zmianą trwałego rejestru.",
+            approvalRef = "test-user-close:${proposal.id}", phase = MemoryAuditLog.Phase.INTENT,
+            outcome = "AUTHORIZED"
+        )))
+        val failingContext = object : ContextWrapper(context) {
+            override fun getSharedPreferences(name: String, mode: Int): SharedPreferences {
+                val delegate = context.getSharedPreferences(name, mode)
+                if (name != "ai_memory_audit_log_v1") return delegate
+                return object : SharedPreferences by delegate {
+                    override fun edit(): SharedPreferences.Editor {
+                        val editor = delegate.edit()
+                        return object : SharedPreferences.Editor by editor {
+                            override fun putString(key: String, value: String?): SharedPreferences.Editor {
+                                editor.putString(key, value)
+                                return this
+                            }
+                            override fun commit(): Boolean = false
+                        }
+                    }
+                }
+            }
+        }
+
+        assertEquals(0, QualityLearningStore.syncApprovedAgentMemories(failingContext))
+        assertTrue(MemoryAuditLog.hasUnresolvedIntent(
+            context, "USER", "APPROVE_PROPOSAL", proposal.id
+        ))
+        SharedPreferencesWriteHealth.resetForTests("ai_memory_audit_log_v1")
+        assertEquals(0, QualityLearningStore.syncApprovedAgentMemories(context))
+        val rows = MemoryAuditLog.readVerified(context)!!
+        assertFalse(MemoryAuditLog.hasUnresolvedIntent(
+            context, "USER", "APPROVE_PROPOSAL", proposal.id
+        ))
+        assertFalse(rows.any { it.actor == "SYSTEM_RECOVERY" && it.objectId == proposal.id })
+    }
+
 }
