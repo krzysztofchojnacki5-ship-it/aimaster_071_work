@@ -116,7 +116,7 @@ class QualityLearningStoreTest {
         val raw = prefs.getString("proposals", null)!!
         assertTrue(prefs.edit().putString("proposals", raw.replace("\"status\":\"PROPOSAL\"", "\"status\":\"APPROVED\"")).commit())
 
-        assertEquals(0, QualityLearningStore.syncApprovedAgentMemories(context))
+        assertEquals(1, QualityLearningStore.syncApprovedAgentMemories(context))
         assertFalse(MemoryAuditLog.hasUnresolvedIntent(context, "USER", "APPROVE_PROPOSAL", proposal.id))
         val resolved = MemoryAuditLog.readVerified(context)!!.last()
         assertEquals("USER", resolved.actor)
@@ -555,7 +555,7 @@ class QualityLearningStoreTest {
         val memoryEntry = "[UCZENIE ZATWIERDZONE ${proposal.id.take(8)}; dowody=${proposal.evidenceCount}; pewność=${proposal.confidence}] ${proposal.text}".take(1000)
         assertTrue(AiMemoryStore.containsExactMemory(context, memoryEntry) == true)
         assertFalse(AgentOperationalMemoryStore.hasAnySource(context, "proposal:" + proposal.id) == true)
-        assertEquals(1, QualityLearningStore.syncApprovedAgentMemories(context))
+        assertEquals(0, QualityLearningStore.syncApprovedAgentMemories(context))
         assertFalse(AiMemoryStore.containsExactMemory(context, memoryEntry) == true)
         assertEquals("PROPOSAL", QualityLearningStore.proposals(context).single().status)
         assertFalse(MemoryAuditLog.hasUnresolvedIntent(
