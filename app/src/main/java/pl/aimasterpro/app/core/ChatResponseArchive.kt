@@ -29,6 +29,7 @@ object ChatResponseArchive {
     private const val MAX_PROVIDER_ID_CHARS = 200
     private const val MAX_MODEL_CHARS = 240
     private const val MAX_RESPONSE_CHARS = 32_000
+    private const val MAX_RAW_CHARS = 1_000_000
 
     @Synchronized
     fun put(
@@ -62,6 +63,7 @@ object ChatResponseArchive {
         }
         val trimmed = JSONArray()
         for (i in 0 until minOf(next.length(), MAX_ENTRIES)) trimmed.put(next.getJSONObject(i))
+        if (trimmed.toString().length > MAX_RAW_CHARS) return@withHealthyAccess false
         runCatching {
             SharedPreferencesWriteHealth.commit(
                 PREFS,
@@ -164,6 +166,7 @@ object ChatResponseArchive {
             context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString(KEY, null)
         } ?: return@runCatching JSONArray()
         runCatching {
+            require(raw.length <= MAX_RAW_CHARS) { "Response archive exceeds its raw size limit." }
             val source = JSONArray(raw)
             require(source.length() <= MAX_ENTRIES) { "Response archive exceeds its capacity." }
             val seen = hashSetOf<String>()

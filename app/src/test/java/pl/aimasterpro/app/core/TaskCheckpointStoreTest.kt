@@ -798,4 +798,41 @@ class TaskCheckpointStoreTest {
         )))
     }
 
+    @Test fun checkpointReaderRejectsOversizedRawPayloadAndExcessRowsWithoutMutation() {
+        val prefs = context.getSharedPreferences("task_checkpoints_v1", Context.MODE_PRIVATE)
+        val oversized = " ".repeat(2_000_001)
+        assertTrue(prefs.edit().putString("events", oversized).commit())
+        assertFalse(TaskCheckpointStore.isJournalReadable(context))
+        assertFalse(TaskCheckpointStore.record(context, TaskCheckpointStore.Event(
+            "new-task", "RESEARCHER", "QUEUED", "", 100L, "", "", 0
+        )))
+        assertEquals(oversized, prefs.getString("events", null))
+
+        val tooMany = org.json.JSONArray()
+        repeat(801) { index -> tooMany.put(org.json.JSONObject()
+            .put("task", "task-$index").put("agent", "RESEARCHER").put("status", "QUEUED")
+            .put("detail", "").put("ts", index.toLong()).put("provider", "").put("model", "")
+            .put("attempts", 0)) }
+        val corrupt = tooMany.toString()
+        assertTrue(prefs.edit().putString("events", corrupt).commit())
+        assertFalse(TaskCheckpointStore.isJournalReadable(context))
+        assertFalse(TaskCheckpointStore.record(context, TaskCheckpointStore.Event(
+            "after-overflow", "RESEARCHER", "QUEUED", "", 900L, "", "", 0
+        )))
+        assertEquals(corrupt, prefs.getString("events", null))
+    }
+
+    @Test fun checkpointReaderRejectsOversizedPersistedMetadataWithoutMutation() {
+        val prefs = context.getSharedPreferences("task_checkpoints_v1", Context.MODE_PRIVATE)
+        val corrupt = org.json.JSONArray().put(org.json.JSONObject()
+            .put("task", "t".repeat(513)).put("agent", "RESEARCHER").put("status", "RUNNING")
+            .put("detail", "").put("ts", 100L).put("provider", "").put("model", "").put("attempts", 0)).toString()
+        assertTrue(prefs.edit().putString("events", corrupt).commit())
+        assertFalse(TaskCheckpointStore.isJournalReadable(context))
+        assertFalse(TaskCheckpointStore.record(context, TaskCheckpointStore.Event(
+            "new-task", "RESEARCHER", "QUEUED", "", 200L, "", "", 0
+        )))
+        assertEquals(corrupt, prefs.getString("events", null))
+    }
+
 }

@@ -17,6 +17,7 @@ object ChatHistoryStore {
     private const val MAX_MESSAGE_CHARS = 32_000
     private const val MAX_TASK_IDS = 5_000
     private const val MAX_AGENT_ACTIVITY = 150
+    private const val MAX_RAW_CHARS = 16_000_000
     private const val MAX_ACTIVITY_CHARS = 32_000
 
     @Synchronized
@@ -28,6 +29,7 @@ object ChatHistoryStore {
             context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString(KEY, null)
         } ?: return@runCatching JSONObject()
         runCatching {
+            require(raw.length <= MAX_RAW_CHARS) { "Chat history exceeds its raw size limit." }
             val root = JSONObject(raw)
             if (root.has("chats")) {
                 val chats = root.optJSONObject("chats")
@@ -223,6 +225,7 @@ object ChatHistoryStore {
         // exclusion guarantee. Navigation metadata joins the canonical document in one commit.
         SharedPreferencesWriteHealth.withHealthyAccess(PREFS) {
             val serialized = root.toString()
+            if (serialized.length > MAX_RAW_CHARS) return@withHealthyAccess false
             if (readRoot(context) == null) return@withHealthyAccess false
             val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
             val candidate = JSONObject(serialized)

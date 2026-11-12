@@ -9,6 +9,7 @@ object TaskCheckpointStore {
     private const val PREFS = "task_checkpoints_v1"
     private const val KEY = "events"
     private const val MAX_EVENTS = 800
+    private const val MAX_RAW_CHARS = 2_000_000
     private val TERMINAL_STATUSES = setOf("COMPLETED", "FAILED", "BLOCKED", "TIMED_OUT", "CANCELLED", "INTERRUPTED")
     private val processId = java.util.UUID.randomUUID().toString()
 
@@ -48,7 +49,7 @@ object TaskCheckpointStore {
     @Synchronized
     fun record(context: Context, event: Event): Boolean {
         if (SharedPreferencesWriteHealth.isUncertain(PREFS)) return false
-        if (event.taskId.isBlank() || event.agentId.isBlank() || event.status.isBlank() ||
+        if (event.taskId.isBlank() || event.taskId.length > 512 || event.agentId.isBlank() || event.status.isBlank() ||
             event.timestamp < 0L || event.attempts < 0 || event.runId < 0 ||
             event.estimatedInputTokens < 0L || event.estimatedOutputTokens < 0L) return false
         val rows = readEvents(context)?.toMutableList() ?: return false
@@ -130,9 +131,10 @@ object TaskCheckpointStore {
         if (SharedPreferencesWriteHealth.isUncertain(PREFS)) return null
         return runCatching {
             SharedPreferencesWriteHealth.withHealthyAccess(PREFS) {
-                val array = JSONArray(
-                    context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString(KEY, "[]") ?: "[]"
-                )
+                val raw = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString(KEY, "[]") ?: "[]"
+                require(raw.length <= MAX_RAW_CHARS) { "Checkpoint journal exceeds its raw size limit." }
+                val array = JSONArray(raw)
+                require(array.length() <= MAX_EVENTS) { "Checkpoint journal exceeds its event capacity." }
                 (0 until array.length()).map { index ->
                     val row = array.getJSONObject(index)
                     fun exactString(key: String, default: String = ""): String {
@@ -160,23 +162,23 @@ object TaskCheckpointStore {
                     }
                     val agentId = exactString("agent")
                     val status = exactString("status")
-                    require(agentId.isNotBlank() && status.isNotBlank()) {
+                    require(agentId.isNotBlank() && agentId.length <= 100 && status.isNotBlank() && status.length <= 30) {
                         "Checkpoint row has no agent or lifecycle status."
                     }
                     Event(
                         taskId = id,
                         agentId = agentId,
                         status = status,
-                        detail = exactString("detail"),
+                        detail = exactString("detail").also { require(it.length <= 500) },
                         timestamp = timestamp,
-                        providerId = exactString("provider"),
-                        model = exactString("model"),
+                        providerId = exactString("provider").also { require(it.length <= 100) },
+                        model = exactString("model").also { require(it.length <= 160) },
                         attempts = attempts.toInt(),
-                        processId = exactString("processId"),
+                        processId = exactString("processId").also { require(it.length <= 128) },
                         estimatedInputTokens = estimatedInput,
                         estimatedOutputTokens = estimatedOutput,
-                        idempotencyKey = exactString("idempotencyKey"),
-                        baseUrl = exactString("baseUrl"),
+                        idempotencyKey = exactString("idempotencyKey").also { require(it.length <= 240) },
+                        baseUrl = exactString("baseUrl").also { require(it.length <= 300) },
                         runId = runId.toInt()
                     )
                 }
@@ -319,8 +321,10 @@ object TaskCheckpointStore {
                     .put("runId", e.runId)
             )
         }
+        val serialized = a.toString()
+        if (serialized.length > MAX_RAW_CHARS) return false
         val editor = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
-            .putString(KEY, a.toString())
+            .putString(KEY, serialized)
         return SharedPreferencesWriteHealth.commit(PREFS, editor)
     }
 }

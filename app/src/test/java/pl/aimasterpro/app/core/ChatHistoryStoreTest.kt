@@ -574,4 +574,13 @@ class ChatHistoryStoreTest {
         assertFalse(ChatHistoryStore.writeRoot(context, oversizedRow))
     }
 
+    @Test fun oversizedRawHistoryIsRejectedBeforeJsonParsingAndPreserved() {
+        val oversized = " ".repeat(16_000_001)
+        assertTrue(prefs.edit().putString("chats_v2", oversized).commit())
+        assertNull(ChatHistoryStore.readRoot(context))
+        assertEquals(oversized, prefs.getString("chats_v2", null))
+        assertFalse(ChatHistoryStore.writeRoot(context, JSONObject().put("chats", JSONObject())))
+        assertEquals(oversized, prefs.getString("chats_v2", null))
+    }
+
 }

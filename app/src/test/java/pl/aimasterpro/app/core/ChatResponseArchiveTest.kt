@@ -362,4 +362,14 @@ class ChatResponseArchiveTest {
         assertEquals(corrupt, archivePrefs.getString("responses", null))
     }
 
+    @Test fun archiveReaderRejectsOversizedRawPayloadWithoutRewritingIt() {
+        val oversized = " ".repeat(1_000_001)
+        assertTrue(archivePrefs.edit().putString("responses", oversized).commit())
+        assertFalse(ChatResponseArchive.isArchiveReadable(context))
+        assertFalse(ChatResponseArchive.put(
+            context, "new-task", "chat", "MASTER", "New answer", "provider-a", "model-a", 60_000L
+        ))
+        assertEquals(oversized, archivePrefs.getString("responses", null))
+    }
+
 }
