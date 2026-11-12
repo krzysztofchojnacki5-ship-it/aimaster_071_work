@@ -412,8 +412,31 @@ object MasterTaskQueueStore {
                 if (current.status != ReadStatus.AVAILABLE) return@withHealthyAccess false
                 val changed = operation(current.tasks, current.events) ?: return@withHealthyAccess false
                 if (changed.first.size > MAX_TASKS) return@withHealthyAccess false
+
+                // A device clock correction or a delayed callback must not move a task's
+                // durable update time or its per-task audit timeline backwards.
+                val previousTasks = current.tasks.associateBy { it.id }
+                val normalizedTasks = changed.first.map { next ->
+                    val previous = previousTasks[next.id]
+                    if (previous != null && next.updatedAt < previous.updatedAt) {
+                        next.copy(updatedAt = previous.updatedAt)
+                    } else next
+                }
+                val knownEventIds = current.events.mapTo(mutableSetOf()) { it.id }
+                val lastEventTime = mutableMapOf<String, Long>()
+                current.tasks.forEach { task -> lastEventTime[task.id] = task.updatedAt }
+                current.events.forEach { event ->
+                    lastEventTime[event.taskId] = maxOf(lastEventTime[event.taskId] ?: 0L, event.timestamp)
+                }
+                val normalizedEvents = changed.second.map { event ->
+                    if (event.id in knownEventIds) event else {
+                        val timestamp = maxOf(event.timestamp, lastEventTime[event.taskId] ?: 0L)
+                        lastEventTime[event.taskId] = timestamp
+                        event.copy(timestamp = timestamp)
+                    }
+                }
                 // Event history is a rolling bounded journal; reaching the cap must not freeze the queue.
-                write(context, changed.first, changed.second)
+                write(context, normalizedTasks, normalizedEvents)
             }
         }.getOrDefault(false)
     }
