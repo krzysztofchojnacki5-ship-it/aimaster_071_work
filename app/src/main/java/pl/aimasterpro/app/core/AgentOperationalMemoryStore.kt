@@ -43,6 +43,11 @@ object AgentOperationalMemoryStore {
     internal fun hasAnySource(context: Context, sourceTaskId: String): Boolean? =
         read(context)?.any { sourceTaskId in it.sourceTaskIds }
 
+    /** Returns every agent currently carrying a proposal marker; null means unreadable. */
+    @Synchronized
+    internal fun agentsWithSource(context: Context, sourceTaskId: String): Set<String>? =
+        read(context)?.filter { sourceTaskId in it.sourceTaskIds }?.map { it.agentId.lowercase(Locale.ROOT) }?.toSet()
+
     @Synchronized internal fun addApproved(
         context: Context, agentId: String, text: String, permit: MemoryMutationPermit,
         category: String = "", sourceTaskIds: List<String> = emptyList(), confidence: String = "zatwierdzona"

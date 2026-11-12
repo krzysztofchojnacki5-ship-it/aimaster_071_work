@@ -147,6 +147,34 @@ class QualityLearningStoreTest {
         assertFalse(AgentOperationalMemoryStore.all(context).any { "proposal:${proposal.id}" in it.sourceTaskIds })
     }
 
+    @Test fun approvedProposalRecoveryRemovesUnexpectedAgentCopies() {
+        val proposal = QualityLearningStore.addProposal(
+            context, "Lekcja tylko dla wskazanego agenta", 8, "wysoka",
+            listOf("task-agent-scope"), listOf("coder"), emptyList()
+        )
+        assertTrue(QualityLearningStore.setProposalStatus(
+            context, proposal.id, "APPROVED", "test-approval:${proposal.id}"
+        ))
+        val sourceRef = "proposal:${proposal.id}"
+        val request = MemoryGovernance.Request(
+            MemoryGovernance.Actor.SYSTEM_RECOVERY,
+            MemoryGovernance.Mutation.RECONCILE_APPROVED_PROPOSAL,
+            proposal.id,
+            "Test wprowadza błędną kopię u innego agenta.",
+            sourceRef
+        )
+        assertTrue(MemoryMutationGate.execute(context, request) { permit ->
+            AgentOperationalMemoryStore.addApproved(
+                context, "writer", proposal.text, permit,
+                category = "test", sourceTaskIds = listOf(sourceRef), confidence = proposal.confidence
+            ) != null
+        })
+        assertTrue(AgentOperationalMemoryStore.hasApprovedSource(context, "writer", proposal.text, sourceRef) == true)
+        assertEquals(1, QualityLearningStore.syncApprovedAgentMemories(context))
+        assertTrue(AgentOperationalMemoryStore.hasApprovedSource(context, "coder", proposal.text, sourceRef) == true)
+        assertFalse(AgentOperationalMemoryStore.hasApprovedSource(context, "writer", proposal.text, sourceRef) == true)
+    }
+
     @Test fun unresolvedRecoveryWithAmbiguousStoreStateIsNotReplayed() {
         val proposal = QualityLearningStore.addProposal(
             context, "Reguła po przerwanym odzyskiwaniu", 8, "wysoka",

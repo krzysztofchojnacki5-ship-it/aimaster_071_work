@@ -36,8 +36,8 @@
 - Added regression test `partialMutationFailureRemainsUnresolvedAndCannotBeReplayed` to prove a false result after a simulated durable side effect remains unresolved and cannot be blindly replayed. This test awaits CI on the next commit.
 
 ## Next audit work
-1. Review compensation/recovery for every approval/rejection path, especially whether rollback failures leave enough evidence for startup reconciliation or manual inspection.
-2. Recheck all USER approvalRef creation paths use fresh unique references; the MainActivity audit previously found UUID generation for relevant UI approvals.
+1. Verify the unexpected-agent provenance regression test and release assembly in CI for the current commit.
+2. Review compensation/recovery for every approval/rejection path, especially whether rollback failures leave enough evidence for startup reconciliation or manual inspection.
 3. Continue source-level audit of durable memory mutation and journal write/retry paths.
 4. Update this checkpoint after meaningful verified work; tie all CI status to exact commit SHAs.
 5. Device/Ollama connectivity remains a separate manual test for the user when an APK is explicitly requested.

@@ -187,12 +187,16 @@ object QualityLearningStore {
                 AgentOperationalMemoryStore.hasApprovedSource(context, agentId, proposal.text, sourceRef)
             }
             val anyAgentSource = AgentOperationalMemoryStore.hasAnySource(context, sourceRef)
-            if (sharedPresent == null || agentStates.any { it == null } || anyAgentSource == null) {
+            val agentsWithSource = AgentOperationalMemoryStore.agentsWithSource(context, sourceRef)
+            if (sharedPresent == null || agentStates.any { it == null } ||
+                anyAgentSource == null || agentsWithSource == null) {
                 android.util.Log.e("AIMasterQuality", "Pominięto uzgadnianie propozycji ${proposal.id}: co najmniej jeden magazyn pamięci jest nieczytelny.")
                 return@forEach
             }
+            val expectedAgents = proposal.affectedAgents.map { it.lowercase(java.util.Locale.ROOT) }.toSet()
+            val hasUnexpectedAgentSource = agentsWithSource.any { it !in expectedAgents }
             val needsRepair = if (approved) {
-                sharedPresent != true || agentStates.any { it != true }
+                sharedPresent != true || agentStates.any { it != true } || hasUnexpectedAgentSource
             } else {
                 sharedPresent == true || anyAgentSource == true
             }
@@ -242,13 +246,16 @@ object QualityLearningStore {
             )
             val recovered = MemoryMutationGate.execute(context, request) { permit ->
                 if (approved) {
+                    // Remove this proposal's provenance from every agent first. Rebuild only
+                    // the explicitly approved scope, so stale/foreign agent copies cannot survive.
+                    val staleAgentSourcesRemoved = AgentOperationalMemoryStore.removeBySource(context, sourceRef, permit)
                     val sharedSaved = AiMemoryStore.addMemory(context, memoryEntry, permit)
                     val agentSaves = proposal.affectedAgents.map { agentId ->
                         AgentOperationalMemoryStore.addApproved(context, agentId, proposal.text, permit,
                             category = "wniosek jakościowy", sourceTaskIds = listOf(sourceRef),
                             confidence = proposal.confidence) != null
                     }
-                    sharedSaved && agentSaves.all { it } &&
+                    staleAgentSourcesRemoved && sharedSaved && agentSaves.all { it } &&
                         AiMemoryStore.containsExactMemory(context, memoryEntry) == true &&
                         proposal.affectedAgents.all { agentId ->
                             AgentOperationalMemoryStore.hasApprovedSource(context, agentId, proposal.text, sourceRef) == true
