@@ -835,4 +835,30 @@ class TaskCheckpointStoreTest {
         assertEquals(corrupt, prefs.getString("events", null))
     }
 
+    @Test fun checkpointWriterRejectsOversizedFieldsWithoutTruncatingOrMutatingJournal() {
+        val prefs = context.getSharedPreferences("task_checkpoints_v1", Context.MODE_PRIVATE)
+        val base = TaskCheckpointStore.Event(
+            taskId = "bounded-fields", agentId = "RESEARCHER", status = "RUNNING", detail = "ok",
+            timestamp = 100L, providerId = "provider", model = "model", attempts = 1,
+            processId = "process", idempotencyKey = "request-key", baseUrl = "https://api.example"
+        )
+        assertTrue(TaskCheckpointStore.record(context, base))
+        val original = prefs.getString("events", null)
+        val invalid = listOf(
+            base.copy(agentId = "a".repeat(101)),
+            base.copy(status = "s".repeat(31)),
+            base.copy(detail = "d".repeat(501)),
+            base.copy(providerId = "p".repeat(101)),
+            base.copy(model = "m".repeat(161)),
+            base.copy(processId = "x".repeat(129)),
+            base.copy(idempotencyKey = "k".repeat(241)),
+            base.copy(baseUrl = "u".repeat(301))
+        )
+        invalid.forEach { event ->
+            assertFalse(TaskCheckpointStore.record(context, event))
+            assertEquals(original, prefs.getString("events", null))
+        }
+        assertEquals("ok", TaskCheckpointStore.latest(context).single().detail)
+    }
+
 }

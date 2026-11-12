@@ -49,7 +49,12 @@ object TaskCheckpointStore {
     @Synchronized
     fun record(context: Context, event: Event): Boolean {
         if (SharedPreferencesWriteHealth.isUncertain(PREFS)) return false
-        if (event.taskId.isBlank() || event.taskId.length > 512 || event.agentId.isBlank() || event.status.isBlank() ||
+        if (event.taskId.isBlank() || event.taskId.length > 512 ||
+            event.agentId.isBlank() || event.agentId.length > 100 ||
+            event.status.isBlank() || event.status.length > 30 ||
+            event.detail.length > 500 || event.providerId.length > 100 ||
+            event.model.length > 160 || event.processId.length > 128 ||
+            event.idempotencyKey.length > 240 || event.baseUrl.length > 300 ||
             event.timestamp < 0L || event.attempts < 0 || event.runId < 0 ||
             event.estimatedInputTokens < 0L || event.estimatedOutputTokens < 0L) return false
         val rows = readEvents(context)?.toMutableList() ?: return false
@@ -97,19 +102,19 @@ object TaskCheckpointStore {
         rows.add(
             0,
             event.copy(
-                agentId = event.agentId.take(100),
-                status = event.status.take(30),
-                detail = event.detail.take(500),
-                providerId = event.providerId.ifBlank { current?.takeIf { sameRun }?.providerId.orEmpty() }.take(100),
-                model = event.model.ifBlank { current?.takeIf { sameRun }?.model.orEmpty() }.take(160),
+                agentId = event.agentId,
+                status = event.status,
+                detail = event.detail,
+                providerId = event.providerId.ifBlank { current?.takeIf { sameRun }?.providerId.orEmpty() },
+                model = event.model.ifBlank { current?.takeIf { sameRun }?.model.orEmpty() },
                 attempts = event.attempts.coerceAtLeast(0),
                 processId = event.processId.ifBlank { processId },
                 estimatedInputTokens = event.estimatedInputTokens.coerceAtLeast(0L)
                     .takeIf { it > 0L } ?: current?.takeIf { sameRun }?.estimatedInputTokens ?: 0L,
                 estimatedOutputTokens = event.estimatedOutputTokens.coerceAtLeast(0L)
                     .takeIf { it > 0L } ?: current?.takeIf { sameRun }?.estimatedOutputTokens ?: 0L,
-                idempotencyKey = event.idempotencyKey.ifBlank { current?.takeIf { sameRun }?.idempotencyKey.orEmpty() }.take(240),
-                baseUrl = event.baseUrl.ifBlank { current?.takeIf { sameRun }?.baseUrl.orEmpty() }.take(300),
+                idempotencyKey = event.idempotencyKey.ifBlank { current?.takeIf { sameRun }?.idempotencyKey.orEmpty() },
+                baseUrl = event.baseUrl.ifBlank { current?.takeIf { sameRun }?.baseUrl.orEmpty() },
                 runId = event.runId
             )
         )

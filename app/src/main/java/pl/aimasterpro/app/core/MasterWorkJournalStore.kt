@@ -45,9 +45,10 @@ object MasterWorkJournalStore {
     fun save(context: Context, record: Record): Boolean = transaction(context) { rows ->
         if (!valid(record)) return@transaction false
         val previous = rows.firstOrNull { it.taskId == record.taskId }
+        if (previous == null && rows.size >= MAX_RECORDS) return@transaction false
         val monotonic = if (previous == null) record else record.copy(updatedAt = maxOf(record.updatedAt, previous.updatedAt))
         val updated = listOf(monotonic) + rows.filterNot { it.taskId == record.taskId }
-        write(context, updated.take(MAX_RECORDS))
+        write(context, updated)
     } ?: false
 
     /** Atomic progress update; null indicates missing/corrupt data or a rejected mutation. */
@@ -81,13 +82,18 @@ object MasterWorkJournalStore {
             next
         }
 
+    private fun pauseNextSteps(existing: List<String>): List<String> {
+        val instruction = "Sprawdź checkpointy i zdecyduj o wznowieniu."
+        return if (instruction in existing || existing.size >= MAX_STEPS) existing else existing + instruction
+    }
+
     /** Pauses one known task without touching unrelated work or terminal states. */
     fun pauseActiveTask(context: Context, taskId: String, now: Long = System.currentTimeMillis()): Record? =
         updateActive(context, taskId) { current ->
             current.copy(
                 status = "PAUSED",
                 currentStep = "Przerwano przez użytkownika lub zamknięcie Activity; wznowienie wymaga jawnej decyzji koordynatora.",
-                nextSteps = (current.nextSteps + "Sprawdź checkpointy i zdecyduj o wznowieniu.").distinct().take(MAX_STEPS),
+                nextSteps = pauseNextSteps(current.nextSteps),
                 updatedAt = maxOf(now.coerceAtLeast(0L), current.updatedAt)
             )
         } ?: get(context, taskId)?.takeIf { it.status in setOf("PAUSED", "BLOCKED", "COMPLETED") }
@@ -101,7 +107,7 @@ object MasterWorkJournalStore {
                 if (record.status != "ACTIVE") record else record.copy(
                     status = "PAUSED",
                     currentStep = "Przerwano po zamknięciu procesu; wznowienie wymaga jawnej decyzji koordynatora.",
-                    nextSteps = (record.nextSteps + "Sprawdź checkpointy i zdecyduj o wznowieniu.").distinct().take(MAX_STEPS),
+                    nextSteps = pauseNextSteps(record.nextSteps),
                     updatedAt = maxOf(now.coerceAtLeast(0L), record.updatedAt)
                 )
             }
@@ -141,7 +147,8 @@ object MasterWorkJournalStore {
                 return v
             }
             fun list(name: String, max: Int): List<String> {
-                val a = o.optJSONArray(name) ?: JSONArray()
+                val a = if (!o.has(name)) JSONArray() else
+                    o.optJSONArray(name) ?: error("Master work journal field '$name' is not an array.")
                 require(a.length() <= max)
                 return (0 until a.length()).map { index ->
                     val v = a.opt(index)

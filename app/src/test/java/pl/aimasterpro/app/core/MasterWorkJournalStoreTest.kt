@@ -171,4 +171,39 @@ class MasterWorkJournalStoreTest {
         assertFalse(MasterWorkJournalStore.save(context, record("new-task")))
         assertEquals(oversized, prefs.getString("records", null))
     }
+    @Test fun fullJournalRejectsNewTasksWithoutEvictingExistingWorkButAllowsUpdates() {
+        repeat(60) { index ->
+            assertTrue(MasterWorkJournalStore.save(context, record("capacity-$index", index.toLong())))
+        }
+        val before = MasterWorkJournalStore.latest(context)
+        assertEquals(60, before.size)
+        assertFalse(MasterWorkJournalStore.save(context, record("capacity-overflow", 999L)))
+        assertEquals(before, MasterWorkJournalStore.latest(context))
+        assertTrue(MasterWorkJournalStore.save(context, record("capacity-0", 1000L).copy(currentStep = "updated in place")))
+        assertEquals(60, MasterWorkJournalStore.latest(context).size)
+        assertEquals("updated in place", MasterWorkJournalStore.get(context, "capacity-0")?.currentStep)
+        assertNotNull(MasterWorkJournalStore.get(context, "capacity-59"))
+    }
+
+    @Test fun pausingFullProgressListsNeverDropsPreviouslyRecordedSteps() {
+        val fullSteps = (1..40).map { "Wykonany krok $it" }
+        assertTrue(MasterWorkJournalStore.save(context, record("full-target").copy(nextSteps = fullSteps)))
+        val targeted = MasterWorkJournalStore.pauseActiveTask(context, "full-target", 50L)
+        assertEquals("PAUSED", targeted?.status)
+        assertEquals(fullSteps, targeted?.nextSteps)
+
+        assertTrue(MasterWorkJournalStore.save(context, record("full-global").copy(nextSteps = fullSteps)))
+        assertEquals(1, MasterWorkJournalStore.pauseActive(context, 60L))
+        assertEquals(fullSteps, MasterWorkJournalStore.get(context, "full-global")?.nextSteps)
+    }
+
+    @Test fun malformedPresentProgressArrayIsRejectedAndOriginalJournalPreserved() {
+        val prefs = context.getSharedPreferences("ai_master_work_journal_v1", Context.MODE_PRIVATE)
+        val corrupt = """[{"taskId":"bad-array","chatId":"chat","title":"Title","objective":"Objective","branch":"work","headSha":"abcdef1234567","status":"ACTIVE","currentStep":"step","completedSteps":[],"decisions":[],"nextSteps":"not-an-array","updatedAt":1}]"""
+        assertTrue(prefs.edit().putString("records", corrupt).commit())
+        assertFalse(MasterWorkJournalStore.save(context, record("new-task")))
+        assertNull(MasterWorkJournalStore.get(context, "bad-array"))
+        assertEquals(corrupt, prefs.getString("records", null))
+    }
+
 }
