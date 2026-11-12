@@ -43,3 +43,11 @@
 - Correction 3: chat ID length is validated on both write and read paths, while legacy rows with no chat ID remain supported as an empty ID.
 - Regression tests cover the 81-row archive, oversized metadata on writes, and oversized metadata/chat-ID on reads; malformed data must not be overwritten.
 - Validation status at commit time: pending CI. No device test and no 0.3 release claimed.
+
+
+## Follow-up package — bounded conversation restoration, legacy import and pins — 2026-11-12
+- Correction 1: ChatConversationSnapshot rejects oversized restored collections and fields (5,000 messages/task IDs, 150 activity rows, bounded role/text/task/activity strings) before constructing a full snapshot.
+- Correction 2: LegacyChatHistoryImporter rejects raw payloads above 1,000,000 characters, more than 5,000 rows, and oversized role/text fields; malformed imports remain distinct from valid empty history.
+- Correction 3: ChatPinsStore validates persisted pin sets (maximum 100 IDs, each nonblank and <=200 characters), rejects oversized IDs and capacity overflow, and preserves malformed persisted data rather than rewriting it.
+- Regression tests cover over-capacity collections, oversized fields/payloads, and pin-set corruption/capacity without destructive writes.
+- Starting commit: 3036187478d85bc3b900dc44162417df19bd287e. Push and PR Android Build passed; push and PR Gradle Wrapper Validation passed. APK, source and test-report artifacts were published. This package is not yet CI-verified; no device test and no 0.3 release claimed.
