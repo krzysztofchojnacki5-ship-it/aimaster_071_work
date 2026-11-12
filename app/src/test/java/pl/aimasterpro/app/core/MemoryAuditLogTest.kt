@@ -34,10 +34,10 @@ class MemoryAuditLogTest {
 
     private fun event(phase: MemoryAuditLog.Phase, outcome: String) = MemoryAuditLog.Event(
         actor = "USER",
-        mutation = "ADD_SHARED_RULE",
+        mutation = "APPROVE_PROPOSAL",
         objectId = "rule-1",
         reason = "Jawne zatwierdzenie w interfejsie",
-        approvalRef = "ui-confirmation:rule-1",
+        approvalRef = "proposal:rule-1",
         phase = phase,
         outcome = outcome,
         timestamp = 1_800_000_000_000L
@@ -111,7 +111,7 @@ class MemoryAuditLogTest {
         assertTrue(MemoryAuditLog.readVerified(context)!!.isEmpty())
     }
     @Test fun intentReservesCapacityForFailureAndRecoveryWithoutTruncatingHistory() {
-        seedCommittedJournal(4_995)
+        seedCommittedJournal(4_994)
 
         assertTrue(MemoryAuditLog.append(context, event(MemoryAuditLog.Phase.INTENT, "AUTHORIZED")))
         assertEquals(4_996, MemoryAuditLog.readVerified(context)!!.size)
@@ -126,7 +126,7 @@ class MemoryAuditLogTest {
         assertEquals(MemoryAuditLog.Phase.COMMITTED, rows.last().phase)
         assertEquals("RECOVERED_STATE", rows.last().outcome)
         assertTrue(MemoryAuditLog.unresolvedOperations(context, "rule-1")!!.isEmpty())
-        assertEquals("seed-4995", rows[4_994].objectId)
+        assertEquals("seed-4994", rows[4_993].objectId)
     }
 
     @Test fun failedUserMutationCanCompleteFullProposalRecoveryAtJournalCapacityBoundary() {
@@ -152,6 +152,33 @@ class MemoryAuditLogTest {
         assertEquals(5_000, rows.size)
         assertEquals("seed-4995", rows[4_994].objectId)
         assertEquals("RECOVERED_STATE", rows.last().outcome)
+        assertTrue(MemoryAuditLog.unresolvedOperations(context, "rule-1")!!.isEmpty())
+    }
+
+    @Test fun failedRecoveryRetainsSlotsForBothVerifiedClosureRecords() {
+        seedCommittedJournal(4_994)
+        assertTrue(MemoryAuditLog.append(context, event(MemoryAuditLog.Phase.INTENT, "AUTHORIZED")))
+        assertTrue(MemoryAuditLog.append(context, event(MemoryAuditLog.Phase.FAILED, "MUTATION_FAILED")))
+        val recoveryIntent = MemoryAuditLog.Event(
+            actor = "SYSTEM_RECOVERY", mutation = "RECONCILE_APPROVED_PROPOSAL",
+            objectId = "rule-1", reason = "recovery intent", approvalRef = "proposal:rule-1",
+            phase = MemoryAuditLog.Phase.INTENT, outcome = "AUTHORIZED", timestamp = 1_800_000_000_100L
+        )
+        assertTrue(MemoryAuditLog.append(context, recoveryIntent))
+        assertTrue(MemoryAuditLog.append(context, recoveryIntent.copy(
+            phase = MemoryAuditLog.Phase.FAILED, outcome = "MUTATION_FAILED",
+            timestamp = 1_800_000_000_101L
+        )))
+        val pendingRecovery = MemoryAuditLog.unresolvedOperations(context, "rule-1")!!
+            .single { it.actor == "SYSTEM_RECOVERY" }
+        assertTrue(MemoryAuditLog.resolveUnresolved(context, pendingRecovery, "stores verified after repair"))
+        val pendingUser = MemoryAuditLog.unresolvedOperations(context, "rule-1")!!
+            .single { it.actor == "USER" }
+        assertTrue(MemoryAuditLog.resolveUnresolved(context, pendingUser, "proposal stores verified"))
+
+        val rows = MemoryAuditLog.readVerified(context)!!
+        assertEquals(5_000, rows.size)
+        assertEquals("RECOVERED_STATE", rows[4_999].outcome)
         assertTrue(MemoryAuditLog.unresolvedOperations(context, "rule-1")!!.isEmpty())
     }
 

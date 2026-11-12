@@ -174,9 +174,9 @@ object MemoryAuditLog {
     /**
      * Reserves capacity for a complete USER mutation and its proposal-recovery lineage.
      *
-     * A USER INTENT reserves four future records: its ordinary terminal record, plus the
-     * three records needed if that terminal is FAILED and proposal reconciliation is later
-     * required (SYSTEM_RECOVERY INTENT, SYSTEM_RECOVERY terminal, USER RECOVERED_STATE).
+     * A USER INTENT reserves five future records: its ordinary terminal record, plus the
+     * four records needed for a worst-case recovery (SYSTEM_RECOVERY INTENT, failed recovery
+     * terminal, verified recovery closure, and USER RECOVERED_STATE).
      * Once recovery starts before a USER terminal exists, the unused ordinary-terminal
      * branch is released. Recovery records tied to the same proposal consume the USER
      * reservation instead of creating a second, overlapping reservation.
@@ -236,13 +236,14 @@ object MemoryAuditLog {
             recovery.forEach {
                 linkedRecoveryKeys += Triple(it.actor, it.mutation, it.objectId)
             }
-            // Before any recovery event, USER INTENT must also reserve its ordinary
-            // terminal record. Once recovery starts, that mutually exclusive branch ends.
-            val base = if (user.phase == Phase.INTENT && recovery.isEmpty()) 4 else 3
-            // A failed recovery needs two later closure records: one for recovery and
-            // one for the original USER operation.
-            val manualClosure = if (recovery.lastOrNull()?.phase == Phase.FAILED) 1 else 0
-            reservedSlots += (base - recovery.size + manualClosure).coerceAtLeast(0)
+            val latestRecovery = recovery.lastOrNull()
+            val remaining = when {
+                recovery.isEmpty() -> if (user.phase == Phase.INTENT) 5 else 4
+                latestRecovery?.phase == Phase.INTENT -> 3 // terminal + two possible closures
+                latestRecovery?.phase == Phase.FAILED -> 2 // verified recovery closure + USER closure
+                else -> 1 // recovery is committed; only the original USER closure remains
+            }
+            reservedSlots += remaining
         }
 
         latestByIdentity.forEach { (identity, record) ->
