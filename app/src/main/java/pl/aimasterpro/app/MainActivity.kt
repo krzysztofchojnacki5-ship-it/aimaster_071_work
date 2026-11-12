@@ -6952,7 +6952,7 @@ class MainActivity : Activity() {
         }
         val scroll = ScrollView(this).apply {
             isFillViewport = false
-            addView(reportView, ScrollView.LayoutParams(-1, -2))
+            addView(reportView, android.view.ViewGroup.LayoutParams(-1, -2))
         }
         AlertDialog.Builder(this)
             .setTitle("Pełny raport • $agentId")
