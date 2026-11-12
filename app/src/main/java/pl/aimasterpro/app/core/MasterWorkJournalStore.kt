@@ -43,7 +43,9 @@ object MasterWorkJournalStore {
     /** Inserts or replaces one task record atomically, preserving other active work. */
     fun save(context: Context, record: Record): Boolean = transaction(context) { rows ->
         if (!valid(record)) return@transaction false
-        val updated = listOf(record) + rows.filterNot { it.taskId == record.taskId }
+        val previous = rows.firstOrNull { it.taskId == record.taskId }
+        val monotonic = if (previous == null) record else record.copy(updatedAt = maxOf(record.updatedAt, previous.updatedAt))
+        val updated = listOf(monotonic) + rows.filterNot { it.taskId == record.taskId }
         write(context, updated.take(MAX_RECORDS))
     } ?: false
 
@@ -51,8 +53,9 @@ object MasterWorkJournalStore {
     fun update(context: Context, taskId: String, transform: (Record) -> Record?): Record? =
         transaction(context) { rows ->
             val current = rows.firstOrNull { it.taskId == taskId } ?: return@transaction null
-            val next = runCatching { transform(current) }.getOrNull() ?: return@transaction null
-            if (next.taskId != current.taskId || !valid(next)) return@transaction null
+            val proposed = runCatching { transform(current) }.getOrNull() ?: return@transaction null
+            if (proposed.taskId != current.taskId || !valid(proposed)) return@transaction null
+            val next = proposed.copy(updatedAt = maxOf(proposed.updatedAt, current.updatedAt))
             if (!write(context, listOf(next) + rows.filterNot { it.taskId == taskId })) return@transaction null
             next
         }
@@ -70,8 +73,9 @@ object MasterWorkJournalStore {
         transaction(context) { rows ->
             val current = rows.firstOrNull { it.taskId == taskId } ?: return@transaction null
             if (current.status != "ACTIVE") return@transaction null
-            val next = runCatching { transform(current) }.getOrNull() ?: return@transaction null
-            if (next.taskId != current.taskId || !valid(next)) return@transaction null
+            val proposed = runCatching { transform(current) }.getOrNull() ?: return@transaction null
+            if (proposed.taskId != current.taskId || !valid(proposed)) return@transaction null
+            val next = proposed.copy(updatedAt = maxOf(proposed.updatedAt, current.updatedAt))
             if (!write(context, listOf(next) + rows.filterNot { it.taskId == taskId })) return@transaction null
             next
         }
@@ -83,7 +87,7 @@ object MasterWorkJournalStore {
                 status = "PAUSED",
                 currentStep = "Przerwano przez użytkownika lub zamknięcie Activity; wznowienie wymaga jawnej decyzji koordynatora.",
                 nextSteps = (current.nextSteps + "Sprawdź checkpointy i zdecyduj o wznowieniu.").distinct().take(MAX_STEPS),
-                updatedAt = now.coerceAtLeast(0L)
+                updatedAt = maxOf(now.coerceAtLeast(0L), current.updatedAt)
             )
         } ?: get(context, taskId)?.takeIf { it.status in setOf("PAUSED", "BLOCKED", "COMPLETED") }
 
@@ -97,7 +101,7 @@ object MasterWorkJournalStore {
                     status = "PAUSED",
                     currentStep = "Przerwano po zamknięciu procesu; wznowienie wymaga jawnej decyzji koordynatora.",
                     nextSteps = (record.nextSteps + "Sprawdź checkpointy i zdecyduj o wznowieniu.").distinct().take(MAX_STEPS),
-                    updatedAt = now.coerceAtLeast(0L)
+                    updatedAt = maxOf(now.coerceAtLeast(0L), record.updatedAt)
                 )
             }
             if (write(context, paused)) active.size else 0
