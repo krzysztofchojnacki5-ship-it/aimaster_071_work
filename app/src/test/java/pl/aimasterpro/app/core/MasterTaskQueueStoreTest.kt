@@ -41,6 +41,22 @@ class MasterTaskQueueStoreTest {
         assertEquals("agent:critical-reviewer", state.events.last().actor)
     }
 
+    @Test fun delayedLifecycleCallbackCannotMoveTaskOrAuditTimelineBackwards() {
+        assertTrue(MasterTaskQueueStore.enqueue(context, "task-clock-001", "Zegar", "Test czasu.", now = 100L))
+        assertTrue(MasterTaskQueueStore.assign(context, "task-clock-001", listOf("critical-reviewer"), now = 110L))
+        assertTrue(MasterTaskQueueStore.transition(context, "task-clock-001", "MASTER",
+            MasterTaskQueueStore.Status.RUNNING, "Start.", 120L))
+
+        // Simulate a delayed callback carrying a timestamp from before the device clock correction.
+        assertTrue(MasterTaskQueueStore.transition(context, "task-clock-001", "agent:critical-reviewer",
+            MasterTaskQueueStore.Status.COMPLETED, "Gotowe.", 90L))
+
+        val snapshot = MasterTaskQueueStore.snapshot(context)
+        assertEquals(MasterTaskQueueStore.Status.COMPLETED, snapshot.tasks.single().status)
+        assertEquals(120L, snapshot.tasks.single().updatedAt)
+        assertEquals(listOf(100L, 110L, 120L, 120L), snapshot.events.map { it.timestamp })
+    }
+
     @Test fun agentCannotCompleteAnotherAgentsTaskOrPauseTask() {
         assertTrue(MasterTaskQueueStore.enqueue(context, "task-002", "Test", "Cel.", now = 20L))
         assertTrue(MasterTaskQueueStore.assign(context, "task-002", listOf("critical-reviewer"), now = 21L))
