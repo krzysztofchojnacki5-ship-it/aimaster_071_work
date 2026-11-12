@@ -16,8 +16,9 @@ object LegacyChatHistoryImporter {
     private const val MAX_MESSAGE_CHARS = 32_000
 
     fun parse(raw: String?): List<Message>? {
-        if (raw.isNullOrBlank()) return emptyList()
+        if (raw == null) return emptyList()
         if (raw.length > MAX_RAW_CHARS) return null
+        if (raw.isBlank()) return emptyList()
         return try {
             val array = JSONArray(raw)
             if (array.length() > MAX_MESSAGES) return null

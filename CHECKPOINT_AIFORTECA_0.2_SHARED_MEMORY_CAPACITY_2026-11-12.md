@@ -51,3 +51,10 @@
 - Correction 3: ChatPinsStore validates persisted pin sets (maximum 100 IDs, each nonblank and <=200 characters), rejects oversized IDs and capacity overflow, and preserves malformed persisted data rather than rewriting it.
 - Regression tests cover over-capacity collections, oversized fields/payloads, and pin-set corruption/capacity without destructive writes.
 - Starting commit: 3036187478d85bc3b900dc44162417df19bd287e. Push and PR Android Build passed; push and PR Gradle Wrapper Validation passed. APK, source and test-report artifacts were published. This package is not yet CI-verified; no device test and no 0.3 release claimed.
+
+
+## CI correction — oversized whitespace-only legacy history — 2026-11-12
+- CI for commit 2269ada71e2ca4c39b69b364085fbee3798cbc4f: Android unit tests failed 1 of 1129. The failing assertion was LegacyChatHistoryImporterTest.oversizedLegacyPayloadCollectionsAndFieldsFailClosed.
+- Root cause: parse() checked isNullOrBlank() before raw payload length, so an oversized whitespace-only string was accepted as a valid empty history.
+- Fix: distinguish null input, enforce MAX_RAW_CHARS first, then accept a within-limit blank string as empty history. Nonblank valid legacy history behavior is unchanged.
+- This correction is awaiting CI; no test pass, APK release, or device validation is claimed.
