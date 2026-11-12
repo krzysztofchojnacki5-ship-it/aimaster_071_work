@@ -3,7 +3,7 @@
 ## Repo state
 - Repository: `krzysztofchojnacki5-ship-it/aimaster_071_work`
 - Branch: `work/aiforteca-0.2-master-agent-foundation`
-- Current base before this checkpoint update: `bb4d40ba1eb0d8b9a753f4b75761de81e5c47503` (`test: disambiguate memory mutation gate lambdas`).
+- Verified base for this checkpoint update: `039c22b5da0bdcc8d2ee5dce80c0384548f2c0c8` (`test: disambiguate replay approval lambdas`).
 - PR #3: open, draft; title: `AiFORTeca 0.2 — MASTER-led agent control center foundation`.
 - App version remains 0.2 / versionCode 3. Do not bump until the current memory-governance stage and CI are verified.
 - GitHub branch is the source of truth. No APK or ZIP has been delivered; do not send either unless explicitly requested.
@@ -24,18 +24,22 @@
 - Commit `bb4d40ba1eb0d8b9a753f4b75761de81e5c47503`: Gradle Wrapper Validation SUCCESS; Android Build FAILED at `compileDebugUnitTestKotlin`. The previous change typed lambdas in the distinct-approval-reference test but missed the two calls in `replayOfCommittedApprovalReferenceIsRejectedWithoutMutation`. The compiler still reports overload ambiguity at test lines 69 and 76. Main Kotlin source compilation completed; unit-test compilation did not. `assembleRelease` was skipped because tests failed.
 - Android Build run: `43165260995`; job: `131005531763`.
 - Gradle Wrapper Validation run: `43165261018`; job: `131005544412`.
-- Do not mark current HEAD tests/build as passed. No device testing is claimed.
+- Commit `039c22b5da0bdcc8d2ee5dce80c0384548f2c0c8`: Android Build run `43165768564` SUCCESS; unit tests, report upload, `Assemble release APK`, source packaging/upload, and unsigned APK upload all completed successfully. Gradle Wrapper Validation run `43165768519` SUCCESS. No device testing is claimed.
 
-## Immediate corrective action
-- Explicitly type the two replay-test lambdas as `(MemoryMutationPermit) -> Boolean` by annotating the lambda parameter.
-- Re-run CI on the new commit. Confirm unit tests and `assembleRelease` on that exact SHA before proceeding.
-- If CI fails again, inspect the exact logs and fix only the demonstrated issue.
+## Completed since the previous checkpoint
+- Fixed the two ambiguous replay-test lambda overloads by explicitly typing `MemoryMutationPermit`; CI on `039c22b5` is green, including unit tests and release APK assembly.
 
-## Next audit work after CI is green
-1. Audit `MemoryMutationGate.execute` behavior when the mutation callback returns false after a partial durable write. Current code appends terminal phase FAILED with outcome `MUTATION_FAILED`; determine from each governed store whether false guarantees no partial mutation. If not, change failure/recovery semantics and add regression tests. Do not assume atomicity.
-2. Recheck all USER approvalRef creation paths use fresh unique references; the MainActivity audit previously found UUID generation for the relevant UI approvals.
+## Current audit finding: failed partial mutations
+- `MemoryMutationGate.execute` records `FAILED / MUTATION_FAILED` when the callback returns false or throws.
+- This is **not treated as a resolved operation**: `hasUnresolvedIntent` returns true for every latest phase other than `COMMITTED`, and `unresolvedOperations` likewise retains `FAILED` records. The next attempt is blocked until recovery verifies state.
+- `QualityLearningStore.setProposalStatusRaw` is a multi-store workflow: it persists proposal status, then writes/removes shared memory and agent memory; on failure it attempts compensating rollback. Those files are not atomic together. Startup reconciliation compares proposal ledger and both memory stores, and skips recovery if any source is unreadable.
+- Added regression test `partialMutationFailureRemainsUnresolvedAndCannotBeReplayed` to prove a false result after a simulated durable side effect remains unresolved and cannot be blindly replayed. This test awaits CI on the next commit.
+
+## Next audit work
+1. Review compensation/recovery for every approval/rejection path, especially whether rollback failures leave enough evidence for startup reconciliation or manual inspection.
+2. Recheck all USER approvalRef creation paths use fresh unique references; the MainActivity audit previously found UUID generation for relevant UI approvals.
 3. Continue source-level audit of durable memory mutation and journal write/retry paths.
-4. Update this checkpoint after meaningful verified work; keep CI status tied to exact commit SHAs.
+4. Update this checkpoint after meaningful verified work; tie all CI status to exact commit SHAs.
 5. Device/Ollama connectivity remains a separate manual test for the user when an APK is explicitly requested.
 
 ## Prior recovery work retained

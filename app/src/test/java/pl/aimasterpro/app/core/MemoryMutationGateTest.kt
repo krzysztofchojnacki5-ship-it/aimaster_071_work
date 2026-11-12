@@ -121,6 +121,30 @@ class MemoryMutationGateTest {
         assertEquals("MUTATION_FAILED", rows.last().outcome)
     }
 
+    @Test fun partialMutationFailureRemainsUnresolvedAndCannotBeReplayed() {
+        var durableSideEffectCount = 0
+        val approvedRequest = request()
+
+        assertFalse(MemoryMutationGate.execute(context, approvedRequest) { _: MemoryMutationPermit ->
+            // Model a callback that persisted one store before a later store failed.
+            durableSideEffectCount++
+            false
+        })
+        assertEquals(1, durableSideEffectCount)
+        assertTrue(MemoryAuditLog.hasUnresolvedIntent(
+            context, "USER", "ADD_SHARED_RULE", "rule-1"
+        ))
+
+        assertFalse(MemoryMutationGate.execute(context, approvedRequest) { _: MemoryMutationPermit ->
+            durableSideEffectCount++
+            true
+        })
+        assertEquals("A failed partial mutation must not be replayed blindly.", 1, durableSideEffectCount)
+        val rows = MemoryAuditLog.readVerified(context)!!
+        assertEquals(MemoryAuditLog.Phase.FAILED, rows.last().phase)
+        assertEquals("MUTATION_FAILED", rows.last().outcome)
+    }
+
     @Test fun permitForOneMutationCannotBeReusedForAnotherStoreOperation() {
         val request = request()
         var storeMutationResult = true
