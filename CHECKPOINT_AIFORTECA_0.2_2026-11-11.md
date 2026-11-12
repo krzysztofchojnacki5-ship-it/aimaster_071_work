@@ -3,7 +3,8 @@
 ## Repo state
 - Repository: `krzysztofchojnacki5-ship-it/aimaster_071_work`
 - Branch: `work/aiforteca-0.2-master-agent-foundation`
-- Code baseline at checkpoint update: `a714b578c461eafb7be012f6160d7eed32894ec9`
+- Latest code commit: `6f44a88b47b21561621728d7b0c02ebf977c664a` (`test: cover denied replay and ambiguous recovery`)
+- Previous checkpoint-only commit: `3714db4c434160f1aa834313e3760d3185add998`
 - PR #3: open, draft; title: `AiFORTeca 0.2 — MASTER-led agent control center foundation`
 - This checkpoint supersedes the earlier stale IPv6-only checkpoint text.
 
@@ -28,25 +29,27 @@ Changes in the recovery hardening:
 - Startup reconciliation checks the current durable state first and skips proposals that are already consistent; this avoids appending redundant recovery audit pairs on every app launch.
 - If a previous SYSTEM_RECOVERY operation is unresolved and the stores still disagree with the proposal ledger, automatic replay is refused and the proposal is logged for manual inspection.
 - A regression test simulates process interruption after proposal status persistence but before memory persistence, verifies recovery, verifies closure of the original USER intent, and verifies a second startup does not add redundant audit events.
+- Additional tests cover interrupted SYSTEM_RECOVERY with mismatched stores (no automatic replay), and verify an authorization-denial record cannot mask an earlier unresolved USER intent.
 
 Important limitation:
 - Proposal ledger, shared memory, and agent memory are separate SharedPreferences files. They are not one cross-file atomic transaction. Recovery verifies and reconciles the durable source of truth; it does not claim cross-file atomicity.
 
 ## CI evidence
 - Commit `798034d6dd4b1cb92ba018cfd3b5f6bb08a04357`: Android Build SUCCESS, including unit tests and `assembleRelease`; Gradle Wrapper Validation SUCCESS.
-- Commit `a714b578c461eafb7be012f6160d7eed32894ec9`: Gradle Wrapper Validation run `43120369725` SUCCESS.
-- Android Build run `43120369847` was still running during checkpoint preparation; latest observed step was Android SDK component installation. Do not mark unit tests or release assembly as passed for this commit.
-- A checkpoint-only follow-up commit will trigger fresh CI; inspect the newest run for its resulting HEAD.
+- Commit `6f44a88b47b21561621728d7b0c02ebf977c664a`: Android Build run `43120869622` SUCCESS, including `Run unit tests`, `Assemble release APK`, and artifact uploads; Gradle Wrapper Validation run `43120869605` SUCCESS.
+- The Android Build produced an unsigned CI APK because release-signing setup is push-only; the PR run skipped signing and uploaded the unsigned release artifact.
+- Earlier Android Build runs for `3714db4...` and `a714b57...` were cancelled after newer commits superseded them. Do not transfer their status to another SHA.
 - No APK was sent to the user. Do not send APK or ZIP unless explicitly requested.
 
 ## Next actions
 1. Verify CI for the newest HEAD after this checkpoint update: unit tests, then `assembleRelease`.
 2. If a test fails, inspect the exact report/log and fix only the demonstrated cause.
-3. Add focused tests for failed/ambiguous recovery and journal-denial ordering; retain fail-closed behavior.
-4. Continue auditing every durable memory mutation call site and recovery boundary.
+3. Add a focused test that unreadable/corrupt audit history blocks a mutation and preserves the original journal bytes; rerun CI.
+4. Continue auditing durable memory mutation call sites and recovery boundaries, including explicit user feedback and operational telemetry stores.
 5. Do not mark device testing as passed; user performs Android Studio/device validation when requesting an APK.
 
 ## Package / artifact ledger
-- Source baseline commits: `798034d...`, `128dada...`, `2d7153e...`, `a714b57...`.
+- Source baseline commits: `798034d...`, `128dada...`, `2d7153e...`, `a714b57...`, `6f44a88...`.
+- Audited UI mutation entry points in `MainActivity`: manual shared-memory add and agent-memory removal use `MemoryMutationGate`; proposal approval/rejection uses `QualityLearningStore.setProposalStatus` and the gate; feedback ratings and proposal drafting are separate data records, not approved-memory mutations; clearing `LearningJournalStore` is a separately confirmed telemetry-only operation.
 - APK / ZIP delivery: none.
 - Current app version remains 0.2; do not bump to 0.3 until the governance/recovery stage and CI are verified.

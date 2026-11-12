@@ -130,6 +130,21 @@ class MemoryMutationGateTest {
         assertTrue(MemoryAuditLog.hasUnresolvedIntent(context, "USER", "ADD_SHARED_RULE", "rule-1"))
     }
 
+    @Test fun unreadableAuditJournalBlocksMutationAndPreservesOriginalBytes() {
+        val prefs = context.getSharedPreferences("ai_memory_audit_log_v1", Context.MODE_PRIVATE)
+        val corrupt = "[{not-valid-json"
+        assertTrue(prefs.edit().putString("events", corrupt).commit())
+
+        var invoked = false
+        assertFalse(MemoryMutationGate.execute(context, request()) { _: MemoryMutationPermit ->
+            invoked = true
+            true
+        })
+        assertFalse(invoked)
+        assertEquals(corrupt, prefs.getString("events", null))
+        assertEquals(null, MemoryAuditLog.readVerified(context))
+    }
+
     @Test fun missingApprovalBlocksMutationBeforeIntent() {
         var invoked = false
         assertFalse(MemoryMutationGate.execute(context, request(approvalRef = "")) { _: MemoryMutationPermit ->
