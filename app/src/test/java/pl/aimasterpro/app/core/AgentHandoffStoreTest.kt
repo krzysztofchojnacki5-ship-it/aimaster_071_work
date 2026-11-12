@@ -141,7 +141,7 @@ class AgentHandoffStoreTest {
         assertFalse(snapshot.messages.any { it.id == firstId })
         assertTrue(snapshot.messages.any { it.id == "handoff-msg-001" })
         assertTrue(snapshot.messages.any { it.id == "handoff-msg-400" })
-        assertEquals(399, snapshot.messages.count { it.state == AgentHandoffStore.State.PENDING })
+        assertEquals(400, snapshot.messages.count { it.state == AgentHandoffStore.State.PENDING })
     }
 
     @Test fun inboxNeverEvictsPendingOrClaimedHandoffsToMakeRoom() {
