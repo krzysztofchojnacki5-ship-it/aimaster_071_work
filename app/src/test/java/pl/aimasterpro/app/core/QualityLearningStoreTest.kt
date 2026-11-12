@@ -1119,4 +1119,79 @@ class QualityLearningStoreTest {
         })
     }
 
+
+    @Test fun failedProposalStatusCompensationIsRecoveredFromDurableRejectedLedger() {
+        val proposal = QualityLearningStore.addProposal(
+            context, "Reguła po nieudanym przywróceniu statusu", 8, "wysoka",
+            listOf("task-failed-status-compensation"), listOf("coder"), emptyList()
+        )
+        assertTrue(QualityLearningStore.setProposalStatus(
+            context, proposal.id, "APPROVED", "test-initial-approval:${proposal.id}"
+        ))
+        val memoryEntry = "[UCZENIE ZATWIERDZONE ${proposal.id.take(8)}; dowody=${proposal.evidenceCount}; pewność=${proposal.confidence}] ${proposal.text}".take(1000)
+        val agentPrefs = context.getSharedPreferences("ai_agent_operational_memory_v1", Context.MODE_PRIVATE)
+        val originalAgentLedger = agentPrefs.getString("entries", null)!!
+        assertTrue(AiMemoryStore.containsExactMemory(context, memoryEntry) == true)
+        assertTrue(AgentOperationalMemoryStore.hasApprovedSource(
+            context, "coder", proposal.text, "proposal:${proposal.id}"
+        ) == true)
+
+        // Force rejection cleanup to fail after shared memory has already been removed.
+        assertTrue(agentPrefs.edit().putString("entries", "not-json").commit())
+        var proposalCommitCalls = 0
+        val failingContext = object : ContextWrapper(context) {
+            override fun getSharedPreferences(name: String, mode: Int): SharedPreferences {
+                val delegate = context.getSharedPreferences(name, mode)
+                if (name != "ai_quality_learning_v1") return delegate
+                return object : SharedPreferences by delegate {
+                    override fun edit(): SharedPreferences.Editor {
+                        val editor = delegate.edit()
+                        return object : SharedPreferences.Editor by editor {
+                            override fun putString(key: String, value: String?): SharedPreferences.Editor {
+                                editor.putString(key, value)
+                                return this
+                            }
+
+                            override fun commit(): Boolean {
+                                proposalCommitCalls++
+                                // Persist REJECTED; fail the compensation write so the durable
+                                // proposal ledger remains authoritative after process restart.
+                                return if (proposalCommitCalls == 1) editor.commit() else false
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        assertFalse(QualityLearningStore.setProposalStatus(
+            failingContext, proposal.id, "REJECTED", "test-rejection-compensation:${proposal.id}"
+        ))
+        assertEquals(2, proposalCommitCalls)
+        assertTrue(SharedPreferencesWriteHealth.isUncertain("ai_quality_learning_v1"))
+        assertEquals("REJECTED", QualityLearningStore.proposals(context).single().status)
+        assertFalse(AiMemoryStore.containsExactMemory(context, memoryEntry) == true)
+        assertTrue(MemoryAuditLog.hasUnresolvedIntent(
+            context, "USER", "REJECT_PROPOSAL", proposal.id
+        ))
+
+        // Simulate restart and repair of the agent ledger. REJECTED is the durable decision,
+        // so reconciliation must finish removing the remaining provenance without replaying
+        // the failed APPROVED-status compensation.
+        SharedPreferencesWriteHealth.resetForTests("ai_quality_learning_v1")
+        SharedPreferencesWriteHealth.resetForTests("ai_agent_operational_memory_v1")
+        assertTrue(agentPrefs.edit().putString("entries", originalAgentLedger).commit())
+        assertEquals(true, AgentOperationalMemoryStore.hasAnySource(context, "proposal:${proposal.id}"))
+        assertEquals(0, QualityLearningStore.syncApprovedAgentMemories(context))
+        assertEquals("REJECTED", QualityLearningStore.proposals(context).single().status)
+        assertFalse(AiMemoryStore.containsExactMemory(context, memoryEntry) == true)
+        assertEquals(false, AgentOperationalMemoryStore.hasAnySource(context, "proposal:${proposal.id}"))
+        assertFalse(MemoryAuditLog.hasUnresolvedIntent(
+            context, "USER", "REJECT_PROPOSAL", proposal.id
+        ))
+        val auditSize = MemoryAuditLog.readVerified(context)!!.size
+        assertEquals(0, QualityLearningStore.syncApprovedAgentMemories(context))
+        assertEquals(auditSize, MemoryAuditLog.readVerified(context)!!.size)
+    }
+
 }
