@@ -6780,6 +6780,48 @@ class MainActivity : Activity() {
                 }
             }
         }
+
+        val handoffDiagnostics = pl.aimasterpro.app.core.AgentHandoffStore.snapshot(this)
+        if (handoffDiagnostics.status != pl.aimasterpro.app.core.AgentHandoffStore.ReadStatus.AVAILABLE) {
+            card("Skrzynka przekazań agentów — niedostępna",
+                "Stan: ${handoffDiagnostics.status}. Nie zakładam, że brak odczytu oznacza pustą skrzynkę.")
+        } else {
+            val taskStates = queueDiagnostics.tasks.associate { it.id to it.status }
+            val unresolved = handoffDiagnostics.messages.filter {
+                it.state == pl.aimasterpro.app.core.AgentHandoffStore.State.PENDING ||
+                    it.state == pl.aimasterpro.app.core.AgentHandoffStore.State.CLAIMED
+            }.takeLast(8).asReversed()
+            val pendingCount = handoffDiagnostics.messages.count {
+                it.state == pl.aimasterpro.app.core.AgentHandoffStore.State.PENDING
+            }
+            val claimedCount = handoffDiagnostics.messages.count {
+                it.state == pl.aimasterpro.app.core.AgentHandoffStore.State.CLAIMED
+            }
+            card("Skrzynka przekazań agentów",
+                "Oczekujące: $pendingCount • Przejęte bez potwierdzenia: $claimedCount")
+            if (unresolved.isEmpty()) {
+                card("Brak nierozstrzygniętych przekazań",
+                    "Wszystkie zapisane przekazania mają stan końcowy.")
+            } else {
+                val handoffTime = java.text.SimpleDateFormat("dd.MM HH:mm:ss", java.util.Locale.getDefault())
+                unresolved.forEach { handoff ->
+                    val running = taskStates[handoff.taskId] == pl.aimasterpro.app.core.MasterTaskQueueStore.Status.RUNNING
+                    val stateLabel = when (handoff.state) {
+                        pl.aimasterpro.app.core.AgentHandoffStore.State.PENDING ->
+                            if (running) "OCZEKUJE NA ODBIORCĘ" else "NIEODEBRANE PO ZATRZYMANIU ZADANIA"
+                        pl.aimasterpro.app.core.AgentHandoffStore.State.CLAIMED ->
+                            if (running) "PRZEJĘTE — W TOKU" else "NIEPEWNE PO PRZERWANIU — BEZ AUTOMATYCZNEGO PONOWIENIA"
+                        else -> handoff.state.name
+                    }
+                    val taskTitle = taskTitles[handoff.taskId] ?: handoff.taskId
+                    card(stateLabel,
+                        "$taskTitle • ${handoff.senderAgentId} → ${handoff.recipientAgentId} • przebieg #${handoff.runId}\n" +
+                            "Utworzono: ${handoffTime.format(java.util.Date(handoff.createdAt))} • " +
+                            "Aktualizacja: ${handoffTime.format(java.util.Date(handoff.updatedAt))}")
+                }
+            }
+        }
+
         card("Smart Budget — stan dzienny", "Zużyto według API: ${usage.recordedTodayTokens} tokenów\nAktywne rezerwacje: ${usage.activeReservedTokens} tokenów\nŁącznie zajęte: $used / ${usage.dailyLimitTokens} ($percent%)\nPozostało do rezerwacji: ${usage.remainingTokens} tokenów\nLimit na jednego agenta: ${usage.perAgentLimitTokens} tokenów\nKoszt znany z 30 dni: ${String.format(java.util.Locale.US, "%.4f", usage.recorded30DayCostPln)} PLN\nRekordy z nieznanym kosztem: ${usage.unknownCostRecords} (nie są liczone jako 0 PLN)\nAktywny koszt zarezerwowany: ${String.format(java.util.Locale.US, "%.4f", usage.activeReservedCostPln)} PLN\nLimit kosztów: ${if (usage.monthlyCostLimitPln > 0.0) "${usage.monthlyCostLimitPln} PLN" else "wyłączony"}")
         action("Otwórz Monitor API i limity budżetowe", onClick = {
             selectedMonitorPeriod = "Dzisiaj"
