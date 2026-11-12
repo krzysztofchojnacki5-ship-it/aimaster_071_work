@@ -235,6 +235,27 @@ object MasterTaskQueueStore {
             recipient.isBlank() || recipient.length > 100 || status.length > 30 ||
             message.isBlank() || message.length > 8_000 || now < 0L ||
             providerId.length > 120 || model.length > 180) return@mutate null
+
+        // The event stream is not a free-form log sink: bind both endpoints to this task's
+        // assigned team. Built-in and custom agents are resolved from the durable catalog,
+        // including disabled agents that were validly assigned before the run started.
+        val catalogState = AgentManagerStore.snapshot(context)
+        if (catalogState.status != AgentManagerStore.ReadStatus.AVAILABLE) return@mutate null
+        val knownAgents = pl.aimasterpro.app.agents.AgentCatalog.all + catalogState.customAgents
+        fun resolveAgentId(endpoint: String): String? {
+            val token = endpoint.removePrefix("agent:")
+            return knownAgents.firstOrNull {
+                it.id.equals(token, ignoreCase = true) || it.name.equals(token, ignoreCase = true)
+            }?.id
+        }
+        val senderId = resolveAgentId(sender)
+        val recipientId = resolveAgentId(recipient)
+        val senderAllowed = sender.equals("MASTER", true) || sender.equals("SYSTEM", true) ||
+            (senderId != null && senderId in current.assignedAgentIds)
+        val recipientAllowed = recipient.equals("MASTER", true) || recipient.equals("SYSTEM", true) ||
+            (recipientId != null && recipientId in current.assignedAgentIds)
+        if (!senderAllowed || !recipientAllowed) return@mutate null
+
         val safe = CommunicationLogSanitizer.sanitize(message).take(350)
         val detail = "Do: $recipient • $status • $safe"
         Triple(tasks, events + event(taskId, sender, "AGENT_MESSAGE", "", status, detail, now,
