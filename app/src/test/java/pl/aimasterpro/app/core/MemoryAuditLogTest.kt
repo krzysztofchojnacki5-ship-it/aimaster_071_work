@@ -114,15 +114,15 @@ class MemoryAuditLogTest {
         seedCommittedJournal(4_994)
 
         assertTrue(MemoryAuditLog.append(context, event(MemoryAuditLog.Phase.INTENT, "AUTHORIZED")))
-        assertEquals(4_996, MemoryAuditLog.readVerified(context)!!.size)
+        assertEquals(4_995, MemoryAuditLog.readVerified(context)!!.size)
 
         assertTrue(MemoryAuditLog.append(context, event(MemoryAuditLog.Phase.FAILED, "MUTATION_FAILED")))
-        assertEquals(4_997, MemoryAuditLog.readVerified(context)!!.size)
+        assertEquals(4_996, MemoryAuditLog.readVerified(context)!!.size)
         val pending = MemoryAuditLog.unresolvedOperations(context, "rule-1")!!.single()
         assertTrue(MemoryAuditLog.resolveUnresolved(context, pending, "test repair verified"))
 
         val rows = MemoryAuditLog.readVerified(context)!!
-        assertEquals(4_998, rows.size)
+        assertEquals(4_997, rows.size)
         assertEquals(MemoryAuditLog.Phase.COMMITTED, rows.last().phase)
         assertEquals("RECOVERED_STATE", rows.last().outcome)
         assertTrue(MemoryAuditLog.unresolvedOperations(context, "rule-1")!!.isEmpty())
