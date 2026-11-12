@@ -6722,6 +6722,60 @@ class MainActivity : Activity() {
         val percent = (used * 100.0 / usage.dailyLimitTokens.coerceAtLeast(1L)).toInt().coerceIn(0, 999)
         card("Centrum diagnostyczne", "Szybka kontrola lokalnego budżetu, rezerwacji i konfiguracji. Klucze API nie są wyświetlane ani kopiowane.")
         addCompanionTrustCard()
+        // Compact operational feed: durable queue/agent events only; provider secrets are never rendered.
+        val queueDiagnostics = pl.aimasterpro.app.core.MasterTaskQueueStore.snapshot(this)
+        card("Ostatnie zdarzenia kolejki i agentów",
+            "Maksymalnie 12 najnowszych wpisów z trwałego dziennika. To lokalny wycinek zdarzeń kolejki, nie pełny monitoring dostawców.")
+        action("↻ Odśwież zdarzenia", onClick = {
+            showShell("Diagnostyka")
+            showDiagnostics()
+        })
+        if (queueDiagnostics.status != pl.aimasterpro.app.core.MasterTaskQueueStore.ReadStatus.AVAILABLE) {
+            card("Dziennik zdarzeń niedostępny",
+                "Stan: ${queueDiagnostics.status} • kod: ${queueDiagnostics.errorCode}. Nie pokazuję danych niezweryfikowanych.")
+        } else {
+            val taskTitles = queueDiagnostics.tasks.associate { it.id to it.title }
+            val visibleOperations = setOf(
+                "AGENT_TRACE", "AGENT_MESSAGE", "AGENT_PROGRESS", "AGENT_RESULT",
+                "TRANSITION", "RECOVER_INTERRUPTED", "CREATE", "ASSIGN"
+            )
+            val recentEvents = queueDiagnostics.events
+                .filter { it.operation in visibleOperations }
+                .takeLast(12)
+                .asReversed()
+            if (recentEvents.isEmpty()) {
+                card("Brak zdarzeń", "Zdarzenia pojawią się po utworzeniu zadania lub rozpoczęciu pracy zespołu.")
+            } else {
+                val eventTime = java.text.SimpleDateFormat("dd.MM HH:mm:ss", java.util.Locale.getDefault())
+                recentEvents.forEach { event ->
+                    val kind = when (event.operation) {
+                        "AGENT_TRACE" -> "ŚLAD TECHNICZNY AGENTA"
+                        "AGENT_MESSAGE" -> "WIADOMOŚĆ"
+                        "AGENT_PROGRESS" -> "POSTĘP AGENTA"
+                        "AGENT_RESULT" -> "WYNIK AGENTA"
+                        "RECOVER_INTERRUPTED" -> "ODZYSKIWANIE PRZERWANEGO ZADANIA"
+                        "TRANSITION" -> "ZMIANA STANU"
+                        "CREATE" -> "UTWORZENIE ZADANIA"
+                        "ASSIGN" -> "PRZYDZIAŁ AGENTÓW"
+                        else -> event.operation
+                    }
+                    val route = if (event.recipient.isNotBlank()) " → ${event.recipient}" else ""
+                    val state = listOf(event.fromStatus, event.toStatus)
+                        .filter { it.isNotBlank() }.joinToString(" → ")
+                    val provider = listOf(event.providerId, event.model)
+                        .filter { it.isNotBlank() }.joinToString(" / ")
+                    val metadata = listOf(
+                        taskTitles[event.taskId] ?: event.taskId,
+                        "${event.actor}${route}",
+                        state,
+                        provider,
+                        eventTime.format(java.util.Date(event.timestamp))
+                    ).filter { it.isNotBlank() }.joinToString(" • ")
+                    card(kind, "${metadata}
+${event.detail.take(350)}")
+                }
+            }
+        }
         card("Smart Budget — stan dzienny", "Zużyto według API: ${usage.recordedTodayTokens} tokenów\nAktywne rezerwacje: ${usage.activeReservedTokens} tokenów\nŁącznie zajęte: $used / ${usage.dailyLimitTokens} ($percent%)\nPozostało do rezerwacji: ${usage.remainingTokens} tokenów\nLimit na jednego agenta: ${usage.perAgentLimitTokens} tokenów\nKoszt znany z 30 dni: ${String.format(java.util.Locale.US, "%.4f", usage.recorded30DayCostPln)} PLN\nRekordy z nieznanym kosztem: ${usage.unknownCostRecords} (nie są liczone jako 0 PLN)\nAktywny koszt zarezerwowany: ${String.format(java.util.Locale.US, "%.4f", usage.activeReservedCostPln)} PLN\nLimit kosztów: ${if (usage.monthlyCostLimitPln > 0.0) "${usage.monthlyCostLimitPln} PLN" else "wyłączony"}")
         action("Otwórz Monitor API i limity budżetowe", onClick = {
             selectedMonitorPeriod = "Dzisiaj"
