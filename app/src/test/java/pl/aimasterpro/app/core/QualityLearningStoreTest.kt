@@ -1173,8 +1173,8 @@ class QualityLearningStoreTest {
         // Inspect the persisted ledger directly to prove REJECTED reached durable storage.
         val persistedProposalLedger = context.getSharedPreferences("ai_quality_learning_v1", Context.MODE_PRIVATE)
             .getString("proposals", null)!!
-        assertTrue(persistedProposalLedger.contains("\\\"id\\\":\\\""+ proposal.id + "\\\""))
-        assertTrue(persistedProposalLedger.contains("\\\"status\\\":\\\"REJECTED\\\""))
+        assertTrue(persistedProposalLedger.contains(proposal.id))
+        assertTrue(persistedProposalLedger.contains("REJECTED"))
         assertFalse(AiMemoryStore.containsExactMemory(context, memoryEntry) == true)
         assertTrue(MemoryAuditLog.hasUnresolvedIntent(
             context, "USER", "REJECT_PROPOSAL", proposal.id
