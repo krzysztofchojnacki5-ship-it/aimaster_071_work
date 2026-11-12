@@ -11,9 +11,9 @@ on:
 permissions:
   contents: read
 
-# Keep push and pull_request validation for the same head branch in one slot.
+# Keep push and pull_request validation in separate slots so neither event cancels the other.
 concurrency:
-  group: aiforteca-wrapper-${{ github.workflow }}-${{ github.head_ref || github.ref_name }}
+  group: aiforteca-wrapper-${{ github.workflow }}-${{ github.event_name }}-${{ github.head_ref || github.ref_name }}
   cancel-in-progress: true
 
 jobs:
