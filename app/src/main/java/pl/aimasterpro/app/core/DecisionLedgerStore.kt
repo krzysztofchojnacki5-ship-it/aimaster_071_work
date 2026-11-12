@@ -18,6 +18,7 @@ object DecisionLedgerStore {
     private const val MAX_ENTRIES = 1_000
     private const val MAX_OPTIONS = 12
     private const val MAX_EVIDENCE = 40
+    private const val MAX_RAW_CHARS = 4_000_000
 
     enum class ReadStatus { AVAILABLE, UNAVAILABLE, CORRUPT }
 
@@ -56,10 +57,12 @@ object DecisionLedgerStore {
                     return@withHealthyAccess false
                 }
                 val next = (listOf(entry) + current).take(MAX_ENTRIES)
+                val serialized = encode(next).toString()
+                if (serialized.length > MAX_RAW_CHARS) return@withHealthyAccess false
                 SharedPreferencesWriteHealth.commit(
                     PREFS,
                     context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
-                        .putString(KEY, encode(next).toString())
+                        .putString(KEY, serialized)
                 )
             }
         }.getOrDefault(false)
@@ -132,6 +135,7 @@ object DecisionLedgerStore {
     private fun readStrict(context: Context): List<Entry>? = runCatching {
         val raw = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
             .getString(KEY, null) ?: "[]"
+        require(raw.length <= MAX_RAW_CHARS) { "Decision ledger exceeds its supported raw size." }
         val array = JSONArray(raw)
         require(array.length() <= MAX_ENTRIES)
         val ids = hashSetOf<String>()

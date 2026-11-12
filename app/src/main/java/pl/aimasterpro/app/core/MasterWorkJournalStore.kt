@@ -14,6 +14,7 @@ object MasterWorkJournalStore {
     private const val MAX_RECORDS = 60
     private const val MAX_STEPS = 40
     private const val MAX_DECISIONS = 40
+    private const val MAX_RAW_CHARS = 1_000_000
 
     data class Record(
         val taskId: String,
@@ -128,6 +129,7 @@ object MasterWorkJournalStore {
 
     private fun read(context: Context): List<Record>? = runCatching {
         val raw = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString(KEY, null) ?: "[]"
+        require(raw.length <= MAX_RAW_CHARS) { "Master work journal exceeds its supported raw size." }
         val array = JSONArray(raw)
         require(array.length() <= MAX_RECORDS)
         val ids = hashSetOf<String>()
@@ -178,7 +180,9 @@ object MasterWorkJournalStore {
                 .put("decisions", JSONArray(r.decisions)).put("nextSteps", JSONArray(r.nextSteps))
                 .put("updatedAt", r.updatedAt))
         }
+        val serialized = array.toString()
+        if (serialized.length > MAX_RAW_CHARS) return@runCatching false
         SharedPreferencesWriteHealth.commit(PREFS,
-            context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putString(KEY, array.toString()))
+            context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putString(KEY, serialized))
     }.getOrDefault(false)
 }

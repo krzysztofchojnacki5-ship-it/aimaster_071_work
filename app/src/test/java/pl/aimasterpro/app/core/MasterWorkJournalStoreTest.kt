@@ -162,4 +162,13 @@ class MasterWorkJournalStoreTest {
         assertNull(MasterWorkJournalStore.get(context, "blocked"))
         assertEquals("[]", prefs.getString("records", null))
     }
+    @Test fun oversizedRawMasterJournalIsRejectedAndPreserved() {
+        val prefs = context.getSharedPreferences("ai_master_work_journal_v1", Context.MODE_PRIVATE)
+        val oversized = " ".repeat(1_000_001)
+        assertTrue(prefs.edit().putString("records", oversized).commit())
+
+        assertTrue(MasterWorkJournalStore.latest(context).isEmpty())
+        assertFalse(MasterWorkJournalStore.save(context, record("new-task")))
+        assertEquals(oversized, prefs.getString("records", null))
+    }
 }

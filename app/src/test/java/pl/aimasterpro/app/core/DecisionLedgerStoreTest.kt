@@ -103,4 +103,13 @@ class DecisionLedgerStoreTest {
         assertEquals(DecisionLedgerStore.ReadStatus.UNAVAILABLE, snapshot.status)
         assertFalse(DecisionLedgerStore.append(context, entry("d-1")))
     }
+    @Test fun oversizedRawDecisionLedgerIsRejectedBeforeParsingAndPreserved() {
+        val oversized = " ".repeat(4_000_001)
+        assertTrue(prefs.edit().putString("entries", oversized).commit())
+
+        val snapshot = DecisionLedgerStore.snapshot(context)
+        assertEquals(DecisionLedgerStore.ReadStatus.CORRUPT, snapshot.status)
+        assertFalse(DecisionLedgerStore.append(context, entry("new-decision")))
+        assertEquals(oversized, prefs.getString("entries", null))
+    }
 }

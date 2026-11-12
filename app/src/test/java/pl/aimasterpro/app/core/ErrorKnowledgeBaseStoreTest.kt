@@ -151,4 +151,13 @@ class ErrorKnowledgeBaseStoreTest {
             ErrorKnowledgeBaseStore.snapshot(context).status)
         assertFalse(ErrorKnowledgeBaseStore.append(context, record("r1")))
     }
+    @Test fun oversizedRawErrorKnowledgeBaseIsRejectedBeforeParsingAndPreserved() {
+        val oversized = " ".repeat(8_000_001)
+        assertTrue(prefs.edit().putString("records", oversized).commit())
+
+        val snapshot = ErrorKnowledgeBaseStore.snapshot(context)
+        assertEquals(ErrorKnowledgeBaseStore.ReadStatus.CORRUPT, snapshot.status)
+        assertFalse(ErrorKnowledgeBaseStore.append(context, record("new-record")))
+        assertEquals(oversized, prefs.getString("records", null))
+    }
 }
