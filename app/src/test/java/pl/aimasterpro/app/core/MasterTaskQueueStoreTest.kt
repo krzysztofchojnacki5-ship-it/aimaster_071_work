@@ -307,11 +307,15 @@ class MasterTaskQueueStoreTest {
         assertTrue(MasterTaskQueueStore.transition(context, "task-010", "MASTER",
             MasterTaskQueueStore.Status.RUNNING, "Żądanie mogło zostać wysłane.", 82L))
 
-        assertEquals(1, MasterTaskQueueStore.recoverInterruptedRuns(context, now = 90L))
+        // Simulate a wall-clock correction: recovery time must not predate the RUNNING update.
+        assertEquals(1, MasterTaskQueueStore.recoverInterruptedRuns(context, now = 81L))
         val state = MasterTaskQueueStore.snapshot(context)
         assertEquals(MasterTaskQueueStore.Status.BLOCKED, state.tasks.single().status)
+        assertEquals(82L, state.tasks.single().updatedAt)
         assertTrue(state.tasks.single().currentStep.contains("wynik żądań może być nieznany", ignoreCase = true))
         assertEquals("RECOVER_INTERRUPTED", state.events.last().operation)
+        assertEquals(82L, state.events.last().timestamp)
+        assertEquals(1, state.events.last().runId)
         assertEquals(0, MasterTaskQueueStore.recoverInterruptedRuns(context, now = 91L))
     }
 
