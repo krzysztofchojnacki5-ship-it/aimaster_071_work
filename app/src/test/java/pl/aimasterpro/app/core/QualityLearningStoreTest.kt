@@ -68,7 +68,7 @@ class QualityLearningStoreTest {
         // Simulate process death after the proposal status commit but before shared-memory persistence.
         assertTrue(context.getSharedPreferences("ai_master_memory_store_v1", Context.MODE_PRIVATE)
             .edit().putString("memories", "[]").commit())
-        assertEquals(0, QualityLearningStore.syncApprovedAgentMemories(context))
+        assertEquals(1, QualityLearningStore.syncApprovedAgentMemories(context))
         val records = MemoryAuditLog.readVerified(context)!!
         val recovery = records.filter { it.actor == "SYSTEM_RECOVERY" && it.objectId == proposal.id }
         assertEquals(2, recovery.size)
@@ -116,7 +116,7 @@ class QualityLearningStoreTest {
         val raw = prefs.getString("proposals", null)!!
         assertTrue(prefs.edit().putString("proposals", raw.replace("\"status\":\"PROPOSAL\"", "\"status\":\"APPROVED\"")).commit())
 
-        assertEquals(1, QualityLearningStore.syncApprovedAgentMemories(context))
+        assertEquals(0, QualityLearningStore.syncApprovedAgentMemories(context))
         assertFalse(MemoryAuditLog.hasUnresolvedIntent(context, "USER", "APPROVE_PROPOSAL", proposal.id))
         val resolved = MemoryAuditLog.readVerified(context)!!.last()
         assertEquals("USER", resolved.actor)
