@@ -11,6 +11,13 @@ import org.json.JSONObject
 object ChatHistoryStore {
     private const val PREFS = "chat_state"
     private const val KEY = "chats_v2"
+    private const val MAX_CHAT_ID_CHARS = 200
+    private const val MAX_MESSAGES = 5_000
+    private const val MAX_ROLE_CHARS = 32
+    private const val MAX_MESSAGE_CHARS = 32_000
+    private const val MAX_TASK_IDS = 5_000
+    private const val MAX_AGENT_ACTIVITY = 150
+    private const val MAX_ACTIVITY_CHARS = 32_000
 
     @Synchronized
     fun readRoot(context: Context): JSONObject? = runCatching {
@@ -28,11 +35,17 @@ object ChatHistoryStore {
                 val keys = chats.keys()
                 while (keys.hasNext()) {
                     val chatId = keys.next()
+                    require(chatId.isNotBlank() && chatId.length <= MAX_CHAT_ID_CHARS) {
+                        "Chat history contains an invalid chat ID."
+                    }
                     val chat = chats.optJSONObject(chatId)
                         ?: error("Chat history contains a non-object chat.")
                     if (chat.has("messages")) {
                         val messages = chat.optJSONArray("messages")
                             ?: error("Chat history contains an invalid messages array.")
+                        require(messages.length() <= MAX_MESSAGES) {
+                            "Chat history contains too many messages."
+                        }
                         for (i in 0 until messages.length()) {
                             val message = messages.optJSONObject(i)
                                 ?: error("Chat history contains an invalid message row.")
@@ -42,11 +55,18 @@ object ChatHistoryStore {
                             require(message.opt("role") is String && message.opt("text") is String) {
                                 "Chat history message has invalid field types."
                             }
+                            require(message.getString("role").length <= MAX_ROLE_CHARS &&
+                                message.getString("text").length <= MAX_MESSAGE_CHARS) {
+                                "Chat history message exceeds its field limits."
+                            }
                         }
                     }
                     if (chat.has("assistantTaskIds")) {
                         val taskIds = chat.optJSONArray("assistantTaskIds")
                             ?: error("Chat history contains invalid assistant task IDs.")
+                        require(taskIds.length() <= MAX_TASK_IDS) {
+                            "Chat history contains too many assistant task IDs."
+                        }
                         val seenTaskIds = hashSetOf<String>()
                         for (i in 0 until taskIds.length()) {
                             val taskId = taskIds.opt(i)
@@ -61,14 +81,26 @@ object ChatHistoryStore {
                     if (chat.has("agentActivity")) {
                         val activity = chat.optJSONArray("agentActivity")
                             ?: error("Chat history contains invalid agent activity.")
-                        for (i in 0 until activity.length()) require(activity.opt(i) is String) {
-                            "Chat history contains a non-text agent activity row."
+                        require(activity.length() <= MAX_AGENT_ACTIVITY) {
+                            "Chat history contains too many agent activity rows."
+                        }
+                        for (i in 0 until activity.length()) {
+                            val row = activity.opt(i)
+                            require(row is String) {
+                                "Chat history contains a non-text agent activity row."
+                            }
+                            require(row.length <= MAX_ACTIVITY_CHARS) {
+                                "Chat history agent activity row exceeds its field limit."
+                            }
                         }
                     }
                 }
             }
-            if (root.has("currentId")) require(root.opt("currentId") is String) {
-                "Chat history has an invalid current chat ID."
+            if (root.has("currentId")) {
+                val currentId = root.opt("currentId")
+                require(currentId is String && currentId.length <= MAX_CHAT_ID_CHARS) {
+                    "Chat history has an invalid current chat ID."
+                }
             }
             root
         }.getOrNull()
@@ -207,16 +239,26 @@ object ChatHistoryStore {
         val chats = root.optJSONObject("chats") ?: error("Invalid chats object.")
         val keys = chats.keys()
         while (keys.hasNext()) {
-            val chat = chats.optJSONObject(keys.next()) ?: error("Invalid chat row.")
+            val chatId = keys.next()
+            require(chatId.isNotBlank() && chatId.length <= MAX_CHAT_ID_CHARS) {
+                "Invalid chat ID."
+            }
+            val chat = chats.optJSONObject(chatId) ?: error("Invalid chat row.")
             if (chat.has("messages")) {
                 val rows = chat.optJSONArray("messages") ?: error("Invalid messages array.")
+                require(rows.length() <= MAX_MESSAGES) { "Too many messages." }
                 for (i in 0 until rows.length()) {
                     val row = rows.optJSONObject(i) ?: error("Invalid message row.")
                     require(row.opt("role") is String && row.opt("text") is String)
+                    require(row.getString("role").length <= MAX_ROLE_CHARS &&
+                        row.getString("text").length <= MAX_MESSAGE_CHARS) {
+                        "Message field exceeds its limit."
+                    }
                 }
             }
             if (chat.has("assistantTaskIds")) {
                 val ids = chat.optJSONArray("assistantTaskIds") ?: error("Invalid assistant task IDs.")
+                require(ids.length() <= MAX_TASK_IDS) { "Too many assistant task IDs." }
                 val seenTaskIds = hashSetOf<String>()
                 for (i in 0 until ids.length()) {
                     val taskId = ids.opt(i)
@@ -228,9 +270,18 @@ object ChatHistoryStore {
             }
             if (chat.has("agentActivity")) {
                 val activity = chat.optJSONArray("agentActivity") ?: error("Invalid agent activity.")
-                for (i in 0 until activity.length()) require(activity.opt(i) is String)
+                require(activity.length() <= MAX_AGENT_ACTIVITY) { "Too many agent activity rows." }
+                for (i in 0 until activity.length()) {
+                    val row = activity.opt(i)
+                    require(row is String && row.length <= MAX_ACTIVITY_CHARS) {
+                        "Invalid or oversized agent activity row."
+                    }
+                }
             }
         }
-        if (root.has("currentId")) require(root.opt("currentId") is String)
+        if (root.has("currentId")) {
+            val currentId = root.opt("currentId")
+            require(currentId is String && currentId.length <= MAX_CHAT_ID_CHARS)
+        }
     }
 }

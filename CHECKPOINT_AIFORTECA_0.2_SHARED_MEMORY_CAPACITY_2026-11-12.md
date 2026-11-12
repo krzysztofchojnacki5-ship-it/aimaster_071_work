@@ -58,3 +58,12 @@
 - Root cause: parse() checked isNullOrBlank() before raw payload length, so an oversized whitespace-only string was accepted as a valid empty history.
 - Fix: distinguish null input, enforce MAX_RAW_CHARS first, then accept a within-limit blank string as empty history. Nonblank valid legacy history behavior is unchanged.
 - This correction is awaiting CI; no test pass, APK release, or device validation is claimed.
+
+
+## Follow-up package — canonical chat-history bounds — 2026-11-12
+- Verified starting commit: `39457b72a4d3862aeeb8816b483c98a9e21d3488` on `work/aiforteca-0.2-master-agent-foundation`; all four Android Build / Gradle Wrapper Validation push and PR runs for the starting commit completed successfully.
+- Correction 1: ChatHistoryStore now enforces the same 5,000-message, 32-character role, 32,000-character message, and 200-character chat-ID bounds during both persisted reads and writes.
+- Correction 2: canonical chat history rejects more than 5,000 assistant task IDs on both read and write; existing duplicate/non-text checks remain in force.
+- Correction 3: canonical chat history rejects more than 150 agent-activity rows and activity values longer than 32,000 characters on both read and write.
+- Regression tests cover oversized persisted values and rejected writes while preserving malformed source bytes.
+- CI for this package is pending until the new Android Build and Gradle Wrapper Validation push and PR runs finish. No APK release or device test is claimed.

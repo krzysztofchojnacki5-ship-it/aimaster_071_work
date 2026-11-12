@@ -522,4 +522,56 @@ class ChatHistoryStoreTest {
         assertEquals(corrupt, prefs.getString("chats_v2", null))
     }
 
+
+    @Test fun oversizedChatMessageCollectionsFieldsAndIdsFailClosedOnReadAndWrite() {
+        val tooManyMessages = JSONArray()
+        repeat(5_001) { tooManyMessages.put(JSONObject().put("role", "user").put("text", "x")) }
+        val oversizedMessages = JSONObject().put("chats", JSONObject().put("chat-1",
+            JSONObject().put("messages", tooManyMessages)))
+        assertFalse(ChatHistoryStore.writeRoot(context, oversizedMessages))
+        assertNull(prefs.getString("chats_v2", null))
+        assertTrue(prefs.edit().putString("chats_v2", oversizedMessages.toString()).commit())
+        assertNull(ChatHistoryStore.readRoot(context))
+        assertEquals(oversizedMessages.toString(), prefs.getString("chats_v2", null))
+
+        prefs.edit().clear().commit()
+        val oversizedText = JSONObject().put("chats", JSONObject().put("chat-1",
+            JSONObject().put("messages", JSONArray().put(JSONObject()
+                .put("role", "user").put("text", "x".repeat(32_001))))))
+        assertFalse(ChatHistoryStore.writeRoot(context, oversizedText))
+        val oversizedChatId = JSONObject().put("chats", JSONObject().put("c".repeat(201),
+            JSONObject().put("messages", JSONArray())))
+        assertFalse(ChatHistoryStore.writeRoot(context, oversizedChatId))
+    }
+
+    @Test fun oversizedAssistantTaskIdCollectionsFailClosedOnReadAndWrite() {
+        val ids = JSONArray()
+        repeat(5_001) { ids.put("task-$it") }
+        val candidate = JSONObject().put("chats", JSONObject().put("chat-1",
+            JSONObject().put("messages", JSONArray()).put("assistantTaskIds", ids)))
+        assertFalse(ChatHistoryStore.writeRoot(context, candidate))
+        assertNull(prefs.getString("chats_v2", null))
+        assertTrue(prefs.edit().putString("chats_v2", candidate.toString()).commit())
+        assertNull(ChatHistoryStore.readRoot(context))
+        assertEquals(candidate.toString(), prefs.getString("chats_v2", null))
+    }
+
+    @Test fun oversizedAgentActivityCollectionsAndRowsFailClosedOnReadAndWrite() {
+        val rows = JSONArray()
+        repeat(151) { rows.put("activity-$it") }
+        val tooMany = JSONObject().put("chats", JSONObject().put("chat-1",
+            JSONObject().put("messages", JSONArray()).put("agentActivity", rows)))
+        assertFalse(ChatHistoryStore.writeRoot(context, tooMany))
+        assertNull(prefs.getString("chats_v2", null))
+        assertTrue(prefs.edit().putString("chats_v2", tooMany.toString()).commit())
+        assertNull(ChatHistoryStore.readRoot(context))
+        assertEquals(tooMany.toString(), prefs.getString("chats_v2", null))
+
+        prefs.edit().clear().commit()
+        val oversizedRow = JSONObject().put("chats", JSONObject().put("chat-1",
+            JSONObject().put("messages", JSONArray())
+                .put("agentActivity", JSONArray().put("a".repeat(32_001)))))
+        assertFalse(ChatHistoryStore.writeRoot(context, oversizedRow))
+    }
+
 }
