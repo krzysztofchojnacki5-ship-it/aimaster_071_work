@@ -36,7 +36,8 @@ object AgentManagerStore {
                 require(raw.isNotBlank() && raw.length <= 256_000) { "AGENT_MANAGER_STATE_SIZE" }
                 val root = JSONObject(raw)
                 val versionValue = root.opt("version")
-                require(versionValue is Number && versionValue.toInt() == VERSION) { "AGENT_MANAGER_VERSION" }
+                require((versionValue is Int && versionValue == VERSION) ||
+                    (versionValue is Long && versionValue == VERSION.toLong())) { "AGENT_MANAGER_VERSION" }
                 require(!root.has("disabled") || root.opt("disabled") is JSONArray) { "AGENT_MANAGER_DISABLED_TYPE" }
                 val disabledArray = root.optJSONArray("disabled") ?: JSONArray()
                 require(disabledArray.length() <= MAX_DISABLED) { "AGENT_MANAGER_DISABLED_LIMIT" }

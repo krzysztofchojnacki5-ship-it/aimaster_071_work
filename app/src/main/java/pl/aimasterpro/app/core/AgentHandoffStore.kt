@@ -189,15 +189,29 @@ object AgentHandoffStore {
                     if (array.length() > MAX_MESSAGES) return@withHealthyAccess Snapshot(ReadStatus.CORRUPT)
                     val messages = (0 until array.length()).map { index ->
                         val item = array.getJSONObject(index)
+                        require(listOf("id", "taskId", "senderAgentId", "recipientAgentId", "payload", "state")
+                            .all { item.opt(it) is String }) { "HANDOFF_STRING_FIELD_TYPE" }
+                        fun exactLong(field: String, required: Boolean = true): Long {
+                            if (!item.has(field)) {
+                                require(!required) { "HANDOFF_MISSING_$field" }
+                                return 0L
+                            }
+                            val value = item.opt(field)
+                            require(value is Int || value is Long) { "HANDOFF_NUMBER_FIELD_TYPE_$field" }
+                            return (value as Number).toLong()
+                        }
+                        require(!item.has("resolutionActor") || item.opt("resolutionActor") is String)
+                        require(!item.has("resolutionReason") || item.opt("resolutionReason") is String)
+                        val parsedRunId = exactLong("runId")
+                        require(parsedRunId in 1..Int.MAX_VALUE.toLong())
                         Handoff(
-                            item.getString("id"), item.getString("taskId"), item.getInt("runId"),
+                            item.getString("id"), item.getString("taskId"), parsedRunId.toInt(),
                             item.getString("senderAgentId"), item.getString("recipientAgentId"),
                             item.getString("payload"), State.valueOf(item.getString("state")),
-                            item.getLong("createdAt"), item.getLong("updatedAt"),
-                            item.optLong("claimedAt", 0L),
-                            item.optLong("resolvedAt", 0L),
-                            item.optString("resolutionActor", ""),
-                            item.optString("resolutionReason", "")
+                            exactLong("createdAt"), exactLong("updatedAt"),
+                            exactLong("claimedAt", false), exactLong("resolvedAt", false),
+                            if (item.has("resolutionActor")) item.getString("resolutionActor") else "",
+                            if (item.has("resolutionReason")) item.getString("resolutionReason") else ""
                         )
                     }
                     if (messages.any {

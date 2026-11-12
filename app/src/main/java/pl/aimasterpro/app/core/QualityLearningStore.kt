@@ -54,7 +54,7 @@ object QualityLearningStore {
     /** One current rating per target. Re-rating updates the current value and preserves an audit trail. */
     @Synchronized fun rate(context: Context, targetId: String, targetType: String, rating: Int, comment: String,
                            agentId: String = "", providerId: String = "", model: String = "", category: String = "") {
-        require(targetId.isNotBlank()) { "Brak identyfikatora ocenianego elementu" }
+        require(targetId.isNotBlank() && targetId.length <= 240) { "Nieprawidłowy identyfikator ocenianego elementu" }
         require(rating == -1 || rating == 1) { "Ocena musi wynosić +1 albo -1" }
         val normalizedType = targetType.ifBlank { "UNKNOWN" }.take(30)
         if (readArrayStrict(context, FEEDBACK_KEY) == null) {
@@ -89,7 +89,11 @@ object QualityLearningStore {
 
     @Synchronized fun addProposal(context: Context, text: String, evidenceCount: Int, confidence: String,
                                   sourceTaskIds: List<String>, agents: List<String>, models: List<String>): Proposal {
-        require(text.isNotBlank())
+        require(text.isNotBlank() && text.length <= 3000)
+        require(sourceTaskIds.size <= 100 && sourceTaskIds.all { it.isNotBlank() && it.length <= 240 })
+        require(agents.size <= 50 && agents.all { it.isNotBlank() && it.length <= 100 })
+        require(models.size <= 50 && models.all { it.isNotBlank() && it.length <= 200 })
+        require(confidence.length <= 40)
         check(readArrayStrict(context, PROPOSALS_KEY) != null) {
             "Rejestr propozycji jest uszkodzony; zapis został wstrzymany bez nadpisywania danych."
         }
@@ -387,7 +391,11 @@ object QualityLearningStore {
                     val id = row.getString("id")
                     val targetId = row.getString("targetId")
                     val targetType = row.getString("targetType")
-                    require(id.isNotBlank() && seenIds.add(id) && targetId.isNotBlank() && targetType.isNotBlank())
+                    require(id.isNotBlank() && id.length <= 120 && seenIds.add(id) &&
+                        targetId.isNotBlank() && targetId.length <= 240 && targetType.isNotBlank() && targetType.length <= 30)
+                    require(row.getString("comment").length <= 1000 &&
+                        row.getString("agent").length <= 100 && row.getString("provider").length <= 100 &&
+                        row.getString("model").length <= 160 && row.getString("category").length <= 100)
                     require(seenFeedbackTargets.add(listOf(targetType, targetId))) {
                         "Quality journal contains more than one current rating for the same target."
                     }
@@ -398,7 +406,7 @@ object QualityLearningStore {
                         require(history.length() <= 50)
                         for (i in 0 until history.length()) {
                             val item = history.getJSONObject(i)
-                            require(item.opt("comment") is String)
+                            require(item.opt("comment") is String && item.getString("comment").length <= 1000)
                             require(exactLong(item.opt("rating")) in setOf(-1L, 1L))
                             require(exactLong(item.opt("timestamp")) >= 0L)
                         }
@@ -406,17 +414,20 @@ object QualityLearningStore {
                 } else if (key == PROPOSALS_KEY) {
                     require(listOf("id", "text", "status", "confidence").all { row.opt(it) is String })
                     val id = row.getString("id")
-                    require(id.isNotBlank() && seenIds.add(id) && row.getString("text").isNotBlank())
+                    require(id.isNotBlank() && id.length <= 120 && seenIds.add(id) &&
+                        row.getString("text").isNotBlank() && row.getString("text").length <= 3000 &&
+                        row.getString("confidence").length <= 40)
                     require(row.getString("status") in setOf("PROPOSAL", "APPROVED", "REJECTED"))
                     require(exactLong(row.opt("created")) >= 0L && exactLong(row.opt("updated")) >= 0L)
                     require(exactLong(row.opt("evidence")) in 0..Int.MAX_VALUE.toLong())
                     listOf("tasks", "agents", "models").forEach { field ->
                         val values = row.optJSONArray(field) ?: error("Invalid proposal provenance.")
-                        require(values.length() <= 100)
+                        require(values.length() <= if (field == "tasks") 100 else 50)
                         val seenValues = hashSetOf<String>()
                         for (i in 0 until values.length()) {
                             val value = values.opt(i)
-                            require(value is String && value.isNotBlank() && seenValues.add(value))
+                            val maxLength = when (field) { "tasks" -> 240; "agents" -> 100; else -> 200 }
+                            require(value is String && value.isNotBlank() && value.length <= maxLength && seenValues.add(value))
                         }
                     }
                 } else error("Unknown quality journal key.")

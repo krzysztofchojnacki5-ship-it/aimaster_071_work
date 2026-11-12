@@ -107,6 +107,19 @@ class AgentManagerStoreTest {
         assertEquals(corrupt, prefs.getString("state", null))
     }
 
+    @Test fun fractionalAndOverflowingVersionsAreRejectedWithoutOverwriting() {
+        val prefs = context.getSharedPreferences("aiforteca_agent_manager_v1", Context.MODE_PRIVATE)
+        listOf(
+            """{"version":1.5,"disabled":[],"customAgents":[],"removedCustomIds":[]}""",
+            """{"version":4294967297,"disabled":[],"customAgents":[],"removedCustomIds":[]}"""
+        ).forEach { raw ->
+            assertTrue(prefs.edit().putString("state", raw).commit())
+            assertEquals(AgentManagerStore.ReadStatus.CORRUPT, AgentManagerStore.snapshot(context).status)
+            assertTrue(AgentManagerStore.enabledCatalog(context).isEmpty())
+            assertEquals(raw, prefs.getString("state", null))
+        }
+    }
+
     @Test fun corruptCatalogDoesNotSilentlyReenableAgentsOrOverwriteState() {
         val prefs = context.getSharedPreferences("aiforteca_agent_manager_v1", Context.MODE_PRIVATE)
         prefs.edit().putString("state", "{broken").commit()

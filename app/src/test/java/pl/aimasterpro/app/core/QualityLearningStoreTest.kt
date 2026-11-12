@@ -31,6 +31,30 @@ class QualityLearningStoreTest {
         context.getSharedPreferences("ai_master_memory_store_v1", Context.MODE_PRIVATE).edit().remove("memories").commit()
     }
 
+    @Test fun oversizedJournalFieldsFailClosedAndAreNotOverwritten() {
+        val prefs = context.getSharedPreferences("ai_quality_learning_v1", Context.MODE_PRIVATE)
+        val feedbackRaw = org.json.JSONArray().put(org.json.JSONObject()
+            .put("id", "feedback-1").put("targetId", "task-1").put("targetType", "TASK")
+            .put("rating", 1).put("comment", "x".repeat(1001)).put("timestamp", 10L)
+            .put("agent", "").put("provider", "").put("model", "").put("category", "")
+            .put("history", org.json.JSONArray())).toString()
+        assertTrue(prefs.edit().putString("feedback", feedbackRaw).commit())
+        QualityLearningStore.rate(context, "task-2", "TASK", 1, "Nowa ocena")
+        assertEquals(feedbackRaw, prefs.getString("feedback", null))
+
+        val proposalRaw = org.json.JSONArray().put(org.json.JSONObject()
+            .put("id", "proposal-1").put("text", "x".repeat(3001)).put("status", "PROPOSAL")
+            .put("created", 10L).put("updated", 10L).put("evidence", 1).put("confidence", "wstępna")
+            .put("tasks", org.json.JSONArray()).put("agents", org.json.JSONArray()).put("models", org.json.JSONArray()))
+            .toString()
+        assertTrue(prefs.edit().putString("proposals", proposalRaw).commit())
+        try {
+            QualityLearningStore.addProposal(context, "Nowa propozycja", 1, "wstępna", emptyList(), emptyList(), emptyList())
+            fail("Corrupt proposal journal must reject writes")
+        } catch (_: IllegalStateException) { }
+        assertEquals(proposalRaw, prefs.getString("proposals", null))
+    }
+
     @Test fun ratingCanBeChangedWithoutDoubleCountingAndKeepsAuditHistory() {
         QualityLearningStore.rate(context, "task-1", "AGENT", 1, "Pomógł", "coder", "groq", "model-a")
         QualityLearningStore.rate(context, "task-1", "AGENT", -1, "Po poprawce jednak błędny", "coder", "groq", "model-a")

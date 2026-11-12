@@ -293,6 +293,30 @@ class AgentHandoffStoreTest {
     }
 
 
+    @Test fun handoffNumericFieldsRejectCoercionAndPreserveCorruptBytes() {
+        val runId = runningTask()
+        val prefs = context.getSharedPreferences("aiforteca_agent_handoff_v1", Context.MODE_PRIVATE)
+        fun record() = org.json.JSONObject()
+            .put("id", "handoff-strict-001").put("taskId", "handoff-task-01").put("runId", runId)
+            .put("senderAgentId", "critical-reviewer").put("recipientAgentId", "unit-test-engineer")
+            .put("payload", "Raport poprawny.").put("state", "PENDING")
+            .put("createdAt", 90L).put("updatedAt", 90L).put("claimedAt", 0L).put("resolvedAt", 0L)
+            .put("resolutionActor", "").put("resolutionReason", "")
+        val malformed = listOf(
+            record().put("runId", runId.toString()),
+            record().put("createdAt", "90"),
+            record().put("updatedAt", 90.5),
+            record().put("claimedAt", "0"),
+            record().put("resolutionActor", 7)
+        )
+        malformed.forEach { item ->
+            val raw = org.json.JSONArray().put(item).toString()
+            assertTrue(prefs.edit().putString("messages", raw).commit())
+            assertEquals(AgentHandoffStore.ReadStatus.CORRUPT, AgentHandoffStore.snapshot(context).status)
+            assertEquals(raw, prefs.getString("messages", null))
+        }
+    }
+
     @Test fun ambiguousCommitQuarantinesHandoffInboxAndRejectsFurtherWrites() {
         val runId = runningTask()
         val prefs = context.getSharedPreferences("aiforteca_agent_handoff_v1", Context.MODE_PRIVATE)
