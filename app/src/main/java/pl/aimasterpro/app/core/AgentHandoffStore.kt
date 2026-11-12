@@ -200,7 +200,9 @@ object AgentHandoffStore {
                     it.updatedAt < 0L || it.claimedAt < 0L || it.resolvedAt < 0L ||
                     it.resolutionActor.length > 100 || it.resolutionReason.length > 300 ||
                     (it.state == State.MANUALLY_RESOLVED &&
-                        (it.resolvedAt <= 0L || it.resolutionActor !in setOf("MASTER", "USER") ||
+                        (it.claimedAt <= 0L || it.resolvedAt <= 0L ||
+                            it.resolvedAt < it.claimedAt || it.resolvedAt < it.createdAt ||
+                            it.resolutionActor !in setOf("MASTER", "USER") ||
                             it.resolutionReason.isBlank() || it.resolvedAt != it.updatedAt)) ||
                     (it.state != State.MANUALLY_RESOLVED &&
                         (it.resolvedAt != 0L || it.resolutionActor.isNotEmpty() || it.resolutionReason.isNotEmpty()))

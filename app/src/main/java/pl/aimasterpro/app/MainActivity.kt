@@ -6782,6 +6782,7 @@ class MainActivity : Activity() {
         }
 
         val handoffDiagnostics = pl.aimasterpro.app.core.AgentHandoffStore.snapshot(this)
+        val handoffTime = java.text.SimpleDateFormat("dd.MM HH:mm:ss", java.util.Locale.getDefault())
         if (handoffDiagnostics.status != pl.aimasterpro.app.core.AgentHandoffStore.ReadStatus.AVAILABLE) {
             card("Skrzynka przekazań agentów — niedostępna",
                 "Stan: ${handoffDiagnostics.status}. Nie zakładam, że brak odczytu oznacza pustą skrzynkę.")
@@ -6805,7 +6806,6 @@ class MainActivity : Activity() {
                 card("Brak nierozstrzygniętych przekazań",
                     "Wszystkie zapisane przekazania mają stan końcowy.")
             } else {
-                val handoffTime = java.text.SimpleDateFormat("dd.MM HH:mm:ss", java.util.Locale.getDefault())
                 unresolved.forEach { handoff ->
                     val running = taskStates[handoff.taskId] == pl.aimasterpro.app.core.MasterTaskQueueStore.Status.RUNNING
                     val stateLabel = when (handoff.state) {

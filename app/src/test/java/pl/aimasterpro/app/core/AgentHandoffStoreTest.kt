@@ -213,6 +213,22 @@ class AgentHandoffStoreTest {
             AgentHandoffStore.snapshot(context).messages.single().state)
     }
 
+    @Test fun manualResolutionFailsClosedWhenHandoffStorageIsCorrupt() {
+        val runId = runningTask()
+        assertTrue(AgentHandoffStore.send(context, "handoff-task-01", runId, "handoff-msg-manual-corrupt",
+            "critical-reviewer", "unit-test-engineer", "Raport o niepewnym wyniku.", 80L))
+        assertNotNull(AgentHandoffStore.claim(context, "handoff-task-01", runId, "handoff-msg-manual-corrupt",
+            "unit-test-engineer", 81L))
+        assertTrue(MasterTaskQueueStore.transition(context, "handoff-task-01", "USER",
+            MasterTaskQueueStore.Status.BLOCKED, "Przerwano przebieg.", 82L))
+        context.getSharedPreferences("aiforteca_agent_handoff_v1", Context.MODE_PRIVATE)
+            .edit().putString("messages", "{broken").commit()
+
+        assertFalse(AgentHandoffStore.resolveUncertainClaim(context, "handoff-task-01", runId,
+            "handoff-msg-manual-corrupt", "USER", "Nie wolno zapisać decyzji przy uszkodzonej skrzynce.", 83L))
+        assertEquals(AgentHandoffStore.ReadStatus.CORRUPT, AgentHandoffStore.snapshot(context).status)
+    }
+
     @Test fun staleRunAndUnassignedRecipientsAreRejected() {
         val runId = runningTask()
         assertFalse(AgentHandoffStore.send(context, "handoff-task-01", runId - 1, "handoff-msg-004",
