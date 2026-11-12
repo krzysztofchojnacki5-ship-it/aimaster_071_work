@@ -1039,4 +1039,84 @@ class QualityLearningStoreTest {
         assertEquals(auditSize, MemoryAuditLog.readVerified(context)!!.size)
     }
 
+
+    @Test fun proposalApprovalWithPersistedButReportedFailedTerminalAuditIsNotReplayed() {
+        val proposal = QualityLearningStore.addProposal(
+            context, "Reguła po niejednoznacznym terminalnym audycie", 9, "wysoka",
+            listOf("task-terminal-audit-ambiguous"), listOf("coder"), emptyList()
+        )
+        val auditPrefsName = "ai_memory_audit_log_v1"
+        var auditCommitCalls = 0
+        var qualityCommitCalls = 0
+        val failingContext = object : ContextWrapper(context) {
+            override fun getSharedPreferences(name: String, mode: Int): SharedPreferences {
+                val delegate = context.getSharedPreferences(name, mode)
+                if (name !in setOf(auditPrefsName, "ai_quality_learning_v1")) return delegate
+                return object : SharedPreferences by delegate {
+                    override fun edit(): SharedPreferences.Editor {
+                        val editor = delegate.edit()
+                        return object : SharedPreferences.Editor by editor {
+                            override fun putString(key: String, value: String?): SharedPreferences.Editor {
+                                editor.putString(key, value)
+                                return this
+                            }
+
+                            override fun commit(): Boolean {
+                                return when (name) {
+                                    auditPrefsName -> {
+                                        auditCommitCalls++
+                                        if (auditCommitCalls == 2) {
+                                            // The COMMITTED terminal is durable, but the API reports
+                                            // failure so the audit store must be quarantined.
+                                            editor.commit()
+                                            false
+                                        } else editor.commit()
+                                    }
+                                    "ai_quality_learning_v1" -> {
+                                        qualityCommitCalls++
+                                        editor.commit()
+                                    }
+                                    else -> false
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        assertFalse(QualityLearningStore.setProposalStatus(
+            failingContext, proposal.id, "APPROVED", "test-terminal-ambiguous:${proposal.id}"
+        ))
+        assertEquals(2, auditCommitCalls)
+        assertEquals(1, qualityCommitCalls)
+        assertTrue(SharedPreferencesWriteHealth.isUncertain(auditPrefsName))
+
+        // Simulate process restart: the terminal COMMITTED record is present and verified.
+        SharedPreferencesWriteHealth.resetForTests(auditPrefsName)
+        val memoryEntry = "[UCZENIE ZATWIERDZONE ${proposal.id.take(8)}; dowody=${proposal.evidenceCount}; pewność=${proposal.confidence}] ${proposal.text}".take(1000)
+        assertEquals("APPROVED", QualityLearningStore.proposals(context).single().status)
+        assertTrue(AiMemoryStore.containsExactMemory(context, memoryEntry) == true)
+        assertTrue(AgentOperationalMemoryStore.hasApprovedSource(
+            context, "coder", proposal.text, "proposal:${proposal.id}"
+        ) == true)
+        val beforeSync = MemoryAuditLog.readVerified(context)!!
+        assertEquals(listOf("AUTHORIZED", "SUCCESS"), beforeSync.map { it.outcome })
+        assertFalse(MemoryAuditLog.hasUnresolvedIntent(
+            context, "USER", "APPROVE_PROPOSAL", proposal.id
+        ))
+
+        assertEquals(0, QualityLearningStore.syncApprovedAgentMemories(context))
+        assertEquals(beforeSync.size, MemoryAuditLog.readVerified(context)!!.size)
+        assertFalse(QualityLearningStore.setProposalStatus(
+            context, proposal.id, "APPROVED", "test-terminal-ambiguous:${proposal.id}"
+        ))
+        assertEquals(1, QualityLearningStore.proposals(context).size)
+        assertEquals(beforeSync.size + 1, MemoryAuditLog.readVerified(context)!!.size)
+        assertEquals(1, AiMemoryStore.getMemories(context).count { it == memoryEntry })
+        assertEquals(1, AgentOperationalMemoryStore.all(context).count {
+            it.sourceTaskIds.contains("proposal:${proposal.id}")
+        })
+    }
+
 }
