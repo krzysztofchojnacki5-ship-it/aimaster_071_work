@@ -47,6 +47,20 @@ class AgentHandoffStoreTest {
         assertEquals(AgentHandoffStore.State.PENDING, snapshot.messages.single().state)
     }
 
+    @Test fun sanitizedPayloadRetryRemainsIdempotent() {
+        val runId = runningTask()
+        val raw = "Raport: api_key=sk_live_1234567890"
+        assertEquals("Raport: api_key=[REDACTED]", CommunicationLogSanitizer.sanitize(raw))
+        assertTrue(AgentHandoffStore.send(context, "handoff-task-01", runId, "handoff-msg-006",
+            "critical-reviewer", "unit-test-engineer", raw, 23L))
+        assertTrue("Retry with the same raw payload must compare against its sanitized form",
+            AgentHandoffStore.send(context, "handoff-task-01", runId, "handoff-msg-006",
+                "critical-reviewer", "unit-test-engineer", raw, 24L))
+        val snapshot = AgentHandoffStore.snapshot(context)
+        assertEquals(1, snapshot.messages.size)
+        assertEquals("Raport: api_key=[REDACTED]", snapshot.messages.single().payload)
+    }
+
     @Test fun onlyAssignedSenderAndAddressedRecipientCanClaimAndAcknowledge() {
         val runId = runningTask()
         assertFalse(AgentHandoffStore.send(context, "handoff-task-01", runId, "handoff-msg-002",

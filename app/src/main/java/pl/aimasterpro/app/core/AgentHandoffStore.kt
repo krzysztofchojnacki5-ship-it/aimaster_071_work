@@ -46,6 +46,12 @@ object AgentHandoffStore {
         if (!valid(taskId) || !valid(messageId) || !valid(senderAgentId) ||
             !valid(recipientAgentId) || senderAgentId == recipientAgentId ||
             runId <= 0 || payload.isBlank() || payload.length > MAX_PAYLOAD || now < 0L) return false
+
+        // Normalize before looking up an existing ID: the stored payload is always sanitized,
+        // so comparing it with the caller's raw retry would incorrectly report a conflict.
+        val safe = CommunicationLogSanitizer.sanitize(payload).take(MAX_PAYLOAD)
+        if (safe.isBlank()) return false
+
         if (!isAssigned(context, taskId, runId, senderAgentId) ||
             !isAssigned(context, taskId, runId, recipientAgentId)) return false
         val current = read(context)
@@ -53,10 +59,8 @@ object AgentHandoffStore {
         val existing = current.messages.firstOrNull { it.id == messageId }
         if (existing != null) return existing.taskId == taskId && existing.runId == runId &&
             existing.senderAgentId == senderAgentId && existing.recipientAgentId == recipientAgentId &&
-            existing.payload == payload
+            existing.payload == safe
         if (current.messages.size >= MAX_MESSAGES) return false
-        val safe = CommunicationLogSanitizer.sanitize(payload).take(MAX_PAYLOAD)
-        if (safe.isBlank()) return false
         return write(context, current.messages + Handoff(
             messageId, taskId, runId, senderAgentId, recipientAgentId,
             safe, State.PENDING, now, now
