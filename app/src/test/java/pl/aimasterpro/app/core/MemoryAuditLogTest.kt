@@ -130,7 +130,7 @@ class MemoryAuditLogTest {
     }
 
     @Test fun failedUserMutationCanCompleteFullProposalRecoveryAtJournalCapacityBoundary() {
-        seedCommittedJournal(4_995)
+        seedCommittedJournal(4_994)
         assertTrue(MemoryAuditLog.append(context, event(MemoryAuditLog.Phase.INTENT, "AUTHORIZED")))
         assertTrue(MemoryAuditLog.append(context, event(MemoryAuditLog.Phase.FAILED, "MUTATION_FAILED")))
         val recoveryIntent = MemoryAuditLog.Event(
@@ -150,7 +150,7 @@ class MemoryAuditLogTest {
 
         val rows = MemoryAuditLog.readVerified(context)!!
         assertEquals(5_000, rows.size)
-        assertEquals("seed-4995", rows[4_994].objectId)
+        assertEquals("seed-4994", rows[4_993].objectId)
         assertEquals("RECOVERED_STATE", rows.last().outcome)
         assertTrue(MemoryAuditLog.unresolvedOperations(context, "rule-1")!!.isEmpty())
     }
@@ -183,7 +183,7 @@ class MemoryAuditLogTest {
     }
 
     @Test fun interruptedUserIntentCanStartRecoveryWithoutDoubleReservingCapacity() {
-        seedCommittedJournal(4_995)
+        seedCommittedJournal(4_994)
         assertTrue(MemoryAuditLog.append(context, event(MemoryAuditLog.Phase.INTENT, "AUTHORIZED")))
         val recoveryIntent = MemoryAuditLog.Event(
             actor = "SYSTEM_RECOVERY", mutation = "RECONCILE_APPROVED_PROPOSAL",
