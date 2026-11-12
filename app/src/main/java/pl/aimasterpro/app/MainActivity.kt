@@ -3994,7 +3994,7 @@ class MainActivity : Activity() {
         val titles = snapshot.tasks.associate { it.id to it.title }
         val agentIdsByName = pl.aimasterpro.app.core.AgentManagerStore.enabledCatalog(this)
             .associate { it.name to it.id }
-        val events = snapshot.events.filter { it.operation == "AGENT_MESSAGE" }.takeLast(120).asReversed()
+        val events = snapshot.events.filter { pl.aimasterpro.app.core.MasterTaskQueueStore.isConversationMessage(it) }.takeLast(120).asReversed()
         if (events.isEmpty()) {
             val empty = TextView(this).apply {
                 text = "Brak komunikatów z kolejki MASTER-a. Wiadomości pojawią się tutaj podczas rzeczywistego wykonania zadań."

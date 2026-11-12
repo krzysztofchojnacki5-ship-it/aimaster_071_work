@@ -175,6 +175,23 @@ class MasterTaskQueueStoreTest {
         assertTrue(event.detail.contains("Raport testowy"))
     }
 
+    @Test fun conversationTimelineExcludesLegacyTechnicalLogsConservatively() {
+        fun event(operation: String, status: String) = MasterTaskQueueStore.Event(
+            id = "$operation-$status", taskId = "task-legacy", actor = "agent",
+            operation = operation, fromStatus = "", toStatus = status,
+            detail = "Treść testowa", timestamp = 1L
+        )
+        assertTrue(MasterTaskQueueStore.isConversationMessage(event("AGENT_MESSAGE", "REPORT")))
+        assertTrue(MasterTaskQueueStore.isConversationMessage(event("AGENT_MESSAGE", "HANDOFF")))
+        assertTrue(MasterTaskQueueStore.isConversationMessage(event("AGENT_MESSAGE", "MESSAGE")))
+        assertTrue(MasterTaskQueueStore.isConversationMessage(event("AGENT_MESSAGE", "PROGRESS")))
+        assertFalse(MasterTaskQueueStore.isConversationMessage(event("AGENT_MESSAGE", "NETWORK_FAILOVER")))
+        assertFalse(MasterTaskQueueStore.isConversationMessage(event("AGENT_MESSAGE", "REQUEST")))
+        assertFalse(MasterTaskQueueStore.isConversationMessage(event("AGENT_MESSAGE", "COMPLETE")))
+        assertFalse(MasterTaskQueueStore.isConversationMessage(event("AGENT_TRACE", "REPORT")))
+        assertFalse(MasterTaskQueueStore.isConversationMessage(event("AGENT_MESSAGE", "UNKNOWN")))
+    }
+
     @Test fun technicalAgentTraceIsSeparateFromMessagesAndBoundToCurrentRun() {
         val taskId = "task-technical-trace"
         assertTrue(MasterTaskQueueStore.enqueue(context, taskId, "Ślady techniczne", "Rozdziel komunikaty i logi.", now = 71L))

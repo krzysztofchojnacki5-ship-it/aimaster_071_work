@@ -63,6 +63,15 @@ object MasterTaskQueueStore {
         val errorCode: String = ""
     )
 
+    /**
+     * Legacy TeamRunEngine logs were historically persisted as AGENT_MESSAGE.
+     * Only explicit communication kinds are shown in the conversation timeline;
+     * unknown and diagnostic statuses are conservatively excluded.
+     */
+    fun isConversationMessage(event: Event): Boolean =
+        event.operation == "AGENT_MESSAGE" &&
+            event.toStatus in setOf("MESSAGE", "HANDOFF", "REPORT", "PROGRESS")
+
     @Synchronized
     fun snapshot(context: Context): Snapshot {
         if (SharedPreferencesWriteHealth.isUncertain(PREFS)) {
