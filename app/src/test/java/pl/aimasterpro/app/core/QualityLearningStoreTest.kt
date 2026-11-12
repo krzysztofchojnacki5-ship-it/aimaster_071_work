@@ -511,6 +511,171 @@ class QualityLearningStoreTest {
         assertEquals(originalProposals, prefs.getString("proposals", null))
     }
 
+    @Test fun ambiguousSharedApprovalWriteIsRemovedByStartupReconciliation() {
+        val proposal = QualityLearningStore.addProposal(
+            context, "Reguła po niejednoznacznym zapisie pamięci wspólnej", 8, "wysoka",
+            listOf("task-ambiguous-shared-write"), listOf("coder"), emptyList()
+        )
+        val sharedPrefsName = "ai_master_memory_store_v1"
+        val sharedPrefs = context.getSharedPreferences(sharedPrefsName, Context.MODE_PRIVATE)
+        val failingContext = object : ContextWrapper(context) {
+            override fun getSharedPreferences(name: String, mode: Int): SharedPreferences {
+                val delegatePrefs = context.getSharedPreferences(name, mode)
+                if (name != sharedPrefsName) return delegatePrefs
+                return object : SharedPreferences by delegatePrefs {
+                    override fun edit(): SharedPreferences.Editor {
+                        val delegateEditor = delegatePrefs.edit()
+                        return object : SharedPreferences.Editor by delegateEditor {
+                            override fun putString(key: String, value: String?): SharedPreferences.Editor {
+                                delegateEditor.putString(key, value)
+                                return this
+                            }
+
+                            override fun commit(): Boolean {
+                                delegateEditor.commit()
+                                return false
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        assertFalse(QualityLearningStore.setProposalStatus(
+            failingContext, proposal.id, "APPROVED", "test-ambiguous-shared:" + proposal.id
+        ))
+        assertEquals("PROPOSAL", QualityLearningStore.proposals(context).single().status)
+        assertTrue(SharedPreferencesWriteHealth.isUncertain(sharedPrefsName))
+        assertTrue(MemoryAuditLog.hasUnresolvedIntent(
+            context, "USER", "APPROVE_PROPOSAL", proposal.id
+        ))
+
+        // The shared write reached disk before reporting failure. Compensation could not
+        // inspect that quarantined store; after repair, startup must remove the stale lesson.
+        SharedPreferencesWriteHealth.resetForTests(sharedPrefsName)
+        val memoryEntry = "[UCZENIE ZATWIERDZONE ${proposal.id.take(8)}; dowody=${proposal.evidenceCount}; pewność=${proposal.confidence}] ${proposal.text}".take(1000)
+        assertTrue(AiMemoryStore.containsExactMemory(context, memoryEntry) == true)
+        assertFalse(AgentOperationalMemoryStore.hasAnySource(context, "proposal:" + proposal.id) == true)
+        assertEquals(1, QualityLearningStore.syncApprovedAgentMemories(context))
+        assertFalse(AiMemoryStore.containsExactMemory(context, memoryEntry) == true)
+        assertEquals("PROPOSAL", QualityLearningStore.proposals(context).single().status)
+        assertFalse(MemoryAuditLog.hasUnresolvedIntent(
+            context, "USER", "APPROVE_PROPOSAL", proposal.id
+        ))
+        assertEquals(0, QualityLearningStore.syncApprovedAgentMemories(context))
+    }
+
+    @Test fun failedAgentApprovalWriteWithoutDurableCommitCompensatesSharedMemory() {
+        val proposal = QualityLearningStore.addProposal(
+            context, "Reguła po niezapisanym błędzie agenta", 8, "wysoka",
+            listOf("task-agent-write-not-persisted"), listOf("coder"), emptyList()
+        )
+        val agentPrefsName = "ai_agent_operational_memory_v1"
+        val failingContext = object : ContextWrapper(context) {
+            override fun getSharedPreferences(name: String, mode: Int): SharedPreferences {
+                val delegatePrefs = context.getSharedPreferences(name, mode)
+                if (name != agentPrefsName) return delegatePrefs
+                return object : SharedPreferences by delegatePrefs {
+                    override fun edit(): SharedPreferences.Editor {
+                        val delegateEditor = delegatePrefs.edit()
+                        return object : SharedPreferences.Editor by delegateEditor {
+                            override fun putString(key: String, value: String?): SharedPreferences.Editor {
+                                delegateEditor.putString(key, value)
+                                return this
+                            }
+
+                            override fun commit(): Boolean = false
+                        }
+                    }
+                }
+            }
+        }
+
+        assertFalse(QualityLearningStore.setProposalStatus(
+            failingContext, proposal.id, "APPROVED", "test-agent-no-persist:" + proposal.id
+        ))
+        assertEquals("PROPOSAL", QualityLearningStore.proposals(context).single().status)
+        assertTrue(SharedPreferencesWriteHealth.isUncertain(agentPrefsName))
+        val memoryEntry = "[UCZENIE ZATWIERDZONE ${proposal.id.take(8)}; dowody=${proposal.evidenceCount}; pewność=${proposal.confidence}] ${proposal.text}".take(1000)
+        assertFalse(AiMemoryStore.containsExactMemory(context, memoryEntry) == true)
+        assertTrue(MemoryAuditLog.hasUnresolvedIntent(
+            context, "USER", "APPROVE_PROPOSAL", proposal.id
+        ))
+
+        // The failed agent commit did not persist. Once its quarantine is cleared, the
+        // proposal ledger and both memory stores agree on the original PROPOSAL state.
+        SharedPreferencesWriteHealth.resetForTests(agentPrefsName)
+        assertFalse(AgentOperationalMemoryStore.hasAnySource(context, "proposal:" + proposal.id) == true)
+        val beforeSync = MemoryAuditLog.readVerified(context)!!.size
+        assertEquals(0, QualityLearningStore.syncApprovedAgentMemories(context))
+        assertEquals(beforeSync + 1, MemoryAuditLog.readVerified(context)!!.size)
+        assertFalse(MemoryAuditLog.hasUnresolvedIntent(
+            context, "USER", "APPROVE_PROPOSAL", proposal.id
+        ))
+        assertFalse(MemoryAuditLog.readVerified(context)!!.any {
+            it.actor == "SYSTEM_RECOVERY" && it.objectId == proposal.id
+        })
+    }
+
+    @Test fun failedStatusRollbackWithConsistentApprovedMemoriesClosesIntentWithoutRecovery() {
+        val proposal = QualityLearningStore.addProposal(
+            context, "Reguła po nieudanym cofnięciu statusu", 8, "wysoka",
+            listOf("task-status-rollback-only"), listOf("coder"), emptyList()
+        )
+        val qualityPrefsName = "ai_quality_learning_v1"
+        var qualityCommitCount = 0
+        val failingContext = object : ContextWrapper(context) {
+            override fun getSharedPreferences(name: String, mode: Int): SharedPreferences {
+                val delegatePrefs = context.getSharedPreferences(name, mode)
+                if (name != qualityPrefsName) return delegatePrefs
+                return object : SharedPreferences by delegatePrefs {
+                    override fun edit(): SharedPreferences.Editor {
+                        val delegateEditor = delegatePrefs.edit()
+                        return object : SharedPreferences.Editor by delegateEditor {
+                            override fun putString(key: String, value: String?): SharedPreferences.Editor {
+                                delegateEditor.putString(key, value)
+                                return this
+                            }
+
+                            override fun commit(): Boolean {
+                                qualityCommitCount++
+                                return if (qualityCommitCount == 1) delegateEditor.commit() else false
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        assertFalse(QualityLearningStore.setProposalStatus(
+            failingContext, proposal.id, "APPROVED", "test-status-rollback-only:" + proposal.id
+        ))
+        assertEquals(2, qualityCommitCount)
+        assertTrue(SharedPreferencesWriteHealth.isUncertain(qualityPrefsName))
+        assertTrue(MemoryAuditLog.hasUnresolvedIntent(
+            context, "USER", "APPROVE_PROPOSAL", proposal.id
+        ))
+
+        // The proposal status commit reached disk and both memory writes succeeded. The
+        // rollback attempt failed, but the durable ledger and approved memories are consistent.
+        SharedPreferencesWriteHealth.resetForTests(qualityPrefsName)
+        assertEquals("APPROVED", QualityLearningStore.proposals(context).single().status)
+        val memoryEntry = "[UCZENIE ZATWIERDZONE ${proposal.id.take(8)}; dowody=${proposal.evidenceCount}; pewność=${proposal.confidence}] ${proposal.text}".take(1000)
+        assertTrue(AiMemoryStore.containsExactMemory(context, memoryEntry) == true)
+        assertTrue(AgentOperationalMemoryStore.hasApprovedSource(
+            context, "coder", proposal.text, "proposal:" + proposal.id
+        ) == true)
+        val beforeSync = MemoryAuditLog.readVerified(context)!!.size
+        assertEquals(0, QualityLearningStore.syncApprovedAgentMemories(context))
+        assertEquals(beforeSync + 1, MemoryAuditLog.readVerified(context)!!.size)
+        assertFalse(MemoryAuditLog.hasUnresolvedIntent(
+            context, "USER", "APPROVE_PROPOSAL", proposal.id
+        ))
+        assertFalse(MemoryAuditLog.readVerified(context)!!.any {
+            it.actor == "SYSTEM_RECOVERY" && it.objectId == proposal.id
+        })
+    }
+
     @Test fun failedApprovalCompensationLeavesDurableLedgerForExplicitStartupRecovery() {
         val proposal = QualityLearningStore.addProposal(
             context, "Reguła po nieudanym rollbacku statusu", 9, "wysoka",
