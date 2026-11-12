@@ -260,4 +260,34 @@ class AgentHandoffStoreTest {
             "critical-reviewer", "debugger", "Odbiorca spoza zespołu.", 41L))
         assertTrue(AgentHandoffStore.snapshot(context).messages.isEmpty())
     }
+
+    @Test fun persistedHandoffsRejectSelfAddressingAndUnredactedSecrets() {
+        val runId = runningTask()
+        val prefs = context.getSharedPreferences("aiforteca_agent_handoff_v1", Context.MODE_PRIVATE)
+
+        fun writeRecord(sender: String, recipient: String, payload: String) {
+            val record = org.json.JSONObject()
+                .put("id", "handoff-corrupt-01")
+                .put("taskId", "handoff-task-01")
+                .put("runId", runId)
+                .put("senderAgentId", sender)
+                .put("recipientAgentId", recipient)
+                .put("payload", payload)
+                .put("state", "PENDING")
+                .put("createdAt", 90L)
+                .put("updatedAt", 90L)
+                .put("claimedAt", 0L)
+                .put("resolvedAt", 0L)
+                .put("resolutionActor", "")
+                .put("resolutionReason", "")
+            prefs.edit().putString("messages", org.json.JSONArray().put(record).toString()).commit()
+        }
+
+        writeRecord("critical-reviewer", "critical-reviewer", "Niepoprawne przekazanie.")
+        assertEquals(AgentHandoffStore.ReadStatus.CORRUPT, AgentHandoffStore.snapshot(context).status)
+
+        writeRecord("critical-reviewer", "unit-test-engineer", "api_key=sk_live_1234567890")
+        assertEquals(AgentHandoffStore.ReadStatus.CORRUPT, AgentHandoffStore.snapshot(context).status)
+    }
+
 }
