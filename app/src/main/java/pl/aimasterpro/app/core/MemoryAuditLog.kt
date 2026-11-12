@@ -16,7 +16,13 @@ object MemoryAuditLog {
     private const val PREFS_NAME = "ai_memory_audit_log_v1"
     private const val EVENTS_KEY = "events"
     private const val MAX_EVENTS = 5_000
+    private const val MAX_RAW_CHARS = 4_000_000
+    private const val MAX_ACTOR_CHARS = 80
+    private const val MAX_MUTATION_CHARS = 100
+    private const val MAX_OBJECT_ID_CHARS = 200
     private const val MAX_TEXT_CHARS = 500
+    private const val MAX_APPROVAL_REF_CHARS = 200
+    private const val MAX_OUTCOME_CHARS = 100
 
     enum class Phase { INTENT, COMMITTED, FAILED }
 
@@ -263,6 +269,7 @@ object MemoryAuditLog {
         val raw = SharedPreferencesWriteHealth.withHealthyAccess(PREFS_NAME) {
             context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).getString(EVENTS_KEY, null)
         } ?: return@runCatching emptyList()
+        require(raw.length <= MAX_RAW_CHARS) { "Memory audit journal exceeds its raw size limit." }
         val rows = JSONArray(raw)
         require(rows.length() <= MAX_EVENTS)
         val result = ArrayList<Record>(rows.length())
@@ -282,8 +289,14 @@ object MemoryAuditLog {
             val hash = row.getString("hash")
             require(sequence == index.toLong() + 1L)
             require(previousHash == expectedPrevious)
-            require(actor.isNotBlank() && mutation.isNotBlank() && objectId.isNotBlank())
-            require(reason.isNotBlank() && outcome.isNotBlank() && timestamp >= 0L)
+            require(actor.isNotBlank() && actor.length <= MAX_ACTOR_CHARS)
+            require(mutation.isNotBlank() && mutation.length <= MAX_MUTATION_CHARS)
+            require(objectId.isNotBlank() && objectId.length <= MAX_OBJECT_ID_CHARS)
+            require(reason.isNotBlank() && reason.length <= MAX_TEXT_CHARS)
+            require(approvalRef.length <= MAX_APPROVAL_REF_CHARS)
+            require(outcome.isNotBlank() && outcome.length <= MAX_OUTCOME_CHARS)
+            require(timestamp >= 0L)
+            require(hash.matches(Regex("[0-9a-f]{64}")))
             require(hash == hashRecord(
                 sequence, actor, mutation, objectId, reason, approvalRef, phase.name,
                 outcome, timestamp, previousHash

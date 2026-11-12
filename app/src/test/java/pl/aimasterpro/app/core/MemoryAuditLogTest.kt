@@ -214,4 +214,39 @@ class MemoryAuditLogTest {
         }
     }
 
+
+    @Test fun oversizedRawJournalAndOversizedFieldsAreRejectedWithoutMutation() {
+        val prefs = context.getSharedPreferences("ai_memory_audit_log_v1", Context.MODE_PRIVATE)
+        val oversizedRaw = " ".repeat(4_000_001)
+        assertTrue(prefs.edit().putString("events", oversizedRaw).commit())
+        assertNull(MemoryAuditLog.readVerified(context))
+        assertEquals(oversizedRaw, prefs.getString("events", null))
+
+        val actor = "A".repeat(81)
+        val mutation = "SEED"
+        val objectId = "seed-1"
+        val reason = "seed record"
+        val approvalRef = ""
+        val phase = MemoryAuditLog.Phase.COMMITTED.name
+        val outcome = "SEED"
+        val timestamp = 1_800_000_000_001L
+        val previousHash = "GENESIS"
+        val values = listOf("1", actor, mutation, objectId, reason, approvalRef,
+            phase, outcome, timestamp.toString(), previousHash)
+        val canonical = values.joinToString("") { "${it.length}:$it" }
+        val hash = MessageDigest.getInstance("SHA-256")
+            .digest(canonical.toByteArray(Charsets.UTF_8))
+            .joinToString("") { "%02x".format(it) }
+        val oversizedFieldJournal = JSONArray().put(JSONObject()
+            .put("sequence", 1L).put("actor", actor).put("mutation", mutation)
+            .put("objectId", objectId).put("reason", reason).put("approvalRef", approvalRef)
+            .put("phase", phase).put("outcome", outcome).put("timestamp", timestamp)
+            .put("previousHash", previousHash).put("hash", hash)).toString()
+        assertTrue(prefs.edit().putString("events", oversizedFieldJournal).commit())
+        assertNull(MemoryAuditLog.readVerified(context))
+        assertEquals(oversizedFieldJournal, prefs.getString("events", null))
+        assertFalse(MemoryAuditLog.append(context, event(MemoryAuditLog.Phase.INTENT, "AUTHORIZED")))
+    }
+
+
 }
