@@ -1,6 +1,8 @@
 package pl.aimasterpro.app.core
 
 import android.content.Context
+import android.content.ContextWrapper
+import android.content.SharedPreferences
 import org.junit.After
 import org.junit.Assert.*
 import org.junit.Before
@@ -252,6 +254,62 @@ class QualityLearningStoreTest {
         assertFalse(QualityLearningStore.setProposalStatus(context, proposal.id, "APPROVED", "test-approval:${proposal.id}"))
         assertEquals("PROPOSAL", QualityLearningStore.proposals(context).single().status)
         assertEquals(corrupt, memoryPrefs.getString("memories", null))
+    }
+
+    @Test fun ambiguousAgentApprovalWriteIsReconciledAfterPreferenceStoreRepair() {
+        val proposal = QualityLearningStore.addProposal(
+            context, "Reguła po niejednoznacznym zapisie agenta", 9, "wysoka",
+            listOf("task-ambiguous-agent-write"), listOf("coder"), emptyList()
+        )
+        val agentPrefsName = "ai_agent_operational_memory_v1"
+        val failingContext = object : ContextWrapper(context) {
+            override fun getSharedPreferences(name: String, mode: Int): SharedPreferences {
+                val delegatePrefs = context.getSharedPreferences(name, mode)
+                if (name != agentPrefsName) return delegatePrefs
+                return object : SharedPreferences by delegatePrefs {
+                    override fun edit(): SharedPreferences.Editor {
+                        val delegateEditor = delegatePrefs.edit()
+                        return object : SharedPreferences.Editor by delegateEditor {
+                            override fun commit(): Boolean {
+                                // Persist the write, then report failure: this is the ambiguous
+                                // outcome SharedPreferencesWriteHealth must quarantine.
+                                delegateEditor.commit()
+                                return false
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        assertFalse(QualityLearningStore.setProposalStatus(
+            failingContext, proposal.id, "APPROVED", "test-ambiguous-agent:" + proposal.id
+        ))
+
+        // Agent memory may already contain the approval marker even though commit returned
+        // false. The file is quarantined, so immediate compensation cannot safely inspect it.
+        assertEquals("PROPOSAL", QualityLearningStore.proposals(context).single().status)
+        assertTrue(SharedPreferencesWriteHealth.isUncertain(agentPrefsName))
+        assertTrue(MemoryAuditLog.hasUnresolvedIntent(
+            context, "USER", "APPROVE_PROPOSAL", proposal.id
+        ))
+
+        // Model a process restart/store repair: clear only the in-process quarantine, then
+        // reconcile against the durable PROPOSAL ledger. No stale agent lesson may survive.
+        SharedPreferencesWriteHealth.resetForTests(agentPrefsName)
+        assertEquals(true, AgentOperationalMemoryStore.hasAnySource(
+            context, "proposal:" + proposal.id
+        ))
+        assertEquals(0, QualityLearningStore.syncApprovedAgentMemories(context))
+        assertEquals("PROPOSAL", QualityLearningStore.proposals(context).single().status)
+        assertFalse(AiMemoryStore.getMemories(context).any { it.contains("Reguła po niejednoznacznym zapisie agenta") })
+        assertEquals(false, AgentOperationalMemoryStore.hasAnySource(
+            context, "proposal:" + proposal.id
+        ))
+        assertFalse(MemoryAuditLog.hasUnresolvedIntent(
+            context, "USER", "APPROVE_PROPOSAL", proposal.id
+        ))
+        assertEquals(0, QualityLearningStore.syncApprovedAgentMemories(context))
     }
 
     @Test fun rejectionPartialCleanupFailureIsRecoveredFromApprovedLedgerAfterStoreRepair() {
