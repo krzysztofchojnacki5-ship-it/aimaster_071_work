@@ -6995,7 +6995,8 @@ class MainActivity : Activity() {
             return
         }
         val startedTask = queueStore.snapshot(this).tasks.firstOrNull { it.id == taskId }
-        if (startedTask?.status != pl.aimasterpro.app.core.MasterTaskQueueStore.Status.RUNNING || startedTask.runId != executionRunId) {
+        if (startedTask == null || startedTask.status != pl.aimasterpro.app.core.MasterTaskQueueStore.Status.RUNNING ||
+            startedTask.runId != executionRunId) {
             pl.aimasterpro.app.core.ApiTokenTracker.releaseBatchReservation(budgetPlan.reservationId)
             activeQueueTaskId = ""
             toast("Nie udało się potwierdzić numeru przebiegu kolejki. Nie wysłano żądań.")
@@ -7003,7 +7004,7 @@ class MainActivity : Activity() {
         }
         blocked.forEach { item ->
             queueStore.recordAgentResult(this, taskId, item.agentId, pl.aimasterpro.app.core.MasterTaskQueueStore.Status.BLOCKED,
-                budgetPlan.blockedReasons[item.id] ?: "Zablokowano przez Smart Budget.")
+                budgetPlan.blockedReasons[item.id] ?: "Zablokowano przez Smart Budget.", expectedRunId = executionRunId)
         }
         toast("MASTER uruchamia ${allowed.size} agentów. Wyniki będą zapisane w historii zadania.")
         val requestScope = client.beginRequestScope()

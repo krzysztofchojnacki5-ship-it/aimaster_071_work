@@ -49,7 +49,7 @@ object TaskCheckpointStore {
     fun record(context: Context, event: Event): Boolean {
         if (SharedPreferencesWriteHealth.isUncertain(PREFS)) return false
         if (event.taskId.isBlank() || event.agentId.isBlank() || event.status.isBlank() ||
-            event.timestamp < 0L || event.attempts < 0 ||
+            event.timestamp < 0L || event.attempts < 0 || event.runId < 0 ||
             event.estimatedInputTokens < 0L || event.estimatedOutputTokens < 0L) return false
         val rows = readEvents(context)?.toMutableList() ?: return false
         // A late worker callback must not overwrite a terminal result already recorded by
