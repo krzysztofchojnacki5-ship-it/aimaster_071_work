@@ -66,25 +66,36 @@ object AgentOperationalMemoryStore {
     ): Entry? = runCatching {
         SharedPreferencesWriteHealth.withHealthyAccess(PREFS) {
 
-        val agent = agentId.trim().take(100)
-        val clean = text.trim().replace(Regex("[\\t ]+"), " ").take(MAX_ENTRY_CHARS)
-        if (agent.isBlank() || clean.length < 8) return@withHealthyAccess null
+        val agent = agentId.trim()
+        val clean = text.trim().replace(Regex("[\\t ]+"), " ")
+        val cleanCategory = category.trim()
+        val cleanConfidence = confidence.trim()
+        val sources = sourceTaskIds.map(String::trim)
+        if (agent.isBlank() || agent.length > 100 || clean.length !in 8..MAX_ENTRY_CHARS ||
+            cleanCategory.length > 80 || cleanConfidence.isBlank() || cleanConfidence.length > 40 ||
+            sources.size > 30 || sources.any { it.isBlank() || it.length > 200 } ||
+            sources.distinct().size != sources.size) return@withHealthyAccess null
         val entries = read(context)?.toMutableList() ?: return@withHealthyAccess null
         val duplicateIndex = entries.indexOfFirst { it.agentId.equals(agent, true) && it.text.equals(clean, true) }
         if (duplicateIndex >= 0) {
             val duplicate = entries[duplicateIndex]
-            if (sourceTaskIds.all { it in duplicate.sourceTaskIds }) return@withHealthyAccess duplicate
+            val mergedSources = (duplicate.sourceTaskIds + sources).distinct()
+            if (mergedSources.size > 30) return@withHealthyAccess null
+            if (mergedSources == duplicate.sourceTaskIds && duplicate.confidence == cleanConfidence) {
+                return@withHealthyAccess duplicate
+            }
             val merged = duplicate.copy(
-                sourceTaskIds = (duplicate.sourceTaskIds + sourceTaskIds).filter(String::isNotBlank).distinct().take(30),
-                confidence = if (duplicate.confidence == confidence) confidence.take(40) else "wielokrotnie zatwierdzona"
+                sourceTaskIds = mergedSources,
+                confidence = if (duplicate.confidence == cleanConfidence) cleanConfidence else "wielokrotnie zatwierdzona"
             )
             entries[duplicateIndex] = merged
             return@withHealthyAccess if (write(context, entries)) merged else null
         }
-        val item = Entry(UUID.randomUUID().toString(), agent, clean, category.trim().take(80),
-            System.currentTimeMillis(), sourceTaskIds.filter(String::isNotBlank).distinct().take(30), confidence.take(40))
+        if (entries.size >= MAX_ENTRIES) return@withHealthyAccess null
+        val item = Entry(UUID.randomUUID().toString(), agent, clean, cleanCategory,
+            System.currentTimeMillis(), sources, cleanConfidence)
         entries.add(0, item)
-        return@withHealthyAccess if (write(context, entries.take(MAX_ENTRIES))) item else null
+        return@withHealthyAccess if (write(context, entries)) item else null
     
         }
     }.getOrNull()
@@ -181,8 +192,10 @@ object AgentOperationalMemoryStore {
             val id = requiredText("id").trim()
             val agent = requiredText("agentId").trim()
             val text = requiredText("text").trim()
-            require(id.isNotBlank() && seenIds.add(id) && agent.isNotBlank() && text.isNotBlank()) {
-                "Operational memory entry is missing unique identity or content."
+            require(id.isNotBlank() && id.length <= 120 && seenIds.add(id) &&
+                agent.isNotBlank() && agent.length <= 100 &&
+                text.length in 8..MAX_ENTRY_CHARS) {
+                "Operational memory entry is missing unique identity or exceeds supported field limits."
             }
             val createdValue = o.opt("createdAt")
             require(createdValue is Int || createdValue is Long || createdValue is Double || createdValue is Float) {
@@ -196,19 +209,35 @@ object AgentOperationalMemoryStore {
                 require(sourceArray.length() <= 30)
                 (0 until sourceArray.length()).map { index ->
                     val value = sourceArray.opt(index)
-                    require(value is String && value.isNotBlank()) { "Operational memory provenance contains an invalid ID." }
+                    require(value is String && value.isNotBlank() && value.length <= 200) {
+                        "Operational memory provenance contains an invalid ID."
+                    }
                     value
                 }.also { require(it.distinct().size == it.size) }
             }
-            Entry(id, agent, text.take(MAX_ENTRY_CHARS), optionalText("category").take(80),
-                createdAt, sources, optionalText("confidence").take(40))
+            val category = optionalText("category")
+            val confidence = optionalText("confidence")
+            require(category.length <= 80 && confidence.length <= 40) {
+                "Operational memory metadata exceeds supported field limits."
+            }
+            Entry(id, agent, text, category, createdAt, sources, confidence)
         }
     }.getOrNull()
 
+    private fun validEntry(entry: Entry): Boolean =
+        entry.id.isNotBlank() && entry.id.length <= 120 &&
+            entry.agentId.isNotBlank() && entry.agentId.length <= 100 &&
+            entry.text.length in 8..MAX_ENTRY_CHARS &&
+            entry.category.length <= 80 && entry.confidence.length <= 40 &&
+            entry.createdAt >= 0L && entry.sourceTaskIds.size <= 30 &&
+            entry.sourceTaskIds.all { it.isNotBlank() && it.length <= 200 } &&
+            entry.sourceTaskIds.distinct().size == entry.sourceTaskIds.size
+
     private fun write(context: Context, entries: List<Entry>): Boolean = runCatching {
-        if (SharedPreferencesWriteHealth.isUncertain(PREFS)) return@runCatching false
+        if (SharedPreferencesWriteHealth.isUncertain(PREFS) ||
+            entries.size > MAX_ENTRIES || entries.any { !validEntry(it) }) return@runCatching false
         val array = JSONArray()
-        entries.take(MAX_ENTRIES).forEach { e ->
+        entries.forEach { e ->
             array.put(JSONObject().put("id", e.id).put("agentId", e.agentId).put("text", e.text)
                 .put("category", e.category).put("createdAt", e.createdAt)
                 .put("sourceTaskIds", JSONArray(e.sourceTaskIds)).put("confidence", e.confidence))

@@ -182,4 +182,56 @@ class AgentOperationalMemoryStoreTest {
         assertEquals(listOf("locked-source"), AgentOperationalMemoryStore.all(context).single().sourceTaskIds)
     }
 
+    private fun org.json.JSONObject.deepCopy(): org.json.JSONObject = org.json.JSONObject(toString())
+
+    @Test fun oversizedPersistedFieldsFailClosedAndAreNeverTruncatedOnRewrite() {
+        val prefs = context.getSharedPreferences("ai_agent_operational_memory_v1", Context.MODE_PRIVATE)
+        val validRow = org.json.JSONObject()
+            .put("id", "entry-valid")
+            .put("agentId", "tester")
+            .put("text", "Poprawny tekst wpisu pamięci operacyjnej.")
+            .put("category", "")
+            .put("createdAt", 1L)
+            .put("sourceTaskIds", org.json.JSONArray())
+            .put("confidence", "zatwierdzona")
+        val malformedRows = listOf(
+            validRow.deepCopy().put("id", "i".repeat(121)),
+            validRow.deepCopy().put("agentId", "a".repeat(101)),
+            validRow.deepCopy().put("text", "x".repeat(1201)),
+            validRow.deepCopy().put("category", "c".repeat(81)),
+            validRow.deepCopy().put("confidence", "v".repeat(41)),
+            validRow.deepCopy().put("sourceTaskIds", org.json.JSONArray().put("s".repeat(201)))
+        )
+        malformedRows.forEach { row ->
+            val corrupt = org.json.JSONArray().put(row).toString()
+            assertTrue(prefs.edit().putString("entries", corrupt).commit())
+            assertTrue(AgentOperationalMemoryStore.all(context).isEmpty())
+            assertNull(addLesson(context, "tester", "Nowy wpis nie może nadpisać niepoprawnego rekordu."))
+            assertEquals(corrupt, prefs.getString("entries", null))
+            SharedPreferencesWriteHealth.resetForTests("ai_agent_operational_memory_v1")
+        }
+    }
+
+    @Test fun newLessonsRejectOversizedOrMalformedInputInsteadOfSilentlyTruncating() {
+        val prefs = context.getSharedPreferences("ai_agent_operational_memory_v1", Context.MODE_PRIVATE)
+        assertNull(addLesson(context, "a".repeat(101), "Poprawny tekst reguły do zapisania."))
+        assertNull(addLesson(context, "tester", "Poprawny tekst reguły do zapisania.", category = "c".repeat(81)))
+        assertNull(addLesson(context, "tester", "Poprawny tekst reguły do zapisania.", sourceTaskIds = listOf(" ")))
+        assertNull(addLesson(context, "tester", "Poprawny tekst reguły do zapisania.", sourceTaskIds = listOf("s".repeat(201))))
+        assertNull(addLesson(context, "tester", "x".repeat(1201)))
+        assertNull(prefs.getString("entries", null))
+    }
+
+    @Test fun provenanceMergeRefusesToDropSourceIdsWhenCapacityIsReached() {
+        val prefs = context.getSharedPreferences("ai_agent_operational_memory_v1", Context.MODE_PRIVATE)
+        val text = "Zachowuj pełną historię źródeł zatwierdzonej reguły."
+        val firstSources = (1..30).map { "source-$it" }
+        val first = addLesson(context, "architect", text, sourceTaskIds = firstSources)!!
+        val before = prefs.getString("entries", null)
+        assertNull(addLesson(context, "architect", text, sourceTaskIds = listOf("source-31")))
+        assertEquals(before, prefs.getString("entries", null))
+        assertEquals(firstSources.toSet(), AgentOperationalMemoryStore.all(context).single().sourceTaskIds.toSet())
+        assertEquals(first.id, AgentOperationalMemoryStore.all(context).single().id)
+    }
+
 }
