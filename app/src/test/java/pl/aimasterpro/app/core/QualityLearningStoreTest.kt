@@ -1247,6 +1247,32 @@ class QualityLearningStoreTest {
     }
 
 
+    @Test fun proposalRecoveryTreatsAlreadyAbsentSharedMemoryAsSuccessButManualRemovalRemainsStrict() {
+        val absentEntry = "Reguła, której nie ma już we wspólnej pamięci."
+        val recoveryRequest = MemoryGovernance.Request(
+            actor = MemoryGovernance.Actor.SYSTEM_RECOVERY,
+            mutation = MemoryGovernance.Mutation.RECONCILE_REVOKED_PROPOSAL,
+            objectId = "missing-proposal",
+            reason = "Test idempotentnego odzyskiwania cofniętej propozycji.",
+            approvalRef = "proposal:missing-proposal"
+        )
+        assertTrue(MemoryMutationGate.execute(context, recoveryRequest) { permit ->
+            AiMemoryStore.removeMemory(context, absentEntry, permit)
+        })
+        assertEquals(false, AiMemoryStore.containsExactMemory(context, absentEntry))
+
+        val manualRequest = MemoryGovernance.Request(
+            actor = MemoryGovernance.Actor.USER,
+            mutation = MemoryGovernance.Mutation.REMOVE_SHARED_RULE,
+            objectId = "missing-rule",
+            reason = "Test ścisłego usuwania ręcznego.",
+            approvalRef = "manual-remove:missing-rule"
+        )
+        assertFalse(MemoryMutationGate.execute(context, manualRequest) { permit ->
+            AiMemoryStore.removeMemory(context, absentEntry, permit)
+        })
+    }
+
     @Test fun failedProposalStatusCompensationIsRecoveredFromDurableRejectedLedger() {
         val proposal = QualityLearningStore.addProposal(
             context, "Reguła po nieudanym przywróceniu statusu", 8, "wysoka",

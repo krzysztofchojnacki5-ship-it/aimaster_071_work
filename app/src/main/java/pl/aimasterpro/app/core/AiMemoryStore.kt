@@ -98,15 +98,25 @@ object AiMemoryStore {
                 MemoryGovernance.Mutation.RECONCILE_APPROVED_PROPOSAL,
                 MemoryGovernance.Mutation.RECONCILE_REVOKED_PROPOSAL
             ))) return false
-        return removeMemoryRaw(context, exactMemory)
+        // Proposal rollback and startup reconciliation are idempotent: an already-absent
+        // entry is the desired state. A direct user deletion remains strict and returns false.
+        val idempotentRemoval = setOf(
+            MemoryGovernance.Mutation.APPROVE_PROPOSAL,
+            MemoryGovernance.Mutation.REJECT_PROPOSAL,
+            MemoryGovernance.Mutation.RECONCILE_APPROVED_PROPOSAL,
+            MemoryGovernance.Mutation.RECONCILE_REVOKED_PROPOSAL
+        ).any { MemoryMutationGate.isValid(permit, setOf(it)) }
+        return removeMemoryRaw(context, exactMemory, missingIsSuccess = idempotentRemoval)
     }
 
     @Synchronized
-    private fun removeMemoryRaw(context: Context, exactMemory: String): Boolean = runCatching {
+    private fun removeMemoryRaw(
+        context: Context, exactMemory: String, missingIsSuccess: Boolean
+    ): Boolean = runCatching {
         if (SharedPreferencesWriteHealth.isUncertain(PREFS_NAME)) return@runCatching false
         val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         val current = readStoredMemories(context) ?: return@runCatching false
-        if (exactMemory !in current) return@runCatching false
+        if (exactMemory !in current) return@runCatching missingIsSuccess
         val remaining = current.filterNot { it == exactMemory }
         val arr = JSONArray()
         remaining.forEach { arr.put(it) }

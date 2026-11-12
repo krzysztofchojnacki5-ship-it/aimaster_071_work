@@ -20,3 +20,9 @@
 ## Verification
 - Source, regression tests and this checkpoint are in one commit.
 - CI pending for this exact commit. No local build or device test claimed.
+
+## Follow-up package — idempotent proposal cleanup — 2026-11-12
+- Root cause in both failing QualityLearningStore recovery tests: AiMemoryStore.removeMemory returned false when the target entry was already absent. Proposal rollback/reconciliation therefore failed despite the desired durable state already being present.
+- Fix: removal is idempotent only for APPROVE_PROPOSAL, REJECT_PROPOSAL and the two SYSTEM_RECOVERY reconciliation mutations. Direct REMOVE_SHARED_RULE remains strict and returns false for an absent entry.
+- Regression coverage: recovery succeeds when the shared-memory entry is already absent; manual deletion of an absent rule still fails.
+- This patch is source-reviewed but not yet CI-verified. No APK or test pass is claimed.
