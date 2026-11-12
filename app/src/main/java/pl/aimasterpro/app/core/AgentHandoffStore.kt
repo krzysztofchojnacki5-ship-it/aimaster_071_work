@@ -93,7 +93,8 @@ object AgentHandoffStore {
             if (current.status != ReadStatus.AVAILABLE) return@synchronized null
             val message = current.messages.firstOrNull { it.id == messageId } ?: return@synchronized null
             if (message.taskId != taskId || message.runId != runId ||
-                message.recipientAgentId != recipientAgentId || message.state != State.PENDING) return@synchronized null
+                message.recipientAgentId != recipientAgentId || message.state != State.PENDING ||
+                now < message.createdAt) return@synchronized null
             val updated = message.copy(state = State.CLAIMED, updatedAt = now, claimedAt = now)
             if (write(context, current.messages.map { if (it.id == messageId) updated else it })) updated else null
         }
@@ -113,7 +114,8 @@ object AgentHandoffStore {
             if (message.taskId != taskId || message.runId != runId ||
                 message.recipientAgentId != recipientAgentId) return@synchronized false
             if (message.state == State.ACKNOWLEDGED) return@synchronized true
-            if (message.state != State.CLAIMED || message.claimedAt <= 0L) return@synchronized false
+            if (message.state != State.CLAIMED || message.claimedAt <= 0L ||
+                now < message.claimedAt || now < message.createdAt) return@synchronized false
             write(context, current.messages.map {
                 if (it.id == messageId) it.copy(state = State.ACKNOWLEDGED, updatedAt = now) else it
             })
@@ -197,8 +199,11 @@ object AgentHandoffStore {
                 !valid(it.id) || !valid(it.taskId) || !valid(it.senderAgentId) ||
                     !valid(it.recipientAgentId) || it.runId <= 0 || it.payload.isBlank() ||
                     it.payload.length > MAX_PAYLOAD || it.createdAt < 0L ||
-                    it.updatedAt < 0L || it.claimedAt < 0L || it.resolvedAt < 0L ||
+                    it.updatedAt < it.createdAt || it.claimedAt < 0L || it.resolvedAt < 0L ||
                     it.resolutionActor.length > 100 || it.resolutionReason.length > 300 ||
+                    (it.state == State.PENDING && it.claimedAt != 0L) ||
+                    (it.state in setOf(State.CLAIMED, State.ACKNOWLEDGED, State.REJECTED) &&
+                        (it.claimedAt <= 0L || it.updatedAt < it.claimedAt)) ||
                     (it.state == State.MANUALLY_RESOLVED &&
                         (it.claimedAt <= 0L || it.resolvedAt <= 0L ||
                             it.resolvedAt < it.claimedAt || it.resolvedAt < it.createdAt ||
