@@ -441,23 +441,48 @@ object MasterTaskQueueStore {
         }.getOrDefault(false)
     }
 
-    private fun read(context: Context): Snapshot = runCatching {
-        SharedPreferencesWriteHealth.withHealthyAccess(PREFS) {
-            val raw = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString(KEY, null)
-                ?: return@withHealthyAccess Snapshot(ReadStatus.AVAILABLE)
+    private fun read(context: Context): Snapshot {
+        if (SharedPreferencesWriteHealth.isUncertain(PREFS)) {
+            return Snapshot(ReadStatus.UNAVAILABLE, errorCode = "STORAGE_UNCERTAIN")
+        }
+        val raw = try {
+            SharedPreferencesWriteHealth.withHealthyAccess(PREFS) {
+                context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString(KEY, null)
+            }
+        } catch (error: Throwable) {
+            return Snapshot(ReadStatus.UNAVAILABLE, errorCode = "STORAGE_READ_FAILED:${error.javaClass.simpleName}")
+        } ?: return Snapshot(ReadStatus.AVAILABLE)
+
+        return runCatching {
             require(raw.isNotBlank() && raw.length <= 512_000)
             val root = JSONObject(raw)
-            require(root.optInt("version", -1) == VERSION)
+            val versionValue = root.opt("version")
+            require((versionValue is Int || versionValue is Long) &&
+                (versionValue as Number).toLong() == VERSION.toLong()) {
+                "Queue version is not an exact supported integer."
+            }
             val taskArray = root.getJSONArray("tasks")
             val eventArray = root.getJSONArray("events")
             require(taskArray.length() <= MAX_TASKS && eventArray.length() <= MAX_STORED_EVENTS)
+            fun exactLong(row: JSONObject, key: String, default: Long? = null): Long {
+                if (!row.has(key)) return default ?: error("Missing exact integer field '$key'.")
+                val value = row.opt(key)
+                require(value is Int || value is Long) { "Queue field '$key' is not an exact integer." }
+                return (value as Number).toLong()
+            }
             val tasks = (0 until taskArray.length()).map { i ->
                 val o = taskArray.getJSONObject(i)
+                val priority = exactLong(o, "priority")
+                val createdAt = exactLong(o, "createdAt")
+                val updatedAt = exactLong(o, "updatedAt")
+                val runId = exactLong(o, "runId", 0L)
+                require(priority in Int.MIN_VALUE.toLong()..Int.MAX_VALUE.toLong() &&
+                    runId in 0L..Int.MAX_VALUE.toLong())
                 val agents = strings(o.getJSONArray("agents"), 8)
                 val deps = strings(o.getJSONArray("dependencies"), 20)
                 val task = Task(o.getString("id"), o.getString("title"), o.getString("objective"),
-                    agents, deps, o.getInt("priority"), Status.valueOf(o.getString("status")),
-                    o.getString("step"), o.getLong("createdAt"), o.getLong("updatedAt"), o.optInt("runId", 0))
+                    agents, deps, priority.toInt(), Status.valueOf(o.getString("status")),
+                    o.getString("step"), createdAt, updatedAt, runId.toInt())
                 require(valid(task))
                 task
             }
@@ -475,16 +500,9 @@ object MasterTaskQueueStore {
                     require(value is String) { "Queue event field '$key' is not a string." }
                     return value
                 }
-                val timestampValue = o.opt("timestamp")
-                require(timestampValue is Int || timestampValue is Long) {
-                    "Queue event timestamp is not an exact integer."
-                }
-                val runIdValue = if (o.has("runId")) o.opt("runId") else 0
-                require(runIdValue is Int || runIdValue is Long) {
-                    "Queue event run ID is not an exact integer."
-                }
-                val runIdLong = (runIdValue as Number).toLong()
-                require(runIdLong in 0L..Int.MAX_VALUE.toLong()) {
+                val timestamp = exactLong(o, "timestamp")
+                val runId = exactLong(o, "runId", 0L)
+                require(runId in 0L..Int.MAX_VALUE.toLong()) {
                     "Queue event run ID is outside the supported range."
                 }
                 val event = Event(
@@ -495,19 +513,25 @@ object MasterTaskQueueStore {
                     requiredString("from"),
                     requiredString("to"),
                     requiredString("detail"),
-                    (timestampValue as Number).toLong(),
+                    timestamp,
                     optionalString("recipient"),
                     optionalString("providerId"),
                     optionalString("model"),
-                    runIdLong.toInt()
+                    runId.toInt()
                 )
                 require(valid(event))
                 event
             }
             require(events.map { it.id }.distinct().size == events.size)
+            val taskIds = tasks.mapTo(hashSetOf()) { it.id }
+            require(events.all { it.taskId in taskIds }) {
+                "Queue event references a task that is not present in the task ledger."
+            }
             Snapshot(ReadStatus.AVAILABLE, tasks, events)
+        }.getOrElse {
+            Snapshot(ReadStatus.CORRUPT, errorCode = "QUEUE_READ_FAILED:${it.javaClass.simpleName}")
         }
-    }.getOrElse { Snapshot(ReadStatus.CORRUPT, errorCode = "QUEUE_READ_FAILED:${it.javaClass.simpleName}") }
+    }
 
     private fun strings(array: JSONArray, max: Int): List<String> {
         require(array.length() <= max)

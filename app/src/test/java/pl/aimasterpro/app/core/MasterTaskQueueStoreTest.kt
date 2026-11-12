@@ -553,6 +553,73 @@ class MasterTaskQueueStoreTest {
         }
     }
 
+
+    @Test fun preferenceAccessFailureIsUnavailableNotCorruptQueueData() {
+        val failingContext = object : android.content.ContextWrapper(context) {
+            override fun getSharedPreferences(name: String, mode: Int): android.content.SharedPreferences {
+                throw IllegalStateException("controlled queue preference read failure")
+            }
+        }
+        val snapshot = MasterTaskQueueStore.snapshot(failingContext)
+        assertEquals(MasterTaskQueueStore.ReadStatus.UNAVAILABLE, snapshot.status)
+        assertTrue(snapshot.errorCode.startsWith("STORAGE_READ_FAILED:"))
+    }
+
+    @Test fun fractionalTaskLifecycleNumbersAreRejectedWithoutRewritingQueue() {
+        val prefs = context.getSharedPreferences("aiforteca_master_task_queue_v1", Context.MODE_PRIVATE)
+        val fields = listOf("priority", "createdAt", "updatedAt", "runId")
+        fields.forEachIndexed { index, field ->
+            val task = org.json.JSONObject()
+                .put("id", "task-exact-$index")
+                .put("title", "Exact values")
+                .put("objective", "Reject fractional persisted numbers.")
+                .put("agents", org.json.JSONArray())
+                .put("dependencies", org.json.JSONArray())
+                .put("priority", 2)
+                .put("status", "QUEUED")
+                .put("step", "Waiting")
+                .put("createdAt", 10L)
+                .put("updatedAt", 10L)
+                .put("runId", 0)
+            task.put(field, 1.5)
+            val raw = org.json.JSONObject()
+                .put("version", 1)
+                .put("tasks", org.json.JSONArray().put(task))
+                .put("events", org.json.JSONArray())
+                .toString()
+            assertTrue(prefs.edit().putString("state", raw).commit())
+            assertEquals("Fractional $field must be rejected",
+                MasterTaskQueueStore.ReadStatus.CORRUPT, MasterTaskQueueStore.snapshot(context).status)
+            assertEquals("Rejected $field must remain untouched", raw, prefs.getString("state", null))
+        }
+    }
+
+    @Test fun queueRejectsAuditEventsForUnknownTasksWithoutDroppingThem() {
+        val prefs = context.getSharedPreferences("aiforteca_master_task_queue_v1", Context.MODE_PRIVATE)
+        val orphan = org.json.JSONObject()
+            .put("id", "event-orphan-001")
+            .put("taskId", "task-orphan-001")
+            .put("actor", "MASTER")
+            .put("operation", "CREATE")
+            .put("from", "")
+            .put("to", "QUEUED")
+            .put("detail", "Orphan event")
+            .put("timestamp", 100L)
+            .put("recipient", "")
+            .put("providerId", "")
+            .put("model", "")
+            .put("runId", 0)
+        val raw = org.json.JSONObject()
+            .put("version", 1)
+            .put("tasks", org.json.JSONArray())
+            .put("events", org.json.JSONArray().put(orphan))
+            .toString()
+        assertTrue(prefs.edit().putString("state", raw).commit())
+        assertEquals(MasterTaskQueueStore.ReadStatus.CORRUPT, MasterTaskQueueStore.snapshot(context).status)
+        assertFalse(MasterTaskQueueStore.enqueue(context, "task-after-orphan", "New", "Must fail closed.", now = 200L))
+        assertEquals(raw, prefs.getString("state", null))
+    }
+
     @Test fun terminalTaskCannotBeReopenedAndCorruptStorageFailsClosed() {
         assertTrue(MasterTaskQueueStore.enqueue(context, "task-006", "Final", "Cel.", now = 50L))
         assertTrue(MasterTaskQueueStore.transition(context, "task-006", "MASTER",

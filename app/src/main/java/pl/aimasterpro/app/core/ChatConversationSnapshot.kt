@@ -42,9 +42,13 @@ data class ChatConversationSnapshot(
             val taskRows = array(chat, "assistantTaskIds")
             require(taskRows.length() <= MAX_TASK_IDS)
             val restoredTaskIds = ArrayList<String>(taskRows.length())
+            val seenTaskIds = hashSetOf<String>()
             for (index in 0 until taskRows.length()) {
                 val value = taskRows.opt(index)
                 require(value is String && value.length <= MAX_TASK_ID_CHARS)
+                // Empty placeholders preserve legacy assistant-message alignment; non-empty IDs
+                // must be unique or a task result could be attributed to the wrong message.
+                require(value.isBlank() || seenTaskIds.add(value))
                 restoredTaskIds += value
             }
 
