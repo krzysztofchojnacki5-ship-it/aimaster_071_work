@@ -54,3 +54,11 @@
 - Current version: 0.2 / versionCode 3.
 - CI artifacts are not user-delivered packages.
 - APK delivery: none. ZIP delivery: none.
+
+
+## Verified follow-up — CI and agent-scope normalization
+- Commit `34d16759f80495ce154e4ee48c7ab8fce29107fa`: Android Build SUCCESS (unit tests and `assembleRelease`); Gradle Wrapper Validation SUCCESS. This is CI evidence for this exact SHA, not device testing.
+- The approved-proposal recovery comparison now trims agent IDs before case normalization. Previously, an affected agent recorded as `" coder "` was persisted as `coder` by the agent store but compared without trimming during reconciliation, which could cause unnecessary recovery on startup.
+- Added `approvedProposalScopeNormalizationDoesNotTriggerRepeatedRecovery`: verifies the normalized scope and that repeated startup reconciliation adds no audit events.
+- This follow-up change is prepared against the verified HEAD above; CI must be run for its resulting commit before it is considered verified.
+- Next audit: compensation failures in approval/rejection multi-store writes, then durable journal/recovery fault injection. SharedPreferences files remain non-atomic across stores.

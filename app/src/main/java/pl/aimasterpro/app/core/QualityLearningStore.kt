@@ -193,7 +193,7 @@ object QualityLearningStore {
                 android.util.Log.e("AIMasterQuality", "Pominięto uzgadnianie propozycji ${proposal.id}: co najmniej jeden magazyn pamięci jest nieczytelny.")
                 return@forEach
             }
-            val expectedAgents = proposal.affectedAgents.map { it.lowercase(java.util.Locale.ROOT) }.toSet()
+            val expectedAgents = proposal.affectedAgents.map { it.trim().lowercase(java.util.Locale.ROOT) }.filter(String::isNotEmpty).toSet()
             val hasUnexpectedAgentSource = agentsWithSource.any { it !in expectedAgents }
             val needsRepair = if (approved) {
                 sharedPresent != true || agentStates.any { it != true } || hasUnexpectedAgentSource

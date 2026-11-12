@@ -175,6 +175,25 @@ class QualityLearningStoreTest {
         assertFalse(AgentOperationalMemoryStore.hasApprovedSource(context, "writer", proposal.text, sourceRef) == true)
     }
 
+    @Test fun approvedProposalScopeNormalizationDoesNotTriggerRepeatedRecovery() {
+        val proposal = QualityLearningStore.addProposal(
+            context, "Lekcja dla agenta z nieznormalizowanym identyfikatorem", 8, "wysoka",
+            listOf("task-agent-normalization"), listOf(" coder "), emptyList()
+        )
+        assertTrue(QualityLearningStore.setProposalStatus(
+            context, proposal.id, "APPROVED", "test-approval:${proposal.id}"
+        ))
+        assertTrue(AgentOperationalMemoryStore.hasApprovedSource(
+            context, "coder", proposal.text, "proposal:${proposal.id}"
+        ) == true)
+
+        val auditSizeBeforeSync = MemoryAuditLog.readVerified(context)!!.size
+        assertEquals(0, QualityLearningStore.syncApprovedAgentMemories(context))
+        assertEquals(auditSizeBeforeSync, MemoryAuditLog.readVerified(context)!!.size)
+        assertEquals(0, QualityLearningStore.syncApprovedAgentMemories(context))
+        assertEquals(auditSizeBeforeSync, MemoryAuditLog.readVerified(context)!!.size)
+    }
+
     @Test fun unresolvedRecoveryWithAmbiguousStoreStateIsNotReplayed() {
         val proposal = QualityLearningStore.addProposal(
             context, "Reguła po przerwanym odzyskiwaniu", 8, "wysoka",
