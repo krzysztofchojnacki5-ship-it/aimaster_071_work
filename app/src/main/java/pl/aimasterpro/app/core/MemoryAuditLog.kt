@@ -172,42 +172,89 @@ object MemoryAuditLog {
     }.getOrDefault(false)
 
     /**
-     * Keeps enough journal capacity to finish every accepted governed operation.
+     * Reserves capacity for a complete USER mutation and its proposal-recovery lineage.
      *
-     * An INTENT may be followed by FAILED and, after store repair, RECOVERED_STATE:
-     * reserve two future records while INTENT is latest. FAILED remains unresolved,
-     * but has consumed one of those records, so it retains one recovery slot.
-     * A COMMITTED record resolves the reservation. Denial records never replace an
-     * earlier unresolved operation. The calculation is made under append's monitor,
-     * so concurrent append callers cannot consume another operation's reserved slots.
+     * A USER INTENT reserves four future records: its ordinary terminal record, plus the
+     * three records needed if that terminal is FAILED and proposal reconciliation is later
+     * required (SYSTEM_RECOVERY INTENT, SYSTEM_RECOVERY terminal, USER RECOVERED_STATE).
+     * Once recovery starts before a USER terminal exists, the unused ordinary-terminal
+     * branch is released. Recovery records tied to the same proposal consume the USER
+     * reservation instead of creating a second, overlapping reservation.
+     *
+     * A standalone INTENT reserves its terminal and one possible manual resolution.
+     * FAILED retains one manual-resolution slot. Denial records never mask unresolved work.
+     * All accounting is performed under append's monitor.
      */
     private fun hasReservedCapacity(existing: List<Record>, event: Event): Boolean {
-        val latestByIdentity = linkedMapOf<Triple<String, String, String>, Phase>()
-        existing.forEach { record ->
+        val candidate = existing + Record(
+            sequence = existing.size.toLong() + 1L,
+            actor = event.actor,
+            mutation = event.mutation,
+            objectId = event.objectId,
+            reason = event.reason,
+            approvalRef = event.approvalRef,
+            phase = event.phase,
+            outcome = event.outcome,
+            timestamp = event.timestamp,
+            previousHash = "",
+            hash = ""
+        )
+
+        val latestByIdentity = linkedMapOf<Triple<String, String, String>, Record>()
+        candidate.forEach { record ->
             if (!record.outcome.startsWith("DENIED_")) {
-                latestByIdentity[Triple(record.actor, record.mutation, record.objectId)] = record.phase
+                latestByIdentity[Triple(record.actor, record.mutation, record.objectId)] = record
             }
         }
 
         if (!event.outcome.startsWith("DENIED_")) {
-            val identity = Triple(event.actor, event.mutation, event.objectId)
-            val previous = latestByIdentity[identity]
+            val previous = existing.lastOrNull {
+                it.actor == event.actor && it.mutation == event.mutation &&
+                    it.objectId == event.objectId && !it.outcome.startsWith("DENIED_")
+            }
             // A second INTENT for an unresolved identity would create an ambiguous
             // reservation and is rejected; callers must resolve the earlier attempt first.
-            if (event.phase == Phase.INTENT && previous != null && previous != Phase.COMMITTED) {
+            if (event.phase == Phase.INTENT && previous != null && previous.phase != Phase.COMMITTED) {
                 return false
             }
-            latestByIdentity[identity] = event.phase
         }
 
-        val reservedSlots = latestByIdentity.values.sumOf { phase ->
-            when (phase) {
+        val unresolvedUsers = latestByIdentity.values.filter {
+            it.actor == "USER" && it.phase != Phase.COMMITTED &&
+                it.mutation in setOf("APPROVE_PROPOSAL", "REJECT_PROPOSAL")
+        }
+        val linkedRecoveryKeys = mutableSetOf<Triple<String, String, String>>()
+        var reservedSlots = 0
+
+        unresolvedUsers.forEach { user ->
+            val recovery = candidate.filter {
+                it.actor == "SYSTEM_RECOVERY" && it.objectId == user.objectId &&
+                    it.approvalRef == "proposal:${user.objectId}" &&
+                    it.mutation in setOf("RECONCILE_APPROVED_PROPOSAL", "RECONCILE_REVOKED_PROPOSAL") &&
+                    it.sequence > user.sequence
+            }
+            recovery.forEach {
+                linkedRecoveryKeys += Triple(it.actor, it.mutation, it.objectId)
+            }
+            // Before any recovery event, USER INTENT must also reserve its ordinary
+            // terminal record. Once recovery starts, that mutually exclusive branch ends.
+            val base = if (user.phase == Phase.INTENT && recovery.isEmpty()) 4 else 3
+            // A failed recovery needs two later closure records: one for recovery and
+            // one for the original USER operation.
+            val manualClosure = if (recovery.lastOrNull()?.phase == Phase.FAILED) 1 else 0
+            reservedSlots += (base - recovery.size + manualClosure).coerceAtLeast(0)
+        }
+
+        latestByIdentity.forEach { (identity, record) ->
+            if (identity in linkedRecoveryKeys) return@forEach
+            if (record.actor == "USER" && record in unresolvedUsers) return@forEach
+            reservedSlots += when (record.phase) {
                 Phase.INTENT -> 2
                 Phase.FAILED -> 1
                 Phase.COMMITTED -> 0
             }
         }
-        return existing.size + 1 + reservedSlots <= MAX_EVENTS
+        return candidate.size + reservedSlots <= MAX_EVENTS
     }
 
     private fun readRecords(context: Context): List<Record>? = runCatching {

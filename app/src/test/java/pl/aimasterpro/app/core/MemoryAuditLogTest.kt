@@ -111,22 +111,67 @@ class MemoryAuditLogTest {
         assertTrue(MemoryAuditLog.readVerified(context)!!.isEmpty())
     }
     @Test fun intentReservesCapacityForFailureAndRecoveryWithoutTruncatingHistory() {
-        seedCommittedJournal(4_997)
+        seedCommittedJournal(4_995)
 
         assertTrue(MemoryAuditLog.append(context, event(MemoryAuditLog.Phase.INTENT, "AUTHORIZED")))
-        assertEquals(4_998, MemoryAuditLog.readVerified(context)!!.size)
+        assertEquals(4_996, MemoryAuditLog.readVerified(context)!!.size)
 
         assertTrue(MemoryAuditLog.append(context, event(MemoryAuditLog.Phase.FAILED, "MUTATION_FAILED")))
-        assertEquals(4_999, MemoryAuditLog.readVerified(context)!!.size)
+        assertEquals(4_997, MemoryAuditLog.readVerified(context)!!.size)
         val pending = MemoryAuditLog.unresolvedOperations(context, "rule-1")!!.single()
         assertTrue(MemoryAuditLog.resolveUnresolved(context, pending, "test repair verified"))
 
         val rows = MemoryAuditLog.readVerified(context)!!
-        assertEquals(5_000, rows.size)
+        assertEquals(4_998, rows.size)
         assertEquals(MemoryAuditLog.Phase.COMMITTED, rows.last().phase)
         assertEquals("RECOVERED_STATE", rows.last().outcome)
         assertTrue(MemoryAuditLog.unresolvedOperations(context, "rule-1")!!.isEmpty())
-        assertEquals("seed-4997", rows[4_996].objectId)
+        assertEquals("seed-4995", rows[4_994].objectId)
+    }
+
+    @Test fun failedUserMutationCanCompleteFullProposalRecoveryAtJournalCapacityBoundary() {
+        seedCommittedJournal(4_995)
+        assertTrue(MemoryAuditLog.append(context, event(MemoryAuditLog.Phase.INTENT, "AUTHORIZED")))
+        assertTrue(MemoryAuditLog.append(context, event(MemoryAuditLog.Phase.FAILED, "MUTATION_FAILED")))
+        val recoveryIntent = MemoryAuditLog.Event(
+            actor = "SYSTEM_RECOVERY", mutation = "RECONCILE_APPROVED_PROPOSAL",
+            objectId = "rule-1", reason = "recovery intent", approvalRef = "proposal:rule-1",
+            phase = MemoryAuditLog.Phase.INTENT, outcome = "AUTHORIZED", timestamp = 1_800_000_000_100L
+        )
+        val recoveryTerminal = recoveryIntent.copy(
+            phase = MemoryAuditLog.Phase.COMMITTED, outcome = "SUCCESS",
+            timestamp = 1_800_000_000_101L
+        )
+        assertTrue(MemoryAuditLog.append(context, recoveryIntent))
+        assertTrue(MemoryAuditLog.append(context, recoveryTerminal))
+        val pendingUser = MemoryAuditLog.unresolvedOperations(context, "rule-1")!!
+            .single { it.actor == "USER" }
+        assertTrue(MemoryAuditLog.resolveUnresolved(context, pendingUser, "proposal stores verified"))
+
+        val rows = MemoryAuditLog.readVerified(context)!!
+        assertEquals(5_000, rows.size)
+        assertEquals("seed-4995", rows[4_994].objectId)
+        assertEquals("RECOVERED_STATE", rows.last().outcome)
+        assertTrue(MemoryAuditLog.unresolvedOperations(context, "rule-1")!!.isEmpty())
+    }
+
+    @Test fun interruptedUserIntentCanStartRecoveryWithoutDoubleReservingCapacity() {
+        seedCommittedJournal(4_995)
+        assertTrue(MemoryAuditLog.append(context, event(MemoryAuditLog.Phase.INTENT, "AUTHORIZED")))
+        val recoveryIntent = MemoryAuditLog.Event(
+            actor = "SYSTEM_RECOVERY", mutation = "RECONCILE_APPROVED_PROPOSAL",
+            objectId = "rule-1", reason = "recovery intent", approvalRef = "proposal:rule-1",
+            phase = MemoryAuditLog.Phase.INTENT, outcome = "AUTHORIZED", timestamp = 1_800_000_000_100L
+        )
+        assertTrue(MemoryAuditLog.append(context, recoveryIntent))
+        assertTrue(MemoryAuditLog.append(context, recoveryIntent.copy(
+            phase = MemoryAuditLog.Phase.COMMITTED, outcome = "SUCCESS",
+            timestamp = 1_800_000_000_101L
+        )))
+        val pendingUser = MemoryAuditLog.unresolvedOperations(context, "rule-1")!!
+            .single { it.actor == "USER" }
+        assertTrue(MemoryAuditLog.resolveUnresolved(context, pendingUser, "proposal stores verified"))
+        assertEquals(4_999, MemoryAuditLog.readVerified(context)!!.size)
     }
 
     @Test fun intentIsRejectedWhenThreeJournalSlotsCannotBeGuaranteed() {
