@@ -156,6 +156,50 @@ class TeamRunEngineNetworkTest {
     }
 
     @Test
+    fun sequentialHandoffContextIsIncludedInTheNextAgentsActualRequest() {
+        ProviderQuotaScheduler.resetForTests()
+        val requests = Collections.synchronizedList(mutableListOf<String>())
+        val server = TestHttpServer { body, _ ->
+            requests.add(body)
+            200 to """{"choices":[{"message":{"content":"report-from-agent"}}],"usage":{"prompt_tokens":5,"completion_tokens":4,"total_tokens":9}}"""
+        }
+        try {
+            val config = ProviderConfig(
+                "handoff-sequence-test", "Handoff sequence test", ProviderKind.OPENAI_COMPATIBLE,
+                "http://127.0.0.1:${server.address.port}/v1", "test-model", ""
+            )
+            val handoffs = java.util.concurrent.ConcurrentHashMap<String, String>()
+            val results = TeamRunEngine(ProviderClient(), maxParallel = 1).runBatch(
+                tasks = listOf(
+                    TeamTask("handoff-first", "qa-architect", "First", "Analyze the task"),
+                    TeamTask("handoff-second", "unit-test-engineer", "Second", "Continue the analysis")
+                ),
+                provider = config,
+                agentProvidersMap = mapOf("qa-architect" to config, "unit-test-engineer" to config),
+                isFreeProvider = { true },
+                mode = WorkMode.PLANNING,
+                handoffContextForTask = { task ->
+                    handoffs[task.id].orEmpty()
+                },
+                onTaskResult = { result ->
+                    if (result.agentId == "qa-architect") {
+                        handoffs["handoff-second"] = "PREVIOUS_AGENT_REPORT: ${result.report}"
+                    }
+                    true
+                }
+            )
+            assertEquals(2, results.size)
+            assertTrue(results.all { it.status == TeamTaskResult.Status.COMPLETED })
+            assertEquals(2, requests.size)
+            assertTrue("The second provider request must include the first agent's handoff",
+                requests[1].contains("PREVIOUS_AGENT_REPORT: report-from-agent"))
+        } finally {
+            ProviderQuotaScheduler.resetForTests()
+            server.stop(0)
+        }
+    }
+
+    @Test
     fun completedReportIsPersistedBeforeTerminalCheckpoint() {
         ProviderQuotaScheduler.resetForTests()
         val server = TestHttpServer { _, _ ->

@@ -7070,11 +7070,13 @@ class MainActivity : Activity() {
                 prompt = "Zadanie MASTER-a: ${task.title}\n\nCel i kryteria wykonania:\n${task.objective}\n\nPrzeanalizuj cel, wykonaj przydzieloną pracę na podstawie dostępnego kontekstu i zwróć raport z ustaleniami, ograniczeniami oraz weryfikacją. Nie twierdź, że zmieniłeś pliki ani wykonałeś operacje, do których nie masz narzędzi."
             )
         }
-        val budgetRequests = teamTasks.map { teamTask ->
+        val budgetRequests = teamTasks.mapIndexed { index, teamTask ->
             val spec = enabledAgentCatalog.firstOrNull { it.id == teamTask.agentId }
             val cfg = configs.getValue(teamTask.agentId)
+            // Reserve headroom for the bounded 8k-character durable report handoff.
             val chars = (spec?.systemPrompt.orEmpty().length + mode.systemInstruction.length +
-                projectContextBase.length + 18_000 + teamTask.prompt.length + 1_800)
+                projectContextBase.length + 18_000 + teamTask.prompt.length + 1_800 +
+                if (index > 0) 8_000 else 0)
             pl.aimasterpro.app.core.BudgetRequest(
                 taskId = teamTask.id, agentId = teamTask.agentId, providerId = cfg.id,
                 baseUrl = cfg.baseUrl, modelName = cfg.model,
@@ -7127,7 +7129,9 @@ class MainActivity : Activity() {
                         append("\n\n").append(sourceContextResult.contextText)
                     }
                 }
-                val results = TeamRunEngine(client, maxParallel = minOf(4, allowed.size.coerceAtLeast(1)), agentCatalog = enabledAgentCatalog).use { engine ->
+                // Durable report handoffs are ordered: recipient N+1 must receive and claim N's report
+                // before its provider request starts. Parallel execution would violate that guarantee.
+                val results = TeamRunEngine(client, maxParallel = 1, agentCatalog = enabledAgentCatalog).use { engine ->
                     engine.runBatch(
                         tasks = allowed,
                         provider = fallback,
@@ -7201,10 +7205,44 @@ class MainActivity : Activity() {
                             if (!progressSaved) android.util.Log.w("AiFORTecaQueue", "Nie zapisano postępu kolejki $taskId/${item.agentId} • $state")
                         },
                         onTaskResult = { result ->
-                            pl.aimasterpro.app.core.TaskResultArchive.put(
+                            val archived = pl.aimasterpro.app.core.TaskResultArchive.put(
                                 this, result.taskId, result.agentId, result.report,
                                 result.providerId, result.model
                             )
+                            if (!archived) {
+                                false
+                            } else {
+                                val index = allowed.indexOfFirst { it.agentId == result.agentId }
+                                val inboundId = if (index > 0) {
+                                    "h-${taskId.take(30)}-$executionRunId-${allowed[index - 1].agentId.take(20)}-${result.agentId.take(20)}"
+                                } else ""
+                                val inboundAcknowledged = inboundId.isBlank() ||
+                                    pl.aimasterpro.app.core.AgentHandoffStore.acknowledge(
+                                        this, taskId, executionRunId, inboundId, result.agentId
+                                    )
+                                val next = allowed.getOrNull(index + 1)
+                                val outboundSent = if (next == null) true else {
+                                    val messageId = "h-${taskId.take(30)}-$executionRunId-${result.agentId.take(20)}-${next.agentId.take(20)}"
+                                    pl.aimasterpro.app.core.AgentHandoffStore.send(
+                                        this, taskId, executionRunId, messageId,
+                                        result.agentId, next.agentId, result.report.take(8_000)
+                                    )
+                                }
+                                inboundAcknowledged && outboundSent
+                            }
+                        },
+                        handoffContextForTask = { item ->
+                            val index = allowed.indexOfFirst { it.agentId == item.agentId }
+                            if (index <= 0) "" else {
+                                val previous = allowed[index - 1]
+                                val messageId = "h-${taskId.take(30)}-$executionRunId-${previous.agentId.take(20)}-${item.agentId.take(20)}"
+                                val claimed = pl.aimasterpro.app.core.AgentHandoffStore.claim(
+                                    this, taskId, executionRunId, messageId, item.agentId
+                                ) ?: throw IllegalStateException(
+                                    "Brak możliwego do przejęcia przekazania od agenta ${previous.agentId}; żądanie API odbiorcy nie zostanie wysłane."
+                                )
+                                "Nadawca: ${claimed.senderAgentId}\nOdbiorca: ${claimed.recipientAgentId}\n\nRaport poprzedniego agenta:\n${claimed.payload}"
+                            }
                         },
                         onRequestStarting = { item, actualProvider, estimatedInput, estimatedOutput, idempotencyKey, attempts ->
                             !store.isStorageUncertain() && ensureBudgetReservationTarget(budgetPlan.reservationId, item.id, item.agentId, actualProvider) && pl.aimasterpro.app.core.TaskCheckpointStore.record(
