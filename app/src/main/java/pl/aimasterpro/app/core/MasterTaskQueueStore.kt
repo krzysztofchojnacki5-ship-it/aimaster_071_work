@@ -18,6 +18,9 @@ object MasterTaskQueueStore {
     private const val VERSION = 1
     private const val MAX_TASKS = 120
     private const val MAX_EVENTS = 800
+    // Keep the latest run's result for every possible task/assignee in addition to the rolling journal.
+    private const val MAX_RESULT_EVENTS = MAX_TASKS * 8
+    private const val MAX_STORED_EVENTS = MAX_EVENTS + MAX_RESULT_EVENTS
     private val idPattern = Regex("[A-Za-z0-9][A-Za-z0-9._:-]{2,119}")
 
     enum class ReadStatus { AVAILABLE, CORRUPT, UNAVAILABLE }
@@ -33,7 +36,9 @@ object MasterTaskQueueStore {
         val status: Status,
         val currentStep: String,
         val createdAt: Long,
-        val updatedAt: Long
+        val updatedAt: Long,
+        /** Monotonic execution epoch; retries must not inherit prior agent results. */
+        val runId: Int = 0
     )
 
     data class Event(
@@ -47,7 +52,8 @@ object MasterTaskQueueStore {
         val timestamp: Long,
         val recipient: String = "",
         val providerId: String = "",
-        val model: String = ""
+        val model: String = "",
+        val runId: Int = 0
     )
 
     data class Snapshot(
@@ -130,10 +136,13 @@ object MasterTaskQueueStore {
             actor in setOf("MASTER", "USER") && allowedCoordinatorTransition(current.status, target)
         }
         if (!allowed || current.status == target) return@mutate null
-        if (target == Status.RUNNING && current.status != Status.ASSIGNED) return@mutate null
-        val next = current.copy(status = target, currentStep = detail.trim().ifBlank { target.name }, updatedAt = now)
+        if (target == Status.RUNNING && (current.status != Status.ASSIGNED || current.runId == Int.MAX_VALUE)) return@mutate null
+        val nextRunId = if (target == Status.RUNNING) current.runId + 1 else current.runId
+        val next = current.copy(status = target, currentStep = detail.trim().ifBlank { target.name },
+            updatedAt = now, runId = nextRunId)
         Triple(tasks.map { if (it.id == taskId) next else it },
-            events + event(taskId, actor, "TRANSITION", current.status.name, target.name, detail.trim(), now), true)
+            events + event(taskId, actor, "TRANSITION", current.status.name, target.name, detail.trim(), now,
+                runId = nextRunId), true)
     }
 
     /** Records one assigned agent's terminal execution result; the queue task closes only after every assignee reports. */
@@ -155,8 +164,10 @@ object MasterTaskQueueStore {
         }
         if (alreadyReported) return@mutate null
         val nextEvents = events + event(taskId, "agent:$agentId", "AGENT_RESULT", Status.RUNNING.name,
-            result.name, detail.trim(), now)
-        val reports = nextEvents.filter { it.taskId == taskId && it.operation == "AGENT_RESULT" }
+            result.name, detail.trim(), now, runId = current.runId)
+        val reports = nextEvents.filter {
+            it.taskId == taskId && it.operation == "AGENT_RESULT" && it.runId == current.runId
+        }
         val reportedAgents = reports.map { it.actor.removePrefix("agent:") }.toSet()
         val allReported = current.assignedAgentIds.all { it in reportedAgents }
         val finalStatus = if (!allReported) Status.RUNNING else when {
@@ -196,7 +207,7 @@ object MasterTaskQueueStore {
         val next = current.copy(currentStep = summary, updatedAt = maxOf(now, current.updatedAt))
         Triple(tasks.map { if (it.id == taskId) next else it },
             events + event(taskId, "agent:$agentId", "AGENT_PROGRESS", Status.RUNNING.name,
-                state, summary, now, providerId = safeProvider, model = safeModel), true)
+                state, summary, now, providerId = safeProvider, model = safeModel, runId = current.runId), true)
     }
 
     /** Appends sanitized agent-to-agent / agent-to-MASTER communication to the owning task timeline. */
@@ -220,7 +231,7 @@ object MasterTaskQueueStore {
         val safe = CommunicationLogSanitizer.sanitize(message).take(350)
         val detail = "Do: $recipient • $status • $safe"
         Triple(tasks, events + event(taskId, sender, "AGENT_MESSAGE", "", status, detail, now,
-            recipient = recipient, providerId = providerId, model = model), true)
+            recipient = recipient, providerId = providerId, model = model, runId = current.runId), true)
     }
 
     /** Moves interrupted RUNNING tasks to BLOCKED after process restart; never auto-replays uncertain API work. */
@@ -260,12 +271,12 @@ object MasterTaskQueueStore {
 
     private fun event(taskId: String, actor: String, operation: String, from: String,
                       to: String, detail: String, now: Long, recipient: String = "",
-                      providerId: String = "", model: String = "") =
+                      providerId: String = "", model: String = "", runId: Int = 0) =
         Event(UUID.randomUUID().toString(), taskId, actor, operation, from, to,
             CommunicationLogSanitizer.sanitize(detail).take(500), now,
             CommunicationLogSanitizer.sanitize(recipient).take(100),
             CommunicationLogSanitizer.sanitize(providerId).take(80),
-            CommunicationLogSanitizer.sanitize(model).take(120))
+            CommunicationLogSanitizer.sanitize(model).take(120), runId)
 
     private fun mutate(
         context: Context,
@@ -293,14 +304,14 @@ object MasterTaskQueueStore {
             require(root.optInt("version", -1) == VERSION)
             val taskArray = root.getJSONArray("tasks")
             val eventArray = root.getJSONArray("events")
-            require(taskArray.length() <= MAX_TASKS && eventArray.length() <= MAX_EVENTS)
+            require(taskArray.length() <= MAX_TASKS && eventArray.length() <= MAX_STORED_EVENTS)
             val tasks = (0 until taskArray.length()).map { i ->
                 val o = taskArray.getJSONObject(i)
                 val agents = strings(o.getJSONArray("agents"), 8)
                 val deps = strings(o.getJSONArray("dependencies"), 20)
                 val task = Task(o.getString("id"), o.getString("title"), o.getString("objective"),
                     agents, deps, o.getInt("priority"), Status.valueOf(o.getString("status")),
-                    o.getString("step"), o.getLong("createdAt"), o.getLong("updatedAt"))
+                    o.getString("step"), o.getLong("createdAt"), o.getLong("updatedAt"), o.optInt("runId", 0))
                 require(valid(task))
                 task
             }
@@ -310,7 +321,7 @@ object MasterTaskQueueStore {
                 Event(o.getString("id"), o.getString("taskId"), o.getString("actor"),
                     o.getString("operation"), o.getString("from"), o.getString("to"),
                     o.getString("detail"), o.getLong("timestamp"),
-                    o.optString("recipient"), o.optString("providerId"), o.optString("model"))
+                    o.optString("recipient"), o.optString("providerId"), o.optString("model"), o.optInt("runId", 0))
             }
             require(events.map { it.id }.distinct().size == events.size)
             Snapshot(ReadStatus.AVAILABLE, tasks, events)
@@ -328,7 +339,7 @@ object MasterTaskQueueStore {
             t.assignedAgentIds.size <= 8 && t.assignedAgentIds.distinct().size == t.assignedAgentIds.size &&
             t.dependencies.size <= 20 && t.dependencies.distinct().size == t.dependencies.size &&
             t.priority in 0..4 && t.currentStep.length <= 500 &&
-            t.createdAt >= 0L && t.updatedAt >= t.createdAt
+            t.createdAt >= 0L && t.updatedAt >= t.createdAt && t.runId >= 0
 
     private fun write(context: Context, tasks: List<Task>, events: List<Event>): Boolean = runCatching {
         val taskArray = JSONArray()
@@ -336,14 +347,21 @@ object MasterTaskQueueStore {
             taskArray.put(JSONObject().put("id", t.id).put("title", t.title).put("objective", t.objective)
                 .put("agents", JSONArray(t.assignedAgentIds)).put("dependencies", JSONArray(t.dependencies))
                 .put("priority", t.priority).put("status", t.status.name).put("step", t.currentStep)
-                .put("createdAt", t.createdAt).put("updatedAt", t.updatedAt))
+                .put("createdAt", t.createdAt).put("updatedAt", t.updatedAt).put("runId", t.runId))
         }
         val eventArray = JSONArray()
-        events.takeLast(MAX_EVENTS).forEach { e ->
+        val currentRunResultIds = events.filter { e ->
+            e.operation == "AGENT_RESULT" && tasks.any { it.id == e.taskId && it.runId == e.runId }
+        }.map { it.id }.toSet()
+        val retainedIds = events.filterNot { it.id in currentRunResultIds }.takeLast(MAX_EVENTS)
+            .map { it.id }.toSet() + currentRunResultIds
+        require(retainedIds.size <= MAX_STORED_EVENTS)
+        events.filter { it.id in retainedIds }.forEach { e ->
             eventArray.put(JSONObject().put("id", e.id).put("taskId", e.taskId).put("actor", e.actor)
                 .put("operation", e.operation).put("from", e.fromStatus).put("to", e.toStatus)
                 .put("detail", e.detail).put("timestamp", e.timestamp)
-                .put("recipient", e.recipient).put("providerId", e.providerId).put("model", e.model))
+                .put("recipient", e.recipient).put("providerId", e.providerId).put("model", e.model)
+                .put("runId", e.runId))
         }
         val raw = JSONObject().put("version", VERSION).put("tasks", taskArray).put("events", eventArray).toString()
         raw.length <= 512_000 && SharedPreferencesWriteHealth.commit(PREFS,

@@ -204,6 +204,73 @@ class MasterTaskQueueStoreTest {
         assertTrue(state.events.last().detail.contains("Krok 809"))
     }
 
+    @Test fun retryAfterBlockedRunStartsFreshAgentResultEpoch() {
+        assertTrue(MasterTaskQueueStore.enqueue(context, "task-retry-001", "Ponowienie", "Sprawdź retry.", now = 300L))
+        val agents = listOf("critical-reviewer", "unit-test-engineer")
+        assertTrue(MasterTaskQueueStore.assign(context, "task-retry-001", agents, now = 301L))
+        assertTrue(MasterTaskQueueStore.transition(context, "task-retry-001", "MASTER",
+            MasterTaskQueueStore.Status.RUNNING, "Pierwszy przebieg.", 302L))
+        assertTrue(MasterTaskQueueStore.recordAgentResult(context, "task-retry-001", agents[0],
+            MasterTaskQueueStore.Status.COMPLETED, "Pierwszy raport.", 303L))
+        assertTrue(MasterTaskQueueStore.recordAgentResult(context, "task-retry-001", agents[1],
+            MasterTaskQueueStore.Status.BLOCKED, "Wymaga ponowienia.", 304L))
+        assertEquals(MasterTaskQueueStore.Status.BLOCKED, MasterTaskQueueStore.snapshot(context).tasks.single().status)
+
+        assertTrue(MasterTaskQueueStore.transition(context, "task-retry-001", "MASTER",
+            MasterTaskQueueStore.Status.QUEUED, "Zatwierdzono ponowienie.", 305L))
+        assertTrue(MasterTaskQueueStore.assign(context, "task-retry-001", agents, now = 306L))
+        assertTrue(MasterTaskQueueStore.transition(context, "task-retry-001", "MASTER",
+            MasterTaskQueueStore.Status.RUNNING, "Drugi przebieg.", 307L))
+        assertTrue(MasterTaskQueueStore.recordAgentResult(context, "task-retry-001", agents[0],
+            MasterTaskQueueStore.Status.COMPLETED, "Nowy raport pierwszego agenta.", 308L))
+        assertEquals(MasterTaskQueueStore.Status.RUNNING, MasterTaskQueueStore.snapshot(context).tasks.single().status)
+        assertTrue(MasterTaskQueueStore.recordAgentResult(context, "task-retry-001", agents[1],
+            MasterTaskQueueStore.Status.COMPLETED, "Nowy raport drugiego agenta.", 309L))
+
+        val state = MasterTaskQueueStore.snapshot(context)
+        assertEquals(MasterTaskQueueStore.Status.COMPLETED, state.tasks.single().status)
+        assertEquals(2, state.events.count {
+            it.taskId == "task-retry-001" && it.operation == "AGENT_RESULT" && it.runId == state.tasks.single().runId
+        })
+        assertEquals(2, state.tasks.single().runId)
+    }
+
+    @Test fun lateAgentResultAfterUserCancellationIsRejected() {
+        assertTrue(MasterTaskQueueStore.enqueue(context, "task-cancel-race", "Anulowanie", "Test spóźnionego wyniku.", now = 320L))
+        assertTrue(MasterTaskQueueStore.assign(context, "task-cancel-race", listOf("critical-reviewer"), now = 321L))
+        assertTrue(MasterTaskQueueStore.transition(context, "task-cancel-race", "MASTER",
+            MasterTaskQueueStore.Status.RUNNING, "Start.", 322L))
+        assertTrue(MasterTaskQueueStore.transition(context, "task-cancel-race", "USER",
+            MasterTaskQueueStore.Status.CANCELLED, "Użytkownik anulował zadanie.", 323L))
+        assertFalse(MasterTaskQueueStore.recordAgentResult(context, "task-cancel-race", "critical-reviewer",
+            MasterTaskQueueStore.Status.COMPLETED, "Spóźniona odpowiedź HTTP.", 324L))
+        val state = MasterTaskQueueStore.snapshot(context)
+        assertEquals(MasterTaskQueueStore.Status.CANCELLED, state.tasks.single().status)
+        assertEquals(0, state.events.count { it.taskId == "task-cancel-race" && it.operation == "AGENT_RESULT" })
+    }
+
+    @Test fun currentRunAgentResultsSurviveRollingJournalRollover() {
+        val agents = listOf("critical-reviewer", "unit-test-engineer")
+        assertTrue(MasterTaskQueueStore.enqueue(context, "task-result-retention", "Trwałe wyniki", "Test rotacji dziennika.", now = 340L))
+        assertTrue(MasterTaskQueueStore.assign(context, "task-result-retention", agents, now = 341L))
+        assertTrue(MasterTaskQueueStore.transition(context, "task-result-retention", "MASTER",
+            MasterTaskQueueStore.Status.RUNNING, "Start.", 342L))
+        assertTrue(MasterTaskQueueStore.recordAgentResult(context, "task-result-retention", agents[0],
+            MasterTaskQueueStore.Status.COMPLETED, "Pierwszy raport.", 343L))
+        repeat(810) { index ->
+            assertTrue(MasterTaskQueueStore.recordAgentProgress(context, "task-result-retention", agents[1],
+                "RUNNING", "Krok $index", attempts = 1, now = 344L + index))
+        }
+        assertTrue(MasterTaskQueueStore.recordAgentResult(context, "task-result-retention", agents[1],
+            MasterTaskQueueStore.Status.COMPLETED, "Drugi raport.", 1_200L))
+        val state = MasterTaskQueueStore.snapshot(context)
+        assertEquals(MasterTaskQueueStore.Status.COMPLETED, state.tasks.single().status)
+        assertEquals(2, state.events.count {
+            it.taskId == "task-result-retention" && it.operation == "AGENT_RESULT" && it.runId == state.tasks.single().runId
+        })
+        assertTrue(state.events.size <= 810)
+    }
+
     @Test fun terminalTaskCannotBeReopenedAndCorruptStorageFailsClosed() {
         assertTrue(MasterTaskQueueStore.enqueue(context, "task-006", "Final", "Cel.", now = 50L))
         assertTrue(MasterTaskQueueStore.transition(context, "task-006", "MASTER",
