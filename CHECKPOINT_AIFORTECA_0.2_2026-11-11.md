@@ -71,3 +71,11 @@
 - Added `rejectionPartialCleanupFailureIsRecoveredFromApprovedLedgerAfterStoreRepair`: approve a proposal, corrupt the agent ledger, attempt rejection, verify shared-memory removal plus proposal-status rollback and unresolved USER intent, restore the agent ledger, then verify reconciliation restores both approved memory stores and closes the original intent. This is a targeted regression test; it awaits CI on the new commit.
 - No production behavior was changed in this test-only step. The observed partial state is recoverable after the unreadable store is repaired; cross-file atomicity is still not claimed.
 - Next: verify this test on CI, then continue fault injection for approval rollback failures and durable audit/proposal journal write failures.
+
+## Follow-up — ambiguous agent approval write test correction (2026-11-12)
+- Commit `49d18b060c772aea2b3f8f248b3570d5a366d6c9` added `ambiguousAgentApprovalWriteIsReconciledAfterPreferenceStoreRepair`.
+- CI: Gradle Wrapper Validation SUCCESS (run `43189137634`); Android Build FAILURE (run `43189137712`). Unit tests compiled and 1,058 tests ran; exactly one failed: `QualityLearningStoreTest.ambiguousAgentApprovalWriteIsReconciledAfterPreferenceStoreRepair`, assertion at line 285. Release APK assembly was skipped.
+- Root cause confirmed from source: the fault-injection `SharedPreferences.Editor` used Kotlin delegation. The delegated `putString()` returned the underlying editor, so `SharedPreferencesWriteHealth.commit()` bypassed the wrapper's overridden `commit()`. The test therefore did not actually inject the ambiguous commit failure.
+- Corrected in commit `3d41809d268b7f254a7237950a87aa87bd4d2190`: explicitly override `putString()`, forward it to the delegate, and return the wrapper editor so the later `commit()` is intercepted. This is a test-fixture correction, not a production behavior change.
+- CI for `3d41809d...` has not yet been verified. Do not mark the test or build as passing until exact-SHA workflows finish.
+- Next: inspect current HEAD/PR and CI for `3d41809d...`; if green, continue fault injection for terminal audit append failure and proposal-status rollback failure. No APK/ZIP delivery and no version bump.
