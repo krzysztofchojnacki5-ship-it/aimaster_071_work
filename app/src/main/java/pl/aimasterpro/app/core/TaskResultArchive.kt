@@ -24,6 +24,11 @@ object TaskResultArchive {
     private const val PREFS = "task_result_archive_v1"
     private const val KEY = "entries"
     private const val MAX_ENTRIES = 80
+    private const val MAX_TASK_ID_CHARS = 512
+    private const val MAX_AGENT_ID_CHARS = 120
+    private const val MAX_PROVIDER_ID_CHARS = 200
+    private const val MAX_MODEL_CHARS = 240
+    private const val MAX_CHAT_ID_CHARS = 200
     private const val MAX_REPORT_CHARS = 32_000
 
     /**
@@ -48,8 +53,12 @@ object TaskResultArchive {
     ): Boolean {
         return runCatching { SharedPreferencesWriteHealth.withHealthyAccess(PREFS) {
 
-        if (SharedPreferencesWriteHealth.isUncertain(PREFS) || taskId.isBlank() || agentId.isBlank() || providerId.isBlank() || model.isBlank() ||
-            chatId.length > 200) return@withHealthyAccess false
+        if (SharedPreferencesWriteHealth.isUncertain(PREFS) ||
+            taskId.isBlank() || taskId.length > MAX_TASK_ID_CHARS ||
+            agentId.isBlank() || agentId.length > MAX_AGENT_ID_CHARS ||
+            providerId.isBlank() || providerId.length > MAX_PROVIDER_ID_CHARS ||
+            model.isBlank() || model.length > MAX_MODEL_CHARS ||
+            chatId.length > MAX_CHAT_ID_CHARS) return@withHealthyAccess false
         val safeReport = CommunicationLogSanitizer.sanitize(report)
         if (safeReport.isBlank() || safeReport.length > MAX_REPORT_CHARS || createdAt < 0L) return@withHealthyAccess false
         val old = read(context) ?: run {
@@ -176,6 +185,7 @@ object TaskResultArchive {
         } ?: return@runCatching JSONArray()
         runCatching {
             val source = JSONArray(raw)
+            require(source.length() <= MAX_ENTRIES) { "Task result archive exceeds its capacity." }
             val seen = hashSetOf<String>()
             for (i in 0 until source.length()) {
                 val row = source.getJSONObject(i)
@@ -191,8 +201,12 @@ object TaskResultArchive {
                 val providerId = row.getString("providerId")
                 val model = row.getString("model")
                 val createdAt = (createdAtValue as Number).toLong()
-                require(taskId.isNotBlank() && seen.add(taskId))
-                require(agentId.isNotBlank() && providerId.isNotBlank() && model.isNotBlank())
+                val chatId = row.optString("chatId")
+                require(taskId.isNotBlank() && taskId.length <= MAX_TASK_ID_CHARS && seen.add(taskId))
+                require(agentId.isNotBlank() && agentId.length <= MAX_AGENT_ID_CHARS)
+                require(providerId.isNotBlank() && providerId.length <= MAX_PROVIDER_ID_CHARS)
+                require(model.isNotBlank() && model.length <= MAX_MODEL_CHARS)
+                require(chatId.length <= MAX_CHAT_ID_CHARS)
                 require(report.isNotBlank() && report.length <= MAX_REPORT_CHARS)
                 require(createdAt >= 0L)
             }

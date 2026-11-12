@@ -35,3 +35,11 @@
 - Correction 3: ChatHistoryStore rejects duplicate nonblank assistant task IDs on both read and write, while preserving repeated empty placeholders used for legacy message alignment.
 - Regression tests cover over-capacity archive preservation, oversized metadata on write/read, and duplicate assistant task-ID rejection without overwriting the source history.
 - CI for this code commit: queued at the time of this checkpoint. No test/build result is claimed yet. No device test and no 0.3 release claimed.
+ 
+## Follow-up package — task result archive bounds — 2026-11-12
+- Code changes: TaskResultArchive capacity and metadata validation.
+- Correction 1: persisted task-result archives larger than the declared 80-entry capacity are rejected as corrupt; original bytes are preserved and new writes are blocked.
+- Correction 2: task, agent, provider and model identifiers now have explicit length limits on both write and read paths.
+- Correction 3: chat ID length is validated on both write and read paths, while legacy rows with no chat ID remain supported as an empty ID.
+- Regression tests cover the 81-row archive, oversized metadata on writes, and oversized metadata/chat-ID on reads; malformed data must not be overwritten.
+- Validation status at commit time: pending CI. No device test and no 0.3 release claimed.

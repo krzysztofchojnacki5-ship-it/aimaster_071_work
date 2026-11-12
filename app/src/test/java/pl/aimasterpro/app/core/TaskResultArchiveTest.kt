@@ -343,4 +343,50 @@ class TaskResultArchiveTest {
         assertEquals(1, (0 until rows.length()).count { rows.getString(it).contains("[TASK_REPORT_ID:report-after-apply]") })
     }
 
+
+    @Test fun archiveReaderRejectsRowsBeyondCapacityWithoutRewritingData() {
+        val rows = JSONArray()
+        repeat(81) { index ->
+            rows.put(JSONObject()
+                .put("taskId", "overflow-task-$index")
+                .put("agentId", "RESEARCHER")
+                .put("report", "Report $index")
+                .put("providerId", "provider-a")
+                .put("model", "model-a")
+                .put("createdAt", 40_000L + index))
+        }
+        val corrupt = rows.toString()
+        assertTrue(prefs.edit().putString("entries", corrupt).commit())
+
+        assertFalse(TaskResultArchive.isArchiveReadable(context))
+        assertFalse(TaskResultArchive.put(
+            context, "new-task", "RESEARCHER", "New report", "provider-a", "model-a", 50_000L
+        ))
+        assertEquals(corrupt, prefs.getString("entries", null))
+    }
+
+    @Test fun putRejectsOversizedArchiveMetadataAndChatIdsBeforeWriting() {
+        assertFalse(TaskResultArchive.put(context, "t".repeat(513), "RESEARCHER", "Report", "p", "m", 1_000L))
+        assertFalse(TaskResultArchive.put(context, "task-agent", "a".repeat(121), "Report", "p", "m", 1_000L))
+        assertFalse(TaskResultArchive.put(context, "task-provider", "RESEARCHER", "Report", "p".repeat(201), "m", 1_000L))
+        assertFalse(TaskResultArchive.put(context, "task-model", "RESEARCHER", "Report", "p", "m".repeat(241), 1_000L))
+        assertFalse(TaskResultArchive.put(context, "task-chat", "RESEARCHER", "Report", "p", "m", 1_000L, "c".repeat(201)))
+        assertTrue(TaskResultArchive.latest(context).isEmpty())
+    }
+
+    @Test fun archiveReaderRejectsOversizedMetadataAndChatIdWithoutRewritingData() {
+        val corrupt = JSONArray().put(JSONObject()
+            .put("taskId", "task-metadata")
+            .put("agentId", "RESEARCHER")
+            .put("report", "Saved report")
+            .put("providerId", "provider-a")
+            .put("model", "m".repeat(241))
+            .put("createdAt", 1_000L)
+            .put("chatId", "chat")).toString()
+        assertTrue(prefs.edit().putString("entries", corrupt).commit())
+
+        assertFalse(TaskResultArchive.isArchiveReadable(context))
+        assertEquals(corrupt, prefs.getString("entries", null))
+    }
+
 }
