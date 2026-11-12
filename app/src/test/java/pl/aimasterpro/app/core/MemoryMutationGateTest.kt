@@ -1,6 +1,8 @@
 package pl.aimasterpro.app.core
 
 import android.content.Context
+import android.content.ContextWrapper
+import android.content.SharedPreferences
 import org.json.JSONArray
 import org.json.JSONObject
 import org.junit.After
@@ -247,6 +249,75 @@ class MemoryMutationGateTest {
         assertFalse(invoked)
         assertEquals("DENIED_USER_APPROVAL_REQUIRED", MemoryAuditLog.readVerified(context)!!.single().outcome)
     }
+    @Test fun terminalAuditAppendFailureNeverReportsSuccessOrReplaysMutation() {
+        for (persistTerminalBeforeReturningFalse in listOf(false, true)) {
+            context.getSharedPreferences("ai_memory_audit_log_v1", Context.MODE_PRIVATE)
+                .edit().clear().commit()
+            SharedPreferencesWriteHealth.resetForTests("ai_memory_audit_log_v1")
+
+            var commitCalls = 0
+            val failingContext = object : ContextWrapper(context) {
+                override fun getSharedPreferences(name: String, mode: Int): SharedPreferences {
+                    val delegate = context.getSharedPreferences(name, mode)
+                    if (name != "ai_memory_audit_log_v1") return delegate
+                    return object : SharedPreferences by delegate {
+                        override fun edit(): SharedPreferences.Editor {
+                            val delegateEditor = delegate.edit()
+                            return object : SharedPreferences.Editor by delegateEditor {
+                                override fun putString(key: String, value: String?): SharedPreferences.Editor {
+                                    delegateEditor.putString(key, value)
+                                    return this
+                                }
+
+                                override fun commit(): Boolean {
+                                    commitCalls++
+                                    if (commitCalls == 2) {
+                                        if (persistTerminalBeforeReturningFalse) delegateEditor.commit()
+                                        return false
+                                    }
+                                    return delegateEditor.commit()
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            val approvedRequest = request(approvalRef = "terminal-fault:$persistTerminalBeforeReturningFalse")
+            var mutationCalls = 0
+            assertFalse(MemoryMutationGate.execute(failingContext, approvedRequest) {
+                _: MemoryMutationPermit ->
+                mutationCalls++
+                true
+            })
+            assertEquals(1, mutationCalls)
+            assertTrue(SharedPreferencesWriteHealth.isUncertain("ai_memory_audit_log_v1"))
+
+            // Model process restart: quarantine is process-local, journal bytes are durable.
+            SharedPreferencesWriteHealth.resetForTests("ai_memory_audit_log_v1")
+            val rows = MemoryAuditLog.readVerified(context)!!
+            if (persistTerminalBeforeReturningFalse) {
+                assertEquals(listOf("AUTHORIZED", "SUCCESS"), rows.map { it.outcome })
+                assertFalse(MemoryAuditLog.hasUnresolvedIntent(
+                    context, "USER", "ADD_SHARED_RULE", "rule-1"
+                ))
+            } else {
+                assertEquals(listOf("AUTHORIZED"), rows.map { it.outcome })
+                assertTrue(MemoryAuditLog.hasUnresolvedIntent(
+                    context, "USER", "ADD_SHARED_RULE", "rule-1"
+                ))
+            }
+
+            // Neither a missing terminal nor a persisted terminal may replay the mutation.
+            assertFalse(MemoryMutationGate.execute(context, approvedRequest) {
+                _: MemoryMutationPermit ->
+                mutationCalls++
+                true
+            })
+            assertEquals(1, mutationCalls)
+        }
+    }
+
     @Test fun mutationIsNotInvokedWhenJournalCannotReserveFailureAndRecoverySlots() {
         seedCommittedJournal(4_998)
         var invoked = false

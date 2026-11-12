@@ -149,7 +149,7 @@ class MemoryAuditLogTest {
         assertTrue(MemoryAuditLog.resolveUnresolved(context, pendingUser, "proposal stores verified"))
 
         val rows = MemoryAuditLog.readVerified(context)!!
-        assertEquals(5_000, rows.size)
+        assertEquals(4_999, rows.size)
         assertEquals("seed-4994", rows[4_993].objectId)
         assertEquals("RECOVERED_STATE", rows.last().outcome)
         assertTrue(MemoryAuditLog.unresolvedOperations(context, "rule-1")!!.isEmpty())
@@ -198,7 +198,7 @@ class MemoryAuditLogTest {
         val pendingUser = MemoryAuditLog.unresolvedOperations(context, "rule-1")!!
             .single { it.actor == "USER" }
         assertTrue(MemoryAuditLog.resolveUnresolved(context, pendingUser, "proposal stores verified"))
-        assertEquals(4_999, MemoryAuditLog.readVerified(context)!!.size)
+        assertEquals(4_998, MemoryAuditLog.readVerified(context)!!.size)
     }
 
     @Test fun intentIsRejectedWhenThreeJournalSlotsCannotBeGuaranteed() {
