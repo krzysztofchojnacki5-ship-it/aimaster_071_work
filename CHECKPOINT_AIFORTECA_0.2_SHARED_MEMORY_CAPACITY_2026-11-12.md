@@ -26,3 +26,12 @@
 - Fix: removal is idempotent only for APPROVE_PROPOSAL, REJECT_PROPOSAL and the two SYSTEM_RECOVERY reconciliation mutations. Direct REMOVE_SHARED_RULE remains strict and returns false for an absent entry.
 - Regression coverage: recovery succeeds when the shared-memory entry is already absent; manual deletion of an absent rule still fails.
 - This patch is source-reviewed but not yet CI-verified. No APK or test pass is claimed.
+
+## Follow-up package — chat archive and task-ID integrity — 2026-11-12
+- Previous commit `094bbb84e56159043987ba36bae10f334fac0ce6` CI completed successfully: unit tests, Gradle Wrapper validation, release APK assembly and source packaging all passed; signed release APK and reports were uploaded. This is still version 0.2.
+- Code commit: `f544593b3d744195cf08c07a47bd15d323ba97df`.
+- Correction 1: ChatResponseArchive now rejects persisted archives with more than its declared 25-entry capacity instead of accepting oversized journals.
+- Correction 2: task ID, agent ID, provider ID and model metadata have explicit length bounds on both writes and reads; malformed persisted metadata fails closed and is preserved.
+- Correction 3: ChatHistoryStore rejects duplicate nonblank assistant task IDs on both read and write, while preserving repeated empty placeholders used for legacy message alignment.
+- Regression tests cover over-capacity archive preservation, oversized metadata on write/read, and duplicate assistant task-ID rejection without overwriting the source history.
+- CI for this code commit: queued at the time of this checkpoint. No test/build result is claimed yet. No device test and no 0.3 release claimed.
