@@ -1169,7 +1169,12 @@ class QualityLearningStoreTest {
         ))
         assertEquals(2, proposalCommitCalls)
         assertTrue(SharedPreferencesWriteHealth.isUncertain("ai_quality_learning_v1"))
-        assertEquals("REJECTED", QualityLearningStore.proposals(context).single().status)
+        // The write-health guard intentionally hides the proposal list until restart.
+        // Inspect the persisted ledger directly to prove REJECTED reached durable storage.
+        val persistedProposalLedger = context.getSharedPreferences("ai_quality_learning_v1", Context.MODE_PRIVATE)
+            .getString("proposals", null)!!
+        assertTrue(persistedProposalLedger.contains("\\\"id\\\":\\\""+ proposal.id + "\\\""))
+        assertTrue(persistedProposalLedger.contains("\\\"status\\\":\\\"REJECTED\\\""))
         assertFalse(AiMemoryStore.containsExactMemory(context, memoryEntry) == true)
         assertTrue(MemoryAuditLog.hasUnresolvedIntent(
             context, "USER", "REJECT_PROPOSAL", proposal.id
