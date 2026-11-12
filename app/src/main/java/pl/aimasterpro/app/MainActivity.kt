@@ -6813,7 +6813,7 @@ class MainActivity : Activity() {
                             if (running) "PRZEJĘTE — W TOKU" else "NIEPEWNE PO PRZERWANIU — BEZ AUTOMATYCZNEGO PONOWIENIA"
                         else -> handoff.state.name
                     }
-                    val taskTitle = taskTitles[handoff.taskId] ?: handoff.taskId
+                    val taskTitle = queueDiagnostics.tasks.firstOrNull { it.id == handoff.taskId }?.title ?: handoff.taskId
                     card(stateLabel,
                         "$taskTitle • ${handoff.senderAgentId} → ${handoff.recipientAgentId} • przebieg #${handoff.runId}\n" +
                             "Utworzono: ${handoffTime.format(java.util.Date(handoff.createdAt))} • " +
