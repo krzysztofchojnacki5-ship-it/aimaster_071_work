@@ -23,7 +23,7 @@ object MasterTaskQueueStore {
     private const val MAX_STORED_EVENTS = MAX_EVENTS + MAX_RESULT_EVENTS
     private val idPattern = Regex("[A-Za-z0-9][A-Za-z0-9._:-]{2,119}")
     private val progressStates = setOf(
-        "QUEUED", "RUNNING", "BLOCKED", "USAGE_RECORDED", "USAGE_PENDING",
+        "QUEUED", "RUNNING", "REQUESTING", "BLOCKED", "USAGE_RECORDED", "USAGE_PENDING",
         "RESULT_PERSIST_PENDING", "FAILED", "COMPLETED", "TIMED_OUT", "CANCELLED"
     )
     private val conversationStatuses = setOf("MESSAGE", "HANDOFF", "REPORT", "PROGRESS")
