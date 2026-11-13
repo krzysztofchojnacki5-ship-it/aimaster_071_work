@@ -451,4 +451,25 @@ class ChatResponseArchiveTest {
         assertEquals(oversized, archivePrefs.getString("responses", null))
     }
 
+    @Test fun capacityRejectsNewUnacknowledgedAnswerWithoutEvictingOlderAnswersButAllowsReplacement() {
+        repeat(25) { index ->
+            assertTrue(ChatResponseArchive.put(
+                context, "capacity-answer-$index", "capacity-chat", "MASTER", "Answer $index",
+                "provider-a", "model-a", 80_000L + index
+            ))
+        }
+        val before = ChatResponseArchive.latest(context).map { it.taskId }
+        assertEquals(25, before.size)
+        assertFalse(ChatResponseArchive.put(
+            context, "capacity-overflow-answer", "capacity-chat", "MASTER", "Must remain retryable",
+            "provider-a", "model-a", 81_000L
+        ))
+        assertEquals(before, ChatResponseArchive.latest(context).map { it.taskId })
+        assertTrue(ChatResponseArchive.put(
+            context, "capacity-answer-24", "capacity-chat", "MASTER", "Updated answer",
+            "provider-b", "model-b", 82_000L
+        ))
+        assertEquals(25, ChatResponseArchive.latest(context).size)
+        assertEquals("Updated answer", ChatResponseArchive.get(context, "capacity-answer-24")?.response)
+    }
 }

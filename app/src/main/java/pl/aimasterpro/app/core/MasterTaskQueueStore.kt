@@ -487,6 +487,17 @@ object MasterTaskQueueStore {
                 task
             }
             require(tasks.map { it.id }.distinct().size == tasks.size)
+            // Dependencies are immutable prerequisites: enqueue accepts only already-completed
+            // tasks. Preserve that append-order invariant when validating persisted state.
+            val taskIndexById = tasks.mapIndexed { index, task -> task.id to index }.toMap()
+            require(tasks.indices.all { index ->
+                val task = tasks[index]
+                task.dependencies.all { dependency ->
+                    val dependencyIndex = taskIndexById[dependency]
+                    dependencyIndex != null && dependencyIndex < index &&
+                        tasks[dependencyIndex].status == Status.COMPLETED
+                }
+            }) { "Queue task dependencies are missing, forward-referenced or not completed." }
             val events = (0 until eventArray.length()).map { i ->
                 val o = eventArray.getJSONObject(i)
                 fun requiredString(key: String): String {
@@ -523,9 +534,12 @@ object MasterTaskQueueStore {
                 event
             }
             require(events.map { it.id }.distinct().size == events.size)
-            val taskIds = tasks.mapTo(hashSetOf()) { it.id }
-            require(events.all { it.taskId in taskIds }) {
-                "Queue event references a task that is not present in the task ledger."
+            val taskById = tasks.associateBy { it.id }
+            require(events.all { event ->
+                val owner = taskById[event.taskId]
+                owner != null && event.runId <= owner.runId
+            }) {
+                "Queue event references a missing task or an execution run newer than its task."
             }
             Snapshot(ReadStatus.AVAILABLE, tasks, events)
         }.getOrElse {

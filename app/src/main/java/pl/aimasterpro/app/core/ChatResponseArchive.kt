@@ -61,14 +61,16 @@ object ChatResponseArchive {
             val row = old.getJSONObject(i)
             if (row.optString("taskId") != taskId) next.put(row)
         }
-        val trimmed = JSONArray()
-        for (i in 0 until minOf(next.length(), MAX_ENTRIES)) trimmed.put(next.getJSONObject(i))
-        if (trimmed.toString().length > MAX_RAW_CHARS) return@withHealthyAccess false
+        // This is a write-ahead log: capacity pressure must not silently discard an
+        // unacknowledged answer. Existing task entries can still be replaced at capacity.
+        if (next.length() > MAX_ENTRIES || next.toString().length > MAX_RAW_CHARS) {
+            return@withHealthyAccess false
+        }
         runCatching {
             SharedPreferencesWriteHealth.commit(
                 PREFS,
                 context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
-                    .putString(KEY, trimmed.toString())
+                    .putString(KEY, next.toString())
             )
         }.getOrDefault(false)
     } }.getOrDefault(false)

@@ -633,4 +633,58 @@ class MasterTaskQueueStoreTest {
         assertEquals("{broken", context.getSharedPreferences("aiforteca_master_task_queue_v1", Context.MODE_PRIVATE)
             .getString("state", null))
     }
+    @Test fun persistedDependenciesMustReferenceEarlierCompletedTasks() {
+        val prefs = context.getSharedPreferences("aiforteca_master_task_queue_v1", Context.MODE_PRIVATE)
+        fun task(id: String, status: String, dependencies: org.json.JSONArray = org.json.JSONArray()) =
+            org.json.JSONObject()
+                .put("id", id).put("title", "Task").put("objective", "Objective")
+                .put("agents", org.json.JSONArray()).put("dependencies", dependencies)
+                .put("priority", 2).put("status", status).put("step", "Step")
+                .put("createdAt", 10L).put("updatedAt", 10L).put("runId", 0)
+        val invalidLedgers = listOf(
+            org.json.JSONArray().put(task("task-child", "QUEUED",
+                org.json.JSONArray().put("task-missing"))),
+            org.json.JSONArray().put(task("task-parent", "QUEUED"))
+                .put(task("task-child", "QUEUED", org.json.JSONArray().put("task-parent"))),
+            org.json.JSONArray().put(task("task-child", "QUEUED",
+                org.json.JSONArray().put("task-child")))
+        )
+        invalidLedgers.forEachIndexed { index, tasks ->
+            val raw = org.json.JSONObject().put("version", 1).put("tasks", tasks)
+                .put("events", org.json.JSONArray()).toString()
+            assertTrue(prefs.edit().putString("state", raw).commit())
+            assertEquals("Invalid dependency ledger $index must be rejected",
+                MasterTaskQueueStore.ReadStatus.CORRUPT, MasterTaskQueueStore.snapshot(context).status)
+            assertEquals("Invalid dependency data must remain untouched", raw, prefs.getString("state", null))
+        }
+        val valid = org.json.JSONObject().put("version", 1).put("tasks",
+            org.json.JSONArray()
+                .put(task("task-parent", "COMPLETED"))
+                .put(task("task-child", "QUEUED", org.json.JSONArray().put("task-parent"))))
+            .put("events", org.json.JSONArray()).toString()
+        assertTrue(prefs.edit().putString("state", valid).commit())
+        assertEquals(MasterTaskQueueStore.ReadStatus.AVAILABLE, MasterTaskQueueStore.snapshot(context).status)
+    }
+
+    @Test fun persistedQueueEventsCannotClaimAFutureRunEpoch() {
+        val prefs = context.getSharedPreferences("aiforteca_master_task_queue_v1", Context.MODE_PRIVATE)
+        val task = org.json.JSONObject()
+            .put("id", "task-run-bound").put("title", "Run bound").put("objective", "Validate event epoch")
+            .put("agents", org.json.JSONArray()).put("dependencies", org.json.JSONArray())
+            .put("priority", 2).put("status", "QUEUED").put("step", "Queued")
+            .put("createdAt", 10L).put("updatedAt", 10L).put("runId", 0)
+        val event = org.json.JSONObject()
+            .put("id", "event-future-run").put("taskId", "task-run-bound")
+            .put("actor", "MASTER").put("operation", "TRANSITION")
+            .put("from", "ASSIGNED").put("to", "RUNNING").put("detail", "Impossible future event")
+            .put("timestamp", 11L).put("recipient", "").put("providerId", "").put("model", "")
+            .put("runId", 1)
+        val raw = org.json.JSONObject().put("version", 1)
+            .put("tasks", org.json.JSONArray().put(task))
+            .put("events", org.json.JSONArray().put(event)).toString()
+        assertTrue(prefs.edit().putString("state", raw).commit())
+        assertEquals(MasterTaskQueueStore.ReadStatus.CORRUPT, MasterTaskQueueStore.snapshot(context).status)
+        assertFalse(MasterTaskQueueStore.enqueue(context, "task-after-future", "New", "Must fail closed.", now = 20L))
+        assertEquals(raw, prefs.getString("state", null))
+    }
 }

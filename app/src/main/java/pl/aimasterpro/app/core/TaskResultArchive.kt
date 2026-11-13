@@ -72,9 +72,10 @@ object TaskResultArchive {
             val row = old.getJSONObject(i)
             if (row.optString("taskId") != taskId) next.put(row)
         }
-        val trimmed = JSONArray()
-        for (i in 0 until minOf(next.length(), MAX_ENTRIES)) trimmed.put(next.getJSONObject(i))
-        val serialized = trimmed.toString()
+        // Never evict an unacknowledged specialist report to make room for a new one.
+        // Replacing an existing task remains possible at capacity because it was removed above.
+        if (next.length() > MAX_ENTRIES) return@withHealthyAccess false
+        val serialized = next.toString()
         if (serialized.length > MAX_RAW_CHARS) return@withHealthyAccess false
         return@withHealthyAccess runCatching {
             SharedPreferencesWriteHealth.commit(

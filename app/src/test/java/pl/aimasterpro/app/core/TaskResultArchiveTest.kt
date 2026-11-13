@@ -400,4 +400,26 @@ class TaskResultArchiveTest {
         assertEquals(oversized, prefs.getString("entries", null))
     }
 
+    @Test fun archiveCapacityRejectsNewReportWithoutEvictingOlderReportsButAllowsReplacement() {
+        repeat(80) { index ->
+            assertTrue(TaskResultArchive.put(
+                context, "capacity-task-$index", "RESEARCHER", "Report $index",
+                "provider-a", "model-a", 60_000L + index
+            ))
+        }
+        val before = TaskResultArchive.latest(context).map { it.taskId }
+        assertEquals(80, before.size)
+        assertFalse(TaskResultArchive.put(
+            context, "capacity-overflow", "RESEARCHER", "Must not evict data",
+            "provider-a", "model-a", 70_000L
+        ))
+        assertEquals(before, TaskResultArchive.latest(context).map { it.taskId })
+        assertNotNull(TaskResultArchive.get(context, "capacity-task-79"))
+        assertTrue(TaskResultArchive.put(
+            context, "capacity-task-79", "RESEARCHER", "Updated in place",
+            "provider-b", "model-b", 71_000L
+        ))
+        assertEquals(80, TaskResultArchive.latest(context).size)
+        assertEquals("Updated in place", TaskResultArchive.get(context, "capacity-task-79")?.report)
+    }
 }
