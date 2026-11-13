@@ -129,7 +129,9 @@ object MemoryAuditLog {
             reason = reason.take(MAX_TEXT_CHARS),
             approvalRef = pending.approvalRef,
             phase = Phase.COMMITTED,
-            outcome = "RECOVERED_STATE"
+            outcome = "RECOVERED_STATE",
+            // A wall-clock rollback must not make a verified recovery impossible to audit.
+            timestamp = maxOf(System.currentTimeMillis(), pending.timestamp)
         ))
     }
 
