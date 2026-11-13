@@ -67,7 +67,7 @@ object TokenTracker {
                 outputTokens = exactNonNegativeLong(json, "output"),
                 status = status,
                 lastStatusMessage = CommunicationLogSanitizer.sanitize(json.optString("msg", "Gotowy")).take(240),
-                rateLimitTimestamp = exactNonNegativeLong(json, "ts").also { timestamp ->
+                rateLimitTimestamp = (if (json.has("ts")) exactNonNegativeLong(json, "ts") else 0L).also { timestamp ->
                     require(timestamp <= System.currentTimeMillis() + 300_000L) { "Znacznik czasu limitu dostawcy znajduje się w przyszłości." }
                 }
             )
