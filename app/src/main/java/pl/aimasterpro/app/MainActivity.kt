@@ -7254,10 +7254,12 @@ class MainActivity : Activity() {
                                 else -> "provider:${recipient.take(100)}"
                             }
                             val senderConfig = senderSpec?.let { configs[it.id] }
-                            val traced = queueStore.recordAgentTrace(this, taskId, senderEndpoint, recipientEndpoint,
-                                eventStatus, message, providerId = senderConfig?.id.orEmpty(),
-                                model = senderConfig?.model.orEmpty(), expectedRunId = executionRunId)
-                            if (!traced) android.util.Log.w("AiFORTecaQueue", "Nie zapisano śladu technicznego $taskId • $sender → $recipient")
+                            val traced = queueStore.withActiveRun(this, taskId, executionRunId) {
+                                queueStore.recordAgentTrace(this, taskId, senderEndpoint, recipientEndpoint,
+                                    eventStatus, message, providerId = senderConfig?.id.orEmpty(),
+                                    model = senderConfig?.model.orEmpty(), expectedRunId = executionRunId)
+                            } == true
+                            if (!traced) android.util.Log.w("AiFORTecaQueue", "Pominięto ślad techniczny dla nieaktywnego przebiegu lub nie udało się go zapisać: $taskId • $sender → $recipient")
                             android.util.Log.i("AiFORTecaQueue", "$taskId • TRACE • $sender → $recipient • $eventStatus • ${message.take(350)}")
                         },
                         onUsage = { agentId, subTaskId, actualProvider, usage ->
@@ -7313,14 +7315,14 @@ class MainActivity : Activity() {
                             }
                         },
                         onTaskResult = { result ->
-                            val archived = pl.aimasterpro.app.core.TaskResultArchive.put(
-                                this, result.taskId, result.agentId, result.report,
-                                result.providerId, result.model
-                            )
-                            if (!archived) {
-                                false
-                            } else {
-                                queueStore.withActiveRun(this, taskId, executionRunId) {
+                            queueStore.withActiveRun(this, taskId, executionRunId) {
+                                val archived = pl.aimasterpro.app.core.TaskResultArchive.put(
+                                    this, result.taskId, result.agentId, result.report,
+                                    result.providerId, result.model
+                                )
+                                if (!archived) {
+                                    false
+                                } else {
                                 val index = allowed.indexOfFirst { it.agentId == result.agentId }
                                 val inboundId = if (index > 0) {
                                     "h-${taskId.take(30)}-$executionRunId-${allowed[index - 1].agentId.take(20)}-${result.agentId.take(20)}"
@@ -7368,8 +7370,8 @@ class MainActivity : Activity() {
                                     }
                                 }
                                 inboundResolved && outboundSent
-                                } ?: false
-                            }
+                                }
+                            } ?: false
                         },
                         handoffContextForTask = { item ->
                             queueStore.withActiveRun(this, taskId, executionRunId) {
