@@ -204,8 +204,9 @@ class ChatResponseArchiveTest {
         }
         val beforeOverflow = ChatResponseArchive.latest(context).map { it.taskId }
         assertEquals(25, beforeOverflow.size)
-        assertEquals("bounded-task-0", beforeOverflow.first())
-        assertEquals("bounded-task-24", beforeOverflow.last())
+        // put() prepends new entries, so latest() is newest-first.
+        assertEquals("bounded-task-24", beforeOverflow.first())
+        assertEquals("bounded-task-0", beforeOverflow.last())
 
         assertFalse(ChatResponseArchive.put(
             context, "bounded-task-25", "bounded-chat", "MASTER",
