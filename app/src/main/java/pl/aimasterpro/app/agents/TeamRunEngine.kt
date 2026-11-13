@@ -506,11 +506,13 @@ class TeamRunEngine(
                                         when {
                                             usageAccountingPending -> "USAGE_PENDING"
                                             !resultPersisted -> "RESULT_PERSIST_PENDING"
+                                            handoffRejectionReason.isNotBlank() -> "BLOCKED"
                                             else -> "COMPLETED"
                                         },
                                         when {
                                             usageAccountingPending -> "Raport odebrany; trwałe księgowanie usage wymaga odzyskania."
                                             !resultPersisted -> "Raport odebrany; trwały zapis wyniku wymaga kontroli."
+                                            handoffRejectionReason.isNotBlank() -> "Agent jawnie odrzucił przekazanie: $handoffRejectionReason"
                                             else -> "Raport odebrany i zapisany."
                                         },
                                         actualProviderId, actualModel, attemptCount
