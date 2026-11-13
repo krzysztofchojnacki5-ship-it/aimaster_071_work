@@ -47,13 +47,15 @@ class MemoryMutationGateTest {
         val rows = JSONArray()
         var previousHash = "GENESIS"
         for (sequence in 1..count) {
-            val actor = "SYSTEM_RECOVERY"
-            val mutation = "SEED"
+            // Capacity fixtures must remain valid under the journal's replay-time
+            // authorization checks: use independent, standalone denial decisions.
+            val actor = "USER"
+            val mutation = "ADD_SHARED_RULE"
             val objectId = "seed-$sequence"
             val reason = "seed record"
-            val approvalRef = ""
-            val phase = MemoryAuditLog.Phase.COMMITTED.name
-            val outcome = "SEED"
+            val approvalRef = "seed-approval-$sequence"
+            val phase = MemoryAuditLog.Phase.FAILED.name
+            val outcome = "DENIED_SEED"
             val timestamp = 1_800_000_000_000L + sequence
             val values = listOf(
                 sequence.toString(), actor, mutation, objectId, reason, approvalRef,
