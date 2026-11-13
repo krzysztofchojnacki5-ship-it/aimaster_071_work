@@ -71,24 +71,52 @@ class DiagnosticsEventFeedTest {
         val messages = listOf(handoff("handoff-a", taskId = "task-a"))
         val taskFiltered = DiagnosticsEventFeed.build(
             queue(events = events), handoffs(messages = messages),
-            DiagnosticsEventFeed.Filter(taskId = "task-a")
+            DiagnosticsEventFeed.Filter(taskId = " task-a ")
         )
         assertEquals(2, taskFiltered.entries.size)
         val agentFiltered = DiagnosticsEventFeed.build(
             queue(events = events), handoffs(messages = messages),
-            DiagnosticsEventFeed.Filter(agentId = "agent:debugger")
+            DiagnosticsEventFeed.Filter(agentId = " DEBUGGER ")
         )
         assertEquals(listOf("event-b"), agentFiltered.entries.map { it.id })
         val providerFiltered = DiagnosticsEventFeed.build(
             queue(events = events), handoffs(messages = messages),
-            DiagnosticsEventFeed.Filter(providerId = "cloud")
+            DiagnosticsEventFeed.Filter(providerId = " CLOUD ")
         )
         assertEquals(listOf("event-b"), providerFiltered.entries.map { it.id })
         val operationFiltered = DiagnosticsEventFeed.build(
             queue(events = events), handoffs(messages = messages),
-            DiagnosticsEventFeed.Filter(operation = "HANDOFF_PENDING")
+            DiagnosticsEventFeed.Filter(operation = " handoff_pending ")
         )
         assertEquals(listOf("handoff-a"), operationFiltered.entries.map { it.id })
+    }
+
+    @Test fun queueAgentEventsExposeStateButNeverFreeFormMessageOrReportBodies() {
+        val secretBodies = listOf(
+            "prywatny raport agenta",
+            "pełna treść wiadomości agentów",
+            "szczegóły postępu z odpowiedzią dostawcy",
+            "surowy ślad zawierający fragment odpowiedzi"
+        )
+        val events = listOf(
+            queueEvent("result-event", timestamp = 10L, operation = "AGENT_RESULT",
+                detail = secretBodies[0]).copy(toStatus = "COMPLETED"),
+            queueEvent("message-event", timestamp = 11L, operation = "AGENT_MESSAGE",
+                detail = secretBodies[1]).copy(toStatus = "MESSAGE"),
+            queueEvent("progress-event", timestamp = 12L, operation = "AGENT_PROGRESS",
+                detail = secretBodies[2]).copy(toStatus = "RUNNING"),
+            queueEvent("trace-event", timestamp = 13L, operation = "AGENT_TRACE",
+                detail = secretBodies[3]).copy(toStatus = "PROVIDER_RESPONSE")
+        )
+
+        val result = DiagnosticsEventFeed.build(queue(events = events), handoffs())
+
+        val renderedDetails = result.entries.joinToString(" ") { it.detail }
+        secretBodies.forEach { assertFalse(renderedDetails.contains(it)) }
+        assertTrue(renderedDetails.contains("COMPLETED"))
+        assertTrue(renderedDetails.contains("MESSAGE"))
+        assertTrue(renderedDetails.contains("RUNNING"))
+        assertTrue(renderedDetails.contains("PROVIDER_RESPONSE"))
     }
 
     @Test fun newestFirstOrderingUsesStableTieBreakersAndClampsLimit() {
