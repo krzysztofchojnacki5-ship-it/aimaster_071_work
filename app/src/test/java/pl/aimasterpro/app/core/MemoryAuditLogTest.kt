@@ -47,13 +47,15 @@ class MemoryAuditLogTest {
         val rows = JSONArray()
         var previousHash = "GENESIS"
         for (sequence in 1..count) {
-            val actor = "SYSTEM_RECOVERY"
-            val mutation = "SEED"
+            // Independent, valid denial decisions provide capacity fixtures without
+            // introducing fake governance actors or impossible terminal transitions.
+            val actor = "USER"
+            val mutation = "ADD_SHARED_RULE"
             val objectId = "seed-$sequence"
             val reason = "seed record"
-            val approvalRef = ""
-            val phase = MemoryAuditLog.Phase.COMMITTED.name
-            val outcome = "SEED"
+            val approvalRef = "seed-approval-$sequence"
+            val phase = MemoryAuditLog.Phase.FAILED.name
+            val outcome = "DENIED_SEED"
             val timestamp = 1_800_000_000_000L + sequence
             val values = listOf(
                 sequence.toString(), actor, mutation, objectId, reason, approvalRef,
@@ -151,6 +153,74 @@ class MemoryAuditLogTest {
         assertTrue(MemoryAuditLog.readVerified(context)!!.isEmpty())
         assertTrue(MemoryAuditLog.append(context, recovery.copy(approvalRef = "proposal:rule-1")))
     }
+    @Test fun appendRejectsTimestampRollbackWithinAnOperation() {
+        val intent = event(MemoryAuditLog.Phase.INTENT, "AUTHORIZED").copy(timestamp = 1_800_000_000_100L)
+        assertTrue(MemoryAuditLog.append(context, intent))
+        assertFalse(MemoryAuditLog.append(context, intent.copy(
+            phase = MemoryAuditLog.Phase.COMMITTED,
+            outcome = "SUCCESS",
+            timestamp = 1_800_000_000_099L
+        )))
+        assertTrue(MemoryAuditLog.hasUnresolvedIntent(context, "USER", "APPROVE_PROPOSAL", "rule-1"))
+    }
+
+    @Test fun verifiedHashChainRejectsUnauthorizedPersistedActor() {
+        val actor = "AGENT"
+        val mutation = "ADD_SHARED_RULE"
+        val objectId = "forged-rule"
+        val reason = "forged persisted intent"
+        val approvalRef = "proposal:forged-rule"
+        val phase = MemoryAuditLog.Phase.INTENT.name
+        val outcome = "AUTHORIZED"
+        val timestamp = 1_800_000_000_000L
+        val previousHash = "GENESIS"
+        val values = listOf("1", actor, mutation, objectId, reason, approvalRef,
+            phase, outcome, timestamp.toString(), previousHash)
+        val canonical = values.joinToString("") { "${it.length}:$it" }
+        val hash = MessageDigest.getInstance("SHA-256")
+            .digest(canonical.toByteArray(Charsets.UTF_8))
+            .joinToString("") { "%02x".format(it) }
+        val raw = JSONArray().put(JSONObject()
+            .put("sequence", 1L).put("actor", actor).put("mutation", mutation)
+            .put("objectId", objectId).put("reason", reason).put("approvalRef", approvalRef)
+            .put("phase", phase).put("outcome", outcome).put("timestamp", timestamp)
+            .put("previousHash", previousHash).put("hash", hash)).toString()
+        val prefs = context.getSharedPreferences("ai_memory_audit_log_v1", Context.MODE_PRIVATE)
+        assertTrue(prefs.edit().putString("events", raw).commit())
+
+        assertNull(MemoryAuditLog.readVerified(context))
+        assertEquals(raw, prefs.getString("events", null))
+        assertFalse(MemoryAuditLog.append(context, event(MemoryAuditLog.Phase.INTENT, "AUTHORIZED")))
+    }
+
+    @Test fun verifiedHashChainRejectsTerminalRecordWithoutIntent() {
+        val actor = "USER"
+        val mutation = "APPROVE_PROPOSAL"
+        val objectId = "orphan-terminal"
+        val reason = "orphan terminal"
+        val approvalRef = "proposal:orphan-terminal"
+        val phase = MemoryAuditLog.Phase.COMMITTED.name
+        val outcome = "SUCCESS"
+        val timestamp = 1_800_000_000_000L
+        val previousHash = "GENESIS"
+        val values = listOf("1", actor, mutation, objectId, reason, approvalRef,
+            phase, outcome, timestamp.toString(), previousHash)
+        val canonical = values.joinToString("") { "${it.length}:$it" }
+        val hash = MessageDigest.getInstance("SHA-256")
+            .digest(canonical.toByteArray(Charsets.UTF_8))
+            .joinToString("") { "%02x".format(it) }
+        val raw = JSONArray().put(JSONObject()
+            .put("sequence", 1L).put("actor", actor).put("mutation", mutation)
+            .put("objectId", objectId).put("reason", reason).put("approvalRef", approvalRef)
+            .put("phase", phase).put("outcome", outcome).put("timestamp", timestamp)
+            .put("previousHash", previousHash).put("hash", hash)).toString()
+        val prefs = context.getSharedPreferences("ai_memory_audit_log_v1", Context.MODE_PRIVATE)
+        assertTrue(prefs.edit().putString("events", raw).commit())
+
+        assertNull(MemoryAuditLog.readVerified(context))
+        assertEquals(raw, prefs.getString("events", null))
+    }
+
     @Test fun terminalEventsRequireAnOpenIntentAndCannotBeReplayedAfterCommit() {
         assertFalse(MemoryAuditLog.append(context, event(MemoryAuditLog.Phase.COMMITTED, "SUCCESS")))
         assertFalse(MemoryAuditLog.append(context, event(MemoryAuditLog.Phase.FAILED, "MUTATION_FAILED")))
