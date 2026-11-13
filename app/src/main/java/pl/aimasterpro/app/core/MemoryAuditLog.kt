@@ -157,6 +157,7 @@ object MemoryAuditLog {
         if (SharedPreferencesWriteHealth.isUncertain(PREFS_NAME)) return@runCatching false
 
         val existing = readRecords(context) ?: return@runCatching false
+        if (!hasValidTransition(existing, safeEvent)) return@runCatching false
         if (!hasReservedCapacity(existing, safeEvent)) return@runCatching false
         val previousHash = existing.lastOrNull()?.hash ?: GENESIS_HASH
         val record = Record(
@@ -184,6 +185,39 @@ object MemoryAuditLog {
             PREFS_NAME, prefs.edit().putString(EVENTS_KEY, rows.toString())
         )
     }.getOrDefault(false)
+
+    /**
+     * Enforces the append-only operation lifecycle. A terminal event may only close the
+     * latest matching INTENT. A FAILED operation can only be closed later by an explicit
+     * RECOVERED_STATE record after the backing store has been verified.
+     *
+     * DENIED_* records are standalone audit decisions and never participate in operation
+     * lifecycle state.
+     */
+    private fun hasValidTransition(existing: List<Record>, event: Event): Boolean {
+        if (event.outcome.startsWith("DENIED_")) {
+            return event.phase == Phase.FAILED
+        }
+
+        val previous = existing.lastOrNull {
+            it.actor == event.actor &&
+                it.mutation == event.mutation &&
+                it.objectId == event.objectId &&
+                !it.outcome.startsWith("DENIED_")
+        }
+
+        return when (event.phase) {
+            Phase.INTENT -> previous == null || previous.phase == Phase.COMMITTED
+            Phase.FAILED -> previous?.phase == Phase.INTENT &&
+                previous.approvalRef == event.approvalRef
+            Phase.COMMITTED -> when (previous?.phase) {
+                Phase.INTENT -> previous.approvalRef == event.approvalRef
+                Phase.FAILED -> previous.approvalRef == event.approvalRef &&
+                    event.outcome == "RECOVERED_STATE"
+                else -> false
+            }
+        }
+    }
 
     /**
      * Reserves capacity for a complete USER mutation and its proposal-recovery lineage.
