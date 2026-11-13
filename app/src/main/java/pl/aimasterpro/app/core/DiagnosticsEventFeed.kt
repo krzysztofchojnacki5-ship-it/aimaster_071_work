@@ -55,7 +55,16 @@ object DiagnosticsEventFeed {
                     recipient = event.recipient,
                     providerId = event.providerId,
                     model = event.model,
-                    detail = event.detail,
+                    // Queue event details can contain agent-authored messages or report excerpts.
+                    // Keep the diagnostic timeline operational: expose only the validated state
+                    // for agent events, never their free-form content.
+                    detail = when (event.operation) {
+                        "AGENT_RESULT" -> "Wynik agenta zapisany (${event.toStatus})."
+                        "AGENT_MESSAGE" -> "Wiadomość agenta zarejestrowana (${event.toStatus})."
+                        "AGENT_PROGRESS" -> "Postęp agenta: ${event.toStatus}."
+                        "AGENT_TRACE" -> "Ślad techniczny: ${event.toStatus}."
+                        else -> event.detail.take(350)
+                    },
                     source = "QUEUE"
                 )
             }
@@ -85,19 +94,28 @@ object DiagnosticsEventFeed {
             }
         }
 
+        val taskFilter = filter.taskId.trim()
+        val agentFilter = filter.agentId.trim().removePrefix("agent:")
+        val providerFilter = filter.providerId.trim()
+        val operationFilter = filter.operation.trim()
+
+        fun matchesAgent(endpoint: String): Boolean {
+            val endpointId = endpoint.removePrefix("agent:")
+            return endpoint.equals(agentFilter, ignoreCase = true) ||
+                endpointId.equals(agentFilter, ignoreCase = true)
+        }
+
         val filtered = entries.asSequence()
-            .filter { filter.taskId.isBlank() || it.taskId == filter.taskId }
+            .filter { taskFilter.isEmpty() || it.taskId == taskFilter }
             .filter {
-                filter.agentId.isBlank() ||
-                    it.actor.equals(filter.agentId, ignoreCase = true) ||
-                    it.recipient.equals(filter.agentId, ignoreCase = true)
+                agentFilter.isEmpty() || matchesAgent(it.actor) || matchesAgent(it.recipient)
             }
             .filter {
-                filter.providerId.isBlank() ||
-                    it.providerId.contains(filter.providerId, ignoreCase = true) ||
-                    it.model.contains(filter.providerId, ignoreCase = true)
+                providerFilter.isEmpty() ||
+                    it.providerId.contains(providerFilter, ignoreCase = true) ||
+                    it.model.contains(providerFilter, ignoreCase = true)
             }
-            .filter { filter.operation.isBlank() || it.operation == filter.operation }
+            .filter { operationFilter.isEmpty() || it.operation.equals(operationFilter, ignoreCase = true) }
             .sortedWith(
                 compareByDescending<Entry> { it.timestamp }
                     .thenBy { it.id }
