@@ -23,9 +23,9 @@ class AgentManagerStoreTest {
         AgentManagerStore.resetStorageHealthForTests()
     }
 
-    private fun custom(id: String = "custom-log-auditor") = AgentSpec(
+    private fun custom(id: String = "custom-log-auditor", name: String = "Log Auditor") = AgentSpec(
         id = id,
-        name = "Log Auditor",
+        name = name,
         category = "Jakość, bezpieczeństwo i zgodność",
         responsibility = "Analizuje logi bez ujawniania sekretów.",
         keywords = listOf("log", "diagnostyka", "sekret"),
@@ -95,6 +95,8 @@ class AgentManagerStoreTest {
 
     @Test fun invalidOrDuplicateCustomAgentIsRejected() {
         assertFalse(AgentManagerStore.addCustomAgent(context, custom(id = "bad id")))
+        assertFalse(AgentManagerStore.addCustomAgent(context, custom(id = "custom-gsk_12345678901234567890")))
+        assertFalse(AgentManagerStore.addCustomAgent(context, custom(id = "custom-safe-name", name = "Agent api_key=secret")))
         assertTrue(AgentManagerStore.addCustomAgent(context, custom()))
         assertFalse(AgentManagerStore.addCustomAgent(context, custom()))
     }

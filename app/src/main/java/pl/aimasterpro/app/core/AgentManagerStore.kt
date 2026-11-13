@@ -161,7 +161,9 @@ object AgentManagerStore {
 
     private fun validCustom(agent: AgentSpec): Boolean =
         agent.id.startsWith("custom-") && agent.id.matches(ID_PATTERN) &&
+            CommunicationLogSanitizer.sanitize(agent.id) == agent.id &&
             agent.name.isNotBlank() && agent.name.length <= 100 &&
+            CommunicationLogSanitizer.sanitize(agent.name) == agent.name &&
             agent.category.isNotBlank() && agent.category.length <= 120 &&
             agent.responsibility.isNotBlank() && agent.responsibility.length <= 500 &&
             agent.keywords.size in 1..MAX_KEYWORDS &&

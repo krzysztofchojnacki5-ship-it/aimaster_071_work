@@ -565,24 +565,38 @@ object MasterTaskQueueStore {
     }
 
     private fun valid(t: Task): Boolean =
-        t.id.matches(idPattern) && t.title.isNotBlank() && t.title.length <= 180 &&
+        t.id.matches(idPattern) && CommunicationLogSanitizer.sanitize(t.id) == t.id &&
+            t.title.isNotBlank() && t.title.length <= 180 &&
             t.objective.isNotBlank() && t.objective.length <= 1200 &&
-            t.assignedAgentIds.size <= 8 && t.assignedAgentIds.all { it.isNotBlank() && it.length <= 100 } &&
+            t.assignedAgentIds.size <= 8 &&
+            t.assignedAgentIds.all { it.isNotBlank() && it.length <= 100 &&
+                CommunicationLogSanitizer.sanitize(it) == it } &&
             t.assignedAgentIds.distinct().size == t.assignedAgentIds.size &&
             t.dependencies.size <= 20 && t.dependencies.all { it.matches(idPattern) } &&
             t.dependencies.distinct().size == t.dependencies.size &&
             t.priority in 0..4 && t.currentStep.length <= 500 &&
-            t.createdAt >= 0L && t.updatedAt >= t.createdAt && t.runId >= 0
+            t.createdAt >= 0L && t.updatedAt >= t.createdAt && t.runId >= 0 &&
+            CommunicationLogSanitizer.sanitize(t.title) == t.title &&
+            CommunicationLogSanitizer.sanitize(t.objective) == t.objective &&
+            CommunicationLogSanitizer.sanitize(t.currentStep) == t.currentStep
 
     private fun valid(event: Event): Boolean =
         event.id.isNotBlank() && event.id.length <= 80 &&
-            event.taskId.matches(idPattern) &&
+            event.taskId.matches(idPattern) && CommunicationLogSanitizer.sanitize(event.taskId) == event.taskId &&
             event.actor.isNotBlank() && event.actor.length <= 140 &&
             event.operation.isNotBlank() && event.operation.length <= 40 &&
             event.fromStatus.length <= 40 && event.toStatus.length <= 40 &&
             event.detail.length <= 500 && event.timestamp >= 0L &&
             event.recipient.length <= 100 && event.providerId.length <= 80 &&
-            event.model.length <= 120 && event.runId >= 0
+            event.model.length <= 120 && event.runId >= 0 &&
+            CommunicationLogSanitizer.sanitize(event.actor) == event.actor &&
+            CommunicationLogSanitizer.sanitize(event.operation) == event.operation &&
+            CommunicationLogSanitizer.sanitize(event.fromStatus) == event.fromStatus &&
+            CommunicationLogSanitizer.sanitize(event.toStatus) == event.toStatus &&
+            CommunicationLogSanitizer.sanitize(event.detail) == event.detail &&
+            CommunicationLogSanitizer.sanitize(event.recipient) == event.recipient &&
+            CommunicationLogSanitizer.sanitize(event.providerId) == event.providerId &&
+            CommunicationLogSanitizer.sanitize(event.model) == event.model
 
     private fun write(context: Context, tasks: List<Task>, events: List<Event>): Boolean = runCatching {
         val taskArray = JSONArray()

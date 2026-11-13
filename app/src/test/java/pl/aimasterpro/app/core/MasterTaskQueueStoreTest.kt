@@ -603,13 +603,31 @@ class MasterTaskQueueStoreTest {
             org.json.JSONObject(validEvent.toString()).put("runId", "1"),
             org.json.JSONObject(validEvent.toString()).put("actor", ""),
             org.json.JSONObject(validEvent.toString()).put("detail", "x".repeat(501)),
-            org.json.JSONObject(validEvent.toString()).put("providerId", 7)
+            org.json.JSONObject(validEvent.toString()).put("providerId", 7),
+            org.json.JSONObject(validEvent.toString()).put("actor", "MASTER api_key=actor-secret"),
+            org.json.JSONObject(validEvent.toString()).put("operation", "api_key=operation-secret"),
+            org.json.JSONObject(validEvent.toString()).put("detail", "password=detail-secret"),
+            org.json.JSONObject(validEvent.toString()).put("recipient", "Bearer recipient-secret"),
+            org.json.JSONObject(validEvent.toString()).put("providerId", "sk-12345678901234567890"),
+            org.json.JSONObject(validEvent.toString()).put("model", "client_secret=model-secret")
         )
 
         malformedEvents.forEachIndexed { index, event ->
+            val validTask = org.json.JSONObject()
+                .put("id", "task-event-001")
+                .put("title", "Event owner")
+                .put("objective", "Isolate event validation.")
+                .put("agents", org.json.JSONArray())
+                .put("dependencies", org.json.JSONArray())
+                .put("priority", 2)
+                .put("status", "QUEUED")
+                .put("step", "Queued")
+                .put("createdAt", 10L)
+                .put("updatedAt", 100L)
+                .put("runId", 0)
             val raw = org.json.JSONObject()
                 .put("version", 1)
-                .put("tasks", org.json.JSONArray())
+                .put("tasks", org.json.JSONArray().put(validTask))
                 .put("events", org.json.JSONArray().put(event))
                 .toString()
             assertTrue("Fixture must be written: $index", prefs.edit().putString("state", raw).commit())
@@ -622,6 +640,42 @@ class MasterTaskQueueStoreTest {
         }
     }
 
+
+    @Test fun persistedTaskMetadataWithSecretsIsRejectedAndPreserved() {
+        val prefs = context.getSharedPreferences("aiforteca_master_task_queue_v1", Context.MODE_PRIVATE)
+        val safeTask = org.json.JSONObject()
+            .put("id", "task-metadata-001")
+            .put("title", "Safe title")
+            .put("objective", "Safe objective")
+            .put("agents", org.json.JSONArray())
+            .put("dependencies", org.json.JSONArray())
+            .put("priority", 2)
+            .put("status", "QUEUED")
+            .put("step", "Queued")
+            .put("createdAt", 10L)
+            .put("updatedAt", 10L)
+            .put("runId", 0)
+        val unsafeTasks = listOf(
+            org.json.JSONObject(safeTask.toString()).put("title", "api_key=title-secret"),
+            org.json.JSONObject(safeTask.toString()).put("objective", "Bearer objective-secret"),
+            org.json.JSONObject(safeTask.toString()).put("step", "password=step-secret"),
+            org.json.JSONObject(safeTask.toString()).put("id", "task-gsk_12345678901234567890"),
+            org.json.JSONObject(safeTask.toString()).put("agents",
+                org.json.JSONArray().put("custom-gsk_12345678901234567890"))
+        )
+        unsafeTasks.forEachIndexed { index, task ->
+            val raw = org.json.JSONObject()
+                .put("version", 1)
+                .put("tasks", org.json.JSONArray().put(task))
+                .put("events", org.json.JSONArray())
+                .toString()
+            assertTrue(prefs.edit().putString("state", raw).commit())
+            assertEquals("Unsafe task metadata $index must be rejected",
+                MasterTaskQueueStore.ReadStatus.CORRUPT, MasterTaskQueueStore.snapshot(context).status)
+            assertFalse(MasterTaskQueueStore.enqueue(context, "task-after-secret-$index", "New", "Objective.", now = 20L))
+            assertEquals("Original unsafe task data must remain intact", raw, prefs.getString("state", null))
+        }
+    }
 
     @Test fun preferenceAccessFailureIsUnavailableNotCorruptQueueData() {
         val failingContext = object : android.content.ContextWrapper(context) {
