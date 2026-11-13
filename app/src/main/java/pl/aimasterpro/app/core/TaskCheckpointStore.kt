@@ -57,19 +57,35 @@ object TaskCheckpointStore {
             event.idempotencyKey.length > 240 || event.baseUrl.length > 300 ||
             event.timestamp < 0L || event.attempts < 0 || event.runId < 0 ||
             event.estimatedInputTokens < 0L || event.estimatedOutputTokens < 0L) return false
+
+        // Identifiers participate in recovery/idempotency decisions and must never be
+        // rewritten by redaction. Display/diagnostic metadata is redacted before persistence.
+        if (listOf(event.taskId, event.agentId, event.status, event.processId, event.idempotencyKey)
+                .any { CommunicationLogSanitizer.sanitize(it) != it }) return false
+        val safeBaseUrl = if (event.baseUrl.isBlank()) "" else safeBaseUrlForCheckpoint(event.baseUrl)
+        if (event.baseUrl.isNotBlank() && safeBaseUrl.isBlank()) return false
+        val safeEvent = event.copy(
+            detail = CommunicationLogSanitizer.sanitize(event.detail),
+            providerId = CommunicationLogSanitizer.sanitize(event.providerId),
+            model = CommunicationLogSanitizer.sanitize(event.model),
+            baseUrl = safeBaseUrl
+        )
+        if (safeEvent.detail.length > 500 || safeEvent.providerId.length > 100 ||
+            safeEvent.model.length > 160) return false
+
         val rows = readEvents(context)?.toMutableList() ?: return false
         // A late worker callback must not overwrite a terminal result already recorded by
         // the coordinator (for example TIMED_OUT followed by the worker's CANCELLED callback).
-        val current = rows.firstOrNull { it.taskId == event.taskId }
+        val current = rows.firstOrNull { it.taskId == safeEvent.taskId }
         // Old worker callbacks must not overwrite a checkpoint from a newer queue retry.
-        if (current != null && event.runId < current.runId) return true
-        val sameRun = current?.runId == event.runId
+        if (current != null && safeEvent.runId < current.runId) return true
+        val sameRun = current?.runId == safeEvent.runId
         // REQUESTING means the provider may already have processed and billed the POST.
         // Do not let UI/worker finalization hide a failed USAGE_RECORDED/USAGE_PENDING write
         // behind a terminal state. Startup recovery is the only path allowed to close it.
         if (sameRun && current?.status == "REQUESTING" &&
-            event.status in setOf("COMPLETED", "FAILED", "BLOCKED")) {
-            val isRecoveryTransition = current.processId != processId && event.processId == processId
+            safeEvent.status in setOf("COMPLETED", "FAILED", "BLOCKED")) {
+            val isRecoveryTransition = current.processId != processId && safeEvent.processId == processId
             if (!isRecoveryTransition) return true
         }
         if (sameRun && current?.status?.let { it in TERMINAL_STATUSES } == true) {
@@ -77,50 +93,49 @@ object TaskCheckpointStore {
             // Permit only archive-backed reconciliation for that exact task; never trust a late
             // callback alone to rewrite a terminal checkpoint.
             val archivedResultExists = runCatching {
-                hasArchivedResult(context, event.taskId)
+                hasArchivedResult(context, safeEvent.taskId)
             }.getOrDefault(false)
-            val mergedUsageMetadata = event.copy(
-                providerId = event.providerId.ifBlank { current.providerId },
-                model = event.model.ifBlank { current.model },
-                estimatedInputTokens = event.estimatedInputTokens.takeIf { it > 0L }
+            val mergedUsageMetadata = safeEvent.copy(
+                providerId = safeEvent.providerId.ifBlank { current.providerId },
+                model = safeEvent.model.ifBlank { current.model },
+                estimatedInputTokens = safeEvent.estimatedInputTokens.takeIf { it > 0L }
                     ?: current.estimatedInputTokens,
-                estimatedOutputTokens = event.estimatedOutputTokens.takeIf { it > 0L }
+                estimatedOutputTokens = safeEvent.estimatedOutputTokens.takeIf { it > 0L }
                     ?: current.estimatedOutputTokens,
-                idempotencyKey = event.idempotencyKey.ifBlank { current.idempotencyKey }
+                idempotencyKey = safeEvent.idempotencyKey.ifBlank { current.idempotencyKey }
             )
-            val usagePendingCanBeRecovered = event.status in setOf(
+            val usagePendingCanBeRecovered = safeEvent.status in setOf(
                 "USAGE_PENDING", "INTERRUPTED_USAGE_PENDING"
             ) && hasRecoverableUsageMetadata(mergedUsageMetadata)
             val usageRecoveryCompleted = current.status in setOf("TIMED_OUT", "CANCELLED") &&
-                event.status == "INTERRUPTED" && hasRecoverableUsageMetadata(mergedUsageMetadata)
+                safeEvent.status == "INTERRUPTED" && hasRecoverableUsageMetadata(mergedUsageMetadata)
             val isArchiveBackedReconciliation = archivedResultExists &&
-                event.status in setOf("COMPLETED", "INTERRUPTED_USAGE_PENDING")
+                safeEvent.status in setOf("COMPLETED", "INTERRUPTED_USAGE_PENDING")
             if (!isArchiveBackedReconciliation && !usagePendingCanBeRecovered && !usageRecoveryCompleted) return true
         }
         // Later lifecycle states often omit request-only metadata. Preserve the latest
         // REQUESTING details so a USAGE_PENDING checkpoint can still be reconciled after restart.
         rows.add(
             0,
-            event.copy(
-                agentId = event.agentId,
-                status = event.status,
-                detail = event.detail,
-                providerId = event.providerId.ifBlank { current?.takeIf { sameRun }?.providerId.orEmpty() },
-                model = event.model.ifBlank { current?.takeIf { sameRun }?.model.orEmpty() },
-                attempts = event.attempts.coerceAtLeast(0),
-                processId = event.processId.ifBlank { processId },
-                estimatedInputTokens = event.estimatedInputTokens.coerceAtLeast(0L)
+            safeEvent.copy(
+                agentId = safeEvent.agentId,
+                status = safeEvent.status,
+                detail = safeEvent.detail,
+                providerId = safeEvent.providerId.ifBlank { current?.takeIf { sameRun }?.providerId.orEmpty() },
+                model = safeEvent.model.ifBlank { current?.takeIf { sameRun }?.model.orEmpty() },
+                attempts = safeEvent.attempts.coerceAtLeast(0),
+                processId = safeEvent.processId.ifBlank { processId },
+                estimatedInputTokens = safeEvent.estimatedInputTokens.coerceAtLeast(0L)
                     .takeIf { it > 0L } ?: current?.takeIf { sameRun }?.estimatedInputTokens ?: 0L,
-                estimatedOutputTokens = event.estimatedOutputTokens.coerceAtLeast(0L)
+                estimatedOutputTokens = safeEvent.estimatedOutputTokens.coerceAtLeast(0L)
                     .takeIf { it > 0L } ?: current?.takeIf { sameRun }?.estimatedOutputTokens ?: 0L,
-                idempotencyKey = event.idempotencyKey.ifBlank { current?.takeIf { sameRun }?.idempotencyKey.orEmpty() },
-                baseUrl = event.baseUrl.ifBlank { current?.takeIf { sameRun }?.baseUrl.orEmpty() },
-                runId = event.runId
+                idempotencyKey = safeEvent.idempotencyKey.ifBlank { current?.takeIf { sameRun }?.idempotencyKey.orEmpty() },
+                baseUrl = safeEvent.baseUrl.ifBlank { current?.takeIf { sameRun }?.baseUrl.orEmpty() },
+                runId = safeEvent.runId
             )
         )
         return save(context, rows.take(MAX_EVENTS))
     }
-
     @Synchronized
     fun load(context: Context): List<Event> = if (SharedPreferencesWriteHealth.isUncertain(PREFS)) emptyList() else readEvents(context) ?: emptyList()
 
@@ -155,7 +170,10 @@ object TaskCheckpointStore {
                         return (value as Number).toLong()
                     }
                     val id = exactString("task")
-                    require(id.isNotBlank() && id.length <= 512) { "Checkpoint row has an invalid task id." }
+                    require(id.isNotBlank() && id.length <= 512 &&
+                        CommunicationLogSanitizer.sanitize(id) == id) {
+                        "Checkpoint row has an invalid or unsafe task id."
+                    }
                     val estimatedInput = exactLong("estimatedInputTokens")
                     val estimatedOutput = exactLong("estimatedOutputTokens")
                     val attempts = exactLong("attempts")
@@ -172,18 +190,34 @@ object TaskCheckpointStore {
                     }
                     Event(
                         taskId = id,
-                        agentId = agentId,
-                        status = status,
-                        detail = exactString("detail").also { require(it.length <= 500) },
+                        agentId = agentId.also {
+                            require(CommunicationLogSanitizer.sanitize(it) == it)
+                        },
+                        status = status.also {
+                            require(CommunicationLogSanitizer.sanitize(it) == it)
+                        },
+                        detail = exactString("detail").also {
+                            require(it.length <= 500 && CommunicationLogSanitizer.sanitize(it) == it)
+                        },
                         timestamp = timestamp,
-                        providerId = exactString("provider").also { require(it.length <= 100) },
-                        model = exactString("model").also { require(it.length <= 160) },
+                        providerId = exactString("provider").also {
+                            require(it.length <= 100 && CommunicationLogSanitizer.sanitize(it) == it)
+                        },
+                        model = exactString("model").also {
+                            require(it.length <= 160 && CommunicationLogSanitizer.sanitize(it) == it)
+                        },
                         attempts = attempts.toInt(),
-                        processId = exactString("processId").also { require(it.length <= 128) },
+                        processId = exactString("processId").also {
+                            require(it.length <= 128 && CommunicationLogSanitizer.sanitize(it) == it)
+                        },
                         estimatedInputTokens = estimatedInput,
                         estimatedOutputTokens = estimatedOutput,
-                        idempotencyKey = exactString("idempotencyKey").also { require(it.length <= 240) },
-                        baseUrl = exactString("baseUrl").also { require(it.length <= 300) },
+                        idempotencyKey = exactString("idempotencyKey").also {
+                            require(it.length <= 240 && CommunicationLogSanitizer.sanitize(it) == it)
+                        },
+                        baseUrl = exactString("baseUrl").also {
+                            require(it.length <= 300 && (it.isEmpty() || safeBaseUrlForCheckpoint(it) == it))
+                        },
                         runId = runId.toInt()
                     )
                 }
