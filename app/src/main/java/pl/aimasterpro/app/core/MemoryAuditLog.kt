@@ -157,6 +157,7 @@ object MemoryAuditLog {
         if (SharedPreferencesWriteHealth.isUncertain(PREFS_NAME)) return@runCatching false
 
         val existing = readRecords(context) ?: return@runCatching false
+        if (!hasValidAuthorizationShape(safeEvent)) return@runCatching false
         if (!hasValidTransition(existing, safeEvent)) return@runCatching false
         if (!hasReservedCapacity(existing, safeEvent)) return@runCatching false
         val previousHash = existing.lastOrNull()?.hash ?: GENESIS_HASH
@@ -186,6 +187,40 @@ object MemoryAuditLog {
         )
     }.getOrDefault(false)
 
+    /**
+     * Defense in depth at the journal boundary: only canonical governance actors and
+     * mutation types may be recorded. Non-denied mutations must match the actor's authority;
+     * SYSTEM_RECOVERY is bound to the exact proposal identity it is reconciling.
+     */
+    private fun hasValidAuthorizationShape(event: Event): Boolean {
+        val actors = MemoryGovernance.Actor.values().map { it.name }.toSet()
+        val mutations = MemoryGovernance.Mutation.values().map { it.name }.toSet()
+        if (event.actor !in actors || event.mutation !in mutations) return false
+
+        if (event.outcome.startsWith("DENIED_")) {
+            return event.phase == Phase.FAILED
+        }
+
+        return when (event.actor) {
+            MemoryGovernance.Actor.USER.name ->
+                event.mutation in setOf(
+                    MemoryGovernance.Mutation.ADD_SHARED_RULE.name,
+                    MemoryGovernance.Mutation.REMOVE_SHARED_RULE.name,
+                    MemoryGovernance.Mutation.ADD_AGENT_LESSON.name,
+                    MemoryGovernance.Mutation.REMOVE_AGENT_LESSON.name,
+                    MemoryGovernance.Mutation.APPROVE_PROPOSAL.name,
+                    MemoryGovernance.Mutation.REJECT_PROPOSAL.name
+                ) && event.approvalRef.isNotBlank()
+
+            MemoryGovernance.Actor.SYSTEM_RECOVERY.name ->
+                event.mutation in setOf(
+                    MemoryGovernance.Mutation.RECONCILE_APPROVED_PROPOSAL.name,
+                    MemoryGovernance.Mutation.RECONCILE_REVOKED_PROPOSAL.name
+                ) && event.approvalRef == "proposal:" + event.objectId
+
+            else -> false
+        }
+    }
     /**
      * Enforces the append-only operation lifecycle. A terminal event may only close the
      * latest matching INTENT. A FAILED operation can only be closed later by an explicit
