@@ -143,3 +143,15 @@ Cover unauthorized create/update/delete, scope escape, missing or forged approva
 - Package 16 CI is verified on code HEAD `fe2e48c940f656e7749e7b953d17f9700b7c2451`: Gradle Wrapper Validation run `43397835339` passed; AiFORTeca Unit Tests run `43397835360` passed. The uploaded XML artifact `14023781730` contains 1,197 tests across 113 XML files, with 0 failures, 0 errors and 0 skipped tests.
 - CI exposed a pre-existing network-test fixture gap: the simulated HTTP 500 is an ambiguous POST outcome and must be durably recorded as unknown usage before the task can be classified FAILED. The test now supplies an explicit successful `onUnknownUsage` recorder and asserts exactly one such record; it does not weaken production accounting behavior.
 - Package 16 is closed as CI-verified. No Android APK build is claimed for this package; the scheduled full Android build remains aligned with the agreed 20-fix cadence.
+
+## Implementation checkpoint — package 17 / atomic queue cancellation fencing (2026-11-13)
+- Base checkpoint: `fe2e48c940f656e7749e7b953d17f9700b7c2451` (package 16 CI-verified).
+- Five corrections implemented:
+  1. Queue lifecycle callbacks now enter an exact task/run active fence before writing checkpoints or agent progress; stale/cancelled callbacks are ignored.
+  2. Agent-result finalization and missing-agent failure recording execute inside one active-run critical section, serialized against cancellation.
+  3. Added store-level regression coverage proving stale run IDs and cancelled runs cannot execute fenced side effects.
+  4. Moved durable result archival inside the active-run fence, preventing a late result from being added to the archive after cancellation or a retry.
+  5. Fenced agent communication/technical trace persistence against the same active task/run, so late callbacks cannot append stale events to the queue timeline.
+- Relevant commits: `0232a6f68aa5f5f398c0796378e8e2444fe5e9da`, `3cb979f267c6eb5a9947577355340ab90c02507f`, `e65b72ba9cf7455a52ecc4c92e87db760865750d`, `1054f963400b02376d531c09ff2f269ae0c37977`.
+- Regression tests cover stale/cancelled side-effect rejection, cancellation serialization, late progress/message/trace/result rejection and retry run-epoch isolation.
+- CI for package 17 is pending on the latest source commit. Do not close the package until Gradle Wrapper Validation and AiFORTeca Unit Tests both pass and the XML report is inspected. No Android APK build is claimed; full Android build remains on the agreed 20-fix cadence.
