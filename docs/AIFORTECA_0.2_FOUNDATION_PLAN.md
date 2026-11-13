@@ -119,7 +119,7 @@ Cover unauthorized create/update/delete, scope escape, missing or forged approva
 - Persisted REJECTED records now require a non-empty sanitized audit reason and valid monotonic timestamps; malformed rejection records fail closed and their original stored bytes remain untouched.
 - Added tests for recipient authorization, secret redaction, duplicate rejection, rejection timestamp rollback, terminal-state behavior and malformed persisted REJECTED records.
 - Source commit: `d301d18af014f5c8e11ea8e3f4d504108ced3e62`; follow-up test commits: `b34a76f62ae8759adf29810658f4e30a5c107674`, `b3a5eb2429efc0ff70b07e7e6c3a3b48e092f423`, `bba6b315c8f0cdfd623db1484a185de833013505`.
-- This is one logical feature increment with focused test hardening, not a claim that all five package-15 fixes are complete. No CI has yet been run for these package-15 commits. Do not mark the package green until its full five-fix scope and required CI evidence are complete.
+- The initial implementation increment established the rejection transition and focused test hardening. The five listed package-15 corrections are now implemented; the final CI run for HEAD `e88e4b2b523f08cadada677bf10824fb59c25759` passed, with 1,195 tests and no failures, errors or skips.
 
 
 ### Package 15 — five implementation corrections completed (pending CI)
