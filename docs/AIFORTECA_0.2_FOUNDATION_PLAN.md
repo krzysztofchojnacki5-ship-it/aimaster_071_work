@@ -168,3 +168,28 @@ Cover unauthorized create/update/delete, scope escape, missing or forged approva
 - Added five regression tests covering metadata redaction, unchanged identity keys, unsafe chat-key rejection and legacy archive replay.
 - Relevant commits: `2cbf7f60843ce0170110069f2b40476cce7eae8d`, `c5f2501c673ab5ec56349e91e985f7d686a6dec3`.
 - Package 18 is closed as CI-verified on branch HEAD `1dd293f090d860b60bc71d07edbc261910b280a0` (source/test commit `c5f2501c673ab5ec56349e91e985f7d686a6dec3`; documentation checkpoint commit `1dd293f090d860b60bc71d07edbc261910b280a0`). Gradle Wrapper Validation run `43410271783` and AiFORTeca Unit Tests run `43410271908` both completed successfully on the latest HEAD. The uploaded XML artifact `14029905216` contains 1,204 tests across 113 XML files, with 0 failures, 0 errors and 0 skipped tests. The unit-test job completed its `Run unit tests` and `Upload unit test reports` steps successfully. No Android APK build is claimed; full Android build remains on the agreed 20-fix cadence.
+
+## Implementation checkpoint — package 19 / queue lifecycle, memory scope and durable workspace patching (2026-11-13)
+- Base checkpoint: package 18 CI-verified code HEAD `1dd293f090d860b60bc71d07edbc261910b280a0`.
+- Four corrections completed:
+  1. Hardened MASTER queue lifecycle transitions and persisted event metadata, including timestamp monotonicity and event-history retention.
+  2. Added `REQUESTING` to durable agent-progress states so the queue records the real request phase instead of rejecting it.
+  3. Bound shared-memory store permits to exact object IDs and aligned the Windows test fixture with the supported filesystem behavior.
+  4. Replaced unsafe staged workspace patch deletion/rename with the durable atomic publisher; failed replacement preserves the previous target.
+- Relevant code commits: `611c081a5aa8f3019afc0f4f8f5422185b827a78`, `4feba84750e9649d2a7950c5df99b4ce16583bb0`, `7af13d7a6d5baebbc00c48c8a22c043c1d647626`, `d157d7e2a70d3281e11d149e5c8099e1136d5399`.
+- Package 19 CI verified on code HEAD `d157d7e2a70d3281e11d149e5c8099e1136d5399`: Gradle Wrapper Validation run `43469109567` passed; AiFORTeca Unit Tests run `43469109432` passed. XML artifact `14059249881` records 1,210 tests across 113 XML files, with 0 failures, 0 errors and 0 skipped tests.
+- No Android APK build is claimed for this package.
+
+## Implementation checkpoint — package 20 / fail-closed trust durability and exact memory provenance (2026-11-13)
+- Base checkpoint: package 19 CI-verified code HEAD `d157d7e2a70d3281e11d149e5c8099e1136d5399`.
+- Four corrections completed:
+  1. Companion trust marker directory-fsync failures now propagate; publication/deletion is not reported as durable when directory synchronization fails.
+  2. Shared-memory mutation APIs require a nonblank exact object ID and the manual-memory UI passes the same ID that was authorized. Regression coverage rejects cross-object permit reuse.
+  3. Agent operational-memory writes/removals are bound to the exact proposal/source ID. Proposal writes must carry their matching `proposal:<id>` provenance, and direct agent lessons cannot forge proposal provenance.
+  4. Persisted queue task/event metadata is rejected fail-closed if it contains secret-like patterns; custom agent IDs/names are also screened before they can enter event metadata. Original corrupt bytes are preserved.
+- Relevant code commits: `ae3b4810336a5a41726849e9c89b600bed547744`, `d6e195edb25bfea5bd510c9c516c65407f9d96e2`, `f4e1dab8cbd51fe4fdfa56c3d0cb136eec1678a6`, `55db41ccef9266ebeee32fdc56b813d42bd5294c`.
+- An intermediate CI compile failure on `d6e195e` exposed two omitted test call-site updates (missing object ID and nullable assertion). Both were corrected in `f4e1dab`; no unresolved compiler failure remains in the package-final commit.
+- Package 20 CI verified on code HEAD `55db41ccef9266ebeee32fdc56b813d42bd5294c`: Gradle Wrapper Validation run `43472733905` passed; AiFORTeca Unit Tests run `43472733568` passed. XML artifact `14060203942` records 1,213 tests across 113 XML files, with 0 failures, 0 errors and 0 skipped tests.
+- Android `assembleDebug`, APK metadata inspection and physical-device checks have not been run in this package; the Android Build/APK cadence remains separate from the unit-test CI cadence.
+- Pull request #3 remains open. Work branch: `work/aiforteca-0.2-master-agent-foundation`; latest code HEAD at this checkpoint: `55db41ccef9266ebeee32fdc56b813d42bd5294c`.
+
