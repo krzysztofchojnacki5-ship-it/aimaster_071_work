@@ -52,11 +52,17 @@ object DecisionLedgerStore {
             SharedPreferencesWriteHealth.withHealthyAccess(PREFS) {
                 val current = readStrict(context) ?: return@withHealthyAccess false
                 if (current.any { it.decisionId == entry.decisionId }) return@withHealthyAccess false
-                if (entry.supersedesDecisionId.isNotBlank() &&
-                    current.none { it.decisionId == entry.supersedesDecisionId }) {
-                    return@withHealthyAccess false
+                if (entry.supersedesDecisionId.isNotBlank()) {
+                    val previous = current.firstOrNull { it.decisionId == entry.supersedesDecisionId }
+                        ?: return@withHealthyAccess false
+                    if (previous.taskId != entry.taskId ||
+                        current.any { it.supersedesDecisionId == entry.supersedesDecisionId }) {
+                        return@withHealthyAccess false
+                    }
                 }
-                val next = (listOf(entry) + current).take(MAX_ENTRIES)
+                // Preserve the complete append-only audit trail. Never evict an older decision.
+                if (current.size >= MAX_ENTRIES) return@withHealthyAccess false
+                val next = listOf(entry) + current
                 val serialized = encode(next).toString()
                 if (serialized.length > MAX_RAW_CHARS) return@withHealthyAccess false
                 SharedPreferencesWriteHealth.commit(
@@ -118,7 +124,7 @@ object DecisionLedgerStore {
 
     private fun valid(e: Entry): Boolean =
         e.decisionId.isNotBlank() && e.decisionId.length <= 160 &&
-        e.taskId.length <= 160 && e.timestampUtc >= 0L &&
+        e.taskId.isNotBlank() && e.taskId.length <= 160 && e.timestampUtc >= 0L &&
         e.actor.isNotBlank() && e.actor.length <= 120 &&
         e.context.length <= 2_000 && e.objective.isNotBlank() && e.objective.length <= 1_200 &&
         e.optionsConsidered.size <= MAX_OPTIONS &&
@@ -129,6 +135,7 @@ object DecisionLedgerStore {
         e.evidenceRefs.all { it.isNotBlank() && it.length <= 500 } &&
         e.assumptions.length <= 1_000 && e.confidence.length <= 80 &&
         e.riskImpact.length <= 1_000 && e.approvalReference.length <= 240 &&
+        (!e.approvalRequired || e.approvalReference.isNotBlank()) &&
         e.outcome in setOf("PROPOSED", "APPROVED", "REJECTED", "IMPLEMENTED", "SUPERSEDED") &&
         e.reviewTrigger.length <= 500 && e.supersedesDecisionId.length <= 160
 
@@ -152,7 +159,8 @@ object DecisionLedgerStore {
                 return (value as Number).toLong()
             }
             fun strings(key: String, max: Int): List<String> {
-                val a = o.optJSONArray(key) ?: JSONArray()
+                if (!o.has(key)) return emptyList()
+                val a = o.optJSONArray(key) ?: error("Decision field '$key' is not an array.")
                 require(a.length() <= max)
                 return (0 until a.length()).map { i ->
                     val value = a.opt(i)
@@ -178,6 +186,22 @@ object DecisionLedgerStore {
             require(ids.add(entry.decisionId) && valid(entry))
             entry
         }
+        val byId = decoded.withIndex().associate { it.value.decisionId to it.index }
+        val superseded = hashSetOf<String>()
+        decoded.forEachIndexed { index, entry ->
+            if (entry.supersedesDecisionId.isNotBlank()) {
+                val previousIndex = byId[entry.supersedesDecisionId]
+                    ?: error("Missing superseded decision.")
+                val previous = decoded[previousIndex]
+                require(previousIndex > index && previous.taskId == entry.taskId) {
+                    "Decision supersession must point to an older decision for the same task."
+                }
+                require(superseded.add(entry.supersedesDecisionId)) {
+                    "Decision history cannot fork from one earlier decision."
+                }
+            }
+        }
+        decoded
     }.getOrNull()
 
     private fun encode(entries: List<Entry>): JSONArray = JSONArray().apply {
