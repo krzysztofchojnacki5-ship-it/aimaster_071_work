@@ -91,7 +91,7 @@ jobs:
           AIFORTECA_KEYSTORE_PASSWORD: ${{ steps.signing.outputs.configured == 'true' && secrets.AIFORTECA_KEYSTORE_PASSWORD || '' }}
           AIFORTECA_KEY_ALIAS: ${{ steps.signing.outputs.configured == 'true' && secrets.AIFORTECA_KEY_ALIAS || '' }}
           AIFORTECA_KEY_PASSWORD: ${{ steps.signing.outputs.configured == 'true' && secrets.AIFORTECA_KEY_PASSWORD || '' }}
-        run: ./gradlew --no-daemon assembleRelease
+        run: ./gradlew --no-daemon assembleDebug assembleRelease
       - name: Package source project
         run: |
           zip -r aiforteca-source-project.zip . \
@@ -103,6 +103,13 @@ jobs:
           path: aiforteca-source-project.zip
           if-no-files-found: error
           retention-days: 90
+      - name: Upload installable debug APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: aiforteca-debug-apk
+          path: app/build/outputs/apk/debug/*.apk
+          if-no-files-found: error
+          retention-days: 30
       - name: Upload signed release APK
         if: success() && steps.signing.outputs.configured == 'true'
         uses: actions/upload-artifact@v4
