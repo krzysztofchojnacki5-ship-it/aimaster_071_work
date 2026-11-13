@@ -129,8 +129,16 @@ class AgentEfficiencyTrackerPersistenceTest {
 
     @Test fun failedDurableCommitQuarantinesEfficiencyHistory() {
         SharedPreferencesWriteHealth.resetForTests("agent_efficiency_history_v1")
-        val editor = org.mockito.Mockito.mock(android.content.SharedPreferences.Editor::class.java)
-        org.mockito.Mockito.`when`(editor.commit()).thenReturn(false)
+        val editor = java.lang.reflect.Proxy.newProxyInstance(
+            android.content.SharedPreferences.Editor::class.java.classLoader,
+            arrayOf(android.content.SharedPreferences.Editor::class.java)
+        ) { proxy, method, _ ->
+            when (method.name) {
+                "commit" -> false
+                "apply" -> null
+                else -> proxy
+            }
+        } as android.content.SharedPreferences.Editor
         assertFalse(SharedPreferencesWriteHealth.commit("agent_efficiency_history_v1", editor))
         AgentEfficiencyTracker.record(context, AgentEfficiencyTracker.Outcome(
             12L, "task-after-failure", "agent-a", "COMPLETED", 10L, 1, "p", "m", ""
