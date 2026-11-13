@@ -43,6 +43,8 @@ private fun parseExplicitHandoffRejection(report: String): String? {
     }.getOrDefault(INVALID_HANDOFF_REJECTION_REASON)
 }
 
+class HandoffUnavailableException(message: String) : IllegalStateException(message)
+
 data class TeamTask(
     val id: String,
     val agentId: String,
@@ -532,21 +534,21 @@ class TeamRunEngine(
                                 "ProviderException: ${providerError.category ?: "UNKNOWN"}" +
                                     (providerError.httpCode?.let { " (HTTP $it)" } ?: "")
                             } ?: t.javaClass.simpleName
-                            runCatching {
-                                onTaskState(
-                                    task,
-                                    when {
-                                        usageAccountingPending -> "USAGE_PENDING"
-                                        t is InterruptedException || (t as? ProviderException)?.category == "CANCELLED" || Thread.currentThread().isInterrupted -> "CANCELLED"
-                                        else -> "FAILED"
-                                    },
-                                    checkpointError,
-                                    actualProviderId,
-                                    actualModel,
-                                    attemptCount
-                                )
+                            val failureStatus = when {
+                                usageAccountingPending -> TeamTaskResult.Status.BLOCKED
+                                t is HandoffUnavailableException -> TeamTaskResult.Status.BLOCKED
+                                t is InterruptedException || (t as? ProviderException)?.category == "CANCELLED" || Thread.currentThread().isInterrupted -> TeamTaskResult.Status.FAILED
+                                else -> TeamTaskResult.Status.FAILED
                             }
-                            TeamTaskResult(task.id, task.agentId, TeamTaskResult.Status.FAILED, err, System.currentTimeMillis() - taskStartedAt, attemptCount, actualProviderId, actualModel, task.reviewOfAgentId)
+                            val checkpointStatus = when (failureStatus) {
+                                TeamTaskResult.Status.BLOCKED -> "BLOCKED"
+                                TeamTaskResult.Status.FAILED -> if (t is InterruptedException || Thread.currentThread().isInterrupted) "CANCELLED" else "FAILED"
+                                TeamTaskResult.Status.COMPLETED -> "COMPLETED"
+                            }
+                            runCatching {
+                                onTaskState(task, checkpointStatus, checkpointError, actualProviderId, actualModel, attemptCount)
+                            }
+                            TeamTaskResult(task.id, task.agentId, failureStatus, err, System.currentTimeMillis() - taskStartedAt, attemptCount, actualProviderId, actualModel, task.reviewOfAgentId)
                         }
                     } finally {
                         workerStates[taskIndex].set(2)
