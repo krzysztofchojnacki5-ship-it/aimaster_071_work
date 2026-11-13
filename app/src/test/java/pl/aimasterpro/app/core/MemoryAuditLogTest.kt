@@ -105,6 +105,34 @@ class MemoryAuditLogTest {
         assertFalse(MemoryAuditLog.append(context, event(MemoryAuditLog.Phase.COMMITTED, "SUCCESS")))
     }
 
+
+    @Test fun appendRedactsSecretsFromFreeFormAuditReasons() {
+        val secret = "sk-1234567890abcdef"
+        val unsafe = event(MemoryAuditLog.Phase.INTENT, "PREPARED").copy(
+            reason = "Użytkownik przekazał api_key=$secret do zatwierdzenia"
+        )
+
+        assertTrue(MemoryAuditLog.append(context, unsafe))
+        val rows = MemoryAuditLog.readVerified(context)!!
+
+        assertEquals(1, rows.size)
+        assertFalse(rows.single().reason.contains(secret))
+        assertTrue(rows.single().reason.contains("[REDACTED]"))
+        val raw = context.getSharedPreferences("ai_memory_audit_log_v1", Context.MODE_PRIVATE)
+            .getString("events", null)!!
+        assertFalse(raw.contains(secret))
+    }
+
+    @Test fun appendRejectsSecretBearingIdentityAndControlFields() {
+        val secret = "ghp_123456789012345678901234"
+        val unsafe = event(MemoryAuditLog.Phase.INTENT, "PREPARED").copy(
+            objectId = secret
+        )
+
+        assertFalse(MemoryAuditLog.append(context, unsafe))
+        assertTrue(MemoryAuditLog.readVerified(context)!!.isEmpty())
+    }
+
     @Test fun malformedEventIsRejectedWithoutWriting() {
         val invalid = event(MemoryAuditLog.Phase.INTENT, " ")
         assertFalse(MemoryAuditLog.append(context, invalid))
