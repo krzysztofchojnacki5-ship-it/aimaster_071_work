@@ -7357,6 +7357,7 @@ class MainActivity : Activity() {
                                         "HANDOFF_SENT", "Trwałe przekazanie raportu zapisane w skrzynce odbiorczej.",
                                         expectedRunId = executionRunId
                                     )
+                                    }
                                 }
                                 inboundResolved && outboundSent
                             }
