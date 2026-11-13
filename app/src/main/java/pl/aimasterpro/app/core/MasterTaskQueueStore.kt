@@ -28,6 +28,7 @@ object MasterTaskQueueStore {
     )
     private val conversationStatuses = setOf("MESSAGE", "HANDOFF", "REPORT", "PROGRESS")
     private val traceTypePattern = Regex("[A-Z][A-Z0-9_]{0,39}")
+    private val providerEndpointPattern = Regex("[A-Za-z0-9][A-Za-z0-9._-]{0,79}")
 
     enum class ReadStatus { AVAILABLE, CORRUPT, UNAVAILABLE }
     enum class Status { QUEUED, ASSIGNED, RUNNING, BLOCKED, PAUSED, COMPLETED, FAILED, CANCELLED }
@@ -290,7 +291,7 @@ object MasterTaskQueueStore {
         if (catalogState.status != AgentManagerStore.ReadStatus.AVAILABLE) return@mutate null
         val knownAgents = pl.aimasterpro.app.agents.AgentCatalog.all + catalogState.customAgents
         fun resolveAgentId(endpoint: String): String? {
-            val token = endpoint.removePrefix("agent:")
+            val token = if (endpoint.startsWith("agent:", ignoreCase = true)) endpoint.substringAfter(':') else endpoint
             return knownAgents.firstOrNull {
                 it.id.equals(token, ignoreCase = true) || it.name.equals(token, ignoreCase = true)
             }?.id
@@ -304,9 +305,11 @@ object MasterTaskQueueStore {
         if (!senderAllowed || !recipientAllowed) return@mutate null
 
         val safe = CommunicationLogSanitizer.sanitize(message).take(350)
+        val safeProvider = CommunicationLogSanitizer.sanitize(providerId).take(80)
+        val safeModel = CommunicationLogSanitizer.sanitize(model).take(120)
         val detail = "Do: $recipient • $status • $safe"
         Triple(tasks, events + event(taskId, sender, "AGENT_MESSAGE", "", status, detail, now,
-            recipient = recipient, providerId = providerId, model = model, runId = current.runId), true)
+            recipient = recipient, providerId = safeProvider, model = safeModel, runId = current.runId), true)
     }
 
     /**
@@ -340,7 +343,7 @@ object MasterTaskQueueStore {
         if (catalogState.status != AgentManagerStore.ReadStatus.AVAILABLE) return@mutate null
         val knownAgents = pl.aimasterpro.app.agents.AgentCatalog.all + catalogState.customAgents
         fun resolveAgentId(endpoint: String): String? {
-            val token = endpoint.removePrefix("agent:")
+            val token = if (endpoint.startsWith("agent:", ignoreCase = true)) endpoint.substringAfter(':') else endpoint
             return knownAgents.firstOrNull {
                 it.id.equals(token, ignoreCase = true) || it.name.equals(token, ignoreCase = true)
             }?.id
@@ -353,8 +356,8 @@ object MasterTaskQueueStore {
         val targetIsProvider = target.startsWith("provider:", ignoreCase = true)
         val sourceProviderId = source.substringAfter(':', "").takeIf { sourceIsProvider }
         val targetProviderId = target.substringAfter(':', "").takeIf { targetIsProvider }
-        if ((sourceIsProvider && sourceProviderId.isNullOrBlank()) ||
-            (targetIsProvider && targetProviderId.isNullOrBlank())) return@mutate null
+        if ((sourceIsProvider && (sourceProviderId == null || !sourceProviderId.matches(providerEndpointPattern))) ||
+            (targetIsProvider && (targetProviderId == null || !targetProviderId.matches(providerEndpointPattern)))) return@mutate null
 
         val sourceAllowed = sourceIsCoordinator ||
             (sourceId != null && sourceId in current.assignedAgentIds) ||
@@ -377,9 +380,11 @@ object MasterTaskQueueStore {
         val canonicalSource = canonicalEndpoint(source, sourceId, sourceIsProvider)
         val canonicalTarget = canonicalEndpoint(target, targetId, targetIsProvider)
         val safe = CommunicationLogSanitizer.sanitize(detail).take(350)
+        val safeProvider = CommunicationLogSanitizer.sanitize(providerId).take(80)
+        val safeModel = CommunicationLogSanitizer.sanitize(model).take(120)
         val summary = "Do: $canonicalTarget • $traceType • $safe"
         Triple(tasks, events + event(taskId, canonicalSource, "AGENT_TRACE", "", traceType, summary, now,
-            recipient = canonicalTarget, providerId = providerId, model = model, runId = current.runId), true)
+            recipient = canonicalTarget, providerId = safeProvider, model = safeModel, runId = current.runId), true)
     }
 
     /** Moves interrupted RUNNING tasks to BLOCKED after process restart; never auto-replays uncertain API work. */
@@ -590,7 +595,8 @@ object MasterTaskQueueStore {
                         val agentId = event.actor.removePrefix("agent:")
                         require(event.actor.startsWith("agent:") &&
                             agentId in owner.assignedAgentIds &&
-                            event.toStatus in setOf("COMPLETED", "FAILED", "BLOCKED")) {
+                            event.toStatus in setOf("COMPLETED", "FAILED", "BLOCKED") &&
+                            event.fromStatus == Status.RUNNING.name && event.runId > 0) {
                             "Agent result does not match an assigned agent or terminal state."
                         }
                         require(resultActorsByRun.add("${event.taskId}:${event.runId}:$agentId")) {
@@ -600,7 +606,7 @@ object MasterTaskQueueStore {
                     "AGENT_PROGRESS" -> {
                         val agentId = event.actor.removePrefix("agent:")
                         require(event.actor.startsWith("agent:") && agentId in owner.assignedAgentIds &&
-                            event.toStatus in progressStates) {
+                            event.toStatus in progressStates && event.fromStatus == Status.RUNNING.name && event.runId > 0) {
                             "Agent progress does not match an assigned agent or supported state."
                         }
                     }
@@ -615,10 +621,16 @@ object MasterTaskQueueStore {
                         val targetIsCoordinator = target == "MASTER" || target == "SYSTEM"
                         val sourceIsProvider = source.startsWith("provider:")
                         val targetIsProvider = target.startsWith("provider:")
+                        val sourceProviderId = source.substringAfter(":", "").takeIf { sourceIsProvider }
+                        val targetProviderId = target.substringAfter(":", "").takeIf { targetIsProvider }
                         val endpointsMatch = (sourceIsAgent || sourceIsCoordinator ||
                             (sourceIsProvider && targetIsAgent)) &&
                             (targetIsAgent || targetIsCoordinator || (targetIsProvider && sourceIsAgent))
-                        require(endpointsMatch) {
+                        val traceSchemaValid = traceTypePattern.matches(event.toStatus) &&
+                            event.fromStatus.isEmpty() && event.runId > 0 &&
+                            (!sourceIsProvider || (sourceProviderId != null && sourceProviderId.matches(providerEndpointPattern))) &&
+                            (!targetIsProvider || (targetProviderId != null && targetProviderId.matches(providerEndpointPattern)))
+                        require(endpointsMatch && traceSchemaValid) {
                             "Technical trace endpoints do not belong to the assigned team."
                         }
                     }

@@ -334,6 +334,132 @@ class MasterTaskQueueStoreTest {
         assertEquals("agent:custom-trace-auditor", traces[3].recipient)
     }
 
+
+    @Test fun agentEndpointPrefixIsResolvedCaseInsensitivelyForTechnicalTraces() {
+        val taskId = "task-trace-prefix-case"
+        assertTrue(MasterTaskQueueStore.enqueue(context, taskId, "Prefix case", "Resolve endpoint aliases.", now = 80L))
+        assertTrue(MasterTaskQueueStore.assign(context, taskId, listOf("critical-reviewer"), now = 81L))
+        assertTrue(MasterTaskQueueStore.transition(context, taskId, "MASTER",
+            MasterTaskQueueStore.Status.RUNNING, "Start.", 82L))
+        val runId = MasterTaskQueueStore.snapshot(context).tasks.single().runId
+
+        assertTrue(MasterTaskQueueStore.recordAgentTrace(
+            context, taskId, "AGENT:CRITICAL-REVIEWER", "master", "PREFIX_CASE",
+            "Uppercase agent prefix is accepted and canonicalized.", now = 83L, expectedRunId = runId
+        ))
+        val snapshot = MasterTaskQueueStore.snapshot(context)
+        val trace = snapshot.events.single { it.operation == "AGENT_TRACE" }
+        assertEquals("agent:critical-reviewer", trace.actor)
+        assertEquals("MASTER", trace.recipient)
+        assertEquals(MasterTaskQueueStore.ReadStatus.AVAILABLE, snapshot.status)
+    }
+
+    @Test fun providerTraceEndpointRejectsMalformedProviderIdentifiers() {
+        val taskId = "task-provider-endpoint-guard"
+        assertTrue(MasterTaskQueueStore.enqueue(context, taskId, "Provider guard", "Validate provider endpoint IDs.", now = 90L))
+        assertTrue(MasterTaskQueueStore.assign(context, taskId, listOf("critical-reviewer"), now = 91L))
+        assertTrue(MasterTaskQueueStore.transition(context, taskId, "MASTER",
+            MasterTaskQueueStore.Status.RUNNING, "Start.", 92L))
+        val runId = MasterTaskQueueStore.snapshot(context).tasks.single().runId
+        val before = MasterTaskQueueStore.snapshot(context).events.size
+
+        listOf("provider:", "provider:open router", "provider:openrouter:extra", "provider:-invalid").forEachIndexed { index, endpoint ->
+            assertFalse("Malformed provider endpoint $index must be rejected",
+                MasterTaskQueueStore.recordAgentTrace(
+                    context, taskId, endpoint, "critical-reviewer", "NETWORK_FAILOVER",
+                    "Invalid provider endpoint.", now = 93L + index, expectedRunId = runId
+                ))
+        }
+        assertEquals(before, MasterTaskQueueStore.snapshot(context).events.size)
+    }
+
+    @Test fun communicationAndTraceProviderMetadataAreSanitizedBeforePersistence() {
+        val taskId = "task-provider-metadata-redaction"
+        assertTrue(MasterTaskQueueStore.enqueue(context, taskId, "Metadata redaction", "Protect provider metadata.", now = 100L))
+        assertTrue(MasterTaskQueueStore.assign(context, taskId, listOf("critical-reviewer"), now = 101L))
+        assertTrue(MasterTaskQueueStore.transition(context, taskId, "MASTER",
+            MasterTaskQueueStore.Status.RUNNING, "Start.", 102L))
+        val secret = "sk_live_metadata_secret_123456789"
+
+        assertTrue(MasterTaskQueueStore.recordAgentMessage(
+            context, taskId, "critical-reviewer", "MASTER", "REPORT", "Message body.",
+            now = 103L, providerId = "api_key=$secret", model = "Bearer $secret"
+        ))
+        assertTrue(MasterTaskQueueStore.recordAgentTrace(
+            context, taskId, "agent:critical-reviewer", "MASTER", "NETWORK_FAILOVER", "Trace body.",
+            now = 104L, providerId = "api_key=$secret", model = "Bearer $secret"
+        ))
+
+        val snapshot = MasterTaskQueueStore.snapshot(context)
+        assertEquals(MasterTaskQueueStore.ReadStatus.AVAILABLE, snapshot.status)
+        val metadataEvents = snapshot.events.filter { it.operation in setOf("AGENT_MESSAGE", "AGENT_TRACE") }
+        assertEquals(2, metadataEvents.size)
+        assertTrue(metadataEvents.all { !it.providerId.contains(secret) && !it.model.contains(secret) })
+        assertTrue(metadataEvents.all { it.providerId.contains("[REDACTED]") && it.model.contains("[REDACTED]") })
+    }
+
+    @Test fun persistedTechnicalTraceRejectsMalformedSchemaWithoutRewritingQueue() {
+        val prefs = context.getSharedPreferences("aiforteca_master_task_queue_v1", Context.MODE_PRIVATE)
+        val task = org.json.JSONObject()
+            .put("id", "task-trace-schema").put("title", "Trace schema").put("objective", "Validate trace rows.")
+            .put("agents", org.json.JSONArray().put("critical-reviewer")).put("dependencies", org.json.JSONArray())
+            .put("priority", 2).put("status", "RUNNING").put("step", "Running")
+            .put("createdAt", 10L).put("updatedAt", 20L).put("runId", 1)
+        fun trace(to: String, from: String = "", actor: String = "provider:openrouter", runId: Int = 1) =
+            org.json.JSONObject()
+                .put("id", "event-trace-schema").put("taskId", "task-trace-schema")
+                .put("actor", actor).put("operation", "AGENT_TRACE")
+                .put("from", from).put("to", to).put("detail", "Trace row.")
+                .put("timestamp", 20L).put("recipient", "agent:critical-reviewer")
+                .put("providerId", "").put("model", "").put("runId", runId)
+        val malformed = listOf(
+            trace("not a trace type"),
+            trace("NETWORK_FAILOVER", from = "RUNNING"),
+            trace("NETWORK_FAILOVER", actor = "provider:open router"),
+            trace("NETWORK_FAILOVER", runId = 0)
+        )
+        malformed.forEachIndexed { index, event ->
+            val raw = org.json.JSONObject().put("version", 1)
+                .put("tasks", org.json.JSONArray().put(task))
+                .put("events", org.json.JSONArray().put(event)).toString()
+            assertTrue(prefs.edit().putString("state", raw).commit())
+            assertEquals("Malformed persisted trace $index must fail closed",
+                MasterTaskQueueStore.ReadStatus.CORRUPT, MasterTaskQueueStore.snapshot(context).status)
+            assertEquals("Malformed persisted trace bytes must remain untouched", raw, prefs.getString("state", null))
+        }
+    }
+
+    @Test fun persistedAgentResultsAndProgressMustOriginateFromCurrentExecutionState() {
+        val prefs = context.getSharedPreferences("aiforteca_master_task_queue_v1", Context.MODE_PRIVATE)
+        val task = org.json.JSONObject()
+            .put("id", "task-event-origin").put("title", "Event origin").put("objective", "Validate event origins.")
+            .put("agents", org.json.JSONArray().put("critical-reviewer")).put("dependencies", org.json.JSONArray())
+            .put("priority", 2).put("status", "RUNNING").put("step", "Running")
+            .put("createdAt", 10L).put("updatedAt", 20L).put("runId", 1)
+        fun event(operation: String, from: String, to: String, runId: Int = 1) =
+            org.json.JSONObject()
+                .put("id", "event-origin-$operation-$from").put("taskId", "task-event-origin")
+                .put("actor", "agent:critical-reviewer").put("operation", operation)
+                .put("from", from).put("to", to).put("detail", "Event row.")
+                .put("timestamp", 20L).put("recipient", "").put("providerId", "").put("model", "")
+                .put("runId", runId)
+        val malformed = listOf(
+            event("AGENT_RESULT", "QUEUED", "COMPLETED"),
+            event("AGENT_RESULT", "RUNNING", "COMPLETED", runId = 0),
+            event("AGENT_PROGRESS", "QUEUED", "REQUESTING"),
+            event("AGENT_PROGRESS", "RUNNING", "REQUESTING", runId = 0)
+        )
+        malformed.forEachIndexed { index, row ->
+            val raw = org.json.JSONObject().put("version", 1)
+                .put("tasks", org.json.JSONArray().put(task))
+                .put("events", org.json.JSONArray().put(row)).toString()
+            assertTrue(prefs.edit().putString("state", raw).commit())
+            assertEquals("Invalid execution provenance $index must be rejected",
+                MasterTaskQueueStore.ReadStatus.CORRUPT, MasterTaskQueueStore.snapshot(context).status)
+            assertEquals(raw, prefs.getString("state", null))
+        }
+    }
+
     @Test fun technicalAgentTraceIsSeparateFromMessagesAndBoundToCurrentRun() {
         val taskId = "task-technical-trace"
         assertTrue(MasterTaskQueueStore.enqueue(context, taskId, "Ślady techniczne", "Rozdziel komunikaty i logi.", now = 71L))
