@@ -936,4 +936,75 @@ class TaskCheckpointStoreTest {
         }
     }
 
+    @Test fun checkpointWriterRejectsUnknownLifecycleStatusWithoutMutatingJournal() {
+        val prefs = context.getSharedPreferences("task_checkpoints_v1", Context.MODE_PRIVATE)
+        assertTrue(TaskCheckpointStore.record(context, TaskCheckpointStore.Event(
+            "task-valid-status", "RESEARCHER", "QUEUED", "", 100L, "", "", 0
+        )))
+        val before = prefs.getString("events", null)
+        assertFalse(TaskCheckpointStore.record(context, TaskCheckpointStore.Event(
+            "task-unknown-status", "RESEARCHER", "FUTURE_STATE", "", 200L, "", "", 0
+        )))
+        assertEquals(before, prefs.getString("events", null))
+    }
+
+    @Test fun checkpointReaderRejectsUnknownLifecycleStatusWithoutOverwritingJournal() {
+        val prefs = context.getSharedPreferences("task_checkpoints_v1", Context.MODE_PRIVATE)
+        val raw = org.json.JSONArray().put(org.json.JSONObject()
+            .put("task", "task-future-status")
+            .put("agent", "RESEARCHER")
+            .put("status", "FUTURE_STATE")
+            .put("ts", 100L)).toString()
+        assertTrue(prefs.edit().putString("events", raw).commit())
+        assertFalse(TaskCheckpointStore.isJournalReadable(context))
+        assertFalse(TaskCheckpointStore.record(context, TaskCheckpointStore.Event(
+            "task-after-future-status", "RESEARCHER", "QUEUED", "", 200L, "", "", 0
+        )))
+        assertEquals(raw, prefs.getString("events", null))
+    }
+
+    @Test fun checkpointReaderRejectsUnknownPersistedFieldsWithoutOverwritingJournal() {
+        val prefs = context.getSharedPreferences("task_checkpoints_v1", Context.MODE_PRIVATE)
+        val raw = org.json.JSONArray().put(org.json.JSONObject()
+            .put("task", "task-unknown-field")
+            .put("agent", "RESEARCHER")
+            .put("status", "QUEUED")
+            .put("ts", 100L)
+            .put("apiKey", "unexpected-secret")).toString()
+        assertTrue(prefs.edit().putString("events", raw).commit())
+        assertFalse(TaskCheckpointStore.isJournalReadable(context))
+        assertFalse(TaskCheckpointStore.record(context, TaskCheckpointStore.Event(
+            "task-after-unknown-field", "RESEARCHER", "QUEUED", "", 200L, "", "", 0
+        )))
+        assertEquals(raw, prefs.getString("events", null))
+    }
+
+    @Test fun checkpointReaderRequiresCoreFieldsAndKeepsLegacyOptionalMetadataCompatible() {
+        val prefs = context.getSharedPreferences("task_checkpoints_v1", Context.MODE_PRIVATE)
+        val legacy = org.json.JSONObject()
+            .put("task", "task-legacy-minimal")
+            .put("agent", "RESEARCHER")
+            .put("status", "QUEUED")
+            .put("ts", 100L)
+        val legacyRaw = org.json.JSONArray().put(legacy).toString()
+        assertTrue(prefs.edit().putString("events", legacyRaw).commit())
+        assertTrue(TaskCheckpointStore.isJournalReadable(context))
+        val loaded = TaskCheckpointStore.latest(context).single()
+        assertEquals("task-legacy-minimal", loaded.taskId)
+        assertEquals("", loaded.detail)
+        assertEquals("", loaded.providerId)
+        assertEquals("", loaded.model)
+
+        listOf("task", "agent", "status", "ts").forEach { missing ->
+            val malformed = org.json.JSONObject(legacy.toString()).apply { remove(missing) }
+            val raw = org.json.JSONArray().put(malformed).toString()
+            assertTrue(prefs.edit().putString("events", raw).commit())
+            assertFalse("Missing required field $missing must fail closed", TaskCheckpointStore.isJournalReadable(context))
+            assertFalse(TaskCheckpointStore.record(context, TaskCheckpointStore.Event(
+                "task-after-missing-$missing", "RESEARCHER", "QUEUED", "", 200L, "", "", 0
+            )))
+            assertEquals(raw, prefs.getString("events", null))
+        }
+    }
+
 }
