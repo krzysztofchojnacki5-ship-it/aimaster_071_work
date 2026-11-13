@@ -108,6 +108,19 @@ class AgentHandoffStoreTest {
             AgentHandoffStore.snapshot(context).messages.single().state)
     }
 
+    @Test fun zeroTimestampCannotCreateAnUnclaimableHandoff() {
+        val runId = runningTask()
+        assertFalse(AgentHandoffStore.send(context, "handoff-task-01", runId, "handoff-zero-001",
+            "critical-reviewer", "unit-test-engineer", "Niepoprawny czas utworzenia.", 0L))
+        assertTrue(AgentHandoffStore.send(context, "handoff-task-01", runId, "handoff-zero-002",
+            "critical-reviewer", "unit-test-engineer", "Poprawny czas utworzenia.", 100L))
+        assertNull(AgentHandoffStore.claim(context, "handoff-task-01", runId, "handoff-zero-002",
+            "unit-test-engineer", 0L))
+        assertEquals(AgentHandoffStore.State.PENDING, AgentHandoffStore.snapshot(context).messages.single().state)
+        assertNotNull(AgentHandoffStore.claim(context, "handoff-task-01", runId, "handoff-zero-002",
+            "unit-test-engineer", 101L))
+    }
+
     @Test fun claimedMessageIsNotReplayedAfterStoreIsReadAgain() {
         val runId = runningTask()
         assertTrue(AgentHandoffStore.send(context, "handoff-task-01", runId, "handoff-msg-003",
@@ -140,7 +153,7 @@ class AgentHandoffStoreTest {
         assertEquals(AgentHandoffStore.State.PENDING, snapshot.messages.single().state)
     }
 
-    @Test fun oldestAcknowledgedHandoffsArePrunedBeforeRejectingNewWork() {
+    @Test fun acknowledgedHandoffsRemainInAuditTrailAndCapacityRejectsNewWork() {
         val runId = runningTask()
         val firstId = "handoff-msg-000"
         assertTrue(AgentHandoffStore.send(context, "handoff-task-01", runId, firstId,
@@ -159,14 +172,14 @@ class AgentHandoffStoreTest {
         }
         assertEquals(400, AgentHandoffStore.snapshot(context).messages.size)
 
-        assertTrue(AgentHandoffStore.send(context, "handoff-task-01", runId, "handoff-msg-400",
+        assertFalse(AgentHandoffStore.send(context, "handoff-task-01", runId, "handoff-msg-400",
             "critical-reviewer", "unit-test-engineer", "Nowe przekazanie.", 600L))
         val snapshot = AgentHandoffStore.snapshot(context)
         assertEquals(400, snapshot.messages.size)
-        assertFalse(snapshot.messages.any { it.id == firstId })
+        assertTrue(snapshot.messages.any { it.id == firstId && it.state == AgentHandoffStore.State.ACKNOWLEDGED })
         assertTrue(snapshot.messages.any { it.id == "handoff-msg-001" })
-        assertTrue(snapshot.messages.any { it.id == "handoff-msg-400" })
-        assertEquals(400, snapshot.messages.count { it.state == AgentHandoffStore.State.PENDING })
+        assertFalse(snapshot.messages.any { it.id == "handoff-msg-400" })
+        assertEquals(399, snapshot.messages.count { it.state == AgentHandoffStore.State.PENDING })
     }
 
     @Test fun inboxNeverEvictsPendingOrClaimedHandoffsToMakeRoom() {
@@ -213,6 +226,26 @@ class AgentHandoffStoreTest {
             "handoff-msg-manual-01", "unit-test-engineer", 66L))
         assertNull(AgentHandoffStore.claim(context, "handoff-task-01", runId,
             "handoff-msg-manual-01", "unit-test-engineer", 66L))
+    }
+
+    @Test fun manualResolutionRejectsSanitizerExpansionInsteadOfTruncatingAuditReason() {
+        val runId = runningTask()
+        assertTrue(AgentHandoffStore.send(context, "handoff-task-01", runId, "handoff-reason-001",
+            "critical-reviewer", "unit-test-engineer", "Raport do ręcznej decyzji.", 200L))
+        assertNotNull(AgentHandoffStore.claim(context, "handoff-task-01", runId, "handoff-reason-001",
+            "unit-test-engineer", 201L))
+        assertTrue(MasterTaskQueueStore.transition(context, "handoff-task-01", "USER",
+            MasterTaskQueueStore.Status.BLOCKED, "Przerwano przebieg.", 202L))
+        val reason = "x".repeat(289) + " password=x"
+        assertEquals(300, reason.length)
+        assertTrue(CommunicationLogSanitizer.sanitize(reason).length > 300)
+
+        assertFalse(AgentHandoffStore.resolveUncertainClaim(context, "handoff-task-01", runId,
+            "handoff-reason-001", "USER", reason, 203L))
+        val unchanged = AgentHandoffStore.snapshot(context).messages.single()
+        assertEquals(AgentHandoffStore.State.CLAIMED, unchanged.state)
+        assertEquals("", unchanged.resolutionReason)
+        assertEquals(0L, unchanged.resolvedAt)
     }
 
     @Test fun manualResolutionCannotClosePendingOrPreviousRunHandoff() {
@@ -314,6 +347,29 @@ class AgentHandoffStoreTest {
             assertTrue(prefs.edit().putString("messages", raw).commit())
             assertEquals(AgentHandoffStore.ReadStatus.CORRUPT, AgentHandoffStore.snapshot(context).status)
             assertEquals(raw, prefs.getString("messages", null))
+        }
+    }
+
+    @Test fun persistedHandoffStatesRejectImpossibleTimestampTransitionsAndPreserveBytes() {
+        runningTask()
+        val prefs = context.getSharedPreferences("aiforteca_agent_handoff_v1", Context.MODE_PRIVATE)
+        fun record(state: String, updatedAt: Long, claimedAt: Long) = org.json.JSONObject()
+            .put("id", "handoff-state-001").put("taskId", "handoff-task-01").put("runId", 1)
+            .put("senderAgentId", "critical-reviewer").put("recipientAgentId", "unit-test-engineer")
+            .put("payload", "Raport poprawny.").put("state", state)
+            .put("createdAt", 100L).put("updatedAt", updatedAt).put("claimedAt", claimedAt)
+            .put("resolvedAt", 0L).put("resolutionActor", "").put("resolutionReason", "")
+
+        val malformed = listOf(
+            record("PENDING", 101L, 0L),
+            record("CLAIMED", 112L, 111L),
+            record("ACKNOWLEDGED", 109L, 110L)
+        )
+        malformed.forEach { item ->
+            val raw = org.json.JSONArray().put(item).toString()
+            assertTrue(prefs.edit().putString("messages", raw).commit())
+            assertEquals(AgentHandoffStore.ReadStatus.CORRUPT, AgentHandoffStore.snapshot(context).status)
+            assertEquals("Malformed state history must remain untouched", raw, prefs.getString("messages", null))
         }
     }
 

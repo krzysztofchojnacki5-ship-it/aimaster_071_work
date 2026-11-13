@@ -49,7 +49,7 @@ object AgentHandoffStore {
         synchronized(this) {
             if (!valid(taskId) || !valid(messageId) || !valid(senderAgentId) ||
                 !valid(recipientAgentId) || senderAgentId == recipientAgentId ||
-                payload.isBlank() || payload.length > MAX_PAYLOAD || now < 0L) return@synchronized false
+                payload.isBlank() || payload.length > MAX_PAYLOAD || now <= 0L) return@synchronized false
             if (!isAssigned(context, taskId, runId, senderAgentId) ||
                 !isAssigned(context, taskId, runId, recipientAgentId)) return@synchronized false
             val safe = CommunicationLogSanitizer.sanitize(payload)
@@ -64,19 +64,8 @@ object AgentHandoffStore {
             // Keep the inbox bounded without letting old terminal records permanently
             // exhaust capacity. Never evict PENDING or CLAIMED work: CLAIMED may represent
             // an external provider request whose outcome is uncertain.
-            val retained = if (current.messages.size >= MAX_MESSAGES) {
-                val removableCount = current.messages.size - MAX_MESSAGES + 1
-                val removableIds = current.messages
-                    .asSequence()
-                    .filter { it.state == State.ACKNOWLEDGED || it.state == State.REJECTED }
-                    .sortedWith(compareBy<Handoff> { it.updatedAt }.thenBy { it.createdAt })
-                    .take(removableCount)
-                    .map { it.id }
-                    .toSet()
-                if (removableIds.size < removableCount) return@synchronized false
-                current.messages.filterNot { it.id in removableIds }
-            } else current.messages
-            write(context, retained + Handoff(
+            if (current.messages.size >= MAX_MESSAGES) return@synchronized false
+            write(context, current.messages + Handoff(
                 messageId, taskId, runId, senderAgentId, recipientAgentId,
                 safe, State.PENDING, now, now
             ))
@@ -89,7 +78,7 @@ object AgentHandoffStore {
         recipientAgentId: String, now: Long = System.currentTimeMillis()
     ): Handoff? = MasterTaskQueueStore.withActiveRun(context, taskId, runId) {
         synchronized(this) {
-            if (!valid(taskId) || !valid(messageId) || !valid(recipientAgentId) || now < 0L) return@synchronized null
+            if (!valid(taskId) || !valid(messageId) || !valid(recipientAgentId) || now <= 0L) return@synchronized null
             if (!isAssigned(context, taskId, runId, recipientAgentId)) return@synchronized null
             val current = read(context)
             if (current.status != ReadStatus.AVAILABLE) return@synchronized null
@@ -150,8 +139,9 @@ object AgentHandoffStore {
                 message.recipientAgentId !in task.assignedAgentIds ||
                 message.state != State.CLAIMED || message.claimedAt <= 0L ||
                 now < message.claimedAt || now < message.createdAt) return@synchronized false
-            val safeReason = CommunicationLogSanitizer.sanitize(reason.trim()).take(300)
-            if (safeReason.isBlank()) return@synchronized false
+            val safeReason = CommunicationLogSanitizer.sanitize(reason.trim())
+            // Redaction can expand a short input. Reject rather than persist a truncated audit reason.
+            if (safeReason.isBlank() || safeReason.length > 300) return@synchronized false
             write(context, current.messages.map {
                 if (it.id == messageId) it.copy(
                     state = State.MANUALLY_RESOLVED,
@@ -219,24 +209,8 @@ object AgentHandoffStore {
                             if (item.has("resolutionReason")) item.getString("resolutionReason") else ""
                         )
                     }
-                    if (messages.any {
-                        !valid(it.id) || !valid(it.taskId) || !valid(it.senderAgentId) ||
-                            !valid(it.recipientAgentId) || it.senderAgentId == it.recipientAgentId ||
-                            it.runId <= 0 || it.payload.isBlank() || it.payload.length > MAX_PAYLOAD ||
-                            CommunicationLogSanitizer.sanitize(it.payload) != it.payload || it.createdAt < 0L ||
-                            it.updatedAt < it.createdAt || it.claimedAt < 0L || it.resolvedAt < 0L ||
-                            it.resolutionActor.length > 100 || it.resolutionReason.length > 300 ||
-                            (it.state == State.PENDING && it.claimedAt != 0L) ||
-                            (it.state in setOf(State.CLAIMED, State.ACKNOWLEDGED, State.REJECTED) &&
-                                (it.claimedAt <= 0L || it.updatedAt < it.claimedAt)) ||
-                            (it.state == State.MANUALLY_RESOLVED &&
-                                (it.claimedAt <= 0L || it.resolvedAt <= 0L ||
-                                    it.resolvedAt < it.claimedAt || it.resolvedAt < it.createdAt ||
-                                    it.resolutionActor !in setOf("MASTER", "USER") ||
-                                    it.resolutionReason.isBlank() || it.resolvedAt != it.updatedAt)) ||
-                            (it.state != State.MANUALLY_RESOLVED &&
-                                (it.resolvedAt != 0L || it.resolutionActor.isNotEmpty() || it.resolutionReason.isNotEmpty()))
-                    } || messages.map { it.id }.distinct().size != messages.size) {
+                    if (messages.any { !validRecord(it) } ||
+                        messages.map { it.id }.distinct().size != messages.size) {
                         Snapshot(ReadStatus.CORRUPT)
                     } else Snapshot(ReadStatus.AVAILABLE, messages)
                 } catch (_: Exception) {
@@ -249,8 +223,31 @@ object AgentHandoffStore {
         }
     }
 
+    private fun validRecord(it: Handoff): Boolean =
+        valid(it.id) && valid(it.taskId) && valid(it.senderAgentId) &&
+            valid(it.recipientAgentId) && it.senderAgentId != it.recipientAgentId &&
+            it.runId > 0 && it.payload.isNotBlank() && it.payload.length <= MAX_PAYLOAD &&
+            CommunicationLogSanitizer.sanitize(it.payload) == it.payload &&
+            it.createdAt > 0L && it.updatedAt >= it.createdAt &&
+            it.claimedAt >= 0L && it.resolvedAt >= 0L &&
+            it.resolutionActor.length <= 100 && it.resolutionReason.length <= 300 &&
+            CommunicationLogSanitizer.sanitize(it.resolutionReason) == it.resolutionReason &&
+            when (it.state) {
+                State.PENDING -> it.claimedAt == 0L && it.updatedAt == it.createdAt &&
+                    it.resolvedAt == 0L && it.resolutionActor.isEmpty() && it.resolutionReason.isEmpty()
+                State.CLAIMED -> it.claimedAt >= it.createdAt && it.updatedAt == it.claimedAt &&
+                    it.resolvedAt == 0L && it.resolutionActor.isEmpty() && it.resolutionReason.isEmpty()
+                State.ACKNOWLEDGED, State.REJECTED -> it.claimedAt >= it.createdAt &&
+                    it.updatedAt >= it.claimedAt && it.resolvedAt == 0L &&
+                    it.resolutionActor.isEmpty() && it.resolutionReason.isEmpty()
+                State.MANUALLY_RESOLVED -> it.claimedAt >= it.createdAt && it.resolvedAt >= it.claimedAt &&
+                    it.resolvedAt >= it.createdAt && it.updatedAt == it.resolvedAt &&
+                    it.resolutionActor in setOf("MASTER", "USER") && it.resolutionReason.isNotBlank()
+            }
+
     private fun write(context: Context, messages: List<Handoff>): Boolean {
-        if (messages.size > MAX_MESSAGES) return false
+        if (messages.size > MAX_MESSAGES || messages.map { it.id }.distinct().size != messages.size ||
+            messages.any { !validRecord(it) }) return false
         val array = JSONArray()
         messages.forEach { m ->
             array.put(JSONObject()
