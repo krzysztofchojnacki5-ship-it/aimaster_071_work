@@ -241,6 +241,8 @@ object MemoryAuditLog {
                 !it.outcome.startsWith("DENIED_")
         }
 
+        if (previous != null && event.timestamp < previous.timestamp) return false
+
         return when (event.phase) {
             Phase.INTENT -> previous == null || previous.phase == Phase.COMMITTED
             Phase.FAILED -> previous?.phase == Phase.INTENT &&
@@ -385,6 +387,21 @@ object MemoryAuditLog {
                 sequence, actor, mutation, objectId, reason, approvalRef, phase.name,
                 outcome, timestamp, previousHash
             ))
+            val replayedEvent = Event(
+                actor = actor,
+                mutation = mutation,
+                objectId = objectId,
+                reason = reason,
+                approvalRef = approvalRef,
+                phase = phase,
+                outcome = outcome,
+                timestamp = timestamp
+            )
+            // Hash integrity alone is insufficient: replay must also enforce the same
+            // governance authority, lifecycle and capacity rules as a live append.
+            require(hasValidAuthorizationShape(replayedEvent))
+            require(hasValidTransition(result, replayedEvent))
+            require(hasReservedCapacity(result, replayedEvent))
             result.add(Record(sequence, actor, mutation, objectId, reason, approvalRef,
                 phase, outcome, timestamp, previousHash, hash))
             expectedPrevious = hash
