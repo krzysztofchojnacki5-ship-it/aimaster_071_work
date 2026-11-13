@@ -195,18 +195,25 @@ class ChatResponseArchiveTest {
         assertEquals(12, entries.map { it.taskId }.toSet().size)
     }
 
-    @Test fun archiveCapacityIsBoundedAndNewestEntriesAreRetained() {
-        repeat(30) { index ->
+    @Test fun archiveCapacityIsBoundedAndNeverEvictsUnacknowledgedEntries() {
+        repeat(25) { index ->
             assertTrue(ChatResponseArchive.put(
                 context, "bounded-task-$index", "bounded-chat", "MASTER",
                 "Answer $index", "provider-a", "model-a", 30_000L + index
             ))
         }
-        val entries = ChatResponseArchive.latest(context)
-        assertEquals(25, entries.size)
-        assertEquals("bounded-task-29", entries.first().taskId)
-        assertEquals("bounded-task-5", entries.last().taskId)
-        assertNull(ChatResponseArchive.get(context, "bounded-task-4"))
+        val beforeOverflow = ChatResponseArchive.latest(context).map { it.taskId }
+        assertEquals(25, beforeOverflow.size)
+        assertEquals("bounded-task-0", beforeOverflow.first())
+        assertEquals("bounded-task-24", beforeOverflow.last())
+
+        assertFalse(ChatResponseArchive.put(
+            context, "bounded-task-25", "bounded-chat", "MASTER",
+            "Answer 25", "provider-a", "model-a", 30_025L
+        ))
+        assertEquals(beforeOverflow, ChatResponseArchive.latest(context).map { it.taskId })
+        assertNotNull(ChatResponseArchive.get(context, "bounded-task-0"))
+        assertNull(ChatResponseArchive.get(context, "bounded-task-25"))
     }
 
 
