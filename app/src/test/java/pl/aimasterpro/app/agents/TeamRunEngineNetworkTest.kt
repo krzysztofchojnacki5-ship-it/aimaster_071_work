@@ -281,7 +281,8 @@ class TeamRunEngineNetworkTest {
                 provider = config,
                 agentProvidersMap = mapOf("qa-architect" to config, "unit-test-engineer" to config),
                 isFreeProvider = { true },
-                mode = WorkMode.PLANNING
+                mode = WorkMode.PLANNING,
+                handoffContextForTask = { "INBOUND_CONTEXT" }
             )
             assertEquals(TeamTaskResult.Status.BLOCKED, results[0].status)
             assertTrue(results[0].handoffRejectionReason.contains("nieprawidłowy"))
