@@ -6731,66 +6731,59 @@ class MainActivity : Activity() {
         val percent = (used * 100.0 / usage.dailyLimitTokens.coerceAtLeast(1L)).toInt().coerceIn(0, 999)
         card("Centrum diagnostyczne", "Szybka kontrola lokalnego budżetu, rezerwacji i konfiguracji. Klucze API nie są wyświetlane ani kopiowane.")
         addCompanionTrustCard()
-        // Compact operational feed: durable queue/agent events only; provider secrets are never rendered.
+        // Unified read-only feed: queue transitions plus durable handoff states.
         val queueDiagnostics = pl.aimasterpro.app.core.MasterTaskQueueStore.snapshot(this)
+        val handoffDiagnostics = pl.aimasterpro.app.core.AgentHandoffStore.snapshot(this)
+        val diagnosticsFeed = pl.aimasterpro.app.core.DiagnosticsEventFeed.build(
+            queueDiagnostics, handoffDiagnostics, limit = 12
+        )
         card("Ostatnie zdarzenia kolejki i agentów",
-            "Maksymalnie 12 najnowszych wpisów z trwałego dziennika. To lokalny wycinek zdarzeń kolejki, nie pełny monitoring dostawców.")
+            "Połączony wycinek trwałego dziennika kolejki i skrzynki przekazań. Treści raportów agentów nie są kopiowane do diagnostyki.")
         action("↻ Odśwież zdarzenia", onClick = {
             showShell("Diagnostyka")
             showDiagnostics()
         })
-        if (queueDiagnostics.status != pl.aimasterpro.app.core.MasterTaskQueueStore.ReadStatus.AVAILABLE) {
-            card("Dziennik zdarzeń niedostępny",
-                "Stan: ${queueDiagnostics.status} • kod: ${queueDiagnostics.errorCode}. Nie pokazuję danych niezweryfikowanych.")
+        if (!diagnosticsFeed.isComplete) {
+            card("Częściowe źródła diagnostyczne",
+                "Dziennik kolejki: ${diagnosticsFeed.queueStatus} • Skrzynka przekazań: ${diagnosticsFeed.handoffStatus}. Dostępne wpisy pokazuję częściowo; niedostępne źródło nie jest traktowane jako puste.")
+        }
+        if (diagnosticsFeed.entries.isEmpty()) {
+            card("Brak dostępnych zdarzeń",
+                "Po utworzeniu zadania lub rozpoczęciu pracy zespołu pojawią się tu zdarzenia operacyjne.")
         } else {
             val taskTitles = queueDiagnostics.tasks.associate { it.id to it.title }
-            val visibleOperations = setOf(
-                "AGENT_TRACE", "AGENT_MESSAGE", "AGENT_PROGRESS", "AGENT_RESULT",
-                "TRANSITION", "RECOVER_INTERRUPTED", "CREATE", "ASSIGN"
-            )
-            val recentEvents = queueDiagnostics.events
-                .filter { it.operation in visibleOperations }
-                .takeLast(12)
-                .asReversed()
-            if (recentEvents.isEmpty()) {
-                card("Brak zdarzeń", "Zdarzenia pojawią się po utworzeniu zadania lub rozpoczęciu pracy zespołu.")
-            } else {
-                val eventTime = java.text.SimpleDateFormat("dd.MM HH:mm:ss", java.util.Locale.getDefault())
-                recentEvents.forEach { event ->
-                    val kind = when (event.operation) {
-                        "AGENT_TRACE" -> when (event.toStatus) {
-                            "HANDOFF_SENT" -> "PRZEKAZANIE RAPORTU"
-                            "HANDOFF_CLAIMED" -> "PRZEJĘCIE PRZEKAZANIA"
-                            "HANDOFF_ACKNOWLEDGED" -> "POTWIERDZENIE ODBIORU"
-                            else -> "ŚLAD TECHNICZNY AGENTA"
-                        }
-                        "AGENT_MESSAGE" -> "WIADOMOŚĆ"
-                        "AGENT_PROGRESS" -> "POSTĘP AGENTA"
-                        "AGENT_RESULT" -> "WYNIK AGENTA"
-                        "RECOVER_INTERRUPTED" -> "ODZYSKIWANIE PRZERWANEGO ZADANIA"
-                        "TRANSITION" -> "ZMIANA STANU"
-                        "CREATE" -> "UTWORZENIE ZADANIA"
-                        "ASSIGN" -> "PRZYDZIAŁ AGENTÓW"
-                        else -> event.operation
-                    }
-                    val route = if (event.recipient.isNotBlank()) " → ${event.recipient}" else ""
-                    val state = listOf(event.fromStatus, event.toStatus)
-                        .filter { it.isNotBlank() }.joinToString(" → ")
-                    val provider = listOf(event.providerId, event.model)
-                        .filter { it.isNotBlank() }.joinToString(" / ")
-                    val metadata = listOf(
-                        taskTitles[event.taskId] ?: event.taskId,
-                        "${event.actor}${route}",
-                        state,
-                        provider,
-                        eventTime.format(java.util.Date(event.timestamp))
-                    ).filter { it.isNotBlank() }.joinToString(" • ")
-                    card(kind, "${metadata}\n${event.detail.take(350)}")
+            val eventTime = java.text.SimpleDateFormat("dd.MM HH:mm:ss", java.util.Locale.getDefault())
+            diagnosticsFeed.entries.forEach { event ->
+                val kind = when (event.operation) {
+                    "HANDOFF_PENDING" -> "PRZEKAZANIE OCZEKUJE"
+                    "HANDOFF_CLAIMED" -> "PRZEKAZANIE PRZEJĘTE"
+                    "HANDOFF_ACKNOWLEDGED" -> "PRZEKAZANIE POTWIERDZONE"
+                    "HANDOFF_REJECTED" -> "PRZEKAZANIE ODRZUCONE"
+                    "HANDOFF_MANUALLY_RESOLVED" -> "PRZEKAZANIE ZAMKNIĘTE — WYNIK NIEZNANY"
+                    "AGENT_TRACE" -> "ŚLAD TECHNICZNY AGENTA"
+                    "AGENT_MESSAGE" -> "WIADOMOŚĆ"
+                    "AGENT_PROGRESS" -> "POSTĘP AGENTA"
+                    "AGENT_RESULT" -> "WYNIK AGENTA"
+                    "TRANSITION" -> "ZMIANA STANU"
+                    "RECOVER_INTERRUPTED" -> "ODZYSKIWANIE PRZERWANEGO ZADANIA"
+                    "CREATE" -> "UTWORZENIE ZADANIA"
+                    "ASSIGN" -> "PRZYDZIAŁ AGENTÓW"
+                    else -> event.operation
                 }
+                val route = if (event.recipient.isNotBlank()) " → ${event.recipient}" else ""
+                val provider = listOf(event.providerId, event.model)
+                    .filter { it.isNotBlank() }.joinToString(" / ")
+                val metadata = listOf(
+                    taskTitles[event.taskId] ?: event.taskId,
+                    "${event.actor}${route}",
+                    provider,
+                    event.source,
+                    eventTime.format(java.util.Date(event.timestamp))
+                ).filter { it.isNotBlank() }.joinToString(" • ")
+                card(kind, "${metadata}\n${event.detail.take(350)}")
             }
         }
 
-        val handoffDiagnostics = pl.aimasterpro.app.core.AgentHandoffStore.snapshot(this)
         val handoffTime = java.text.SimpleDateFormat("dd.MM HH:mm:ss", java.util.Locale.getDefault())
         if (handoffDiagnostics.status != pl.aimasterpro.app.core.AgentHandoffStore.ReadStatus.AVAILABLE) {
             card("Skrzynka przekazań agentów — niedostępna",
