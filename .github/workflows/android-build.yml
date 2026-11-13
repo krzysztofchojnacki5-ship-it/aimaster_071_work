@@ -4,9 +4,14 @@ on:
   push:
     branches:
       - 'work/aiforteca-*'
+    paths:
+      - '.github/ci/full-android-build.trigger'
   pull_request:
     branches:
       - 'work/aiforteca-*'
+    paths:
+      - '.github/ci/full-android-build.trigger'
+  workflow_dispatch:
 
 permissions:
   contents: read
