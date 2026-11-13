@@ -55,15 +55,18 @@ object DiagnosticsEventFeed {
                     recipient = event.recipient,
                     providerId = event.providerId,
                     model = event.model,
-                    // Queue event details can contain agent-authored messages or report excerpts.
-                    // Keep the diagnostic timeline operational: expose only the validated state
-                    // for agent events, never their free-form content.
+                    // Queue event details may contain user or agent authored content.
+                    // Render only structured operational metadata, never free-form details.
                     detail = when (event.operation) {
+                        "CREATE" -> "Utworzono zadanie w kolejce."
+                        "ASSIGN" -> "Zapisano przydział agentów."
+                        "TRANSITION" -> "Zmiana stanu: ${event.fromStatus} → ${event.toStatus}."
                         "AGENT_RESULT" -> "Wynik agenta zapisany (${event.toStatus})."
                         "AGENT_MESSAGE" -> "Wiadomość agenta zarejestrowana (${event.toStatus})."
                         "AGENT_PROGRESS" -> "Postęp agenta: ${event.toStatus}."
                         "AGENT_TRACE" -> "Ślad techniczny: ${event.toStatus}."
-                        else -> event.detail.take(350)
+                        "RECOVER_INTERRUPTED" -> "Odzyskiwanie przerwanego zadania: ${event.fromStatus} → ${event.toStatus}."
+                        else -> "Zarejestrowano zdarzenie operacyjne."
                     },
                     source = "QUEUE"
                 )
@@ -75,9 +78,9 @@ object DiagnosticsEventFeed {
                     AgentHandoffStore.State.PENDING -> "Przekazanie oczekuje na odbiorcę."
                     AgentHandoffStore.State.CLAIMED -> "Przekazanie przejęte; wynik żądania odbiorcy może być nieznany."
                     AgentHandoffStore.State.ACKNOWLEDGED -> "Odbiorca potwierdził trwałe przyjęcie przekazania."
-                    AgentHandoffStore.State.REJECTED -> "Odbiorca odrzucił przekazanie: ${message.resolutionReason}"
+                    AgentHandoffStore.State.REJECTED -> "Odbiorca odrzucił przekazanie."
                     AgentHandoffStore.State.MANUALLY_RESOLVED ->
-                        "Ręcznie zamknięto jako wynik nieznany (${message.resolutionActor}): ${message.resolutionReason}"
+                        "Ręcznie zamknięto jako wynik nieznany (${message.resolutionActor})."
                 }
                 entries += Entry(
                     id = message.id,
