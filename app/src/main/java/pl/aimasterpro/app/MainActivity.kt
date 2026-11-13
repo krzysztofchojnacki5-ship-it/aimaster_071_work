@@ -6858,14 +6858,14 @@ class MainActivity : Activity() {
                     "$taskTitle • ${handoff.senderAgentId} → ${handoff.recipientAgentId} • przebieg #${handoff.runId}\n" +
                         "ID: ${handoff.id} • Decyzja: ${handoff.resolutionActor} • " +
                         handoffTime.format(java.util.Date(handoff.resolvedAt)) + "\n" +
-                        handoff.resolutionReason)
+                        "Ręczne zamknięcie nie potwierdza wykonania żądania.")
             }
             rejected.takeLast(5).asReversed().forEach { handoff ->
                 val taskTitle = queueDiagnostics.tasks.firstOrNull { it.id == handoff.taskId }?.title ?: handoff.taskId
                 card("PRZEKAZANIE ODRZUCONE PRZEZ ODBIORCĘ",
                     "$taskTitle • ${handoff.senderAgentId} → ${handoff.recipientAgentId} • przebieg #${handoff.runId}\n" +
                         "ID: ${handoff.id} • Odrzucono: ${handoffTime.format(java.util.Date(handoff.updatedAt))}\n" +
-                        handoff.resolutionReason)
+                        "Odbiorca odrzucił przekazanie; szczegóły pozostają w bezpiecznym dzienniku.")
             }
         }
 
