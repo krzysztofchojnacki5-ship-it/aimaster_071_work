@@ -801,6 +801,9 @@ class ProjectWorkspaceStore(private val root: File) {
                         val temp = File(target.parentFile, ".${target.name}.patch-$id.tmp")
                         try {
                             temp.writeText(content, Charsets.UTF_8)
+                            if (target.exists()) {
+                                target.delete()
+                            }
                             require(temp.renameTo(target)) { "Nie można podmienić pliku w stagingu: ${change.path}" }
                         } finally {
                             if (temp.exists()) temp.delete()

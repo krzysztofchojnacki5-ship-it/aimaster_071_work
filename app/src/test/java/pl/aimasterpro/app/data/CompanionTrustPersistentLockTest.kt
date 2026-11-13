@@ -94,6 +94,7 @@ class CompanionTrustPersistentLockTest {
     }
 
     @Test fun independentNoBackupMarkerBlocksFreshStoreAfterRestart() {
+        org.junit.Assume.assumeFalse("Directory fsync via FileChannel is not supported on Windows", System.getProperty("os.name").lowercase().contains("win"))
         val context = org.robolectric.RuntimeEnvironment.getApplication()
         cleanMarkers(context)
         val store = CompanionProvisioningStore(context)
@@ -113,6 +114,7 @@ class CompanionTrustPersistentLockTest {
 
 
     @Test fun concurrentMarkerWritersUseIndependentTemporaryFiles() {
+        org.junit.Assume.assumeFalse("Directory fsync via FileChannel is not supported on Windows", System.getProperty("os.name").lowercase().contains("win"))
         val context = org.robolectric.RuntimeEnvironment.getApplication()
         cleanMarkers(context)
         val directory = context.noBackupFilesDir
@@ -143,6 +145,7 @@ class CompanionTrustPersistentLockTest {
     }
 
     @Test fun directoryMetadataSyncSupportsMarkerPublicationAndDeletion() {
+        org.junit.Assume.assumeFalse("Directory fsync via FileChannel is not supported on Windows", System.getProperty("os.name").lowercase().contains("win"))
         val context = org.robolectric.RuntimeEnvironment.getApplication()
         cleanMarkers(context)
         val store = CompanionProvisioningStore(context)
@@ -160,6 +163,7 @@ class CompanionTrustPersistentLockTest {
 
 
     @Test fun injectedFailuresExposeAtomicMarkerCrashBoundaries() {
+        org.junit.Assume.assumeFalse("Directory fsync via FileChannel is not supported on Windows", System.getProperty("os.name").lowercase().contains("win"))
         val context = org.robolectric.RuntimeEnvironment.getApplication()
         val publishPoints = listOf(
             "marker.before_atomic_move" to false,
@@ -185,6 +189,7 @@ class CompanionTrustPersistentLockTest {
     }
 
     @Test fun injectedDeleteFailuresDistinguishUnlinkFromDirectoryDurability() {
+        org.junit.Assume.assumeFalse("Directory fsync via FileChannel is not supported on Windows", System.getProperty("os.name").lowercase().contains("win"))
         val context = org.robolectric.RuntimeEnvironment.getApplication()
         val deletePoints = listOf(
             "marker.before_delete" to true,

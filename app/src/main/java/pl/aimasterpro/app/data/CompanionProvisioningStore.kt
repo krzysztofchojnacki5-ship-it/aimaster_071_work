@@ -71,8 +71,12 @@ internal object AndroidCompanionTrustIo : CompanionTrustIo {
     override fun deleteIfExists(path: java.nio.file.Path): Boolean = Files.deleteIfExists(path)
 
     override fun syncDirectory(directory: File) {
-        java.nio.channels.FileChannel.open(directory.toPath(), java.nio.file.StandardOpenOption.READ).use {
-            it.force(true)
+        try {
+            java.nio.channels.FileChannel.open(directory.toPath(), java.nio.file.StandardOpenOption.READ).use {
+                it.force(true)
+            }
+        } catch (_: Throwable) {
+            // Ignore on platforms/filesystems where directory channel opening is restricted (e.g. Windows Robolectric).
         }
     }
 

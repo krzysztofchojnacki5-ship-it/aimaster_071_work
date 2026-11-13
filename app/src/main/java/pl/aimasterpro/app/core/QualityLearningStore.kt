@@ -142,7 +142,7 @@ object QualityLearningStore {
         if (!saveProposals(context, all)) return false
         val memoryEntry = "[UCZENIE ZATWIERDZONE ${old.id.take(8)}; dowody=${old.evidenceCount}; pewność=${old.confidence}] ${old.text}".take(1000)
         if (status == "APPROVED") {
-            val sharedSaved = AiMemoryStore.addMemory(context, memoryEntry, permit)
+            val sharedSaved = AiMemoryStore.addMemory(context, memoryEntry, permit, objectId = old.id)
             // Preserve agent scope: approved specialist lessons are not broadcast to unrelated agents.
             val sourceRef = "proposal:${old.id}"
             val agentSaves = old.affectedAgents.filter(String::isNotBlank).map { agentId ->
@@ -150,7 +150,7 @@ object QualityLearningStore {
                     category = "wniosek jakościowy", sourceTaskIds = listOf(sourceRef), confidence = old.confidence) != null
             }
             if (!sharedSaved || agentSaves.any { !it }) {
-                AiMemoryStore.removeMemory(context, memoryEntry, permit)
+                AiMemoryStore.removeMemory(context, memoryEntry, permit, objectId = old.id)
                 AgentOperationalMemoryStore.removeBySource(context, sourceRef, permit)
                 all[index] = old
                 if (!saveProposals(context, all)) {
@@ -159,7 +159,7 @@ object QualityLearningStore {
                 return false
             }
         } else if (old.status == "APPROVED") {
-            val sharedRemoved = AiMemoryStore.removeMemory(context, memoryEntry, permit)
+            val sharedRemoved = AiMemoryStore.removeMemory(context, memoryEntry, permit, objectId = old.id)
             val agentRemoved = AgentOperationalMemoryStore.removeBySource(context, "proposal:${old.id}", permit)
             if (!sharedRemoved || !agentRemoved) {
                 all[index] = old
@@ -260,7 +260,7 @@ object QualityLearningStore {
                     // Remove this proposal's provenance from every agent first. Rebuild only
                     // the explicitly approved scope, so stale/foreign agent copies cannot survive.
                     val staleAgentSourcesRemoved = AgentOperationalMemoryStore.removeBySource(context, sourceRef, permit)
-                    val sharedSaved = AiMemoryStore.addMemory(context, memoryEntry, permit)
+                    val sharedSaved = AiMemoryStore.addMemory(context, memoryEntry, permit, objectId = proposal.id)
                     val agentSaves = proposal.affectedAgents.map { agentId ->
                         AgentOperationalMemoryStore.addApproved(context, agentId, proposal.text, permit,
                             category = "wniosek jakościowy", sourceTaskIds = listOf(sourceRef),
@@ -272,7 +272,7 @@ object QualityLearningStore {
                             AgentOperationalMemoryStore.hasApprovedSource(context, agentId, proposal.text, sourceRef) == true
                         }
                 } else {
-                    val sharedRemoved = AiMemoryStore.removeMemory(context, memoryEntry, permit)
+                    val sharedRemoved = AiMemoryStore.removeMemory(context, memoryEntry, permit, objectId = proposal.id)
                     val agentRemoved = AgentOperationalMemoryStore.removeBySource(context, sourceRef, permit)
                     sharedRemoved && agentRemoved &&
                         AiMemoryStore.containsExactMemory(context, memoryEntry) == false &&

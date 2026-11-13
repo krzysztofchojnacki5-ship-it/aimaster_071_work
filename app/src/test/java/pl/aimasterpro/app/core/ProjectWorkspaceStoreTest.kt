@@ -262,7 +262,12 @@ class ProjectWorkspaceStoreTest {
             outside.writeText("outside")
             val target = File(root, "current/src/Main.kt")
             target.delete()
-            java.nio.file.Files.createSymbolicLink(target.toPath(), outside.toPath())
+            try {
+                java.nio.file.Files.createSymbolicLink(target.toPath(), outside.toPath())
+            } catch (e: java.nio.file.FileSystemException) {
+                org.junit.Assume.assumeNoException("Symbolic links require administrative privileges or developer mode on Windows", e)
+                return
+            }
             val report = store.verifyCurrentWorkspace()
             assertFalse(report.valid)
             assertTrue(report.missing.contains("src/Main.kt"))
@@ -415,7 +420,12 @@ class ProjectWorkspaceStoreTest {
         try {
             outside.writeText("outside sentinel")
             val link = File(root, ".workspace.swap.owned.tmp")
-            java.nio.file.Files.createSymbolicLink(link.toPath(), outside.toPath())
+            try {
+                java.nio.file.Files.createSymbolicLink(link.toPath(), outside.toPath())
+            } catch (e: java.nio.file.FileSystemException) {
+                org.junit.Assume.assumeNoException("Symbolic links require administrative privileges or developer mode on Windows", e)
+                return
+            }
             cleanupOwnedTemporaryFile(link, createdByThisWriter = true)
             assertFalse("owned temporary directory entry should be unlinked", java.nio.file.Files.exists(link.toPath()))
             assertEquals("outside sentinel", outside.readText())
