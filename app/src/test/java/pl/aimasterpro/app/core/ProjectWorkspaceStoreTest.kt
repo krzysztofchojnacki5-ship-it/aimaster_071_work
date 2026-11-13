@@ -399,6 +399,20 @@ class ProjectWorkspaceStoreTest {
         } finally { root.deleteRecursively() }
     }
 
+    @Test fun durablePublisherAtomicallyReplacesExistingTarget() {
+        val root = tempDir("workspace-publisher-atomic-replace-")
+        try {
+            val temp = File(root, "writer.tmp")
+            val target = File(root, "target.bin").apply { writeText("old complete content") }
+            publishWorkspaceDurableFile(
+                temp, target, true,
+                writePayload = { it.write("new complete content".toByteArray(Charsets.UTF_8)) }
+            )
+            assertEquals("new complete content", target.readText())
+            assertFalse("temporary file should be consumed by atomic move", temp.exists())
+        } finally { root.deleteRecursively() }
+    }
+
     @Test fun durablePublisherTreatsDirectorySyncAsBestEffortAfterAtomicPublish() {
         val root = tempDir("workspace-publisher-directory-sync-")
         try {

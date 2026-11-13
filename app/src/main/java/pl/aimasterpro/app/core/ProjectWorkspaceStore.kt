@@ -800,11 +800,12 @@ class ProjectWorkspaceStore(private val root: File) {
                         require(target.parentFile?.let { it.exists() || it.mkdirs() } == true) { "Nie można utworzyć katalogu: ${change.path}" }
                         val temp = File(target.parentFile, ".${target.name}.patch-$id.tmp")
                         try {
-                            temp.writeText(content, Charsets.UTF_8)
-                            if (target.exists()) {
-                                target.delete()
-                            }
-                            require(temp.renameTo(target)) { "Nie można podmienić pliku w stagingu: ${change.path}" }
+                            publishWorkspaceDurableFile(
+                                temp = temp,
+                                target = target,
+                                replaceExisting = change.operation == "MODIFY",
+                                writePayload = { output -> output.write(content.toByteArray(Charsets.UTF_8)) }
+                            )
                         } finally {
                             if (temp.exists()) temp.delete()
                         }
