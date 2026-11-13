@@ -641,6 +641,69 @@ class MasterTaskQueueStoreTest {
     }
 
 
+    @Test fun persistedAgentEventsMustPreserveTimelineAndExactRunProvenance() {
+        val prefs = context.getSharedPreferences("aiforteca_master_task_queue_v1", Context.MODE_PRIVATE)
+        val task = org.json.JSONObject()
+            .put("id", "task-provenance-001")
+            .put("title", "Agent provenance")
+            .put("objective", "Validate stored agent event ownership.")
+            .put("agents", org.json.JSONArray().put("critical-reviewer").put("unit-test-engineer"))
+            .put("dependencies", org.json.JSONArray())
+            .put("priority", 2)
+            .put("status", "RUNNING")
+            .put("step", "Running")
+            .put("createdAt", 10L)
+            .put("updatedAt", 120L)
+            .put("runId", 1)
+        fun event(
+            id: String,
+            actor: String,
+            operation: String,
+            to: String,
+            timestamp: Long,
+            recipient: String = "",
+            runId: Int = 1
+        ) = org.json.JSONObject()
+            .put("id", id).put("taskId", "task-provenance-001")
+            .put("actor", actor).put("operation", operation)
+            .put("from", "").put("to", to).put("detail", "Test event.")
+            .put("timestamp", timestamp).put("recipient", recipient)
+            .put("providerId", "").put("model", "").put("runId", runId)
+
+        val malformed = listOf(
+            // Per-task event timestamps must never move backwards.
+            org.json.JSONArray().put(event("event-time-1", "MASTER", "NOTE", "INFO", 120L))
+                .put(event("event-time-2", "MASTER", "NOTE", "INFO", 119L)),
+            // A result cannot be attributed to an agent outside the assigned team.
+            org.json.JSONArray().put(event("event-result-foreign", "agent:debugger", "AGENT_RESULT", "COMPLETED", 120L)),
+            // A result must be terminal, not a forged progress state.
+            org.json.JSONArray().put(event("event-result-state", "agent:critical-reviewer", "AGENT_RESULT", "RUNNING", 120L)),
+            // One agent cannot have two terminal results in the same run.
+            org.json.JSONArray()
+                .put(event("event-result-1", "agent:critical-reviewer", "AGENT_RESULT", "COMPLETED", 120L))
+                .put(event("event-result-2", "agent:critical-reviewer", "AGENT_RESULT", "FAILED", 121L)),
+            // Progress must belong to an assigned agent.
+            org.json.JSONArray().put(event("event-progress-foreign", "agent:debugger", "AGENT_PROGRESS", "RUNNING", 120L)),
+            // Technical traces may not introduce an unrelated agent/provider endpoint.
+            org.json.JSONArray().put(event("event-trace-foreign", "provider:unrelated", "AGENT_TRACE",
+                "NETWORK_FAILOVER", 120L, recipient = "agent:debugger"))
+        )
+
+        malformed.forEachIndexed { index, events ->
+            val raw = org.json.JSONObject()
+                .put("version", 1)
+                .put("tasks", org.json.JSONArray().put(task))
+                .put("events", events)
+                .toString()
+            assertTrue("Fixture must be written: $index", prefs.edit().putString("state", raw).commit())
+            assertEquals("Invalid agent provenance $index must fail closed",
+                MasterTaskQueueStore.ReadStatus.CORRUPT, MasterTaskQueueStore.snapshot(context).status)
+            assertFalse("Corrupt provenance must block further mutation",
+                MasterTaskQueueStore.enqueue(context, "task-after-provenance-$index", "Nowe", "Cel.", now = 200L))
+            assertEquals("Corrupt source bytes must remain untouched", raw, prefs.getString("state", null))
+        }
+    }
+
     @Test fun persistedTaskMetadataWithSecretsIsRejectedAndPreserved() {
         val prefs = context.getSharedPreferences("aiforteca_master_task_queue_v1", Context.MODE_PRIVATE)
         val safeTask = org.json.JSONObject()

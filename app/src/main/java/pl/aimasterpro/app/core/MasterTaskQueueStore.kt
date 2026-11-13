@@ -553,6 +553,60 @@ object MasterTaskQueueStore {
             }) {
                 "Queue event references a missing task or an execution run newer than its task."
             }
+
+            // Persisted events are a trusted audit timeline only when their ordering and
+            // agent/run provenance agree with the owning task. Runtime writers enforce these
+            // constraints; validate them again on read so edited or partially corrupted JSON
+            // cannot manufacture another agent's result or a foreign technical trace.
+            val lastTimestampByTask = mutableMapOf<String, Long>()
+            val resultActorsByRun = mutableSetOf<String>()
+            events.forEach { event ->
+                val owner = taskById.getValue(event.taskId)
+                val previousTimestamp = lastTimestampByTask[event.taskId] ?: owner.createdAt
+                require(event.timestamp >= previousTimestamp) {
+                    "Queue event timeline moves backwards for task ${event.taskId}."
+                }
+                lastTimestampByTask[event.taskId] = event.timestamp
+
+                when (event.operation) {
+                    "AGENT_RESULT" -> {
+                        val agentId = event.actor.removePrefix("agent:")
+                        require(event.actor.startsWith("agent:") &&
+                            agentId in owner.assignedAgentIds &&
+                            event.toStatus in setOf("COMPLETED", "FAILED", "BLOCKED")) {
+                            "Agent result does not match an assigned agent or terminal state."
+                        }
+                        require(resultActorsByRun.add("${event.taskId}:${event.runId}:$agentId")) {
+                            "Duplicate agent result exists for one task execution."
+                        }
+                    }
+                    "AGENT_PROGRESS" -> {
+                        val agentId = event.actor.removePrefix("agent:")
+                        require(event.actor.startsWith("agent:") && agentId in owner.assignedAgentIds &&
+                            event.toStatus in progressStates) {
+                            "Agent progress does not match an assigned agent or supported state."
+                        }
+                    }
+                    "AGENT_TRACE" -> {
+                        val source = event.actor
+                        val target = event.recipient
+                        val sourceAgent = source.removePrefix("agent:")
+                        val targetAgent = target.removePrefix("agent:")
+                        val sourceIsAgent = source.startsWith("agent:") && sourceAgent in owner.assignedAgentIds
+                        val targetIsAgent = target.startsWith("agent:") && targetAgent in owner.assignedAgentIds
+                        val sourceIsCoordinator = source == "MASTER" || source == "SYSTEM"
+                        val targetIsCoordinator = target == "MASTER" || target == "SYSTEM"
+                        val sourceIsProvider = source.startsWith("provider:")
+                        val targetIsProvider = target.startsWith("provider:")
+                        val endpointsMatch = (sourceIsAgent || sourceIsCoordinator ||
+                            (sourceIsProvider && targetIsAgent)) &&
+                            (targetIsAgent || targetIsCoordinator || (targetIsProvider && sourceIsAgent))
+                        require(endpointsMatch) {
+                            "Technical trace endpoints do not belong to the assigned team."
+                        }
+                    }
+                }
+            }
             Snapshot(ReadStatus.AVAILABLE, tasks, events)
         }.getOrElse {
             Snapshot(ReadStatus.CORRUPT, errorCode = "QUEUE_READ_FAILED:${it.javaClass.simpleName}")
