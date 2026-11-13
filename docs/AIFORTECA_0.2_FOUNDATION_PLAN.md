@@ -110,3 +110,13 @@ Cover unauthorized create/update/delete, scope escape, missing or forged approva
 6. Add agent workload/availability, role/model assignment visibility, task dependencies, priorities, conflict detection and duplicate-work prevention.
 7. Complete regression and acceptance tests against real store adapters; run CI, inspect test reports/APK metadata, then prepare a new test APK while preserving version 0.2 until the user authorizes a version bump.
 8. Preserve all existing provider profiles, encrypted keys, chats, memories, learning history, agent definitions and legacy journals; no destructive migration without explicit approval.
+
+
+## Implementation checkpoint — package 15 / explicit agent handoff rejection (2026-11-13)
+- Package 14 is closed: the latest verified commit before package 15 was `d0081813e4c0136cad76ec50aea3cd0c8fa0f64d`; Gradle Wrapper Validation and AiFORTeca Unit Tests both completed successfully. The published test report recorded 1,194 tests, 0 failures, 0 errors and 0 skipped tests.
+- Package 15 is in progress and is scoped to the explicit durable agent-to-agent handoff contract. The first implementation increment adds `AgentHandoffStore.reject(...)`: only the addressed, assigned recipient may reject its own CLAIMED handoff while the exact parent run is active.
+- Rejection persists a sanitized, bounded audit reason, preserves the claim timestamp, advances the update timestamp, and is idempotent only for the same sanitized reason. Rejected messages cannot subsequently be claimed or acknowledged.
+- Persisted REJECTED records now require a non-empty sanitized audit reason and valid monotonic timestamps; malformed rejection records fail closed and their original stored bytes remain untouched.
+- Added tests for recipient authorization, secret redaction, duplicate rejection, rejection timestamp rollback, terminal-state behavior and malformed persisted REJECTED records.
+- Source commit: `d301d18af014f5c8e11ea8e3f4d504108ced3e62`; follow-up test commits: `b34a76f62ae8759adf29810658f4e30a5c107674`, `b3a5eb2429efc0ff70b07e7e6c3a3b48e092f423`, `bba6b315c8f0cdfd623db1484a185de833013505`.
+- This is one logical feature increment with focused test hardening, not a claim that all five package-15 fixes are complete. No CI has yet been run for these package-15 commits. Do not mark the package green until its full five-fix scope and required CI evidence are complete.
