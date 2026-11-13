@@ -84,4 +84,59 @@ class AgentEfficiencyTrackerPersistenceTest {
         assertEquals(oversized, prefs.getString("outcomes", null))
     }
 
+
+    @Test fun recordRejectsOversizedIdentityInsteadOfSilentlyTruncatingIt() {
+        val original = "t".repeat(161)
+        AgentEfficiencyTracker.record(context, AgentEfficiencyTracker.Outcome(
+            12L, original, "agent-a", "COMPLETED", 10L, 1, "p", "m", ""
+        ))
+        assertTrue(AgentEfficiencyTracker.load(context).isEmpty())
+        assertNull(prefs.getString("outcomes", null))
+    }
+
+    @Test fun recordRedactsSecretsInProviderModelAndErrorMetadata() {
+        AgentEfficiencyTracker.record(context, AgentEfficiencyTracker.Outcome(
+            12L, "task-safe", "agent-a", "FAILED", 10L, 1,
+            "api_key=sk_live_1234567890", "model-token=ghp_12345678901234567890",
+            "Bearer ghp_12345678901234567890"
+        ))
+        val row = AgentEfficiencyTracker.load(context).single()
+        assertFalse(row.providerId.contains("sk_live_"))
+        assertFalse(row.model.contains("ghp_"))
+        assertFalse(row.errorCategory.contains("ghp_"))
+        assertTrue(prefs.getString("outcomes", "").orEmpty().contains("[REDACTED]"))
+    }
+
+    @Test fun zeroTimestampIsRejectedOnWriteAndInPersistedHistory() {
+        AgentEfficiencyTracker.record(context, AgentEfficiencyTracker.Outcome(
+            0L, "task-zero", "agent-a", "COMPLETED", 10L, 1, "p", "m", ""
+        ))
+        assertNull(prefs.getString("outcomes", null))
+        val zero = validRow().replace("\\\"ts\\\":10", "\\\"ts\\\":0")
+        prefs.edit().putString("outcomes", """[$zero]""").commit()
+        assertTrue(AgentEfficiencyTracker.load(context).isEmpty())
+    }
+
+    @Test fun persistedSecretMetadataInvalidatesWholeHistoryWithoutRepairingIt() {
+        val unsafe = validRow().replace("\\\"provider\\\":\\\"p\\\"", "\\\"provider\\\":\\\"api_key=sk_live_1234567890\\\"")
+        prefs.edit().putString("outcomes", """[$unsafe]""").commit()
+        assertTrue(AgentEfficiencyTracker.load(context).isEmpty())
+        AgentEfficiencyTracker.record(context, AgentEfficiencyTracker.Outcome(
+            12L, "task-new", "agent-a", "COMPLETED", 10L, 1, "p", "m", ""
+        ))
+        assertTrue(prefs.getString("outcomes", null) == """[$unsafe]""")
+    }
+
+    @Test fun failedDurableCommitQuarantinesEfficiencyHistory() {
+        SharedPreferencesWriteHealth.resetForTests("agent_efficiency_history_v1")
+        val editor = org.mockito.Mockito.mock(android.content.SharedPreferences.Editor::class.java)
+        org.mockito.Mockito.`when`(editor.commit()).thenReturn(false)
+        assertFalse(SharedPreferencesWriteHealth.commit("agent_efficiency_history_v1", editor))
+        AgentEfficiencyTracker.record(context, AgentEfficiencyTracker.Outcome(
+            12L, "task-after-failure", "agent-a", "COMPLETED", 10L, 1, "p", "m", ""
+        ))
+        assertTrue(AgentEfficiencyTracker.load(context).isEmpty())
+        assertTrue(SharedPreferencesWriteHealth.isUncertain("agent_efficiency_history_v1"))
+        SharedPreferencesWriteHealth.resetForTests("agent_efficiency_history_v1")
+    }
 }
