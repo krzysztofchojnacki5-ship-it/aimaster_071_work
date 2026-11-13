@@ -113,6 +113,36 @@ object AgentHandoffStore {
         }
     } == true
 
+    /** Only the addressed recipient may reject its own active claim with a durable reason. */
+    fun reject(
+        context: Context, taskId: String, runId: Int, messageId: String,
+        recipientAgentId: String, reason: String,
+        now: Long = System.currentTimeMillis()
+    ): Boolean = MasterTaskQueueStore.withActiveRun(context, taskId, runId) {
+        synchronized(this) {
+            if (!valid(taskId) || !valid(messageId) || !valid(recipientAgentId) ||
+                reason.isBlank() || reason.length > 300 || now <= 0L) return@synchronized false
+            if (!isAssigned(context, taskId, runId, recipientAgentId)) return@synchronized false
+            val safeReason = CommunicationLogSanitizer.sanitize(reason.trim())
+            if (safeReason.isBlank() || safeReason.length > 300) return@synchronized false
+            val current = read(context)
+            if (current.status != ReadStatus.AVAILABLE) return@synchronized false
+            val message = current.messages.firstOrNull { it.id == messageId } ?: return@synchronized false
+            if (message.taskId != taskId || message.runId != runId ||
+                message.recipientAgentId != recipientAgentId) return@synchronized false
+            if (message.state == State.REJECTED) return@synchronized message.resolutionReason == safeReason
+            if (message.state != State.CLAIMED || message.claimedAt <= 0L ||
+                now < message.claimedAt || now < message.createdAt) return@synchronized false
+            write(context, current.messages.map {
+                if (it.id == messageId) it.copy(
+                    state = State.REJECTED,
+                    updatedAt = now,
+                    resolutionReason = safeReason
+                ) else it
+            })
+        }
+    } == true
+
     /**
      * Explicitly closes an interrupted CLAIMED item as unresolved, never as acknowledged.
      * Only MASTER/USER may do this, and only while the exact owning run is BLOCKED.
@@ -237,9 +267,12 @@ object AgentHandoffStore {
                     it.resolvedAt == 0L && it.resolutionActor.isEmpty() && it.resolutionReason.isEmpty()
                 State.CLAIMED -> it.claimedAt >= it.createdAt && it.updatedAt == it.claimedAt &&
                     it.resolvedAt == 0L && it.resolutionActor.isEmpty() && it.resolutionReason.isEmpty()
-                State.ACKNOWLEDGED, State.REJECTED -> it.claimedAt >= it.createdAt &&
+                State.ACKNOWLEDGED -> it.claimedAt >= it.createdAt &&
                     it.updatedAt >= it.claimedAt && it.resolvedAt == 0L &&
                     it.resolutionActor.isEmpty() && it.resolutionReason.isEmpty()
+                State.REJECTED -> it.claimedAt >= it.createdAt &&
+                    it.updatedAt >= it.claimedAt && it.resolvedAt == 0L &&
+                    it.resolutionActor.isEmpty() && it.resolutionReason.isNotBlank()
                 State.MANUALLY_RESOLVED -> it.claimedAt >= it.createdAt && it.resolvedAt >= it.claimedAt &&
                     it.resolvedAt >= it.createdAt && it.updatedAt == it.resolvedAt &&
                     it.resolutionActor in setOf("MASTER", "USER") && it.resolutionReason.isNotBlank()
