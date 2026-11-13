@@ -106,6 +106,53 @@ class MemoryAuditLogTest {
     }
 
 
+    @Test fun terminalEventsRequireAnOpenIntentAndCannotBeReplayedAfterCommit() {
+        assertFalse(MemoryAuditLog.append(context, event(MemoryAuditLog.Phase.COMMITTED, "SUCCESS")))
+        assertFalse(MemoryAuditLog.append(context, event(MemoryAuditLog.Phase.FAILED, "MUTATION_FAILED")))
+        assertTrue(MemoryAuditLog.readVerified(context)!!.isEmpty())
+
+        assertTrue(MemoryAuditLog.append(context, event(MemoryAuditLog.Phase.INTENT, "AUTHORIZED")))
+        assertTrue(MemoryAuditLog.append(context, event(MemoryAuditLog.Phase.COMMITTED, "SUCCESS")))
+        assertFalse(MemoryAuditLog.append(context, event(MemoryAuditLog.Phase.FAILED, "MUTATION_FAILED")))
+        assertEquals(2, MemoryAuditLog.readVerified(context)!!.size)
+    }
+
+    @Test fun terminalEventMustPreserveTheIntentApprovalReference() {
+        val intent = event(MemoryAuditLog.Phase.INTENT, "AUTHORIZED")
+        assertTrue(MemoryAuditLog.append(context, intent))
+
+        assertFalse(MemoryAuditLog.append(context, intent.copy(
+            approvalRef = "proposal:forged",
+            phase = MemoryAuditLog.Phase.COMMITTED,
+            outcome = "SUCCESS"
+        )))
+        assertTrue(MemoryAuditLog.hasUnresolvedIntent(context, "USER", "APPROVE_PROPOSAL", "rule-1"))
+
+        assertTrue(MemoryAuditLog.append(context, intent.copy(
+            phase = MemoryAuditLog.Phase.COMMITTED,
+            outcome = "SUCCESS"
+        )))
+    }
+
+    @Test fun failedOperationCanOnlyBeClosedByVerifiedRecoveryOutcome() {
+        val intent = event(MemoryAuditLog.Phase.INTENT, "AUTHORIZED")
+        assertTrue(MemoryAuditLog.append(context, intent))
+        assertTrue(MemoryAuditLog.append(context, intent.copy(
+            phase = MemoryAuditLog.Phase.FAILED,
+            outcome = "MUTATION_FAILED"
+        )))
+
+        assertFalse(MemoryAuditLog.append(context, intent.copy(
+            phase = MemoryAuditLog.Phase.COMMITTED,
+            outcome = "SUCCESS"
+        )))
+        assertTrue(MemoryAuditLog.append(context, intent.copy(
+            phase = MemoryAuditLog.Phase.COMMITTED,
+            outcome = "RECOVERED_STATE"
+        )))
+        assertTrue(MemoryAuditLog.unresolvedOperations(context, "rule-1")!!.isEmpty())
+    }
+
     @Test fun appendRedactsSecretsFromFreeFormAuditReasons() {
         val secret = "sk-1234567890abcdef"
         val unsafe = event(MemoryAuditLog.Phase.INTENT, "PREPARED").copy(
