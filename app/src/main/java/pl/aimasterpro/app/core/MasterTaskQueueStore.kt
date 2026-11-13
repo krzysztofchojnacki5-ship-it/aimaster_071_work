@@ -351,6 +351,11 @@ object MasterTaskQueueStore {
         val targetIsCoordinator = target.equals("MASTER", true) || target.equals("SYSTEM", true)
         val sourceIsProvider = source.startsWith("provider:", ignoreCase = true)
         val targetIsProvider = target.startsWith("provider:", ignoreCase = true)
+        val sourceProviderId = source.substringAfter(':', "").takeIf { sourceIsProvider }
+        val targetProviderId = target.substringAfter(':', "").takeIf { targetIsProvider }
+        if ((sourceIsProvider && sourceProviderId.isNullOrBlank()) ||
+            (targetIsProvider && targetProviderId.isNullOrBlank())) return@mutate null
+
         val sourceAllowed = sourceIsCoordinator ||
             (sourceId != null && sourceId in current.assignedAgentIds) ||
             (sourceIsProvider && targetId != null && targetId in current.assignedAgentIds)
@@ -359,10 +364,22 @@ object MasterTaskQueueStore {
             (targetIsProvider && sourceId != null && sourceId in current.assignedAgentIds)
         if (!sourceAllowed || !targetAllowed) return@mutate null
 
+        // Persist only canonical endpoint identities. The resolver deliberately accepts agent
+        // IDs and display names case-insensitively; storing the caller's spelling would make
+        // the strict read-time provenance check reject an event that this writer just accepted.
+        fun canonicalEndpoint(endpoint: String, agentId: String?, isProvider: Boolean): String = when {
+            endpoint.equals("MASTER", ignoreCase = true) -> "MASTER"
+            endpoint.equals("SYSTEM", ignoreCase = true) -> "SYSTEM"
+            agentId != null -> "agent:$agentId"
+            isProvider -> "provider:${endpoint.substringAfter(':')}"
+            else -> endpoint
+        }
+        val canonicalSource = canonicalEndpoint(source, sourceId, sourceIsProvider)
+        val canonicalTarget = canonicalEndpoint(target, targetId, targetIsProvider)
         val safe = CommunicationLogSanitizer.sanitize(detail).take(350)
-        val summary = "Do: $target • $traceType • $safe"
-        Triple(tasks, events + event(taskId, source, "AGENT_TRACE", "", traceType, summary, now,
-            recipient = target, providerId = providerId, model = model, runId = current.runId), true)
+        val summary = "Do: $canonicalTarget • $traceType • $safe"
+        Triple(tasks, events + event(taskId, canonicalSource, "AGENT_TRACE", "", traceType, summary, now,
+            recipient = canonicalTarget, providerId = providerId, model = model, runId = current.runId), true)
     }
 
     /** Moves interrupted RUNNING tasks to BLOCKED after process restart; never auto-replays uncertain API work. */

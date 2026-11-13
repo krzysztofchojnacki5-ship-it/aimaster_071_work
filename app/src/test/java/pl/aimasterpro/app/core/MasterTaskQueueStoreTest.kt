@@ -280,6 +280,60 @@ class MasterTaskQueueStoreTest {
         assertFalse(MasterTaskQueueStore.isConversationMessage(event("AGENT_MESSAGE", "UNKNOWN")))
     }
 
+    @Test fun technicalTraceCanonicalizesAcceptedEndpointAliasesBeforePersistence() {
+        val taskId = "task-trace-canonical"
+        val custom = pl.aimasterpro.app.agents.AgentSpec(
+            id = "custom-trace-auditor",
+            name = "Trace Auditor",
+            category = "Quality",
+            responsibility = "Checks technical traces.",
+            keywords = listOf("trace"),
+            systemPromptOverride = "Keep secrets private."
+        )
+        assertTrue(AgentManagerStore.addCustomAgent(context, custom))
+        assertTrue(MasterTaskQueueStore.enqueue(context, taskId, "Canonical trace", "Normalize endpoint identities.", now = 60L))
+        assertTrue(MasterTaskQueueStore.assign(context, taskId,
+            listOf("critical-reviewer", custom.id), now = 61L))
+        assertTrue(MasterTaskQueueStore.transition(context, taskId, "MASTER",
+            MasterTaskQueueStore.Status.RUNNING, "Start.", 62L))
+        val runId = MasterTaskQueueStore.snapshot(context).tasks.single().runId
+
+        // Five accepted input forms must round-trip through strict persisted provenance checks.
+        assertTrue(MasterTaskQueueStore.recordAgentTrace(
+            context, taskId, "trace auditor", "master", "ALIAS_SOURCE",
+            "Display-name source is canonicalized.", now = 63L, expectedRunId = runId
+        ))
+        assertTrue(MasterTaskQueueStore.recordAgentTrace(
+            context, taskId, "AGENT:CRITICAL-REVIEWER", "system", "PREFIX_CASE",
+            "Agent prefix and coordinator case are canonicalized.", now = 64L, expectedRunId = runId
+        ))
+        assertTrue(MasterTaskQueueStore.recordAgentTrace(
+            context, taskId, "PROVIDER:OpenRouter", "critical-reviewer", "PROVIDER_CASE",
+            "Provider scheme is canonicalized.", now = 65L, expectedRunId = runId
+        ))
+        assertTrue(MasterTaskQueueStore.recordAgentTrace(
+            context, taskId, "system", "Trace Auditor", "ALIAS_TARGET",
+            "Display-name target is canonicalized.", now = 66L, expectedRunId = runId
+        ))
+        assertFalse(MasterTaskQueueStore.recordAgentTrace(
+            context, taskId, "provider:", "critical-reviewer", "EMPTY_PROVIDER",
+            "Provider identity must not be empty.", now = 67L, expectedRunId = runId
+        ))
+
+        val snapshot = MasterTaskQueueStore.snapshot(context)
+        assertEquals(MasterTaskQueueStore.ReadStatus.AVAILABLE, snapshot.status)
+        val traces = snapshot.events.filter { it.operation == "AGENT_TRACE" }
+        assertEquals(4, traces.size)
+        assertEquals("agent:custom-trace-auditor", traces[0].actor)
+        assertEquals("MASTER", traces[0].recipient)
+        assertEquals("agent:critical-reviewer", traces[1].actor)
+        assertEquals("SYSTEM", traces[1].recipient)
+        assertEquals("provider:OpenRouter", traces[2].actor)
+        assertEquals("agent:critical-reviewer", traces[2].recipient)
+        assertEquals("SYSTEM", traces[3].actor)
+        assertEquals("agent:custom-trace-auditor", traces[3].recipient)
+    }
+
     @Test fun technicalAgentTraceIsSeparateFromMessagesAndBoundToCurrentRun() {
         val taskId = "task-technical-trace"
         assertTrue(MasterTaskQueueStore.enqueue(context, taskId, "Ślady techniczne", "Rozdziel komunikaty i logi.", now = 71L))
