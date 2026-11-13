@@ -60,6 +60,17 @@ object TaskResultArchive {
             providerId.isBlank() || providerId.length > MAX_PROVIDER_ID_CHARS ||
             model.isBlank() || model.length > MAX_MODEL_CHARS ||
             chatId.length > MAX_CHAT_ID_CHARS) return@withHealthyAccess false
+        // Provider/model labels are user-controlled configuration metadata. Redact them
+        // before persistence because restored archive entries are rendered in chat history.
+        val safeAgentId = CommunicationLogSanitizer.sanitize(agentId.trim())
+        val safeProviderId = CommunicationLogSanitizer.sanitize(providerId.trim())
+        val safeModel = CommunicationLogSanitizer.sanitize(model.trim())
+        // Chat IDs are lookup keys, not display text: reject a transformed key rather than
+        // silently attaching a report to a different conversation.
+        if (safeAgentId.isBlank() || safeAgentId.length > MAX_AGENT_ID_CHARS ||
+            safeProviderId.isBlank() || safeProviderId.length > MAX_PROVIDER_ID_CHARS ||
+            safeModel.isBlank() || safeModel.length > MAX_MODEL_CHARS ||
+            CommunicationLogSanitizer.sanitize(chatId) != chatId) return@withHealthyAccess false
         val safeReport = CommunicationLogSanitizer.sanitize(report)
         if (safeReport.isBlank() || safeReport.length > MAX_REPORT_CHARS || createdAt < 0L) return@withHealthyAccess false
         val old = read(context) ?: run {
@@ -67,7 +78,7 @@ object TaskResultArchive {
             return@withHealthyAccess false
         }
         val next = JSONArray()
-        next.put(encode(Entry(taskId, agentId, safeReport, providerId, model, createdAt, chatId)))
+        next.put(encode(Entry(taskId, safeAgentId, safeReport, safeProviderId, safeModel, createdAt, chatId)))
         for (i in 0 until old.length()) {
             val row = old.getJSONObject(i)
             if (row.optString("taskId") != taskId) next.put(row)
@@ -151,7 +162,10 @@ object TaskResultArchive {
                         !existing.contains("[TASK_REPORT_ID:") && existing.endsWith(entry.report)
                     }
                 if (hasUnmarkedLegacyCopy) return@forEach
-                rows.put("📦 Odzyskany raport agenta ${entry.agentId} (${entry.providerId}/${entry.model}) $marker\n${entry.report}")
+                val safeAgentLabel = CommunicationLogSanitizer.sanitize(entry.agentId).take(MAX_AGENT_ID_CHARS)
+                val safeProviderLabel = CommunicationLogSanitizer.sanitize(entry.providerId).take(MAX_PROVIDER_ID_CHARS)
+                val safeModelLabel = CommunicationLogSanitizer.sanitize(entry.model).take(MAX_MODEL_CHARS)
+                rows.put("📦 Odzyskany raport agenta $safeAgentLabel ($safeProviderLabel/$safeModelLabel) $marker\n${entry.report}")
                 while (rows.length() > 150) rows.remove(0)
                 chat.put("agentActivity", rows).put("updatedAt", maxOf(chat.optLong("updatedAt"), entry.createdAt))
                 restored++
