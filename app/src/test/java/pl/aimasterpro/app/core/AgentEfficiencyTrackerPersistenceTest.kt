@@ -112,13 +112,13 @@ class AgentEfficiencyTrackerPersistenceTest {
             0L, "task-zero", "agent-a", "COMPLETED", 10L, 1, "p", "m", ""
         ))
         assertNull(prefs.getString("outcomes", null))
-        val zero = validRow().replace("\\\"ts\\\":10", "\\\"ts\\\":0")
+        val zero = validRow().replace("\"ts\":10", "\"ts\":0")
         prefs.edit().putString("outcomes", """[$zero]""").commit()
         assertTrue(AgentEfficiencyTracker.load(context).isEmpty())
     }
 
     @Test fun persistedSecretMetadataInvalidatesWholeHistoryWithoutRepairingIt() {
-        val unsafe = validRow().replace("\\\"provider\\\":\\\"p\\\"", "\\\"provider\\\":\\\"api_key=sk_live_1234567890\\\"")
+        val unsafe = validRow().replace("\"provider\":\"p\"", "\"provider\":\"api_key=sk_live_1234567890\"")
         prefs.edit().putString("outcomes", """[$unsafe]""").commit()
         assertTrue(AgentEfficiencyTracker.load(context).isEmpty())
         AgentEfficiencyTracker.record(context, AgentEfficiencyTracker.Outcome(
