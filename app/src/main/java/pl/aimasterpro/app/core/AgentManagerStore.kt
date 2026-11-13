@@ -94,7 +94,14 @@ object AgentManagerStore {
                 require(custom.none { it.id in removed }) { "AGENT_MANAGER_REMOVED_CUSTOM_REAPPEARED" }
                 Snapshot(ReadStatus.AVAILABLE, disabled.toSet(), custom, removedCustomIds = removed.toSet())
             }
-        }.getOrElse { Snapshot(ReadStatus.CORRUPT, errorCode = "AGENT_MANAGER_READ_FAILED:${it.javaClass.simpleName}") }
+        }.getOrElse { error ->
+            val unavailable = SharedPreferencesWriteHealth.isUncertain(PREFS) ||
+                error is IllegalStateException || error is SecurityException
+            Snapshot(
+                if (unavailable) ReadStatus.UNAVAILABLE else ReadStatus.CORRUPT,
+                errorCode = "${if (unavailable) "AGENT_MANAGER_STORAGE_UNAVAILABLE" else "AGENT_MANAGER_READ_FAILED"}:${error.javaClass.simpleName}"
+            )
+        }
     }
 
     fun enabledCatalog(context: Context): List<AgentSpec> {
@@ -109,6 +116,7 @@ object AgentManagerStore {
         return AgentCatalog.find(agentId) != null || state.customAgents.any { it.id == agentId }
     }
 
+    @Synchronized
     fun setEnabled(context: Context, agentId: String, enabled: Boolean): Boolean {
         if (!agentId.matches(ID_PATTERN)) return false
         val state = snapshot(context)
@@ -119,6 +127,7 @@ object AgentManagerStore {
         return write(context, disabled, state.customAgents, state.removedCustomIds)
     }
 
+    @Synchronized
     fun addCustomAgent(context: Context, agent: AgentSpec): Boolean {
         if (!validCustom(agent)) return false
         val state = snapshot(context)
@@ -128,6 +137,7 @@ object AgentManagerStore {
         return write(context, state.disabledIds, state.customAgents + agent, state.removedCustomIds)
     }
 
+    @Synchronized
     fun updateCustomAgent(context: Context, agent: AgentSpec): Boolean {
         if (!validCustom(agent) || AgentCatalog.find(agent.id) != null) return false
         val state = snapshot(context)
@@ -137,6 +147,7 @@ object AgentManagerStore {
         }, state.removedCustomIds)
     }
 
+    @Synchronized
     fun removeCustomAgent(context: Context, agentId: String): Boolean {
         val state = snapshot(context)
         if (state.status != ReadStatus.AVAILABLE || state.customAgents.none { it.id == agentId }) return false

@@ -331,9 +331,22 @@ class AgentHandoffStoreTest {
         assertNull(AgentHandoffStore.claim(context, "handoff-task-01", runId, "handoff-fault-001",
             "unit-test-engineer", 91L))
     }
+    @Test fun sanitizedPayloadThatExpandsPastLimitIsRejectedWithoutTruncation() {
+        val runId = runningTask()
+        val raw = "a".repeat(7_989) + " password=x"
+        assertEquals(8_000, raw.length)
+        assertTrue(CommunicationLogSanitizer.sanitize(raw).length > 8_000)
+
+        assertFalse(AgentHandoffStore.send(context, "handoff-task-01", runId, "handoff-msg-overflow",
+            "critical-reviewer", "unit-test-engineer", raw, 25L))
+        assertTrue(AgentHandoffStore.snapshot(context).messages.isEmpty())
+    }
+
     @Test fun oversizedRawInboxIsRejectedBeforeJsonParsingAndPreserved() {
         val prefs = context.getSharedPreferences("aiforteca_agent_handoff_v1", Context.MODE_PRIVATE)
-        val oversized = " ".repeat(4_000_001)
+        // A valid JSON document with excessive trailing whitespace must be rejected by the
+        // raw-size guard before the parser accepts it as an empty inbox.
+        val oversized = "[]" + " ".repeat(4_000_001 - 2)
         assertTrue(prefs.edit().putString("messages", oversized).commit())
         assertEquals(AgentHandoffStore.ReadStatus.CORRUPT, AgentHandoffStore.snapshot(context).status)
         assertFalse(AgentHandoffStore.send(context, "handoff-task-01", 1, "handoff-new-001",

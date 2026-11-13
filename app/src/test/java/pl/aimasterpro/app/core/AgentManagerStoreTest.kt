@@ -9,6 +9,9 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
 import pl.aimasterpro.app.agents.AgentCatalog
 import pl.aimasterpro.app.agents.AgentSpec
+import java.util.Collections
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 
 @RunWith(RobolectricTestRunner::class)
 class AgentManagerStoreTest {
@@ -94,6 +97,47 @@ class AgentManagerStoreTest {
         assertFalse(AgentManagerStore.addCustomAgent(context, custom(id = "bad id")))
         assertTrue(AgentManagerStore.addCustomAgent(context, custom()))
         assertFalse(AgentManagerStore.addCustomAgent(context, custom()))
+    }
+
+    @Test fun concurrentCustomAgentAddsDoNotLoseCatalogUpdates() {
+        val startGate = CountDownLatch(1)
+        val finished = CountDownLatch(2)
+        val failures = Collections.synchronizedList(mutableListOf<String>())
+
+        for (worker in 0..1) {
+            Thread {
+                try {
+                    startGate.await()
+                    repeat(12) { index ->
+                        val id = "custom-parallel-$worker-${index.toString().padStart(2, '0')}"
+                        if (!AgentManagerStore.addCustomAgent(context, custom(id))) failures.add(id)
+                    }
+                } catch (error: Throwable) {
+                    failures.add("worker-$worker:${error.javaClass.simpleName}")
+                } finally {
+                    finished.countDown()
+                }
+            }.apply {
+                isDaemon = true
+                start()
+            }
+        }
+
+        startGate.countDown()
+        assertTrue("Concurrent catalog updates did not finish", finished.await(10, TimeUnit.SECONDS))
+        assertTrue("Catalog updates failed: $failures", failures.isEmpty())
+        assertEquals(24, AgentManagerStore.snapshot(context).customAgents.size)
+    }
+
+    @Test fun preferenceAccessFailureIsUnavailableNotCorrupt() {
+        val failingContext = object : android.content.ContextWrapper(context) {
+            override fun getSharedPreferences(name: String, mode: Int): android.content.SharedPreferences {
+                throw IllegalStateException("controlled agent catalog preference access failure")
+            }
+        }
+        val state = AgentManagerStore.snapshot(failingContext)
+        assertEquals(AgentManagerStore.ReadStatus.UNAVAILABLE, state.status)
+        assertTrue(state.errorCode.startsWith("AGENT_MANAGER_STORAGE_UNAVAILABLE:"))
     }
 
     @Test fun wrongJsonTypesInAgentStateFailClosedInsteadOfDroppingDisabledOrRemovedIds() {

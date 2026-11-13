@@ -52,8 +52,9 @@ object AgentHandoffStore {
                 payload.isBlank() || payload.length > MAX_PAYLOAD || now < 0L) return@synchronized false
             if (!isAssigned(context, taskId, runId, senderAgentId) ||
                 !isAssigned(context, taskId, runId, recipientAgentId)) return@synchronized false
-            val safe = CommunicationLogSanitizer.sanitize(payload).take(MAX_PAYLOAD)
-            if (safe.isBlank()) return@synchronized false
+            val safe = CommunicationLogSanitizer.sanitize(payload)
+            // Sanitization may expand short credential values; never persist a silently cut message.
+            if (safe.isBlank() || safe.length > MAX_PAYLOAD) return@synchronized false
             val current = read(context)
             if (current.status != ReadStatus.AVAILABLE) return@synchronized false
             val existing = current.messages.firstOrNull { it.id == messageId }
@@ -185,6 +186,9 @@ object AgentHandoffStore {
             SharedPreferencesWriteHealth.withHealthyAccess(PREFS) {
                 val raw = context.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
                     .getString(KEY, null) ?: return@withHealthyAccess Snapshot(ReadStatus.AVAILABLE)
+                if (raw.length > MAX_RAW_CHARS) {
+                    return@withHealthyAccess Snapshot(ReadStatus.CORRUPT)
+                }
                 try {
                     val array = JSONArray(raw)
                     if (array.length() > MAX_MESSAGES) return@withHealthyAccess Snapshot(ReadStatus.CORRUPT)
