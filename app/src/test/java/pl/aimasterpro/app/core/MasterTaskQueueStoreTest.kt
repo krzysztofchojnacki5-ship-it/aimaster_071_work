@@ -209,7 +209,7 @@ class MasterTaskQueueStoreTest {
         assertEquals(MasterTaskQueueStore.Status.COMPLETED, state.tasks.single().status)
         assertEquals(2, state.events.count { it.operation == "AGENT_RESULT" })
         assertEquals(1, state.events.count { it.operation == "AGENT_MESSAGE" })
-        assertEquals("critical-reviewer", state.events.first { it.operation == "AGENT_MESSAGE" }.actor)
+        assertEquals("agent:critical-reviewer", state.events.first { it.operation == "AGENT_MESSAGE" }.actor)
     }
 
     @Test fun failedAgentMakesMultiAgentTaskFailedAfterAllReports() {
@@ -562,8 +562,8 @@ class MasterTaskQueueStoreTest {
         ))
         val messages = MasterTaskQueueStore.snapshot(context).events.filter { it.operation == "AGENT_MESSAGE" }
         assertEquals(2, messages.size)
-        assertEquals("critical-reviewer", messages[0].actor)
-        assertEquals("unit-test-engineer", messages[0].recipient)
+        assertEquals("agent:critical-reviewer", messages[0].actor)
+        assertEquals("agent:unit-test-engineer", messages[0].recipient)
     }
 
     @Test fun interruptedRunningTasksRecoverAsBlockedWithoutAutomaticReplay() {
@@ -1134,6 +1134,66 @@ class MasterTaskQueueStoreTest {
             "agent:critical-reviewer", "NETWORK_FAILOVER", "Niebezpieczna tożsamość źródła.", now = 54L
         ))
         assertEquals(before, MasterTaskQueueStore.snapshot(context).events.size)
+    }
+
+
+    @Test fun communicationCanonicalizesAgentAliasesAndRejectsSelfMessages() {
+        val taskId = "task-message-canonical"
+        assertTrue(MasterTaskQueueStore.enqueue(context, taskId, "Canonical", "Normalize message endpoints.", now = 1_300L))
+        assertTrue(MasterTaskQueueStore.assign(context, taskId,
+            listOf("critical-reviewer", "unit-test-engineer"), now = 1_301L))
+        assertTrue(MasterTaskQueueStore.transition(context, taskId, "MASTER",
+            MasterTaskQueueStore.Status.RUNNING, "Start.", 1_302L))
+
+        assertFalse(MasterTaskQueueStore.recordAgentMessage(
+            context, taskId, "critical-reviewer", "AGENT:CRITICAL-REVIEWER",
+            "MESSAGE", "Self-directed message must be rejected.", now = 1_303L
+        ))
+        assertTrue(MasterTaskQueueStore.recordAgentMessage(
+            context, taskId, "AGENT:CRITICAL-REVIEWER", "master",
+            "REPORT", "Canonical message.", now = 1_304L
+        ))
+        val message = MasterTaskQueueStore.snapshot(context).events.single { it.operation == "AGENT_MESSAGE" }
+        assertEquals("agent:critical-reviewer", message.actor)
+        assertEquals("MASTER", message.recipient)
+        assertEquals("REPORT", message.toStatus)
+    }
+
+    @Test fun persistedAgentMessagesRequireAssignedCanonicalOrLegacyEndpoints() {
+        val prefs = context.getSharedPreferences("aiforteca_master_task_queue_v1", Context.MODE_PRIVATE)
+        val task = org.json.JSONObject()
+            .put("id", "task-message-provenance").put("title", "Message provenance").put("objective", "Validate message endpoints.")
+            .put("agents", org.json.JSONArray().put("critical-reviewer").put("unit-test-engineer"))
+            .put("dependencies", org.json.JSONArray()).put("priority", 2).put("status", "RUNNING")
+            .put("step", "Running").put("createdAt", 10L).put("updatedAt", 20L).put("runId", 1)
+        fun message(actor: String, recipient: String, status: String = "REPORT", runId: Int = 1) =
+            org.json.JSONObject()
+                .put("id", "event-message-provenance").put("taskId", "task-message-provenance")
+                .put("actor", actor).put("operation", "AGENT_MESSAGE").put("from", "")
+                .put("to", status).put("detail", "Message row.").put("timestamp", 20L)
+                .put("recipient", recipient).put("providerId", "").put("model", "").put("runId", runId)
+        val malformed = listOf(
+            message("agent:debugger", "MASTER"),
+            message("agent:critical-reviewer", "agent:debugger"),
+            message("agent:critical-reviewer", "MASTER", status = "UNKNOWN"),
+            message("agent:critical-reviewer", "agent:critical-reviewer"),
+            message("agent:critical-reviewer", "MASTER", runId = 0)
+        )
+        malformed.forEachIndexed { index, event ->
+            val raw = org.json.JSONObject().put("version", 1)
+                .put("tasks", org.json.JSONArray().put(task)).put("events", org.json.JSONArray().put(event)).toString()
+            assertTrue(prefs.edit().putString("state", raw).commit())
+            assertEquals("Malformed persisted communication $index must fail closed",
+                MasterTaskQueueStore.ReadStatus.CORRUPT, MasterTaskQueueStore.snapshot(context).status)
+            assertEquals("Rejected communication bytes must remain untouched", raw, prefs.getString("state", null))
+        }
+
+        // Older version-1 rows stored bare agent IDs; preserve their read compatibility.
+        val legacy = message("critical-reviewer", "MASTER")
+        val rawLegacy = org.json.JSONObject().put("version", 1)
+            .put("tasks", org.json.JSONArray().put(task)).put("events", org.json.JSONArray().put(legacy)).toString()
+        assertTrue(prefs.edit().putString("state", rawLegacy).commit())
+        assertEquals(MasterTaskQueueStore.ReadStatus.AVAILABLE, MasterTaskQueueStore.snapshot(context).status)
     }
 
 }
