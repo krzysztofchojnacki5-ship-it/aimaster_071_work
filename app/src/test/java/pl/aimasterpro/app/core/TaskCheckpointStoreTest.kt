@@ -861,4 +861,79 @@ class TaskCheckpointStoreTest {
         assertEquals("ok", TaskCheckpointStore.latest(context).single().detail)
     }
 
+
+    @Test fun checkpointWriterRedactsDiagnosticMetadataAndPersistsOnlyProviderOrigin() {
+        val prefs = context.getSharedPreferences("task_checkpoints_v1", Context.MODE_PRIVATE)
+        val event = TaskCheckpointStore.Event(
+            taskId = "task-redaction-001",
+            agentId = "RESEARCHER",
+            status = "REQUESTING",
+            detail = "request access_token=detail-secret",
+            timestamp = 100L,
+            providerId = "provider api_key=provider-secret",
+            model = "model password=model-secret",
+            attempts = 1,
+            processId = "process-001",
+            idempotencyKey = "team:task-redaction-001:provider",
+            baseUrl = "https://user:base-secret@api.example.com/v1?token=url-secret"
+        )
+
+        assertTrue(TaskCheckpointStore.record(context, event))
+        val saved = TaskCheckpointStore.latest(context).single()
+        assertEquals("request access_token=[REDACTED]", saved.detail)
+        assertEquals("provider api_key=[REDACTED]", saved.providerId)
+        assertEquals("model password=[REDACTED]", saved.model)
+        assertEquals("https://api.example.com", saved.baseUrl)
+        val raw = prefs.getString("events", null).orEmpty()
+        listOf("detail-secret", "provider-secret", "model-secret", "base-secret", "url-secret")
+            .forEach { assertFalse("Secret must not be persisted: $it", raw.contains(it)) }
+
+        val before = raw
+        assertFalse(TaskCheckpointStore.record(context, event.copy(
+            taskId = "task-unsafe-key-001",
+            idempotencyKey = "team:task-unsafe-key-001:secret=identity-secret"
+        )))
+        assertEquals(before, prefs.getString("events", null))
+    }
+
+    @Test fun checkpointReaderRejectsPersistedSecretsAndNonOriginUrlsWithoutOverwriting() {
+        val prefs = context.getSharedPreferences("task_checkpoints_v1", Context.MODE_PRIVATE)
+        val base = org.json.JSONObject()
+            .put("task", "task-reader-safe")
+            .put("agent", "RESEARCHER")
+            .put("status", "REQUESTING")
+            .put("detail", "request started")
+            .put("ts", 100L)
+            .put("provider", "openai")
+            .put("model", "gpt-model")
+            .put("attempts", 1)
+            .put("processId", "process-001")
+            .put("estimatedInputTokens", 10L)
+            .put("estimatedOutputTokens", 20L)
+            .put("idempotencyKey", "team:task-reader-safe:openai")
+            .put("baseUrl", "https://api.example.com")
+            .put("runId", 1)
+        val unsafeRows = listOf(
+            org.json.JSONObject(base.toString()).put("detail", "api_key=persisted-secret"),
+            org.json.JSONObject(base.toString()).put("provider", "provider secret=persisted-secret"),
+            org.json.JSONObject(base.toString()).put("model", "model password=persisted-secret"),
+            org.json.JSONObject(base.toString()).put("processId", "Bearer persisted-secret-token"),
+            org.json.JSONObject(base.toString()).put("idempotencyKey", "secret=persisted-secret"),
+            org.json.JSONObject(base.toString()).put("baseUrl", "https://user:pass@api.example.com/path?token=hidden"),
+            org.json.JSONObject(base.toString()).put("task", "task-secret=identity-secret")
+        )
+
+        unsafeRows.forEachIndexed { index, row ->
+            val raw = org.json.JSONArray().put(row).toString()
+            assertTrue(prefs.edit().putString("events", raw).commit())
+            assertFalse("Unsafe persisted row $index must be unreadable", TaskCheckpointStore.isJournalReadable(context))
+            assertFalse("Unsafe persisted row $index must block appends", TaskCheckpointStore.record(
+                context, TaskCheckpointStore.Event(
+                    "task-after-unsafe-row", "RESEARCHER", "QUEUED", "", 200L, "", "", 0
+                )
+            ))
+            assertEquals("Unsafe persisted bytes must remain untouched", raw, prefs.getString("events", null))
+        }
+    }
+
 }
