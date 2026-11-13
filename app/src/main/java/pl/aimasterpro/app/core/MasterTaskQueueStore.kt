@@ -22,6 +22,12 @@ object MasterTaskQueueStore {
     private const val MAX_RESULT_EVENTS = MAX_TASKS * 8
     private const val MAX_STORED_EVENTS = MAX_EVENTS + MAX_RESULT_EVENTS
     private val idPattern = Regex("[A-Za-z0-9][A-Za-z0-9._:-]{2,119}")
+    private val progressStates = setOf(
+        "QUEUED", "RUNNING", "BLOCKED", "USAGE_RECORDED", "USAGE_PENDING",
+        "RESULT_PERSIST_PENDING", "FAILED", "COMPLETED", "TIMED_OUT", "CANCELLED"
+    )
+    private val conversationStatuses = setOf("MESSAGE", "HANDOFF", "REPORT", "PROGRESS")
+    private val traceTypePattern = Regex("[A-Z][A-Z0-9_]{0,39}")
 
     enum class ReadStatus { AVAILABLE, CORRUPT, UNAVAILABLE }
     enum class Status { QUEUED, ASSIGNED, RUNNING, BLOCKED, PAUSED, COMPLETED, FAILED, CANCELLED }
@@ -166,7 +172,10 @@ object MasterTaskQueueStore {
         val agentId = actor.removePrefix("agent:")
         val isAgent = actor.startsWith("agent:")
         val allowed = if (isAgent) {
-            agentId in current.assignedAgentIds && current.status == Status.RUNNING &&
+            // A single agent may close its own task directly. Multi-agent runs must use
+            // recordAgentResult so one early callback cannot close the whole team task.
+            current.assignedAgentIds.size == 1 &&
+                agentId in current.assignedAgentIds && current.status == Status.RUNNING &&
                 target in setOf(Status.COMPLETED, Status.FAILED, Status.BLOCKED)
         } else {
             actor in setOf("MASTER", "USER") && allowedCoordinatorTransition(current.status, target)
@@ -174,10 +183,11 @@ object MasterTaskQueueStore {
         if (!allowed || current.status == target) return@mutate null
         if (target == Status.RUNNING && (current.status != Status.ASSIGNED || current.runId == Int.MAX_VALUE)) return@mutate null
         val nextRunId = if (target == Status.RUNNING) current.runId + 1 else current.runId
-        val next = current.copy(status = target, currentStep = detail.trim().ifBlank { target.name },
+        val safeDetail = CommunicationLogSanitizer.sanitize(detail.trim()).take(500)
+        val next = current.copy(status = target, currentStep = safeDetail.ifBlank { target.name },
             updatedAt = now, runId = nextRunId)
         Triple(tasks.map { if (it.id == taskId) next else it },
-            events + event(taskId, actor, "TRANSITION", current.status.name, target.name, detail.trim(), now,
+            events + event(taskId, actor, "TRANSITION", current.status.name, target.name, safeDetail, now,
                 runId = nextRunId), true)
     }
 
@@ -237,7 +247,7 @@ object MasterTaskQueueStore {
         val current = tasks.firstOrNull { it.id == taskId } ?: return@mutate null
         if (current.status != Status.RUNNING || (expectedRunId != null && current.runId != expectedRunId) ||
             agentId !in current.assignedAgentIds ||
-            state.isBlank() || state.length > 40 || detail.length > 500 ||
+            state !in progressStates || detail.length > 500 ||
             providerId.length > 120 || model.length > 180 || attempts !in 0..100 ||
             now < 0L) return@mutate null
         val safeDetail = CommunicationLogSanitizer.sanitize(detail).take(300)
@@ -268,7 +278,8 @@ object MasterTaskQueueStore {
         val current = tasks.firstOrNull { it.id == taskId } ?: return@mutate null
         if (current.status != Status.RUNNING || (expectedRunId != null && current.runId != expectedRunId) ||
             sender.isBlank() || sender.length > 100 ||
-            recipient.isBlank() || recipient.length > 100 || status.length > 30 ||
+            CommunicationLogSanitizer.sanitize(sender) != sender ||
+            recipient.isBlank() || recipient.length > 100 || status !in conversationStatuses ||
             message.isBlank() || message.length > 8_000 || now < 0L ||
             providerId.length > 120 || model.length > 180) return@mutate null
 
@@ -320,7 +331,8 @@ object MasterTaskQueueStore {
         if (current.status != Status.RUNNING || (expectedRunId != null && current.runId != expectedRunId) ||
             source.isBlank() || source.length > 140 ||
             target.isBlank() || target.length > 140 ||
-            traceType.isBlank() || traceType.length > 40 ||
+            !traceType.matches(traceTypePattern) ||
+            CommunicationLogSanitizer.sanitize(source) != source ||
             detail.isBlank() || detail.length > 8_000 || now < 0L ||
             providerId.length > 120 || model.length > 180) return@mutate null
 

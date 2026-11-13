@@ -756,4 +756,87 @@ class MasterTaskQueueStoreTest {
         assertFalse(MasterTaskQueueStore.enqueue(context, "task-after-future", "New", "Must fail closed.", now = 20L))
         assertEquals(raw, prefs.getString("state", null))
     }
+    @Test fun agentCannotCloseMultiAgentTaskWithDirectLifecycleTransition() {
+        val taskId = "task-multi-direct-close"
+        assertTrue(MasterTaskQueueStore.enqueue(context, taskId, "Zespół", "Wymagaj wyników wszystkich agentów.", now = 10L))
+        assertTrue(MasterTaskQueueStore.assign(context, taskId,
+            listOf("critical-reviewer", "unit-test-engineer"), now = 11L))
+        assertTrue(MasterTaskQueueStore.transition(context, taskId, "MASTER",
+            MasterTaskQueueStore.Status.RUNNING, "Start.", 12L))
+
+        assertFalse(MasterTaskQueueStore.transition(context, taskId, "agent:critical-reviewer",
+            MasterTaskQueueStore.Status.COMPLETED, "Jeden agent nie może zamknąć całego zespołu.", 13L))
+        val snapshot = MasterTaskQueueStore.snapshot(context)
+        assertEquals(MasterTaskQueueStore.Status.RUNNING, snapshot.tasks.single().status)
+        assertEquals(3, snapshot.events.size)
+    }
+
+    @Test fun lifecycleTransitionRedactsSecretsBeforePersistingCurrentStep() {
+        val taskId = "task-transition-redaction"
+        assertTrue(MasterTaskQueueStore.enqueue(context, taskId, "Redakcja", "Oczyść opis przejścia.", now = 20L))
+        assertTrue(MasterTaskQueueStore.assign(context, taskId, listOf("critical-reviewer"), now = 21L))
+        assertTrue(MasterTaskQueueStore.transition(context, taskId, "MASTER",
+            MasterTaskQueueStore.Status.RUNNING, "Start.", 22L))
+        val secret = "sk_live_transition_secret_123456789"
+
+        assertTrue(MasterTaskQueueStore.transition(context, taskId, "USER",
+            MasterTaskQueueStore.Status.CANCELLED, "api_key=$secret", 23L))
+        val snapshot = MasterTaskQueueStore.snapshot(context)
+        assertFalse(snapshot.tasks.single().currentStep.contains(secret))
+        assertTrue(snapshot.tasks.single().currentStep.contains("[REDACTED]"))
+        assertFalse(snapshot.events.last().detail.contains(secret))
+    }
+
+    @Test fun progressRejectsUnknownStateInsteadOfPersistingUntrustedMetadata() {
+        val taskId = "task-progress-state-guard"
+        assertTrue(MasterTaskQueueStore.enqueue(context, taskId, "Postęp", "Waliduj stan.", now = 30L))
+        assertTrue(MasterTaskQueueStore.assign(context, taskId, listOf("critical-reviewer"), now = 31L))
+        assertTrue(MasterTaskQueueStore.transition(context, taskId, "MASTER",
+            MasterTaskQueueStore.Status.RUNNING, "Start.", 32L))
+        val before = MasterTaskQueueStore.snapshot(context).events.size
+
+        assertFalse(MasterTaskQueueStore.recordAgentProgress(
+            context, taskId, "critical-reviewer", "api_key=sk_live_progress_secret_123456",
+            "Nieprawidłowy stan.", now = 33L
+        ))
+        assertEquals(before, MasterTaskQueueStore.snapshot(context).events.size)
+        assertTrue(MasterTaskQueueStore.recordAgentProgress(
+            context, taskId, "critical-reviewer", "RUNNING", "Bezpieczny stan.", now = 34L
+        ))
+    }
+
+    @Test fun communicationRejectsUnknownStatusCodes() {
+        val taskId = "task-message-status-guard"
+        assertTrue(MasterTaskQueueStore.enqueue(context, taskId, "Komunikat", "Waliduj status.", now = 40L))
+        assertTrue(MasterTaskQueueStore.assign(context, taskId, listOf("critical-reviewer"), now = 41L))
+        assertTrue(MasterTaskQueueStore.transition(context, taskId, "MASTER",
+            MasterTaskQueueStore.Status.RUNNING, "Start.", 42L))
+        val before = MasterTaskQueueStore.snapshot(context).events.size
+
+        assertFalse(MasterTaskQueueStore.recordAgentMessage(
+            context, taskId, "critical-reviewer", "MASTER", "api_key=sk_live_message_secret_123456",
+            "Nie zapisuj statusu dowolnego tekstu.", now = 43L
+        ))
+        assertEquals(before, MasterTaskQueueStore.snapshot(context).events.size)
+    }
+
+    @Test fun technicalTraceRejectsUnsafeTypeAndCredentialBearingSourceIdentity() {
+        val taskId = "task-trace-metadata-guard"
+        assertTrue(MasterTaskQueueStore.enqueue(context, taskId, "Ślad", "Waliduj metadane śladu.", now = 50L))
+        assertTrue(MasterTaskQueueStore.assign(context, taskId, listOf("critical-reviewer"), now = 51L))
+        assertTrue(MasterTaskQueueStore.transition(context, taskId, "MASTER",
+            MasterTaskQueueStore.Status.RUNNING, "Start.", 52L))
+        val before = MasterTaskQueueStore.snapshot(context).events.size
+
+        assertFalse(MasterTaskQueueStore.recordAgentTrace(
+            context, taskId, "agent:critical-reviewer", "MASTER",
+            "api_key=sk_live_trace_secret_123456", "Nieprawidłowy typ śladu.", now = 53L
+        ))
+        assertFalse(MasterTaskQueueStore.recordAgentTrace(
+            context, taskId, "provider:openrouter api_key=sk_live_trace_secret_123456",
+            "agent:critical-reviewer", "NETWORK_FAILOVER", "Niebezpieczna tożsamość źródła.", now = 54L
+        ))
+        assertEquals(before, MasterTaskQueueStore.snapshot(context).events.size)
+    }
+
 }
