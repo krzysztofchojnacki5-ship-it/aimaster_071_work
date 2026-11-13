@@ -57,7 +57,8 @@ class DiagnosticsEventFeedTest {
         assertEquals(setOf("QUEUE", "HANDOFF"), result.entries.map { it.source }.toSet())
         val handoffEntry = result.entries.single { it.source == "HANDOFF" }
         assertEquals("HANDOFF_REJECTED", handoffEntry.operation)
-        assertTrue(handoffEntry.detail.contains("Powód audytowy."))
+        assertFalse(handoffEntry.detail.contains("Powód audytowy."))
+        assertTrue(handoffEntry.detail.contains("Odbiorca odrzucił przekazanie."))
         assertFalse(handoffEntry.detail.contains("Nie udostępniaj payloadu"))
         assertTrue(result.isComplete)
     }
