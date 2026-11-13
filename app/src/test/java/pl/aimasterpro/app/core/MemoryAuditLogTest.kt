@@ -106,6 +106,51 @@ class MemoryAuditLogTest {
     }
 
 
+    @Test fun appendRejectsUnknownGovernanceActorAndMutationNames() {
+        assertFalse(MemoryAuditLog.append(context, event(MemoryAuditLog.Phase.INTENT, "AUTHORIZED").copy(
+            actor = "UNREGISTERED_ACTOR"
+        )))
+        assertFalse(MemoryAuditLog.append(context, event(MemoryAuditLog.Phase.INTENT, "AUTHORIZED").copy(
+            mutation = "UNREGISTERED_MUTATION"
+        )))
+        assertTrue(MemoryAuditLog.readVerified(context)!!.isEmpty())
+    }
+
+    @Test fun appendRejectsNonDeniedMutationsOutsideUserAuthority() {
+        val recoveryMutation = event(MemoryAuditLog.Phase.INTENT, "AUTHORIZED").copy(
+            mutation = MemoryGovernance.Mutation.RECONCILE_APPROVED_PROPOSAL.name
+        )
+        val agentMutation = event(MemoryAuditLog.Phase.INTENT, "AUTHORIZED").copy(
+            actor = MemoryGovernance.Actor.AGENT.name
+        )
+        assertFalse(MemoryAuditLog.append(context, recoveryMutation))
+        assertFalse(MemoryAuditLog.append(context, agentMutation))
+        assertTrue(MemoryAuditLog.readVerified(context)!!.isEmpty())
+    }
+
+    @Test fun appendAllowsDeniedAgentDecisionButNotAnAgentIntent() {
+        val denied = event(MemoryAuditLog.Phase.FAILED, "DENIED_AGENT_READ_ONLY").copy(
+            actor = MemoryGovernance.Actor.AGENT.name
+        )
+        assertTrue(MemoryAuditLog.append(context, denied))
+        assertFalse(MemoryAuditLog.append(context, denied.copy(
+            phase = MemoryAuditLog.Phase.INTENT, outcome = "AUTHORIZED"
+        )))
+        assertEquals(1, MemoryAuditLog.readVerified(context)!!.size)
+    }
+
+    @Test fun recoveryMutationRequiresExactProposalReference() {
+        val recovery = MemoryAuditLog.Event(
+            actor = MemoryGovernance.Actor.SYSTEM_RECOVERY.name,
+            mutation = MemoryGovernance.Mutation.RECONCILE_APPROVED_PROPOSAL.name,
+            objectId = "rule-1", reason = "verified recovery",
+            approvalRef = "proposal:another-rule",
+            phase = MemoryAuditLog.Phase.INTENT, outcome = "AUTHORIZED"
+        )
+        assertFalse(MemoryAuditLog.append(context, recovery))
+        assertTrue(MemoryAuditLog.readVerified(context)!!.isEmpty())
+        assertTrue(MemoryAuditLog.append(context, recovery.copy(approvalRef = "proposal:rule-1")))
+    }
     @Test fun terminalEventsRequireAnOpenIntentAndCannotBeReplayedAfterCommit() {
         assertFalse(MemoryAuditLog.append(context, event(MemoryAuditLog.Phase.COMMITTED, "SUCCESS")))
         assertFalse(MemoryAuditLog.append(context, event(MemoryAuditLog.Phase.FAILED, "MUTATION_FAILED")))
