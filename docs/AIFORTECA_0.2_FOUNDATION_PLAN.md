@@ -122,11 +122,11 @@ Cover unauthorized create/update/delete, scope escape, missing or forged approva
 - The initial implementation increment established the rejection transition and focused test hardening. The five listed package-15 corrections are now implemented; the final CI run for HEAD `e88e4b2b523f08cadada677bf10824fb59c25759` passed, with 1,195 tests and no failures, errors or skips.
 
 
-### Package 15 — five implementation corrections completed (pending CI)
+### Package 15 — five implementation corrections completed and CI verified
 1. Added an explicit recipient-only rejection transition for a claimed handoff.
 2. Required a non-empty, sanitized, bounded rejection reason in persisted REJECTED records; malformed records fail closed.
 3. Made rejection retries idempotent only when the sanitized reason matches the already stored decision.
 4. Enforced claim-to-rejection timestamp monotonicity; an older timestamp cannot close the claim.
 5. Exposed rejected handoffs in Diagnostics with a count and recent audit entries, rather than silently omitting the new terminal state.
 - Focused unit tests cover authorization, redaction, duplicate retries, backwards timestamps, terminal-state protection and malformed persisted rejection records.
-- Source and tests are committed; this package has not yet received a CI run. The next gate is to verify the branch HEAD and run results, inspect the test report, and only then close package 15.
+- Source and tests are committed. At code HEAD `e88e4b2b523f08cadada677bf10824fb59c25759`, Gradle Wrapper Validation and AiFORTeca Unit Tests both passed; the XML artifact records 1,195 tests, 0 failures, 0 errors and 0 skipped. The follow-up commit `869495cb7aad291fe67ffcc07bea922929b8a33b` updates this documentation only.
