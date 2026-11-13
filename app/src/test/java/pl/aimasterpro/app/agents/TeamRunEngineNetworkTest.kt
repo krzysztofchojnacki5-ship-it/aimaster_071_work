@@ -25,6 +25,7 @@ class TeamRunEngineNetworkTest {
         val activeRequests = AtomicInteger()
         val peakParallel = AtomicInteger()
         val communicationLog = Collections.synchronizedList(mutableListOf<String>())
+        val unknownUsageRecords = AtomicInteger()
         val server = TestHttpServer { body, _ ->
             val active = activeRequests.incrementAndGet()
             peakParallel.updateAndGet { old -> maxOf(old, active) }
@@ -63,12 +64,14 @@ class TeamRunEngineNetworkTest {
                 mode = WorkMode.PLANNING,
                 onLog = { sender, recipient, message, status ->
                     communicationLog.add("$sender->$recipient [$status]: $message")
-                }
+                },
+                onUnknownUsage = { _, _, _, _, _ -> unknownUsageRecords.incrementAndGet() }
             )
             assertEquals(7, results.size)
             assertEquals(1, results.count { it.status == TeamTaskResult.Status.FAILED })
             assertEquals(6, results.count { it.status == TeamTaskResult.Status.COMPLETED })
             assertEquals(7, server.requestCount.get())
+            assertEquals("Ambiguous HTTP 500 must be durably accounted before the task is marked FAILED", 1, unknownUsageRecords.get())
             assertTrue("Expected parallel execution", peakParallel.get() > 1)
             assertTrue("Parallel requests must remain capped at four", peakParallel.get() <= 4)
             assertTrue(results.first { it.agentId == "accessibility-specialist" }.report.contains("HTTP 500"))
