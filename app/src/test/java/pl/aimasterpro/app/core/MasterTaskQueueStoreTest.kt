@@ -57,6 +57,75 @@ class MasterTaskQueueStoreTest {
         assertEquals(listOf(100L, 110L, 120L, 120L), snapshot.events.map { it.timestamp })
     }
 
+    @Test fun activeRunFenceRejectsStaleAndCancelledCallbacks() {
+        val taskId = "task-active-fence"
+        assertTrue(MasterTaskQueueStore.enqueue(context, taskId, "Fence", "Odrzuć spóźnione callbacki.", now = 20L))
+        assertTrue(MasterTaskQueueStore.assign(context, taskId, listOf("critical-reviewer"), now = 21L))
+        assertTrue(MasterTaskQueueStore.transition(context, taskId, "MASTER",
+            MasterTaskQueueStore.Status.RUNNING, "Start.", 22L))
+        val runId = MasterTaskQueueStore.snapshot(context).tasks.single().runId
+        var sideEffects = 0
+
+        assertEquals("active", MasterTaskQueueStore.withActiveRun(context, taskId, runId) {
+            sideEffects++
+            "active"
+        })
+        assertNull(MasterTaskQueueStore.withActiveRun(context, taskId, runId + 1) {
+            sideEffects++
+            "stale"
+        })
+        assertTrue(MasterTaskQueueStore.transition(context, taskId, "USER",
+            MasterTaskQueueStore.Status.CANCELLED, "Anulowano.", 23L))
+        assertNull(MasterTaskQueueStore.withActiveRun(context, taskId, runId) {
+            sideEffects++
+            "cancelled"
+        })
+        assertEquals(1, sideEffects)
+    }
+
+    @Test fun cancellationWaitsForAnAtomicActiveRunSideEffect() {
+        val taskId = "task-active-lock"
+        assertTrue(MasterTaskQueueStore.enqueue(context, taskId, "Blokada", "Sprawdź atomowość anulowania.", now = 30L))
+        assertTrue(MasterTaskQueueStore.assign(context, taskId, listOf("critical-reviewer"), now = 31L))
+        assertTrue(MasterTaskQueueStore.transition(context, taskId, "MASTER",
+            MasterTaskQueueStore.Status.RUNNING, "Start.", 32L))
+
+        val sideEffectEntered = CountDownLatch(1)
+        val releaseSideEffect = CountDownLatch(1)
+        val cancelAttempted = CountDownLatch(1)
+        val cancelFinished = CountDownLatch(1)
+        val sideEffectCompleted = AtomicBoolean(false)
+        val worker = Thread {
+            MasterTaskQueueStore.withActiveRun(context, taskId, 1) {
+                sideEffectEntered.countDown()
+                check(releaseSideEffect.await(3, TimeUnit.SECONDS))
+                sideEffectCompleted.set(true)
+            }
+        }
+        worker.start()
+        assertTrue("Active-run side effect did not start", sideEffectEntered.await(2, TimeUnit.SECONDS))
+
+        val canceller = Thread {
+            cancelAttempted.countDown()
+            MasterTaskQueueStore.transition(context, taskId, "USER",
+                MasterTaskQueueStore.Status.CANCELLED, "Anulowano.", 33L)
+            cancelFinished.countDown()
+        }
+        canceller.start()
+        assertTrue(cancelAttempted.await(2, TimeUnit.SECONDS))
+        assertFalse("Cancellation must wait while the active-run critical section is held.",
+            cancelFinished.await(150, TimeUnit.MILLISECONDS))
+        releaseSideEffect.countDown()
+        assertTrue("Cancellation did not finish after the side effect released the lock.",
+            cancelFinished.await(2, TimeUnit.SECONDS))
+        worker.join(2_000)
+        canceller.join(2_000)
+
+        assertTrue(sideEffectCompleted.get())
+        assertEquals(MasterTaskQueueStore.Status.CANCELLED,
+            MasterTaskQueueStore.snapshot(context).tasks.single().status)
+    }
+
     @Test fun agentCannotCompleteAnotherAgentsTaskOrPauseTask() {
         assertTrue(MasterTaskQueueStore.enqueue(context, "task-002", "Test", "Cel.", now = 20L))
         assertTrue(MasterTaskQueueStore.assign(context, "task-002", listOf("critical-reviewer"), now = 21L))
