@@ -7368,7 +7368,7 @@ class MainActivity : Activity() {
                                 val messageId = "h-${taskId.take(30)}-$executionRunId-${previous.agentId.take(20)}-${item.agentId.take(20)}"
                                 val claimed = pl.aimasterpro.app.core.AgentHandoffStore.claim(
                                     this, taskId, executionRunId, messageId, item.agentId
-                                ) ?: throw IllegalStateException(
+                                ) ?: throw pl.aimasterpro.app.agents.HandoffUnavailableException(
                                     "Brak możliwego do przejęcia przekazania od agenta ${previous.agentId}; żądanie API odbiorcy nie zostanie wysłane."
                                 )
                                 val claimAudited = queueStore.recordAgentTrace(
