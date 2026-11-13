@@ -146,7 +146,7 @@ object QualityLearningStore {
             // Preserve agent scope: approved specialist lessons are not broadcast to unrelated agents.
             val sourceRef = "proposal:${old.id}"
             val agentSaves = old.affectedAgents.filter(String::isNotBlank).map { agentId ->
-                AgentOperationalMemoryStore.addApproved(context, agentId, old.text, permit,
+                AgentOperationalMemoryStore.addApproved(context, agentId, old.text, permit, objectId = old.id,
                     category = "wniosek jakościowy", sourceTaskIds = listOf(sourceRef), confidence = old.confidence) != null
             }
             if (!sharedSaved || agentSaves.any { !it }) {
@@ -262,7 +262,7 @@ object QualityLearningStore {
                     val staleAgentSourcesRemoved = AgentOperationalMemoryStore.removeBySource(context, sourceRef, permit)
                     val sharedSaved = AiMemoryStore.addMemory(context, memoryEntry, permit, objectId = proposal.id)
                     val agentSaves = proposal.affectedAgents.map { agentId ->
-                        AgentOperationalMemoryStore.addApproved(context, agentId, proposal.text, permit,
+                        AgentOperationalMemoryStore.addApproved(context, agentId, proposal.text, permit, objectId = proposal.id,
                             category = "wniosek jakościowy", sourceTaskIds = listOf(sourceRef),
                             confidence = proposal.confidence) != null
                     }

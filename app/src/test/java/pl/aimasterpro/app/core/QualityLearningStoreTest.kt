@@ -191,7 +191,7 @@ class QualityLearningStoreTest {
         )
         assertTrue(MemoryMutationGate.execute(context, request) { permit ->
             AgentOperationalMemoryStore.addApproved(
-                context, "writer", proposal.text, permit,
+                context, "writer", proposal.text, permit, objectId = proposal.id,
                 category = "test", sourceTaskIds = listOf(sourceRef), confidence = proposal.confidence
             ) != null
         })

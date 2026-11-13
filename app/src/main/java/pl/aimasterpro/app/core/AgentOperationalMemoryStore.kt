@@ -51,14 +51,20 @@ object AgentOperationalMemoryStore {
         read(context)?.filter { sourceTaskId in it.sourceTaskIds }?.map { it.agentId.lowercase(Locale.ROOT) }?.toSet()
 
     @Synchronized internal fun addApproved(
-        context: Context, agentId: String, text: String, permit: MemoryMutationPermit,
+        context: Context, agentId: String, text: String, permit: MemoryMutationPermit, objectId: String,
         category: String = "", sourceTaskIds: List<String> = emptyList(), confidence: String = "zatwierdzona"
     ): Entry? {
-        if (!MemoryMutationGate.isValid(permit, setOf(
-                MemoryGovernance.Mutation.ADD_AGENT_LESSON,
-                MemoryGovernance.Mutation.APPROVE_PROPOSAL,
-                MemoryGovernance.Mutation.RECONCILE_APPROVED_PROPOSAL
-            ))) return null
+        if (objectId.isBlank()) return null
+        val directScoped = MemoryMutationGate.isValid(
+            permit, setOf(MemoryGovernance.Mutation.ADD_AGENT_LESSON), objectId
+        )
+        val proposalScoped = MemoryMutationGate.isValid(permit, setOf(
+            MemoryGovernance.Mutation.APPROVE_PROPOSAL,
+            MemoryGovernance.Mutation.RECONCILE_APPROVED_PROPOSAL
+        ), objectId)
+        if (!directScoped && !proposalScoped) return null
+        if (proposalScoped && "proposal:$objectId" !in sourceTaskIds) return null
+        if (directScoped && sourceTaskIds.any { it.startsWith("proposal:") }) return null
         return addApprovedRaw(context, agentId, text, category, sourceTaskIds, confidence)
     }
 
@@ -120,13 +126,19 @@ object AgentOperationalMemoryStore {
     }.getOrDefault(false)
 
     @Synchronized internal fun removeBySource(context: Context, sourceTaskId: String, permit: MemoryMutationPermit): Boolean {
-        if (!MemoryMutationGate.isValid(permit, setOf(
-                MemoryGovernance.Mutation.REMOVE_AGENT_LESSON,
+        if (sourceTaskId.isBlank()) return false
+        val directRemoval = MemoryMutationGate.isValid(
+            permit, setOf(MemoryGovernance.Mutation.REMOVE_AGENT_LESSON), sourceTaskId
+        )
+        val proposalId = sourceTaskId.removePrefix("proposal:")
+        val proposalRemoval = sourceTaskId.startsWith("proposal:") && proposalId.isNotBlank() &&
+            MemoryMutationGate.isValid(permit, setOf(
                 MemoryGovernance.Mutation.APPROVE_PROPOSAL,
                 MemoryGovernance.Mutation.REJECT_PROPOSAL,
                 MemoryGovernance.Mutation.RECONCILE_APPROVED_PROPOSAL,
                 MemoryGovernance.Mutation.RECONCILE_REVOKED_PROPOSAL
-            ))) return false
+            ), proposalId)
+        if (!directRemoval && !proposalRemoval) return false
         return removeBySourceRaw(context, sourceTaskId)
     }
 

@@ -201,7 +201,7 @@ class MemoryMutationGateTest {
         val rows = MemoryAuditLog.readVerified(context)!!
         assertEquals(MemoryAuditLog.Phase.FAILED, rows.last().phase)
         assertEquals("MUTATION_FAILED", rows.last().outcome)
-        assertFalse(AiMemoryStore.containsExactMemory(context, "unrelated"))
+        assertEquals(false, AiMemoryStore.containsExactMemory(context, "unrelated"))
     }
 
     @Test fun deniedAttemptDoesNotMaskAnEarlierUnresolvedIntent() {

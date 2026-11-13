@@ -113,7 +113,7 @@ class LearningJournalStoreTest {
             approvalRef = "test-confirmation:$memory"
         )
         assertTrue(MemoryMutationGate.execute(context, request) { permit ->
-            AiMemoryStore.addMemory(context, memory, permit)
+            AiMemoryStore.addMemory(context, memory, permit, objectId = request.objectId)
         })
         LearningJournalStore.record(context, LearningJournalStore.Event(1L, "chat", "MASTER", "groq", "model-a", "COMPLETED", 10L, 1, ""))
         LearningJournalStore.clear(context)
