@@ -155,3 +155,16 @@ Cover unauthorized create/update/delete, scope escape, missing or forged approva
 - Relevant commits: `0232a6f68aa5f5f398c0796378e8e2444fe5e9da`, `3cb979f267c6eb5a9947577355340ab90c02507f`, `e65b72ba9cf7455a52ecc4c92e87db760865750d`, `1054f963400b02376d531c09ff2f269ae0c37977`.
 - Regression tests cover stale/cancelled side-effect rejection, cancellation serialization, late progress/message/trace/result rejection and retry run-epoch isolation.
 - Package 17 CI is verified on HEAD `a644e18a49115e6168888e26b5e858fb099f44d6`: Gradle Wrapper Validation run `43409560488` passed; AiFORTeca Unit Tests run `43409560492` passed. Artifact `14029251587` contains 1,199 tests across 113 XML files, with 0 failures, 0 errors and 0 skipped tests. Package 17 is closed as CI-verified. No Android APK build is claimed; full Android build remains on the agreed 20-fix cadence.
+
+
+## Implementation checkpoint — package 18 / archived report metadata redaction (2026-11-13)
+- Base checkpoint: `baf7b3eae7ade8cebce02ac3622112cd65943a2f` (package 17 CI-verified).
+- Five corrections implemented:
+  1. Sanitize agent identity labels before writing archived report records.
+  2. Sanitize provider identifiers before persistence, preventing credential-like metadata from entering the archive.
+  3. Sanitize model labels before persistence for the same reason.
+  4. Treat chat IDs as immutable lookup keys: reject an ID if sanitization would change it, rather than silently attaching a report to another chat.
+  5. Sanitize agent/provider/model labels again during replay, protecting chat history when older archive rows contain unsanitized metadata.
+- Added five regression tests covering metadata redaction, unchanged identity keys, unsafe chat-key rejection and legacy archive replay.
+- Relevant commits: `2cbf7f60843ce0170110069f2b40476cce7eae8d`, `c5f2501c673ab5ec56349e91e985f7d686a6dec3`.
+- CI is pending for the latest package 18 source/test commit. Do not close the package until Gradle Wrapper Validation and AiFORTeca Unit Tests both pass and the XML report is inspected. No Android APK build is claimed; full Android build remains on the agreed 20-fix cadence.
