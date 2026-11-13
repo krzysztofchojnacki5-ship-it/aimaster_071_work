@@ -94,6 +94,11 @@ class AgentHandoffStoreTest {
             "critical-reviewer", "Nie jestem odbiorcą.", 91L))
         assertNotNull(AgentHandoffStore.claim(context, "handoff-task-01", runId, "handoff-reject-001",
             "unit-test-engineer", 92L))
+        assertFalse("A rejection timestamp before the claim must not close the handoff",
+            AgentHandoffStore.reject(context, "handoff-task-01", runId, "handoff-reject-001",
+                "unit-test-engineer", "Za wczesna decyzja.", 91L))
+        assertEquals(AgentHandoffStore.State.CLAIMED,
+            AgentHandoffStore.snapshot(context).messages.single().state)
 
         val rawReason = "Odrzucono po analizie: api_key=sk_live_1234567890"
         assertTrue(AgentHandoffStore.reject(context, "handoff-task-01", runId, "handoff-reject-001",
