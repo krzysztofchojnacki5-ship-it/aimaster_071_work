@@ -244,4 +244,69 @@ class AgentOperationalMemoryStoreTest {
         assertEquals(oversized, prefs.getString("entries", null))
     }
 
+
+    @Test fun approvedLessonTextIsSanitizedBeforePersistence() {
+        val entry = addLesson(context, "security-agent",
+            "Nie zapisuj sekretu api_key=sk_live_1234567890 w pamięci operacyjnej.")!!
+        assertFalse(entry.text.contains("sk_live_1234567890"))
+        assertTrue(entry.text.contains("[REDACTED]"))
+        assertEquals(entry.text, AgentOperationalMemoryStore.all(context).single().text)
+    }
+
+    @Test fun sanitizerExpansionBeyondFieldLimitRejectsLessonWithoutTruncation() {
+        val prefs = context.getSharedPreferences("ai_agent_operational_memory_v1", Context.MODE_PRIVATE)
+        val raw = "api_key=x ".repeat(110)
+        assertTrue(raw.length <= 1_200)
+        assertTrue(CommunicationLogSanitizer.sanitize(raw).length > 1_200)
+        assertNull(addLesson(context, "security-agent", raw))
+        assertNull(prefs.getString("entries", null))
+    }
+
+    @Test fun metadataIsSanitizedAndPersistedMetadataMustAlreadyBeSafe() {
+        val entry = addLesson(context, "security-agent",
+            "Nie ujawniaj danych dostępowych podczas analizy logów.",
+            category = "api_key=sk_live_1234567890",
+            confidence = "ghp_12345678901234567890")!!
+        assertFalse(entry.category.contains("sk_live_"))
+        assertFalse(entry.confidence.contains("ghp_"))
+        val prefs = context.getSharedPreferences("ai_agent_operational_memory_v1", Context.MODE_PRIVATE)
+        val tampered = org.json.JSONArray().put(org.json.JSONObject()
+            .put("id", "entry-secret-meta").put("agentId", "security-agent")
+            .put("text", "Nie ujawniaj danych dostępowych podczas analizy logów.")
+            .put("category", "api_key=sk_live_1234567890").put("createdAt", 1L)
+            .put("sourceTaskIds", org.json.JSONArray()).put("confidence", "zatwierdzona")).toString()
+        assertTrue(prefs.edit().putString("entries", tampered).commit())
+        assertTrue(AgentOperationalMemoryStore.all(context).isEmpty())
+        assertNull(addLesson(context, "security-agent", "Nie zapisuj niczego nad uszkodzonym rejestrem pamięci."))
+        assertEquals(tampered, prefs.getString("entries", null))
+    }
+
+    @Test fun sourceApprovalLookupRejectsOversizedTextInsteadOfMatchingItsTruncatedPrefix() {
+        val lesson = "Zachowuj dokładną treść zatwierdzonej reguły."
+        val entry = addLesson(context, "architect", lesson, sourceTaskIds = listOf("source-exact"))!!
+        val oversized = lesson + " " + "x".repeat(1_300)
+        val result = AgentOperationalMemoryStore.hasApprovedSource(
+            context, "architect", oversized, "source-exact"
+        )
+        assertFalse(result == true)
+        assertTrue(AgentOperationalMemoryStore.hasApprovedSource(
+            context, "architect", lesson, "source-exact"
+        ) == true)
+        assertEquals(entry.id, AgentOperationalMemoryStore.all(context).single().id)
+    }
+
+    @Test fun zeroAndNegativePersistedTimestampsAreRejectedWithoutOverwrite() {
+        val prefs = context.getSharedPreferences("ai_agent_operational_memory_v1", Context.MODE_PRIVATE)
+        listOf(0L, -1L).forEach { timestamp ->
+            val raw = org.json.JSONArray().put(org.json.JSONObject()
+                .put("id", "entry-invalid-time").put("agentId", "tester")
+                .put("text", "Prawidłowy tekst wpisu pamięci.").put("createdAt", timestamp)
+                .put("sourceTaskIds", org.json.JSONArray())).toString()
+            assertTrue(prefs.edit().putString("entries", raw).commit())
+            assertTrue(AgentOperationalMemoryStore.all(context).isEmpty())
+            assertNull(addLesson(context, "tester", "Nowy wpis nie może zastąpić nieprawidłowego czasu."))
+            assertEquals(raw, prefs.getString("entries", null))
+            SharedPreferencesWriteHealth.resetForTests("ai_agent_operational_memory_v1")
+        }
+    }
 }

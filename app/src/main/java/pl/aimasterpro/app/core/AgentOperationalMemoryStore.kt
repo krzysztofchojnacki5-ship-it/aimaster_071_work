@@ -33,7 +33,8 @@ object AgentOperationalMemoryStore {
     @Synchronized
     internal fun hasApprovedSource(context: Context, agentId: String, text: String, sourceTaskId: String): Boolean? {
         val cleanAgent = agentId.trim()
-        val cleanText = text.trim().replace(Regex("[\\t ]+"), " ").take(MAX_ENTRY_CHARS)
+        val cleanText = text.trim().replace(Regex("[\\t ]+"), " ")
+        if (cleanText.length !in 8..MAX_ENTRY_CHARS) return false
         return read(context)?.any { entry ->
             entry.agentId.equals(cleanAgent, true) && entry.text == cleanText && sourceTaskId in entry.sourceTaskIds
         }
@@ -68,9 +69,10 @@ object AgentOperationalMemoryStore {
         SharedPreferencesWriteHealth.withHealthyAccess(PREFS) {
 
         val agent = agentId.trim()
-        val clean = text.trim().replace(Regex("[\\t ]+"), " ")
-        val cleanCategory = category.trim()
-        val cleanConfidence = confidence.trim()
+        val rawText = text.trim().replace(Regex("[\\t ]+"), " ")
+        val clean = CommunicationLogSanitizer.sanitize(rawText)
+        val cleanCategory = CommunicationLogSanitizer.sanitize(category.trim())
+        val cleanConfidence = CommunicationLogSanitizer.sanitize(confidence.trim())
         val sources = sourceTaskIds.map(String::trim)
         if (agent.isBlank() || agent.length > 100 || clean.length !in 8..MAX_ENTRY_CHARS ||
             cleanCategory.length > 80 || cleanConfidence.isBlank() || cleanConfidence.length > 40 ||
@@ -196,7 +198,8 @@ object AgentOperationalMemoryStore {
             val text = requiredText("text").trim()
             require(id.isNotBlank() && id.length <= 120 && seenIds.add(id) &&
                 agent.isNotBlank() && agent.length <= 100 &&
-                text.length in 8..MAX_ENTRY_CHARS) {
+                text.length in 8..MAX_ENTRY_CHARS &&
+                CommunicationLogSanitizer.sanitize(text) == text) {
                 "Operational memory entry is missing unique identity or exceeds supported field limits."
             }
             val createdValue = o.opt("createdAt")
@@ -205,7 +208,7 @@ object AgentOperationalMemoryStore {
             }
             val createdAt = if (createdValue is Int || createdValue is Long) (createdValue as Number).toLong()
                 else BigDecimal.valueOf((createdValue as Number).toDouble()).longValueExact()
-            require(createdAt >= 0L) { "Operational memory timestamp cannot be negative." }
+            require(createdAt > 0L) { "Operational memory timestamp must be positive." }
             val sources = if (!o.has("sourceTaskIds")) emptyList() else {
                 val sourceArray = o.optJSONArray("sourceTaskIds") ?: error("Operational memory provenance is invalid.")
                 require(sourceArray.length() <= 30)
@@ -219,7 +222,9 @@ object AgentOperationalMemoryStore {
             }
             val category = optionalText("category")
             val confidence = optionalText("confidence")
-            require(category.length <= 80 && confidence.length <= 40) {
+            require(category.length <= 80 && confidence.length <= 40 &&
+                CommunicationLogSanitizer.sanitize(category) == category &&
+                CommunicationLogSanitizer.sanitize(confidence) == confidence) {
                 "Operational memory metadata exceeds supported field limits."
             }
             Entry(id, agent, text, category, createdAt, sources, confidence)
@@ -230,8 +235,11 @@ object AgentOperationalMemoryStore {
         entry.id.isNotBlank() && entry.id.length <= 120 &&
             entry.agentId.isNotBlank() && entry.agentId.length <= 100 &&
             entry.text.length in 8..MAX_ENTRY_CHARS &&
+            CommunicationLogSanitizer.sanitize(entry.text) == entry.text &&
             entry.category.length <= 80 && entry.confidence.length <= 40 &&
-            entry.createdAt >= 0L && entry.sourceTaskIds.size <= 30 &&
+            CommunicationLogSanitizer.sanitize(entry.category) == entry.category &&
+            CommunicationLogSanitizer.sanitize(entry.confidence) == entry.confidence &&
+            entry.createdAt > 0L && entry.sourceTaskIds.size <= 30 &&
             entry.sourceTaskIds.all { it.isNotBlank() && it.length <= 200 } &&
             entry.sourceTaskIds.distinct().size == entry.sourceTaskIds.size
 
