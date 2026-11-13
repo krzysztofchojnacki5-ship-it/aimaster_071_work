@@ -85,6 +85,36 @@ class AgentHandoffStoreTest {
             AgentHandoffStore.snapshot(context).messages.single().state)
     }
 
+    @Test fun addressedRecipientCanRejectClaimWithSanitizedIdempotentAuditReason() {
+        val runId = runningTask()
+        assertTrue(AgentHandoffStore.send(context, "handoff-task-01", runId, "handoff-reject-001",
+            "critical-reviewer", "unit-test-engineer", "Sprawdź ryzyko regresji.", 90L))
+
+        assertFalse(AgentHandoffStore.reject(context, "handoff-task-01", runId, "handoff-reject-001",
+            "critical-reviewer", "Nie jestem odbiorcą.", 91L))
+        assertNotNull(AgentHandoffStore.claim(context, "handoff-task-01", runId, "handoff-reject-001",
+            "unit-test-engineer", 92L))
+
+        val rawReason = "Odrzucono po analizie: api_key=sk_live_1234567890"
+        assertTrue(AgentHandoffStore.reject(context, "handoff-task-01", runId, "handoff-reject-001",
+            "unit-test-engineer", rawReason, 93L))
+        assertTrue("A retry with the same sanitized reason must be idempotent",
+            AgentHandoffStore.reject(context, "handoff-task-01", runId, "handoff-reject-001",
+                "unit-test-engineer", rawReason, 94L))
+
+        val rejected = AgentHandoffStore.snapshot(context).messages.single()
+        assertEquals(AgentHandoffStore.State.REJECTED, rejected.state)
+        assertEquals(93L, rejected.updatedAt)
+        assertEquals("Odrzucono po analizie: api_key=[REDACTED]", rejected.resolutionReason)
+        assertEquals("", rejected.resolutionActor)
+        assertFalse(AgentHandoffStore.acknowledge(context, "handoff-task-01", runId,
+            "handoff-reject-001", "unit-test-engineer", 95L))
+        assertNull(AgentHandoffStore.claim(context, "handoff-task-01", runId,
+            "handoff-reject-001", "unit-test-engineer", 95L))
+        assertFalse(AgentHandoffStore.reject(context, "handoff-task-01", runId, "handoff-reject-001",
+            "unit-test-engineer", "Inny powód.", 96L))
+    }
+
     @Test fun claimAndAcknowledgementRejectTimestampsThatMoveBackwards() {
         val runId = runningTask()
         assertTrue(AgentHandoffStore.send(context, "handoff-task-01", runId, "handoff-time-001",
