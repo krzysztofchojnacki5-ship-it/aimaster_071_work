@@ -21,10 +21,11 @@ class DecisionLedgerStoreTest {
     private fun entry(
         id: String,
         outcome: String = "PROPOSED",
-        supersedes: String = ""
+        supersedes: String = "",
+        taskId: String = "task-$id"
     ) = DecisionLedgerStore.Entry(
         decisionId = id,
-        taskId = "task-$id",
+        taskId = taskId,
         timestampUtc = 1_700_000_000_000L,
         actor = "MASTER",
         context = "Projekt AiFORTeca",
@@ -44,8 +45,8 @@ class DecisionLedgerStoreTest {
     )
 
     @Test fun appendsAndReloadsDecisionWithoutMutatingEarlierEntry() {
-        assertTrue(DecisionLedgerStore.append(context, entry("d-1")))
-        assertTrue(DecisionLedgerStore.append(context, entry("d-2", supersedes = "d-1")))
+        assertTrue(DecisionLedgerStore.append(context, entry("d-1", taskId = "task-shared")))
+        assertTrue(DecisionLedgerStore.append(context, entry("d-2", supersedes = "d-1", taskId = "task-shared")))
 
         val snapshot = DecisionLedgerStore.snapshot(context)
         assertEquals(DecisionLedgerStore.ReadStatus.AVAILABLE, snapshot.status)
@@ -137,7 +138,8 @@ class DecisionLedgerStoreTest {
         assertTrue(DecisionLedgerStore.append(context, entry("root").copy(taskId = "task-shared")))
         assertTrue(DecisionLedgerStore.append(context, entry("leaf", supersedes = "root").copy(taskId = "task-shared")))
         val root = org.json.JSONArray(prefs.getString("entries", "[]"))
-        root.getJSONObject(0).put("supersedesDecisionId", "root")
+        // The persisted list is newest-first; make the older root point forward to the newer leaf.
+        root.getJSONObject(1).put("supersedesDecisionId", "leaf")
         val corrupt = root.toString()
         assertTrue(prefs.edit().putString("entries", corrupt).commit())
         assertEquals(DecisionLedgerStore.ReadStatus.CORRUPT, DecisionLedgerStore.snapshot(context).status)
