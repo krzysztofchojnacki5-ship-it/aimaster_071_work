@@ -256,7 +256,7 @@ class MasterTaskQueueStoreTest {
             providerId = "provider-local", model = "model-test"
         ))
         val event = MasterTaskQueueStore.snapshot(context).events.last()
-        assertEquals("Critical Reviewer", event.actor)
+        assertEquals("agent:critical-reviewer", event.actor)
         assertEquals("MASTER", event.recipient)
         assertEquals("provider-local", event.providerId)
         assertEquals("model-test", event.model)
