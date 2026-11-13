@@ -119,6 +119,51 @@ class DiagnosticsEventFeedTest {
         assertTrue(renderedDetails.contains("PROVIDER_RESPONSE"))
     }
 
+    @Test fun queueAndHandoffDetailsNeverExposeFreeFormContent() {
+        val privateDetails = listOf(
+            "CREATE secret title",
+            "ASSIGN private assignment detail",
+            "TRANSITION user supplied explanation",
+            "AGENT_RESULT private report body",
+            "AGENT_MESSAGE private message body",
+            "AGENT_PROGRESS provider response fragment",
+            "AGENT_TRACE raw trace excerpt",
+            "RECOVER_INTERRUPTED private stack detail",
+            "UNKNOWN private fallback body"
+        )
+        val operations = listOf(
+            "CREATE", "ASSIGN", "TRANSITION", "AGENT_RESULT", "AGENT_MESSAGE",
+            "AGENT_PROGRESS", "AGENT_TRACE", "RECOVER_INTERRUPTED", "UNRECOGNIZED"
+        )
+        val queueEvents = operations.mapIndexed { index, operation ->
+            queueEvent(
+                id = "privacy-event-$index",
+                timestamp = index.toLong() + 1L,
+                operation = operation,
+                detail = privateDetails[index]
+            ).copy(fromStatus = "RUNNING", toStatus = "BLOCKED")
+        }
+        val handoffMessages = listOf(
+            handoff("private-rejected", state = AgentHandoffStore.State.REJECTED)
+                .copy(resolutionReason = "private rejection reason"),
+            handoff("private-resolved", state = AgentHandoffStore.State.MANUALLY_RESOLVED)
+                .copy(resolutionReason = "private manual resolution reason")
+        )
+
+        val result = DiagnosticsEventFeed.build(
+            queue(events = queueEvents),
+            handoffs(messages = handoffMessages),
+            limit = 100
+        )
+        val rendered = result.entries.joinToString(" ") { it.detail }
+        (privateDetails + listOf("private rejection reason", "private manual resolution reason"))
+            .forEach { assertFalse("Leaked: $it", rendered.contains(it)) }
+        assertTrue(rendered.contains("RUNNING"))
+        assertTrue(rendered.contains("BLOCKED"))
+        assertTrue(rendered.contains("Odbiorca odrzucił przekazanie."))
+        assertTrue(rendered.contains("Ręcznie zamknięto jako wynik nieznany"))
+    }
+
     @Test fun newestFirstOrderingUsesStableTieBreakersAndClampsLimit() {
         val result = DiagnosticsEventFeed.build(
             queue(events = listOf(
