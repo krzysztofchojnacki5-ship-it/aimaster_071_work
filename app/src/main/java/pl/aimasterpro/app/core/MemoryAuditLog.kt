@@ -139,33 +139,41 @@ object MemoryAuditLog {
      */
     @Synchronized
     fun append(context: Context, event: Event): Boolean = runCatching {
-        require(event.actor.isNotBlank() && event.actor.length <= 80)
-        require(event.mutation.isNotBlank() && event.mutation.length <= 100)
-        require(event.objectId.isNotBlank() && event.objectId.length <= 200)
-        require(event.reason.isNotBlank() && event.reason.length <= MAX_TEXT_CHARS)
-        require(event.approvalRef.length <= 200)
-        require(event.outcome.isNotBlank() && event.outcome.length <= 100)
-        require(event.timestamp >= 0L)
+        val safeEvent = event.copy(reason = CommunicationLogSanitizer.sanitize(event.reason))
+        require(safeEvent.actor.isNotBlank() && safeEvent.actor.length <= MAX_ACTOR_CHARS)
+        require(safeEvent.mutation.isNotBlank() && safeEvent.mutation.length <= MAX_MUTATION_CHARS)
+        require(safeEvent.objectId.isNotBlank() && safeEvent.objectId.length <= MAX_OBJECT_ID_CHARS)
+        require(safeEvent.reason.isNotBlank() && safeEvent.reason.length <= MAX_TEXT_CHARS)
+        require(safeEvent.approvalRef.length <= MAX_APPROVAL_REF_CHARS)
+        require(safeEvent.outcome.isNotBlank() && safeEvent.outcome.length <= MAX_OUTCOME_CHARS)
+        require(safeEvent.timestamp >= 0L)
+        // Identity and control fields must remain byte-for-byte stable; only free-form
+        // audit reasons may be redacted, otherwise the operation identity could be aliased.
+        require(CommunicationLogSanitizer.sanitize(safeEvent.actor) == safeEvent.actor)
+        require(CommunicationLogSanitizer.sanitize(safeEvent.mutation) == safeEvent.mutation)
+        require(CommunicationLogSanitizer.sanitize(safeEvent.objectId) == safeEvent.objectId)
+        require(CommunicationLogSanitizer.sanitize(safeEvent.approvalRef) == safeEvent.approvalRef)
+        require(CommunicationLogSanitizer.sanitize(safeEvent.outcome) == safeEvent.outcome)
         if (SharedPreferencesWriteHealth.isUncertain(PREFS_NAME)) return@runCatching false
 
         val existing = readRecords(context) ?: return@runCatching false
-        if (!hasReservedCapacity(existing, event)) return@runCatching false
+        if (!hasReservedCapacity(existing, safeEvent)) return@runCatching false
         val previousHash = existing.lastOrNull()?.hash ?: GENESIS_HASH
         val record = Record(
             sequence = existing.size.toLong() + 1L,
-            actor = event.actor,
-            mutation = event.mutation,
-            objectId = event.objectId,
-            reason = event.reason,
-            approvalRef = event.approvalRef,
-            phase = event.phase,
-            outcome = event.outcome,
-            timestamp = event.timestamp,
+            actor = safeEvent.actor,
+            mutation = safeEvent.mutation,
+            objectId = safeEvent.objectId,
+            reason = safeEvent.reason,
+            approvalRef = safeEvent.approvalRef,
+            phase = safeEvent.phase,
+            outcome = safeEvent.outcome,
+            timestamp = safeEvent.timestamp,
             previousHash = previousHash,
             hash = hashRecord(
-                existing.size.toLong() + 1L, event.actor, event.mutation, event.objectId,
-                event.reason, event.approvalRef, event.phase.name, event.outcome,
-                event.timestamp, previousHash
+                existing.size.toLong() + 1L, safeEvent.actor, safeEvent.mutation, safeEvent.objectId,
+                safeEvent.reason, safeEvent.approvalRef, safeEvent.phase.name, safeEvent.outcome,
+                safeEvent.timestamp, previousHash
             )
         )
         val rows = JSONArray()
@@ -295,6 +303,13 @@ object MemoryAuditLog {
             require(reason.isNotBlank() && reason.length <= MAX_TEXT_CHARS)
             require(approvalRef.length <= MAX_APPROVAL_REF_CHARS)
             require(outcome.isNotBlank() && outcome.length <= MAX_OUTCOME_CHARS)
+            // Refuse historical or externally edited rows that contain unredacted secrets.
+            require(CommunicationLogSanitizer.sanitize(actor) == actor)
+            require(CommunicationLogSanitizer.sanitize(mutation) == mutation)
+            require(CommunicationLogSanitizer.sanitize(objectId) == objectId)
+            require(CommunicationLogSanitizer.sanitize(reason) == reason)
+            require(CommunicationLogSanitizer.sanitize(approvalRef) == approvalRef)
+            require(CommunicationLogSanitizer.sanitize(outcome) == outcome)
             require(timestamp >= 0L)
             require(hash.matches(Regex("[0-9a-f]{64}")))
             require(hash == hashRecord(
