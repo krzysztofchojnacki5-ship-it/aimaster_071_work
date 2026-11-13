@@ -114,7 +114,7 @@ Cover unauthorized create/update/delete, scope escape, missing or forged approva
 
 ## Implementation checkpoint — package 15 / explicit agent handoff rejection (2026-11-13)
 - Package 14 is closed: the latest verified commit before package 15 was `d0081813e4c0136cad76ec50aea3cd0c8fa0f64d`; Gradle Wrapper Validation and AiFORTeca Unit Tests both completed successfully. The published test report recorded 1,194 tests, 0 failures, 0 errors and 0 skipped tests.
-- Package 15 is in progress and is scoped to the explicit durable agent-to-agent handoff contract. The first implementation increment adds `AgentHandoffStore.reject(...)`: only the addressed, assigned recipient may reject its own CLAIMED handoff while the exact parent run is active.
+- Package 15 is closed and CI-verified. It delivered the explicit durable agent-to-agent handoff rejection store contract: only the addressed, assigned recipient may reject its own CLAIMED handoff while the exact parent run is active.
 - Rejection persists a sanitized, bounded audit reason, preserves the claim timestamp, advances the update timestamp, and is idempotent only for the same sanitized reason. Rejected messages cannot subsequently be claimed or acknowledged.
 - Persisted REJECTED records now require a non-empty sanitized audit reason and valid monotonic timestamps; malformed rejection records fail closed and their original stored bytes remain untouched.
 - Added tests for recipient authorization, secret redaction, duplicate rejection, rejection timestamp rollback, terminal-state behavior and malformed persisted REJECTED records.
@@ -130,3 +130,14 @@ Cover unauthorized create/update/delete, scope escape, missing or forged approva
 5. Exposed rejected handoffs in Diagnostics with a count and recent audit entries, rather than silently omitting the new terminal state.
 - Focused unit tests cover authorization, redaction, duplicate retries, backwards timestamps, terminal-state protection and malformed persisted rejection records.
 - Source and tests are committed. At code HEAD `e88e4b2b523f08cadada677bf10824fb59c25759`, Gradle Wrapper Validation and AiFORTeca Unit Tests both passed; the XML artifact records 1,195 tests, 0 failures, 0 errors and 0 skipped. The follow-up commit `869495cb7aad291fe67ffcc07bea922929b8a33b` updates this documentation only.
+
+## Implementation checkpoint — package 16 / strict agent handoff rejection protocol (2026-11-13)
+- Base checkpoint: `272622b6b88a431f3b173bbe6b3f7587cc4aee86` (package 15 documentation reconciled after CI).
+- Five implementation corrections are now committed on the work branch:
+  1. Added the reserved `AIFORTECA_HANDOFF_REJECT_V1:` protocol with strict single-object JSON parsing; ordinary report prose is not interpreted as a rejection, and malformed explicit directives fail closed.
+  2. The protocol is offered only to agents that actually receive an inbound handoff; parsed rejection results carry a sanitized reason and `BLOCKED` status.
+  3. The MASTER queue persists explicit recipient rejection through `AgentHandoffStore.reject(...)` and records a `HANDOFF_REJECTED` technical trace instead of acknowledging the handoff.
+  4. A rejected handoff does not create an outbound handoff; downstream agents with no available inbound handoff are classified `BLOCKED` before an API request.
+  5. Added network-level regression tests for a valid rejection, malformed directives, ordinary prose containing the marker, and stopping the downstream chain.
+- Relevant commits: `273e862602ed5d0fb8e4cedf1f4295fe04cd26cf`, `84d3bc51925ebbd869a0c60aee6da0299ec4c18`, `9d8c1db0ab1b338d2ef38b9e0f4ed5ff9fc3d729`, `9f36661dd677e9ab6c9a541b1b181beffda80736`, `7bd72de2394331b2583ccab149d1a4f690e09569`, `a438af3e05350bbadf8dfcb348cfda9a73b479db`, `7abd230665f8fef83c0582544e4bb105c911e150`, `0dd23beaae1a2b3f50d5762e40054690dd0fdd33`.
+- CI for package 16 is pending. Do not mark it complete until both required workflows pass and the XML test report is inspected. No Android APK build is claimed for this package.
