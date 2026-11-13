@@ -302,14 +302,25 @@ object MasterTaskQueueStore {
             (senderId != null && senderId in current.assignedAgentIds)
         val recipientAllowed = recipient.equals("MASTER", true) || recipient.equals("SYSTEM", true) ||
             (recipientId != null && recipientId in current.assignedAgentIds)
-        if (!senderAllowed || !recipientAllowed) return@mutate null
+        if (!senderAllowed || !recipientAllowed ||
+            (senderId != null && senderId == recipientId)) return@mutate null
 
+        // Persist stable identities rather than caller-supplied aliases or display-name casing.
+        // This keeps the audit trail unambiguous and makes read-time provenance validation exact.
+        fun canonicalMessageEndpoint(endpoint: String, agentId: String?): String = when {
+            endpoint.equals("MASTER", ignoreCase = true) -> "MASTER"
+            endpoint.equals("SYSTEM", ignoreCase = true) -> "SYSTEM"
+            agentId != null -> "agent:$agentId"
+            else -> endpoint
+        }
+        val canonicalSender = canonicalMessageEndpoint(sender, senderId)
+        val canonicalRecipient = canonicalMessageEndpoint(recipient, recipientId)
         val safe = CommunicationLogSanitizer.sanitize(message).take(350)
         val safeProvider = CommunicationLogSanitizer.sanitize(providerId).take(80)
         val safeModel = CommunicationLogSanitizer.sanitize(model).take(120)
-        val detail = "Do: $recipient • $status • $safe"
-        Triple(tasks, events + event(taskId, sender, "AGENT_MESSAGE", "", status, detail, now,
-            recipient = recipient, providerId = safeProvider, model = safeModel, runId = current.runId), true)
+        val detail = "Do: $canonicalRecipient • $status • $safe"
+        Triple(tasks, events + event(taskId, canonicalSender, "AGENT_MESSAGE", "", status, detail, now,
+            recipient = canonicalRecipient, providerId = safeProvider, model = safeModel, runId = current.runId), true)
     }
 
     /**
@@ -608,6 +619,25 @@ object MasterTaskQueueStore {
                         require(event.actor.startsWith("agent:") && agentId in owner.assignedAgentIds &&
                             event.toStatus in progressStates && event.fromStatus == Status.RUNNING.name && event.runId > 0) {
                             "Agent progress does not match an assigned agent or supported state."
+                        }
+                    }
+                    "AGENT_MESSAGE" -> {
+                        val source = event.actor
+                        val target = event.recipient
+                        // Accept legacy raw agent IDs on read, but new writes always use agent:<id>.
+                        val sourceAgent = source.removePrefix("agent:")
+                        val targetAgent = target.removePrefix("agent:")
+                        val sourceIsAgent = sourceAgent in owner.assignedAgentIds &&
+                            (source == sourceAgent || source.startsWith("agent:"))
+                        val targetIsAgent = targetAgent in owner.assignedAgentIds &&
+                            (target == targetAgent || target.startsWith("agent:"))
+                        val sourceIsCoordinator = source == "MASTER" || source == "SYSTEM"
+                        val targetIsCoordinator = target == "MASTER" || target == "SYSTEM"
+                        require(event.toStatus in conversationStatuses && event.fromStatus.isEmpty() &&
+                            event.runId > 0 && (sourceIsAgent || sourceIsCoordinator) &&
+                            (targetIsAgent || targetIsCoordinator) &&
+                            !(sourceIsAgent && targetIsAgent && sourceAgent == targetAgent)) {
+                            "Agent communication does not match an assigned sender, recipient or message state."
                         }
                     }
                     "AGENT_TRACE" -> {
