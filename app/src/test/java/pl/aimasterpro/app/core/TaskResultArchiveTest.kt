@@ -71,6 +71,87 @@ class TaskResultArchiveTest {
         assertTrue(TaskResultArchive.get(context, "secret-task")?.report?.contains("[REDACTED]") == true)
     }
 
+    @Test fun archivedAgentAndProviderMetadataRedactCredentialsBeforePersistence() {
+        val rawAgent = "developer api_key=sk_live_1234567890"
+        val rawProvider = "provider token=Bearer abcdefghijklmnopqrstuvwxyz123456"
+        val rawModel = "model secret=sk-proj-12345678901234567890"
+        assertTrue(TaskResultArchive.put(
+            context, "metadata-secret-task", rawAgent, "Raport bez sekretów.",
+            rawProvider, rawModel, 1_500L
+        ))
+
+        val entry = TaskResultArchive.get(context, "metadata-secret-task")!!
+        val stored = prefs.getString("entries", null).orEmpty()
+        assertFalse(stored.contains("sk_live_1234567890"))
+        assertFalse(stored.contains("abcdefghijklmnopqrstuvwxyz123456"))
+        assertFalse(stored.contains("sk-proj-12345678901234567890"))
+        assertTrue(entry.agentId.contains("[REDACTED]"))
+        assertTrue(entry.providerId.contains("[REDACTED]"))
+        assertTrue(entry.model.contains("[REDACTED]"))
+    }
+
+    @Test fun archiveRejectsChatLookupKeyThatWouldChangeUnderSecretRedaction() {
+        val unsafeChatId = "chat-api_key=sk_live_1234567890"
+        assertFalse(TaskResultArchive.put(
+            context, "unsafe-chat-key-task", "developer", "Raport.",
+            "provider-a", "model-a", 1_600L, unsafeChatId
+        ))
+        assertNull(TaskResultArchive.get(context, "unsafe-chat-key-task"))
+        assertTrue(TaskResultArchive.latest(context).isEmpty())
+    }
+
+    @Test fun restoredLegacyMetadataIsRedactedBeforeEnteringChatTimeline() {
+        val chatId = "chat-legacy-metadata"
+        createChat(chatId)
+        val legacy = JSONArray().put(JSONObject()
+            .put("taskId", "legacy-metadata-task")
+            .put("agentId", "developer api_key=sk_live_1234567890")
+            .put("report", "Legacy report.")
+            .put("providerId", "provider token=Bearer abcdefghijklmnopqrstuvwxyz123456")
+            .put("model", "model secret=sk-proj-12345678901234567890")
+            .put("createdAt", 1_700L)
+            .put("chatId", chatId))
+        assertTrue(prefs.edit().putString("entries", legacy.toString()).commit())
+
+        assertEquals(1, TaskResultArchive.restoreArchivedReports(context))
+        val activity = ChatHistoryStore.readRoot(context)!!
+            .getJSONObject("chats").getJSONObject(chatId).getJSONArray("agentActivity")
+        val restored = activity.optString(0)
+        assertFalse(restored.contains("sk_live_1234567890"))
+        assertFalse(restored.contains("abcdefghijklmnopqrstuvwxyz123456"))
+        assertFalse(restored.contains("sk-proj-12345678901234567890"))
+        assertTrue(restored.contains("[REDACTED]"))
+        assertTrue(restored.contains("Legacy report."))
+    }
+
+    @Test fun metadataRedactionDoesNotAlterTaskOrChatIdentityKeys() {
+        val chatId = "chat-stable-identity"
+        createChat(chatId)
+        assertTrue(TaskResultArchive.put(
+            context, "task-stable-identity", "unit-test-engineer",
+            "Stable report.", "provider-a", "model-a", 1_800L, chatId
+        ))
+        val entry = TaskResultArchive.get(context, "task-stable-identity")!!
+        assertEquals("task-stable-identity", entry.taskId)
+        assertEquals("chat-stable-identity", entry.chatId)
+        assertEquals("unit-test-engineer", entry.agentId)
+        assertEquals("provider-a", entry.providerId)
+        assertEquals("model-a", entry.model)
+    }
+
+    @Test fun metadataSanitizationRunsBeforeArchiveCapacityAndSerializationChecks() {
+        val rawProvider = "provider api_key=sk_live_1234567890"
+        val rawModel = "model bearer=Bearer abcdefghijklmnopqrstuvwxyz123456"
+        assertTrue(TaskResultArchive.put(
+            context, "metadata-order-task", "developer", "Report.",
+            rawProvider, rawModel, 1_900L
+        ))
+        val serialized = prefs.getString("entries", null).orEmpty()
+        assertTrue(serialized.contains("[REDACTED]"))
+        assertFalse(serialized.contains("sk_live_1234567890"))
+        assertFalse(serialized.contains("abcdefghijklmnopqrstuvwxyz123456"))
+    }
+
     @Test fun emptyArchiveIsReadableAndDistinguishedFromCorruption() {
         assertTrue(TaskResultArchive.isArchiveReadable(context))
         assertTrue(TaskResultArchive.latest(context).isEmpty())
