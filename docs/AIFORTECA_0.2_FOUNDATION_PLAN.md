@@ -120,3 +120,13 @@ Cover unauthorized create/update/delete, scope escape, missing or forged approva
 - Added tests for recipient authorization, secret redaction, duplicate rejection, rejection timestamp rollback, terminal-state behavior and malformed persisted REJECTED records.
 - Source commit: `d301d18af014f5c8e11ea8e3f4d504108ced3e62`; follow-up test commits: `b34a76f62ae8759adf29810658f4e30a5c107674`, `b3a5eb2429efc0ff70b07e7e6c3a3b48e092f423`, `bba6b315c8f0cdfd623db1484a185de833013505`.
 - This is one logical feature increment with focused test hardening, not a claim that all five package-15 fixes are complete. No CI has yet been run for these package-15 commits. Do not mark the package green until its full five-fix scope and required CI evidence are complete.
+
+
+### Package 15 — five implementation corrections completed (pending CI)
+1. Added an explicit recipient-only rejection transition for a claimed handoff.
+2. Required a non-empty, sanitized, bounded rejection reason in persisted REJECTED records; malformed records fail closed.
+3. Made rejection retries idempotent only when the sanitized reason matches the already stored decision.
+4. Enforced claim-to-rejection timestamp monotonicity; an older timestamp cannot close the claim.
+5. Exposed rejected handoffs in Diagnostics with a count and recent audit entries, rather than silently omitting the new terminal state.
+- Focused unit tests cover authorization, redaction, duplicate retries, backwards timestamps, terminal-state protection and malformed persisted rejection records.
+- Source and tests are committed; this package has not yet received a CI run. The next gate is to verify the branch HEAD and run results, inspect the test report, and only then close package 15.
