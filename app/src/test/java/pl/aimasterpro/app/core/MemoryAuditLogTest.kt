@@ -133,6 +133,37 @@ class MemoryAuditLogTest {
         assertTrue(MemoryAuditLog.readVerified(context)!!.isEmpty())
     }
 
+
+    @Test fun verifiedHashChainStillRejectsLegacyRowsWithUnredactedSecrets() {
+        val secret = "sk-1234567890abcdef"
+        val actor = "USER"
+        val mutation = "APPROVE_PROPOSAL"
+        val objectId = "rule-legacy"
+        val reason = "Legacy reason api_key=$secret"
+        val approvalRef = "proposal:rule-legacy"
+        val phase = MemoryAuditLog.Phase.COMMITTED.name
+        val outcome = "SUCCESS"
+        val timestamp = 1_800_000_000_000L
+        val previousHash = "GENESIS"
+        val values = listOf("1", actor, mutation, objectId, reason, approvalRef,
+            phase, outcome, timestamp.toString(), previousHash)
+        val canonical = values.joinToString("") { "${it.length}:$it" }
+        val hash = MessageDigest.getInstance("SHA-256")
+            .digest(canonical.toByteArray(Charsets.UTF_8))
+            .joinToString("") { "%02x".format(it) }
+        val raw = JSONArray().put(JSONObject()
+            .put("sequence", 1L).put("actor", actor).put("mutation", mutation)
+            .put("objectId", objectId).put("reason", reason).put("approvalRef", approvalRef)
+            .put("phase", phase).put("outcome", outcome).put("timestamp", timestamp)
+            .put("previousHash", previousHash).put("hash", hash)).toString()
+        val prefs = context.getSharedPreferences("ai_memory_audit_log_v1", Context.MODE_PRIVATE)
+        assertTrue(prefs.edit().putString("events", raw).commit())
+
+        assertNull(MemoryAuditLog.readVerified(context))
+        assertEquals(raw, prefs.getString("events", null))
+        assertFalse(MemoryAuditLog.append(context, event(MemoryAuditLog.Phase.COMMITTED, "SUCCESS")))
+    }
+
     @Test fun malformedEventIsRejectedWithoutWriting() {
         val invalid = event(MemoryAuditLog.Phase.INTENT, " ")
         assertFalse(MemoryAuditLog.append(context, invalid))
