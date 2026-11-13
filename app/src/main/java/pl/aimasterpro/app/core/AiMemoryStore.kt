@@ -54,12 +54,12 @@ object AiMemoryStore {
         readStoredMemories(context)?.contains(exactMemory)
 
     @Synchronized
-    internal fun addMemory(context: Context, memory: String, permit: MemoryMutationPermit, objectId: String = ""): Boolean {
-        if (!MemoryMutationGate.isValid(permit, setOf(
+    internal fun addMemory(context: Context, memory: String, permit: MemoryMutationPermit, objectId: String): Boolean {
+        if (objectId.isBlank() || !MemoryMutationGate.isValid(permit, setOf(
                 MemoryGovernance.Mutation.ADD_SHARED_RULE,
                 MemoryGovernance.Mutation.APPROVE_PROPOSAL,
                 MemoryGovernance.Mutation.RECONCILE_APPROVED_PROPOSAL
-            ), objectId.ifBlank { null })) return false
+            ), objectId)) return false
         return addMemoryRaw(context, memory)
     }
 
@@ -80,14 +80,14 @@ object AiMemoryStore {
     }.getOrDefault(false)
 
     @Synchronized
-    internal fun removeMemory(context: Context, exactMemory: String, permit: MemoryMutationPermit, objectId: String = ""): Boolean {
+    internal fun removeMemory(context: Context, exactMemory: String, permit: MemoryMutationPermit, objectId: String): Boolean {
         if (!MemoryMutationGate.isValid(permit, setOf(
                 MemoryGovernance.Mutation.REMOVE_SHARED_RULE,
                 MemoryGovernance.Mutation.APPROVE_PROPOSAL,
                 MemoryGovernance.Mutation.REJECT_PROPOSAL,
                 MemoryGovernance.Mutation.RECONCILE_APPROVED_PROPOSAL,
                 MemoryGovernance.Mutation.RECONCILE_REVOKED_PROPOSAL
-            ), objectId.ifBlank { null })) return false
+            ), objectId)) return false
         // Proposal rollback and startup reconciliation are idempotent: an already-absent
         // entry is the desired state. A direct user deletion remains strict and returns false.
         val idempotentRemoval = setOf(
@@ -95,7 +95,7 @@ object AiMemoryStore {
             MemoryGovernance.Mutation.REJECT_PROPOSAL,
             MemoryGovernance.Mutation.RECONCILE_APPROVED_PROPOSAL,
             MemoryGovernance.Mutation.RECONCILE_REVOKED_PROPOSAL
-        ).any { MemoryMutationGate.isValid(permit, setOf(it), objectId.ifBlank { null }) }
+        ).any { MemoryMutationGate.isValid(permit, setOf(it), objectId) }
         return removeMemoryRaw(context, exactMemory, missingIsSuccess = idempotentRemoval)
     }
 

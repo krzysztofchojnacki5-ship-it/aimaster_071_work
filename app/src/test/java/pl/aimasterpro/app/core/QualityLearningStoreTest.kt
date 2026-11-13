@@ -111,7 +111,7 @@ class QualityLearningStoreTest {
             MemoryGovernance.Mutation.RECONCILE_APPROVED_PROPOSAL, proposal.id,
             "Test simulates an interrupted approval write", "proposal:${proposal.id}")
         assertTrue(MemoryMutationGate.execute(context, removeRequest) { permit ->
-            AiMemoryStore.removeMemory(context, memoryEntry, permit)
+            AiMemoryStore.removeMemory(context, memoryEntry, permit, objectId = proposal.id)
         })
         assertFalse(AiMemoryStore.getMemories(context).contains(memoryEntry))
         QualityLearningStore.syncApprovedAgentMemories(context)
@@ -1257,7 +1257,7 @@ class QualityLearningStoreTest {
             approvalRef = "proposal:missing-proposal"
         )
         assertTrue(MemoryMutationGate.execute(context, recoveryRequest) { permit ->
-            AiMemoryStore.removeMemory(context, absentEntry, permit)
+            AiMemoryStore.removeMemory(context, absentEntry, permit, objectId = recoveryRequest.objectId)
         })
         assertEquals(false, AiMemoryStore.containsExactMemory(context, absentEntry))
 
@@ -1269,7 +1269,7 @@ class QualityLearningStoreTest {
             approvalRef = "manual-remove:missing-rule"
         )
         assertFalse(MemoryMutationGate.execute(context, manualRequest) { permit ->
-            AiMemoryStore.removeMemory(context, absentEntry, permit)
+            AiMemoryStore.removeMemory(context, absentEntry, permit, objectId = manualRequest.objectId)
         })
     }
 

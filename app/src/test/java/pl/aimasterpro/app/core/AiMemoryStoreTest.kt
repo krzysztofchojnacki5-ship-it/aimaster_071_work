@@ -15,16 +15,22 @@ class AiMemoryStoreTest {
     private val context get() = RuntimeEnvironment.getApplication()
 
     private fun mutateAdd(ctx: Context, memory: String): Boolean {
+        val objectId = "test-add:${java.util.UUID.randomUUID()}"
         val request = MemoryGovernance.Request(MemoryGovernance.Actor.USER,
-            MemoryGovernance.Mutation.ADD_SHARED_RULE, "test-add:${java.util.UUID.randomUUID()}",
+            MemoryGovernance.Mutation.ADD_SHARED_RULE, objectId,
             "Test confirms shared-memory addition", "test-approval")
-        return MemoryMutationGate.execute(ctx, request) { permit -> AiMemoryStore.addMemory(ctx, memory, permit) }
+        return MemoryMutationGate.execute(ctx, request) { permit ->
+            AiMemoryStore.addMemory(ctx, memory, permit, objectId = objectId)
+        }
     }
     private fun mutateRemove(ctx: Context, memory: String): Boolean {
+        val objectId = "test-remove:${java.util.UUID.randomUUID()}"
         val request = MemoryGovernance.Request(MemoryGovernance.Actor.USER,
-            MemoryGovernance.Mutation.REMOVE_SHARED_RULE, "test-remove:${java.util.UUID.randomUUID()}",
+            MemoryGovernance.Mutation.REMOVE_SHARED_RULE, objectId,
             "Test confirms shared-memory removal", "test-approval")
-        return MemoryMutationGate.execute(ctx, request) { permit -> AiMemoryStore.removeMemory(ctx, memory, permit) }
+        return MemoryMutationGate.execute(ctx, request) { permit ->
+            AiMemoryStore.removeMemory(ctx, memory, permit, objectId = objectId)
+        }
     }
 
     @Before fun reset() {

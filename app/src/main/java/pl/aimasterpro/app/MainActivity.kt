@@ -7703,7 +7703,7 @@ class MainActivity : Activity() {
                             approvalRef = "ui-confirm:${java.util.UUID.randomUUID()}"
                         )
                         val saved = pl.aimasterpro.app.core.MemoryMutationGate.execute(this, request) { permit ->
-                            pl.aimasterpro.app.core.AiMemoryStore.addMemory(this, value, permit)
+                            pl.aimasterpro.app.core.AiMemoryStore.addMemory(this, value, permit, objectId = request.objectId)
                         }
                         toast(if (saved) "Zapisano zasadę. Będzie dołączana do kolejnych zadań."
                             else "Nie udało się zapisać zasady. Dotychczasowa pamięć pozostała bez zmian.")
