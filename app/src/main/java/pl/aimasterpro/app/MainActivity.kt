@@ -7419,20 +7419,26 @@ class MainActivity : Activity() {
                         }
                     )
                 }
-                results.forEach { result ->
-                    val queueResult = when (result.status) {
-                        pl.aimasterpro.app.agents.TeamTaskResult.Status.COMPLETED -> pl.aimasterpro.app.core.MasterTaskQueueStore.Status.COMPLETED
-                        pl.aimasterpro.app.agents.TeamTaskResult.Status.FAILED -> pl.aimasterpro.app.core.MasterTaskQueueStore.Status.FAILED
-                        pl.aimasterpro.app.agents.TeamTaskResult.Status.BLOCKED -> pl.aimasterpro.app.core.MasterTaskQueueStore.Status.BLOCKED
+                val finalizationSaved = queueStore.withActiveRun(this, taskId, executionRunId) {
+                    results.forEach { result ->
+                        val queueResult = when (result.status) {
+                            pl.aimasterpro.app.agents.TeamTaskResult.Status.COMPLETED -> pl.aimasterpro.app.core.MasterTaskQueueStore.Status.COMPLETED
+                            pl.aimasterpro.app.agents.TeamTaskResult.Status.FAILED -> pl.aimasterpro.app.core.MasterTaskQueueStore.Status.FAILED
+                            pl.aimasterpro.app.agents.TeamTaskResult.Status.BLOCKED -> pl.aimasterpro.app.core.MasterTaskQueueStore.Status.BLOCKED
+                        }
+                        val saved = queueStore.recordAgentResult(this, taskId, result.agentId, queueResult,
+                            "${result.status}: ${result.report.take(420)}", expectedRunId = executionRunId)
+                        if (!saved) android.util.Log.e("AiFORTecaQueue", "Nie zapisano wyniku agenta ${result.agentId} dla $taskId.")
                     }
-                    val saved = queueStore.recordAgentResult(this, taskId, result.agentId, queueResult,
-                        "${result.status}: ${result.report.take(420)}", expectedRunId = executionRunId)
-                    if (!saved) android.util.Log.e("AiFORTecaQueue", "Nie zapisano wyniku agenta ${result.agentId} dla $taskId.")
+                    val returned = results.map { it.agentId }.toSet()
+                    allowed.filterNot { it.agentId in returned }.forEach { item ->
+                        queueStore.recordAgentResult(this, taskId, item.agentId, pl.aimasterpro.app.core.MasterTaskQueueStore.Status.FAILED,
+                            "TeamRunEngine nie zwrócił wyniku dla tego agenta.", expectedRunId = executionRunId)
+                    }
+                    true
                 }
-                val returned = results.map { it.agentId }.toSet()
-                allowed.filterNot { it.agentId in returned }.forEach { item ->
-                    queueStore.recordAgentResult(this, taskId, item.agentId, pl.aimasterpro.app.core.MasterTaskQueueStore.Status.FAILED,
-                        "TeamRunEngine nie zwrócił wyniku dla tego agenta.", expectedRunId = executionRunId)
+                if (finalizationSaved != true) {
+                    android.util.Log.i("AiFORTecaQueue", "Pominięto finalizację wyników po zatrzymaniu przebiegu $taskId.")
                 }
                 runOnUiThread {
                     if (!isFinishing) {
