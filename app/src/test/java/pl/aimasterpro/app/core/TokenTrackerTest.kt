@@ -48,7 +48,7 @@ class TokenTrackerTest {
 
     @Test fun providerIdsAreValidatedBeforeReadingOrWriting() {
         assertFalse(runCatching { TokenTracker.getUsage(context, " ".repeat(161)) }.isSuccess)
-        assertFalse(runCatching { TokenTracker.recordUsage(context, "bad\\nid", "p", "r") }.isSuccess)
+        assertFalse(runCatching { TokenTracker.recordUsage(context, "bad\nid", "p", "r") }.isSuccess)
     }
 
     @Test fun persistedFractionalAndOverflowCountersAreRejected() {
