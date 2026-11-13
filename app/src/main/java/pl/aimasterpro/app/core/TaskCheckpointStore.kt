@@ -11,6 +11,17 @@ object TaskCheckpointStore {
     private const val MAX_EVENTS = 800
     private const val MAX_RAW_CHARS = 2_000_000
     private val TERMINAL_STATUSES = setOf("COMPLETED", "FAILED", "BLOCKED", "TIMED_OUT", "CANCELLED", "INTERRUPTED")
+    private val VALID_STATUSES = setOf(
+        "QUEUED", "RUNNING", "REQUESTING", "USAGE_RECORDED", "USAGE_PENDING",
+        "RESULT_PERSIST_PENDING", "INTERRUPTED_USAGE_PENDING", "COMPLETED",
+        "FAILED", "BLOCKED", "TIMED_OUT", "CANCELLED", "INTERRUPTED"
+    )
+    private val PERSISTED_FIELDS = setOf(
+        "task", "agent", "status", "detail", "ts", "provider", "model", "attempts",
+        "processId", "estimatedInputTokens", "estimatedOutputTokens", "idempotencyKey",
+        "baseUrl", "runId"
+    )
+    private val REQUIRED_FIELDS = setOf("task", "agent", "status", "ts")
     private val processId = java.util.UUID.randomUUID().toString()
 
     private fun hasArchivedResult(context: Context, taskId: String): Boolean =
@@ -51,7 +62,7 @@ object TaskCheckpointStore {
         if (SharedPreferencesWriteHealth.isUncertain(PREFS)) return false
         if (event.taskId.isBlank() || event.taskId.length > 512 ||
             event.agentId.isBlank() || event.agentId.length > 100 ||
-            event.status.isBlank() || event.status.length > 30 ||
+            event.status !in VALID_STATUSES || event.status.length > 30 ||
             event.detail.length > 500 || event.providerId.length > 100 ||
             event.model.length > 160 || event.processId.length > 128 ||
             event.idempotencyKey.length > 240 || event.baseUrl.length > 300 ||
@@ -157,6 +168,13 @@ object TaskCheckpointStore {
                 require(array.length() <= MAX_EVENTS) { "Checkpoint journal exceeds its event capacity." }
                 (0 until array.length()).map { index ->
                     val row = array.getJSONObject(index)
+                    val persistedFields = row.keys().asSequence().toSet()
+                    require(persistedFields.all { it in PERSISTED_FIELDS }) {
+                        "Checkpoint row contains an unknown persisted field."
+                    }
+                    require(REQUIRED_FIELDS.all { row.has(it) }) {
+                        "Checkpoint row is missing a required identity or lifecycle field."
+                    }
                     fun exactString(key: String, default: String = ""): String {
                         if (!row.has(key)) return default
                         val value = row.opt(key)
@@ -185,8 +203,8 @@ object TaskCheckpointStore {
                     }
                     val agentId = exactString("agent")
                     val status = exactString("status")
-                    require(agentId.isNotBlank() && agentId.length <= 100 && status.isNotBlank() && status.length <= 30) {
-                        "Checkpoint row has no agent or lifecycle status."
+                    require(agentId.isNotBlank() && agentId.length <= 100 && status in VALID_STATUSES) {
+                        "Checkpoint row has no agent or a supported lifecycle status."
                     }
                     Event(
                         taskId = id,
