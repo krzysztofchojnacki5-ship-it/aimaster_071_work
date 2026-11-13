@@ -7292,18 +7292,25 @@ class MainActivity : Activity() {
                             runCatching { pl.aimasterpro.app.core.ProviderCooldownStore.markSuccess(this, model) }
                         },
                         onTaskState = { item, state, detail, providerId, model, attempts ->
-                            val saved = pl.aimasterpro.app.core.TaskCheckpointStore.record(
-                                this, pl.aimasterpro.app.core.TaskCheckpointStore.Event(
-                                    item.id, item.agentId, state, detail, System.currentTimeMillis(),
-                                    providerId, model, attempts, runId = executionRunId
+                            val persisted = queueStore.withActiveRun(this, taskId, executionRunId) {
+                                val checkpointSaved = pl.aimasterpro.app.core.TaskCheckpointStore.record(
+                                    this, pl.aimasterpro.app.core.TaskCheckpointStore.Event(
+                                        item.id, item.agentId, state, detail, System.currentTimeMillis(),
+                                        providerId, model, attempts, runId = executionRunId
+                                    )
                                 )
-                            )
-                            if (!saved) android.util.Log.e("AiFORTecaQueue", "Nie zapisano checkpointu $taskId/${item.agentId} • $state")
-                            val progressSaved = queueStore.recordAgentProgress(
-                                this, taskId, item.agentId, state, detail, providerId, model, attempts,
-                                expectedRunId = executionRunId
-                            )
-                            if (!progressSaved) android.util.Log.w("AiFORTecaQueue", "Nie zapisano postępu kolejki $taskId/${item.agentId} • $state")
+                                val progressSaved = queueStore.recordAgentProgress(
+                                    this, taskId, item.agentId, state, detail, providerId, model, attempts,
+                                    expectedRunId = executionRunId
+                                )
+                                checkpointSaved to progressSaved
+                            }
+                            if (persisted == null) {
+                                android.util.Log.i("AiFORTecaQueue", "Pominięto spóźniony checkpoint po zatrzymaniu przebiegu $taskId • ${item.agentId} • $state")
+                            } else {
+                                if (!persisted.first) android.util.Log.e("AiFORTecaQueue", "Nie zapisano checkpointu $taskId/${item.agentId} • $state")
+                                if (!persisted.second) android.util.Log.w("AiFORTecaQueue", "Nie zapisano postępu kolejki $taskId/${item.agentId} • $state")
+                            }
                         },
                         onTaskResult = { result ->
                             val archived = pl.aimasterpro.app.core.TaskResultArchive.put(
@@ -7313,6 +7320,7 @@ class MainActivity : Activity() {
                             if (!archived) {
                                 false
                             } else {
+                                queueStore.withActiveRun(this, taskId, executionRunId) {
                                 val index = allowed.indexOfFirst { it.agentId == result.agentId }
                                 val inboundId = if (index > 0) {
                                     "h-${taskId.take(30)}-$executionRunId-${allowed[index - 1].agentId.take(20)}-${result.agentId.take(20)}"
@@ -7360,41 +7368,50 @@ class MainActivity : Activity() {
                                     }
                                 }
                                 inboundResolved && outboundSent
+                                } ?: false
                             }
                         },
                         handoffContextForTask = { item ->
-                            val index = allowed.indexOfFirst { it.agentId == item.agentId }
-                            if (index <= 0) "" else {
-                                val previous = allowed[index - 1]
-                                val messageId = "h-${taskId.take(30)}-$executionRunId-${previous.agentId.take(20)}-${item.agentId.take(20)}"
-                                val claimed = pl.aimasterpro.app.core.AgentHandoffStore.claim(
-                                    this, taskId, executionRunId, messageId, item.agentId
-                                ) ?: throw pl.aimasterpro.app.agents.HandoffUnavailableException(
-                                    "Brak możliwego do przejęcia przekazania od agenta ${previous.agentId}; żądanie API odbiorcy nie zostanie wysłane."
-                                )
-                                val claimAudited = queueStore.recordAgentTrace(
-                                    this, taskId, "agent:${previous.agentId}", "agent:${item.agentId}",
-                                    "HANDOFF_CLAIMED", "Odbiorca przejął przekazanie przed wysłaniem własnego żądania API.",
-                                    expectedRunId = executionRunId
-                                )
-                                if (!claimAudited) throw IllegalStateException(
-                                    "Nie udało się trwale zapisać śladu przejęcia przekazania; żądanie API odbiorcy nie zostanie wysłane."
-                                )
-                                "Nadawca: ${claimed.senderAgentId}\nOdbiorca: ${claimed.recipientAgentId}\n\nRaport poprzedniego agenta:\n${claimed.payload}"
-                            }
+                            queueStore.withActiveRun(this, taskId, executionRunId) {
+                                val index = allowed.indexOfFirst { it.agentId == item.agentId }
+                                if (index <= 0) "" else {
+                                    val previous = allowed[index - 1]
+                                    val messageId = "h-${taskId.take(30)}-$executionRunId-${previous.agentId.take(20)}-${item.agentId.take(20)}"
+                                    val claimed = pl.aimasterpro.app.core.AgentHandoffStore.claim(
+                                        this, taskId, executionRunId, messageId, item.agentId
+                                    ) ?: throw pl.aimasterpro.app.agents.HandoffUnavailableException(
+                                        "Brak możliwego do przejęcia przekazania od agenta ${previous.agentId}; żądanie API odbiorcy nie zostanie wysłane."
+                                    )
+                                    val claimAudited = queueStore.recordAgentTrace(
+                                        this, taskId, "agent:${previous.agentId}", "agent:${item.agentId}",
+                                        "HANDOFF_CLAIMED", "Odbiorca przejął przekazanie przed wysłaniem własnego żądania API.",
+                                        expectedRunId = executionRunId
+                                    )
+                                    if (!claimAudited) throw IllegalStateException(
+                                        "Nie udało się trwale zapisać śladu przejęcia przekazania; żądanie API odbiorcy nie zostanie wysłane."
+                                    )
+                                    "Nadawca: ${claimed.senderAgentId}\nOdbiorca: ${claimed.recipientAgentId}\n\nRaport poprzedniego agenta:\n${claimed.payload}"
+                                }
+                            } ?: throw pl.aimasterpro.app.agents.HandoffUnavailableException(
+                                "Przebieg zadania został zatrzymany; odbiorca nie może przejąć przekazania ani wysłać żądania API."
+                            )
                         },
                         onRequestStarting = { item, actualProvider, estimatedInput, estimatedOutput, idempotencyKey, attempts ->
-                            !store.isStorageUncertain() && ensureBudgetReservationTarget(budgetPlan.reservationId, item.id, item.agentId, actualProvider) && pl.aimasterpro.app.core.TaskCheckpointStore.record(
-                                this, pl.aimasterpro.app.core.TaskCheckpointStore.Event(
-                                    item.id, item.agentId, "REQUESTING",
-                                    "Żądanie API rozpoczęte z kolejki MASTER-a.",
-                                    System.currentTimeMillis(), actualProvider.id, actualProvider.model, attempts,
-                                    estimatedInputTokens = estimatedInput, estimatedOutputTokens = estimatedOutput,
-                                    idempotencyKey = idempotencyKey,
-                                    baseUrl = pl.aimasterpro.app.core.TaskCheckpointStore.safeBaseUrlForCheckpoint(actualProvider.baseUrl),
-                                    runId = executionRunId
-                                )
-                            )
+                            queueStore.withActiveRun(this, taskId, executionRunId) {
+                                !store.isStorageUncertain() &&
+                                    ensureBudgetReservationTarget(budgetPlan.reservationId, item.id, item.agentId, actualProvider) &&
+                                    pl.aimasterpro.app.core.TaskCheckpointStore.record(
+                                        this, pl.aimasterpro.app.core.TaskCheckpointStore.Event(
+                                            item.id, item.agentId, "REQUESTING",
+                                            "Żądanie API rozpoczęte z kolejki MASTER-a.",
+                                            System.currentTimeMillis(), actualProvider.id, actualProvider.model, attempts,
+                                            estimatedInputTokens = estimatedInput, estimatedOutputTokens = estimatedOutput,
+                                            idempotencyKey = idempotencyKey,
+                                            baseUrl = pl.aimasterpro.app.core.TaskCheckpointStore.safeBaseUrlForCheckpoint(actualProvider.baseUrl),
+                                            runId = executionRunId
+                                        )
+                                    )
+                            } ?: false
                         },
                         requestScope = requestScope,
                         onTaskFinished = { subTaskId ->
