@@ -4194,6 +4194,21 @@ class MainActivity : Activity() {
     }
 
     private fun showProviders() {
+        try {
+            showProvidersContent()
+        } catch (error: Exception) {
+            android.util.Log.e("AiFORTecaProviders", "Nie udało się zbudować ekranu dostawców.", error)
+            if (::content.isInitialized) {
+                content.removeAllViews()
+                card(
+                    "⚠ NIE UDAŁO SIĘ OTWORZYĆ ZAKŁADKI DOSTAWCÓW",
+                    "Ekran został zabezpieczony przed zamknięciem aplikacji. Dane profili nie zostały zmienione. Typ błędu: ${error.javaClass.simpleName}. Zamknij komunikat i spróbuj ponownie; jeśli problem się powtarza, wygeneruj raport z MASTER."
+                )
+            }
+        }
+    }
+
+    private fun showProvidersContent() {
         if (store.isStorageUncertain()) {
             card(
                 "⚠ MAGAZYN KONFIGURACJI WYMAGA PONOWNEGO URUCHOMIENIA",
@@ -4201,7 +4216,15 @@ class MainActivity : Activity() {
             )
             return
         }
-        val allSaved = store.allConfigs().mapNotNull { j -> runCatching { loadProvider(j.optString("id")) }.getOrNull() }
+        val savedSnapshot = runCatching { store.allConfigs() }.getOrElse { error ->
+            android.util.Log.e("AiFORTecaProviders", "Nie można odczytać profili dostawców.", error)
+            card(
+                "⚠ NIE MOŻNA ODCZYTAĆ PROFILI DOSTAWCÓW",
+                "Magazyn konfiguracji zgłosił błąd odczytu. Nie zmieniono żadnych profili ani kluczy. Typ błędu: ${error.javaClass.simpleName}. Zamknij i uruchom ponownie aplikację; jeśli problem pozostaje, wygeneruj raport z MASTER."
+            )
+            return
+        }
+        val allSaved = savedSnapshot.mapNotNull { j -> runCatching { loadProvider(j.optString("id")) }.getOrNull() }
         val baseProfiles = allSaved.filter { it.parentProviderId.isBlank() }
         val unavailableSecretIds = store.unavailableSecretProviderIds()
         if (unavailableSecretIds.isNotEmpty()) {
@@ -4278,7 +4301,8 @@ class MainActivity : Activity() {
             val paidCount = entries.count { it.info.freeByPricing == false && !isUnknownPriceCatalogEntry(it) }
             val unknownCount = entries.count { isUnknownPriceCatalogEntry(it) }
             modelsContainer.addView(TextView(this).apply {
-                text = "Wyniki: ${entries.size} • darmowe/lokalne: $freeCount • płatne: $paidCount • nieznana cena: $unknownCount\nOstatnia synchronizacja: ${modelCatalogPrefs.getLong("last_sync", 0L).takeIf { it > 0L }?.let { java.text.SimpleDateFormat("dd.MM.yyyy HH:mm", java.util.Locale.getDefault()).format(java.util.Date(it)) } ?: "brak"}"
+                val lastSync = runCatching { modelCatalogPrefs.getLong("last_sync", 0L) }.getOrDefault(0L)
+                text = "Wyniki: ${entries.size} • darmowe/lokalne: $freeCount • płatne: $paidCount • nieznana cena: $unknownCount\nOstatnia synchronizacja: ${lastSync.takeIf { it > 0L }?.let { java.text.SimpleDateFormat("dd.MM.yyyy HH:mm", java.util.Locale.getDefault()).format(java.util.Date(it)) } ?: "brak"}"
                 setTextColor(cyan); textSize = 11f; setPadding(0, 0, 0, dp(8))
             })
             entries.take(80).forEach { entry ->
@@ -4389,7 +4413,12 @@ class MainActivity : Activity() {
 
         val providersCard = card("Dostawcy i klucze API", "Klucze są szyfrowane przez Android Keystore. Profil dostawcy przechowuje połączenie; profile modeli powstają z listy powyżej.")
         baseProfiles.forEach { p ->
-            val usage = TokenTracker.getUsage(this, p.id)
+            val usageRead = pl.aimasterpro.app.core.ProviderScreenReadPolicy.readUsage {
+                TokenTracker.getUsage(this, p.id).totalTokens
+            }
+            if (!usageRead.available) {
+                android.util.Log.w("AiFORTecaProviders", "Licznik tokenów niedostępny dla profilu ${p.id}; ekran dostawców pozostaje dostępny.")
+            }
             val hasKey = p.apiKey.isNotBlank() || pl.aimasterpro.app.core.FreeModelsCatalog.isLocalOllamaEndpoint(p.baseUrl)
             val statusText = if (!hasKey) "Brak klucza API" else if (p.baseUrl.isBlank()) "Uzupełnij Base URL" else "Dane dostawcy zapisane"
             val box = LinearLayout(this).apply {
@@ -4397,7 +4426,8 @@ class MainActivity : Activity() {
                 val lp = LinearLayout.LayoutParams(-1, -2); lp.bottomMargin = dp(8); layoutParams = lp
             }
             box.addView(TextView(this).apply { text = p.name; textSize = 15f; typeface = Typeface.DEFAULT_BOLD; setTextColor(white) })
-            box.addView(TextView(this).apply { text = "${p.baseUrl}\nModel bazowy: ${p.model.ifBlank { "nie wybrano — utwórz profil z katalogu" }}\n$statusText • ${usage.totalTokens} tokenów zarejestrowanych"; textSize = 11f; setTextColor(muted); setPadding(0, dp(3), 0, dp(6)) })
+            val usageLabel = usageRead.totalTokens?.let { "$it tokenów zarejestrowanych" } ?: "licznik tokenów niedostępny"
+            box.addView(TextView(this).apply { text = "${p.baseUrl}\nModel bazowy: ${p.model.ifBlank { "nie wybrano — utwórz profil z katalogu" }}\n$statusText • $usageLabel"; textSize = 11f; setTextColor(muted); setPadding(0, dp(3), 0, dp(6)) })
             fun providerButton(label: String, click: () -> Unit) {
                 val b = TextView(this).apply { text = label; textSize = 12f; gravity = Gravity.CENTER; setTextColor(white); setPadding(dp(10), dp(9), dp(10), dp(9)); background = ripple(panel, 9); setOnClickListener { click() } }
                 box.addView(b, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(5) })
