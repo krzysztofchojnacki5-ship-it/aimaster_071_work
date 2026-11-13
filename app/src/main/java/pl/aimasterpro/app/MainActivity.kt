@@ -6809,8 +6809,10 @@ class MainActivity : Activity() {
             }
             val manuallyResolved = handoffDiagnostics.messages
                 .filter { it.state == pl.aimasterpro.app.core.AgentHandoffStore.State.MANUALLY_RESOLVED }
+            val rejected = handoffDiagnostics.messages
+                .filter { it.state == pl.aimasterpro.app.core.AgentHandoffStore.State.REJECTED }
             card("Skrzynka przekazań agentów",
-                "Oczekujące: $pendingCount • Przejęte bez potwierdzenia: $claimedCount • Ręcznie zamknięte jako nieznane: ${manuallyResolved.size}")
+                "Oczekujące: $pendingCount • Przejęte bez potwierdzenia: $claimedCount • Odrzucone: ${rejected.size} • Ręcznie zamknięte jako nieznane: ${manuallyResolved.size}")
             if (unresolved.isEmpty()) {
                 card("Brak nierozstrzygniętych przekazań",
                     "Wszystkie zapisane przekazania mają stan końcowy.")
@@ -6863,6 +6865,13 @@ class MainActivity : Activity() {
                     "$taskTitle • ${handoff.senderAgentId} → ${handoff.recipientAgentId} • przebieg #${handoff.runId}\n" +
                         "ID: ${handoff.id} • Decyzja: ${handoff.resolutionActor} • " +
                         handoffTime.format(java.util.Date(handoff.resolvedAt)) + "\n" +
+                        handoff.resolutionReason)
+            }
+            rejected.takeLast(5).asReversed().forEach { handoff ->
+                val taskTitle = queueDiagnostics.tasks.firstOrNull { it.id == handoff.taskId }?.title ?: handoff.taskId
+                card("PRZEKAZANIE ODRZUCONE PRZEZ ODBIORCĘ",
+                    "$taskTitle • ${handoff.senderAgentId} → ${handoff.recipientAgentId} • przebieg #${handoff.runId}\n" +
+                        "ID: ${handoff.id} • Odrzucono: ${handoffTime.format(java.util.Date(handoff.updatedAt))}\n" +
                         handoff.resolutionReason)
             }
         }
