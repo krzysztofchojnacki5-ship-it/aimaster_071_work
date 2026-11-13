@@ -7318,7 +7318,19 @@ class MainActivity : Activity() {
                                     "h-${taskId.take(30)}-$executionRunId-${allowed[index - 1].agentId.take(20)}-${result.agentId.take(20)}"
                                 } else ""
                                 val previous = allowed.getOrNull(index - 1)
-                                val inboundAcknowledged = if (inboundId.isBlank()) true else {
+                                val explicitlyRejected = result.handoffRejectionReason.isNotBlank()
+                                val inboundResolved = if (inboundId.isBlank()) true else if (explicitlyRejected) {
+                                    val rejected = pl.aimasterpro.app.core.AgentHandoffStore.reject(
+                                        this, taskId, executionRunId, inboundId, result.agentId,
+                                        result.handoffRejectionReason
+                                    )
+                                    rejected && previous != null &&
+                                        queueStore.recordAgentTrace(
+                                            this, taskId, "agent:${previous.agentId}", "agent:${result.agentId}",
+                                            "HANDOFF_REJECTED", result.handoffRejectionReason,
+                                            expectedRunId = executionRunId
+                                        )
+                                } else {
                                     val acknowledged = pl.aimasterpro.app.core.AgentHandoffStore.acknowledge(
                                         this, taskId, executionRunId, inboundId, result.agentId
                                     )
@@ -7330,9 +7342,11 @@ class MainActivity : Activity() {
                                         )
                                 }
                                 val next = allowed.getOrNull(index + 1)
-                                val outboundSent = if (!inboundAcknowledged || next == null) {
-                                    next == null && inboundAcknowledged
-                                } else {
+                                val outboundSent = when {
+                                    !inboundResolved -> false
+                                    explicitlyRejected -> true // A rejection is terminal for this handoff chain.
+                                    next == null -> true
+                                    else -> {
                                     val messageId = "h-${taskId.take(30)}-$executionRunId-${result.agentId.take(20)}-${next.agentId.take(20)}"
                                     val sent = pl.aimasterpro.app.core.AgentHandoffStore.send(
                                         this, taskId, executionRunId, messageId,
@@ -7344,7 +7358,7 @@ class MainActivity : Activity() {
                                         expectedRunId = executionRunId
                                     )
                                 }
-                                inboundAcknowledged && outboundSent
+                                inboundResolved && outboundSent
                             }
                         },
                         handoffContextForTask = { item ->
