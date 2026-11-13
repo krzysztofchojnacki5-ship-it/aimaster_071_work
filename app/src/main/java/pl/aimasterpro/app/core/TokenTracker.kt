@@ -2,6 +2,7 @@ package pl.aimasterpro.app.core
 
 import android.content.Context
 import org.json.JSONObject
+import java.math.BigDecimal
 
 object TokenTracker {
     private const val PREFS_NAME = "token_tracker_state"
@@ -28,8 +29,30 @@ object TokenTracker {
 
     private val usageMap = mutableMapOf<String, ModelUsage>()
 
+    private fun validateProviderId(providerId: String) {
+        require(providerId.isNotBlank() && providerId.length <= 160 && providerId == providerId.trim() && providerId.none { it.isISOControl() }) {
+            "Nieprawidłowy identyfikator dostawcy."
+        }
+    }
+
+    private fun exactNonNegativeLong(json: JSONObject, key: String): Long {
+        val value = json.opt(key) as? Number ?: throw IllegalStateException("Nieprawidłowe pole licznika: $key.")
+        val exact = when (value) {
+            is Int -> value.toLong()
+            is Long -> value
+            is BigDecimal -> value.longValueExact()
+            is Double -> BigDecimal.valueOf(value).longValueExact()
+            is Float -> BigDecimal(value.toString()).longValueExact()
+            else -> BigDecimal(value.toString()).longValueExact()
+        }
+        require(exact >= 0L) { "Ujemna wartość pola licznika: $key." }
+        return exact
+    }
+
     /** Corrupt legacy counters must never take down the provider screen or a usage write. */
     private fun readSavedUsage(context: Context, providerId: String): ModelUsage {
+        validateProviderId(providerId)
+        check(!SharedPreferencesWriteHealth.isUncertain(PREFS_NAME)) { "Rejestr tokenów jest w kwarantannie po niejednoznacznym zapisie." }
         val raw = runCatching {
             context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).getString(providerId, null)
         }.getOrNull() ?: return ModelUsage(providerId)
@@ -40,32 +63,36 @@ object TokenTracker {
             } ?: "OK"
             ModelUsage(
                 providerId = providerId,
-                inputTokens = json.optLong("input", 0L).coerceAtLeast(0L),
-                outputTokens = json.optLong("output", 0L).coerceAtLeast(0L),
+                inputTokens = exactNonNegativeLong(json, "input"),
+                outputTokens = exactNonNegativeLong(json, "output"),
                 status = status,
-                lastStatusMessage = json.optString("msg", "Gotowy").take(240),
-                rateLimitTimestamp = json.optLong("ts", 0L).coerceAtLeast(0L)
+                lastStatusMessage = CommunicationLogSanitizer.sanitize(json.optString("msg", "Gotowy")).take(240),
+                rateLimitTimestamp = exactNonNegativeLong(json, "ts").also { timestamp ->
+                    require(timestamp <= System.currentTimeMillis() + 300_000L) { "Znacznik czasu limitu dostawcy znajduje się w przyszłości." }
+                }
             )
         }.getOrElse { ModelUsage(providerId) }
     }
 
     @Synchronized
     fun recordUsage(context: Context, providerId: String, inputPrompt: String, outputReply: String, status: String = "OK", statusMsg: String = "Gotowy") {
+        validateProviderId(providerId)
         val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-        val usage = usageMap.getOrPut(providerId) { readSavedUsage(context, providerId) }
-        usage.inputTokens = addTokenCounts(usage.inputTokens, (inputPrompt.length / 4).coerceAtLeast(1).toLong())
-        usage.outputTokens = addTokenCounts(usage.outputTokens, (outputReply.length / 4).coerceAtLeast(1).toLong())
-        usage.status = status.takeIf { it in setOf("OK", "RATE_LIMITED_429", "ERROR") } ?: "ERROR"
-        usage.lastStatusMessage = statusMsg.take(240)
-        if (usage.status == "RATE_LIMITED_429") usage.rateLimitTimestamp = System.currentTimeMillis()
-
-        val json = JSONObject()
-            .put("input", usage.inputTokens)
-            .put("output", usage.outputTokens)
-            .put("status", usage.status)
-            .put("msg", usage.lastStatusMessage)
-            .put("ts", usage.rateLimitTimestamp)
-        prefs.edit().putString(providerId, json.toString()).apply()
+        val current = usageMap[providerId] ?: readSavedUsage(context, providerId)
+        val nextStatus = status.takeIf { it in setOf("OK", "RATE_LIMITED_429", "ERROR") } ?: "ERROR"
+        val next = current.copy(
+            inputTokens = addTokenCounts(current.inputTokens, (inputPrompt.length / 4).coerceAtLeast(1).toLong()),
+            outputTokens = addTokenCounts(current.outputTokens, (outputReply.length / 4).coerceAtLeast(1).toLong()),
+            status = nextStatus,
+            lastStatusMessage = CommunicationLogSanitizer.sanitize(statusMsg).take(240),
+            rateLimitTimestamp = if (nextStatus == "RATE_LIMITED_429") System.currentTimeMillis() else current.rateLimitTimestamp
+        )
+        val json = JSONObject().put("input", next.inputTokens).put("output", next.outputTokens)
+            .put("status", next.status).put("msg", next.lastStatusMessage).put("ts", next.rateLimitTimestamp)
+        check(SharedPreferencesWriteHealth.commit(PREFS_NAME, prefs.edit().putString(providerId, json.toString()))) {
+            "Nie udało się trwale zapisać liczników tokenów; rejestr został zabezpieczony."
+        }
+        usageMap[providerId] = next
     }
 
     private fun addTokenCounts(left: Long, right: Long): Long {
@@ -76,13 +103,18 @@ object TokenTracker {
 
     @Synchronized
     fun getUsage(context: Context, providerId: String): ModelUsage {
+        validateProviderId(providerId)
+        check(!SharedPreferencesWriteHealth.isUncertain(PREFS_NAME)) { "Rejestr tokenów jest w kwarantannie po niejednoznacznym zapisie." }
         return usageMap.getOrPut(providerId) { readSavedUsage(context, providerId) }
     }
 
     @Synchronized
     fun resetUsage(context: Context, providerId: String) {
+        validateProviderId(providerId)
         val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-        prefs.edit().remove(providerId).apply()
+        check(SharedPreferencesWriteHealth.commit(PREFS_NAME, prefs.edit().remove(providerId))) {
+            "Nie udało się trwale wyzerować liczników tokenów."
+        }
         usageMap.remove(providerId)
     }
 }
