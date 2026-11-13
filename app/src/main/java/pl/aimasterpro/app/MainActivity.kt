@@ -481,7 +481,7 @@ class MainActivity : Activity() {
             Triple("☷", "Zadania", "Zadania"),
             Triple("🧠", "Pamięć", "Pamięć"),
             Triple("⇄", "Komunikacja", "Rozmowy"),
-            Triple("◇", "Dostawcy", "Modele"),
+            Triple("◇", "Dostawcy i modele", "Modele"),
             Triple("⌁", "Diagnostyka", "Diagnostyka"),
             Triple("⚙", "Ustawienia", "Ustawienia"),
             Triple("✉", "Czat", "Czat")
@@ -4228,7 +4228,7 @@ class MainActivity : Activity() {
             }
         }
 
-        card("DOSTAWCY AI • KONFIGURACJA", "Zarządzanie połączeniami, kluczami API, lokalnym Ollama, katalogiem modeli i profilami modeli przypisywanymi do agentów.")
+        card("DOSTAWCY AI I KATALOG MODELI", "Tutaj konfigurujesz dostawców, pobierasz katalog dostępnych modeli i dodajesz profile modeli przypisywane agentom. Po imporcie bazy katalog trzeba odświeżyć ręcznie.")
 
         val syncCard = card("Katalog modeli", "Dane pochodzą z API skonfigurowanych dostawców. Cena nieznana nie jest traktowana jako darmowa.")
         action("⟳ ODŚWIEŻ WSZYSTKICH DOSTAWCÓW", syncCard) { refreshAllModelCatalogs(showToast = true) }
@@ -8295,8 +8295,7 @@ class MainActivity : Activity() {
                             }
                         }
                         showShell("Modele"); showProviders()
-                        toast("Wczytano ${configs.size} konfiguracji modeli wraz z kluczami API.")
-                        refreshAllModelCatalogs(showToast = false)
+                        toast("Wczytano ${configs.size} konfiguracji dostawców i kluczy. Aby pobrać modele, otwórz Katalog modeli i naciśnij ODŚWIEŻ WSZYSTKICH DOSTAWCÓW.")
                     }.onFailure {
                         if (store.isStorageUncertain()) {
                             client.cancelActiveRequests()
@@ -8484,8 +8483,7 @@ class MainActivity : Activity() {
                     return@setPositiveButton
                 }
                 showShell("Modele"); showProviders()
-                toast("Zaimportowano ${migrated.size} profili. Sprawdź pola kluczy API przed użyciem.")
-                refreshAllModelCatalogs(showToast = false)
+                toast("Zaimportowano ${migrated.size} profili. Sprawdź klucze API, a katalog modeli odśwież ręcznie przyciskiem ODŚWIEŻ WSZYSTKICH DOSTAWCÓW.")
             }.show()
     }
 
