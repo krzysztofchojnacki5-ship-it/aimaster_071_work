@@ -45,8 +45,8 @@ object TokenTracker {
             is Float -> BigDecimal(value.toString()).longValueExact()
             else -> BigDecimal(value.toString()).longValueExact()
         }
-        require(exact >= 0L) { "Ujemna wartość pola licznika: $key." }
-        return exact
+        // Normalize a negative legacy field independently; do not discard valid sibling counters.
+        return exact.coerceAtLeast(0L)
     }
 
     /** Corrupt legacy counters must never take down the provider screen or a usage write. */
