@@ -481,6 +481,8 @@ class ApiTokenTrackerTest {
             try {
                 while (writerDone.count > 0L) {
                     ApiTokenTracker.loadAllRecordsFromStorage(context)
+                    // Avoid monopolizing the ApiTokenTracker monitor and starving the writer.
+                    Thread.sleep(1L)
                 }
             } catch (error: Throwable) {
                 failure.compareAndSet(null, error)
