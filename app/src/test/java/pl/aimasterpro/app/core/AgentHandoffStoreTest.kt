@@ -398,7 +398,8 @@ class AgentHandoffStoreTest {
         val malformed = listOf(
             record("PENDING", 101L, 0L),
             record("CLAIMED", 112L, 111L),
-            record("ACKNOWLEDGED", 109L, 110L)
+            record("ACKNOWLEDGED", 109L, 110L),
+            record("REJECTED", 112L, 111L)
         )
         malformed.forEach { item ->
             val raw = org.json.JSONArray().put(item).toString()
