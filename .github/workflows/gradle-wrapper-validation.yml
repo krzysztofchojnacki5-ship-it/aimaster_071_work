@@ -1,0 +1,26 @@
+name: Gradle Wrapper Validation
+
+on:
+  push:
+    branches:
+      - 'work/aiforteca-*'
+  pull_request:
+    branches:
+      - 'work/aiforteca-*'
+
+permissions:
+  contents: read
+
+# Keep push and pull_request validation in separate slots so neither event cancels the other.
+concurrency:
+  group: aiforteca-wrapper-${{ github.workflow }}-${{ github.event_name }}-${{ github.head_ref || github.ref_name }}
+  cancel-in-progress: true
+
+jobs:
+  validation:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+      - name: Validate Gradle Wrapper JAR
+        uses: gradle/actions/wrapper-validation@v4

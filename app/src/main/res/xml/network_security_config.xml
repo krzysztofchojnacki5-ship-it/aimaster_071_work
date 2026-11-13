@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<network-security-config>
+    <!-- Platform permits cleartext at the socket layer; ProviderEndpointPolicy is the mandatory app-level gate and only admits exact loopback or opted-in keyless Ollama RFC1918:11434 endpoints. -->
+    <base-config cleartextTrafficPermitted="true">
+        <trust-anchors>
+            <certificates src="system" />
+        </trust-anchors>
+    </base-config>
+    <!-- The platform layer must permit dynamic private IPv4 hosts; ProviderEndpointPolicy is the mandatory app-level gate for every provider HTTP request. -->
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="false">localhost</domain>
+        <domain includeSubdomains="false">127.0.0.1</domain>
+        <domain includeSubdomains="false">10.0.2.2</domain>
+    </domain-config>
+</network-security-config>

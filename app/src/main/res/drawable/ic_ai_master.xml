@@ -1,0 +1,13 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android" android:width="108dp" android:height="108dp" android:viewportWidth="108" android:viewportHeight="108">
+    <path android:fillColor="#0D0D11" android:pathData="M0,0h108v108h-108z"/>
+    <!-- Connecting neural lines -->
+    <path android:strokeColor="#31D7D0" android:strokeWidth="3" android:strokeLineCap="round" android:pathData="M54,24L24,54M54,24L84,54M24,54L54,84M84,54L54,84M24,54L54,54M84,54L54,54M54,24L54,84"/>
+    <!-- Central Master Core -->
+    <path android:fillColor="#FF6B00" android:pathData="M54,42a12,12 0,1 1,0.1 0z"/>
+    <path android:fillColor="#FFFFFF" android:pathData="M54,48a6,6 0,1 1,0.1 0z"/>
+    <!-- Agent nodes -->
+    <path android:fillColor="#31D7D0" android:pathData="M24,54a8,8 0,1 1,0.1 0z"/>
+    <path android:fillColor="#31D7D0" android:pathData="M84,54a8,8 0,1 1,0.1 0z"/>
+    <path android:fillColor="#31D7D0" android:pathData="M54,24a8,8 0,1 1,0.1 0z"/>
+    <path android:fillColor="#31D7D0" android:pathData="M54,84a8,8 0,1 1,0.1 0z"/>
+</vector>
