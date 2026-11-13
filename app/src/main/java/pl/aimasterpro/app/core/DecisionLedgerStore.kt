@@ -146,7 +146,7 @@ object DecisionLedgerStore {
         val array = JSONArray(raw)
         require(array.length() <= MAX_ENTRIES)
         val ids = hashSetOf<String>()
-        (0 until array.length()).map { index ->
+        val decoded = (0 until array.length()).map { index ->
             val o = array.getJSONObject(index)
             fun string(key: String): String {
                 val value = o.opt(key)
