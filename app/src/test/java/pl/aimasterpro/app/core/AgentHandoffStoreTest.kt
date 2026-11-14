@@ -188,7 +188,7 @@ class AgentHandoffStoreTest {
         assertEquals(AgentHandoffStore.State.PENDING, snapshot.messages.single().state)
     }
 
-    @Test fun acknowledgedHandoffsRemainInAuditTrailAndCapacityRejectsNewWork() {
+    @Test fun acknowledgedHandoffsAreReclaimedWhenCapacityIsFull() {
         val runId = runningTask()
         val firstId = "handoff-msg-000"
         assertTrue(AgentHandoffStore.send(context, "handoff-task-01", runId, firstId,
@@ -207,14 +207,14 @@ class AgentHandoffStoreTest {
         }
         assertEquals(400, AgentHandoffStore.snapshot(context).messages.size)
 
-        assertFalse(AgentHandoffStore.send(context, "handoff-task-01", runId, "handoff-msg-400",
+        assertTrue(AgentHandoffStore.send(context, "handoff-task-01", runId, "handoff-msg-400",
             "critical-reviewer", "unit-test-engineer", "Nowe przekazanie.", 600L))
         val snapshot = AgentHandoffStore.snapshot(context)
         assertEquals(400, snapshot.messages.size)
-        assertTrue(snapshot.messages.any { it.id == firstId && it.state == AgentHandoffStore.State.ACKNOWLEDGED })
+        assertFalse(snapshot.messages.any { it.id == firstId })
         assertTrue(snapshot.messages.any { it.id == "handoff-msg-001" })
-        assertFalse(snapshot.messages.any { it.id == "handoff-msg-400" })
-        assertEquals(399, snapshot.messages.count { it.state == AgentHandoffStore.State.PENDING })
+        assertTrue(snapshot.messages.any { it.id == "handoff-msg-400" })
+        assertEquals(400, snapshot.messages.count { it.state == AgentHandoffStore.State.PENDING })
     }
 
     @Test fun inboxNeverEvictsPendingOrClaimedHandoffsToMakeRoom() {
@@ -484,10 +484,7 @@ class AgentHandoffStoreTest {
             handoff(index, if (index % 2 == 0) AgentHandoffStore.State.PENDING else AgentHandoffStore.State.CLAIMED)
         })
 
-        assertEquals(399, states?.size)
-        assertTrue(states.orEmpty().all {
-            it.state == AgentHandoffStore.State.PENDING || it.state == AgentHandoffStore.State.CLAIMED
-        })
+        assertNull(states)
     }
 
     @Test fun inboxCapacityRejectsWhenAllRecordsAreActive() {
