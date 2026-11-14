@@ -1,5 +1,6 @@
 package pl.aimasterpro.app.core
 
+import java.net.URI
 import java.util.Locale
 
 /**
@@ -7,8 +8,33 @@ import java.util.Locale
  * reused for a different endpoint during database import.
  */
 internal object ProviderCatalogCachePolicy {
-    fun normalizeBaseUrl(value: String): String =
-        value.trim().trimEnd('/').lowercase(Locale.ROOT)
+    /**
+     * Canonicalizes only URL components that are case-insensitive. API paths,
+     * query parameters and fragments remain case-sensitive/significant.
+     * Invalid or non-absolute URLs fail closed and cannot validate a cache entry.
+     */
+    fun normalizeBaseUrl(value: String): String {
+        val input = value.trim()
+        if (input.isBlank()) return ""
+        val uri = runCatching { URI(input) }.getOrNull() ?: return ""
+        val scheme = uri.scheme?.lowercase(Locale.ROOT) ?: return ""
+        val host = uri.host?.lowercase(Locale.ROOT) ?: return ""
+        if (!uri.isAbsolute || uri.rawUserInfo != null) return ""
+
+        val path = uri.rawPath.orEmpty().trimEnd('/')
+        return buildString {
+            append(scheme)
+            append("://")
+            append(host)
+            if (uri.port >= 0) {
+                append(':')
+                append(uri.port)
+            }
+            append(path)
+            uri.rawQuery?.let { append('?'); append(it) }
+            uri.rawFragment?.let { append('#'); append(it) }
+        }
+    }
 
     fun currentProviderBaseUrls(records: List<ProviderScreenProfileRecord>): Map<String, String> {
         return records.groupBy { it.id }
