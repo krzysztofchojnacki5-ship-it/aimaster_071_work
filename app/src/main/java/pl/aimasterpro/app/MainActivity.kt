@@ -4280,10 +4280,22 @@ class MainActivity : Activity() {
 
         card("DOSTAWCY AI I KATALOG MODELI", "Zarządzaj zapisanymi profilami modeli u góry. Poniżej możesz przeglądać i pobierać katalog dostępnych modeli z aktywnych endpointów.")
 
-        // 1. ZAPISANE PROFILE MODELI (ABSOLUTNIE NAJWYŻEJ NA EKRANIE)
+        // 1. ZAPISANE PROFILE MODELI (ZAWSZE WIDOCZNE NA SAMYM POCZĄTKU EKRANU)
         val savedModelProfiles = allSaved.filter { it.parentProviderId.isNotBlank() }
-        if (savedModelProfiles.isNotEmpty()) {
-            val profilesCard = card("ZAPISANE PROFILE MODELI", "Aktywne profile modeli przypisane do agentów. Każdy profil ma własną nazwę i limit tokenów.")
+        val profilesCard = card("ZAPISANE PROFILE MODELI", "Aktywne profile modeli przypisane do agentów. Każdy profil ma własną nazwę i limit tokenów.")
+        if (savedModelProfiles.isEmpty()) {
+            val emptyRow = LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL
+                setPadding(dp(12), dp(10), dp(12), dp(10))
+                background = rounded(cardBg, 10, border)
+            }
+            emptyRow.addView(TextView(this).apply {
+                text = "Brak zapisanych profili modeli.\n\nJak utworzyć profil:\n1. Skonfiguruj dostawcę i klucz API w sekcji poniżej ('Dostawcy i klucze API').\n2. Kliknij 'ODŚWIEŻ WSZYSTKICH DOSTAWCÓW' w katalogu poniżej.\n3. Wybierz model z listy i kliknij przycisk 'DODAJ PROFIL'."
+                setTextColor(muted)
+                textSize = 12f
+            })
+            profilesCard.addView(emptyRow)
+        } else {
             savedModelProfiles.forEach { profile ->
                 val selected = resolvedMasterProviderId() == profile.id
                 val row = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(10), dp(9), dp(10), dp(9)); background = rounded(cardBg, 10, border) }
