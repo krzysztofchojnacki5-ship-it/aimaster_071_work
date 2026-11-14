@@ -1548,7 +1548,7 @@ class MainActivity : Activity() {
         val baseId = config.parentProviderId.ifBlank { config.id }
         val entry = readModelCatalogEntries().firstOrNull {
             it.providerId == baseId && it.info.id == config.model &&
-                it.baseUrl.trimEnd('/').equals(config.baseUrl.trimEnd('/'), true)
+                pl.aimasterpro.app.core.ProviderCatalogCachePolicy.normalizeBaseUrl(it.baseUrl).let { endpoint -> endpoint.isNotBlank() && endpoint == pl.aimasterpro.app.core.ProviderCatalogCachePolicy.normalizeBaseUrl(config.baseUrl) }
         } ?: return false
         if (!isUnknownPriceCatalogEntry(entry)) return false
         return pl.aimasterpro.app.core.UnknownPriceApprovalStore.isApproved(
@@ -1624,7 +1624,7 @@ class MainActivity : Activity() {
                 }
                 if (Thread.currentThread().isInterrupted) throw ProviderException(null, "Żądanie anulowane przez użytkownika.", category = "CANCELLED")
                 val reservationTargetChanged = !cfg.id.equals(budgetedProvider.id, true) ||
-                    !cfg.baseUrl.trimEnd('/').equals(budgetedProvider.baseUrl.trimEnd('/'), true) ||
+                    pl.aimasterpro.app.core.ProviderCatalogCachePolicy.normalizeBaseUrl(cfg.baseUrl).let { endpoint -> endpoint.isBlank() || endpoint != pl.aimasterpro.app.core.ProviderCatalogCachePolicy.normalizeBaseUrl(budgetedProvider.baseUrl) } ||
                     !cfg.model.equals(budgetedProvider.model, true)
                 if (reservationTargetChanged) {
                     val retargeted = ensureBudgetReservationTarget(
@@ -4183,9 +4183,7 @@ class MainActivity : Activity() {
      */
     private fun migrateLegacyOllamaEmulatorEndpoint() {
         val legacy = loadProvider("ollama") ?: return
-        val normalized = legacy.baseUrl.trim().trimEnd('/')
-        if (!normalized.equals("http://10.0.2.2:11434/v1", ignoreCase = true) &&
-            !normalized.equals("http://10.0.2.2:11434", ignoreCase = true)) return
+        if (!pl.aimasterpro.app.core.ProviderCatalogCachePolicy.isLegacyOllamaEmulatorEndpoint(legacy.baseUrl)) return
         val migrated = legacy.copy(baseUrl = "", enabled = false, allowInsecureLanOllama = false)
         if (!saveProvider(migrated)) {
             android.util.Log.e("AiFORTecaMigration", "Nie udało się wyczyścić emulatorowego adresu Ollama. Profil pozostawiono bez zmian.")
@@ -8077,7 +8075,7 @@ class MainActivity : Activity() {
         val profiles = store.allConfigs().mapNotNull { raw ->
             runCatching { loadProvider(raw.optString("id")) }.getOrNull()
         }.filter { it.model.isNotBlank() && it.baseUrl.isNotBlank() }
-            .distinctBy { "${it.id}|${it.baseUrl.trim().trimEnd('/')}|${it.model}" }
+            .distinctBy { "${it.id}|${pl.aimasterpro.app.core.ProviderCatalogCachePolicy.normalizeBaseUrl(it.baseUrl).ifBlank { it.baseUrl.trim() }}|${it.model}" }
             .sortedBy { it.name.lowercase(java.util.Locale.ROOT) }
 
         if (profiles.isEmpty()) {
