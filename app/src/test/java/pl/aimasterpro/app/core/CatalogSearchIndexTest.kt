@@ -1,6 +1,7 @@
 package pl.aimasterpro.app.core
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertSame
 import org.junit.Test
 
 class CatalogSearchIndexTest {
