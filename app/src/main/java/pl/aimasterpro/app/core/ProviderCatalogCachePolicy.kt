@@ -36,6 +36,13 @@ internal object ProviderCatalogCachePolicy {
         }
     }
 
+    /** Matches only the untouched emulator default; endpoint path casing remains significant. */
+    fun isLegacyOllamaEmulatorEndpoint(value: String): Boolean {
+        val normalized = normalizeBaseUrl(value)
+        return normalized == "http://10.0.2.2:11434/v1" ||
+            normalized == "http://10.0.2.2:11434"
+    }
+
     fun currentProviderBaseUrls(records: List<ProviderScreenProfileRecord>): Map<String, String> {
         return records.groupBy { it.id }
             .filterValues { it.size == 1 }
