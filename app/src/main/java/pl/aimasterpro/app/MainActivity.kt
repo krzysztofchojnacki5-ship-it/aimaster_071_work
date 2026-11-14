@@ -4298,6 +4298,15 @@ class MainActivity : Activity() {
         val currentProviderBaseUrls = pl.aimasterpro.app.core.ProviderCatalogCachePolicy.currentProviderBaseUrls(storedProfiles)
         val catalogSnapshot = readModelCatalogEntries(currentProviderBaseUrls)
 
+        val priceStatusCache = pl.aimasterpro.app.core.CatalogPriceStatusCache<Triple<String, String, String>, Boolean> { identity ->
+            catalogSnapshot.firstOrNull {
+                it.providerId == identity.first && it.baseUrl == identity.second && it.info.id == identity.third
+            }?.let { isUnknownPriceCatalogEntry(it) } ?: false
+        }
+        fun hasUnknownPrice(entry: CatalogEntry): Boolean = priceStatusCache.get(
+            Triple(entry.providerId, entry.baseUrl, entry.info.id)
+        )
+
         fun renderCatalog(query: String, filter: Int) {
             modelsContainer.removeAllViews()
             val normalizedQuery = query.trim().lowercase()
@@ -4305,7 +4314,7 @@ class MainActivity : Activity() {
                 val hay = "${entry.providerName} ${entry.info.name} ${entry.info.id}".lowercase()
                 val matchesQuery = normalizedQuery.isBlank() || hay.contains(normalizedQuery)
                 val local = pl.aimasterpro.app.core.FreeModelsCatalog.isLocalOllamaEndpoint(entry.baseUrl)
-                val unknownPrice = !local && isUnknownPriceCatalogEntry(entry)
+                val unknownPrice = !local && hasUnknownPrice(entry)
                 val matchesFilter = when (filter) {
                     1 -> local || entry.info.freeByPricing == true
                     2 -> entry.info.freeByPricing == false && !unknownPrice
@@ -4317,7 +4326,7 @@ class MainActivity : Activity() {
                 val local = pl.aimasterpro.app.core.FreeModelsCatalog.isLocalOllamaEndpoint(entry.baseUrl)
                 when {
                     local || entry.info.freeByPricing == true -> 0
-                    isUnknownPriceCatalogEntry(entry) -> 1
+                    hasUnknownPrice(entry) -> 1
                     else -> 2
                 }
             }
@@ -4329,8 +4338,8 @@ class MainActivity : Activity() {
                 return
             }
             val freeCount = entries.count { it.info.freeByPricing == true || pl.aimasterpro.app.core.FreeModelsCatalog.isLocalOllamaEndpoint(it.baseUrl) }
-            val paidCount = entries.count { it.info.freeByPricing == false && !isUnknownPriceCatalogEntry(it) }
-            val unknownCount = entries.count { isUnknownPriceCatalogEntry(it) }
+            val paidCount = entries.count { it.info.freeByPricing == false && !hasUnknownPrice(it) }
+            val unknownCount = entries.count { hasUnknownPrice(it) }
             modelsContainer.addView(TextView(this).apply {
                 val lastSync = runCatching { modelCatalogPrefs.getLong("last_sync", 0L) }.getOrDefault(0L)
                 text = "Wyniki: ${entries.size} • darmowe/lokalne: $freeCount • płatne: $paidCount • nieznana cena: $unknownCount\nOstatnia synchronizacja: ${lastSync.takeIf { it > 0L }?.let { java.text.SimpleDateFormat("dd.MM.yyyy HH:mm", java.util.Locale.getDefault()).format(java.util.Date(it)) } ?: "brak"}"
@@ -4339,7 +4348,7 @@ class MainActivity : Activity() {
             entries.take(80).forEach { entry ->
                 val info = entry.info
                 val isLocal = pl.aimasterpro.app.core.FreeModelsCatalog.isLocalOllamaEndpoint(entry.baseUrl)
-                val unknownPrice = !isLocal && isUnknownPriceCatalogEntry(entry)
+                val unknownPrice = !isLocal && hasUnknownPrice(entry)
                 val approvedUnknownPrice = unknownPrice && pl.aimasterpro.app.core.UnknownPriceApprovalStore.isApproved(
                     this, entry.providerId, entry.baseUrl, info.id
                 )
