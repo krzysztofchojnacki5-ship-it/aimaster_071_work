@@ -10,6 +10,17 @@ internal object ProviderCatalogCachePolicy {
     fun normalizeBaseUrl(value: String): String =
         value.trim().trimEnd('/').lowercase(Locale.ROOT)
 
+    fun currentProviderBaseUrls(records: List<ProviderScreenProfileRecord>): Map<String, String> {
+        return records.groupBy { it.id }
+            .filterValues { it.size == 1 }
+            .mapNotNull { (id, rows) ->
+                val record = rows.single()
+                if (id.isBlank() || record.parentProviderId.isNotBlank() || record.baseUrl.isBlank()) null
+                else id to record.baseUrl
+            }
+            .toMap()
+    }
+
     fun isEntryCurrent(
         providerId: String,
         cachedBaseUrl: String,

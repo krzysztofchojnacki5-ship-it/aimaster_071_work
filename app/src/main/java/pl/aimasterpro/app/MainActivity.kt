@@ -4294,11 +4294,17 @@ class MainActivity : Activity() {
         val modelsContainer = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         syncCard.addView(modelsContainer, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(8) })
 
+        // Read and validate the catalog once for this screen. Search/filter changes below
+        // operate only on this immutable in-memory snapshot, never re-open SecureStore.
+        val currentProviderBaseUrls = pl.aimasterpro.app.core.ProviderCatalogCachePolicy.currentProviderBaseUrls(storedProfiles)
+        val catalogSnapshot = readModelCatalogEntries(currentProviderBaseUrls)
+
         fun renderCatalog(query: String, filter: Int) {
             modelsContainer.removeAllViews()
-            val entries = readModelCatalogEntries().filter { entry ->
+            val normalizedQuery = query.trim().lowercase()
+            val entries = catalogSnapshot.filter { entry ->
                 val hay = "${entry.providerName} ${entry.info.name} ${entry.info.id}".lowercase()
-                val matchesQuery = query.isBlank() || hay.contains(query.lowercase())
+                val matchesQuery = normalizedQuery.isBlank() || hay.contains(normalizedQuery)
                 val local = pl.aimasterpro.app.core.FreeModelsCatalog.isLocalOllamaEndpoint(entry.baseUrl)
                 val unknownPrice = !local && isUnknownPriceCatalogEntry(entry)
                 val matchesFilter = when (filter) {
@@ -4644,13 +4650,15 @@ class MainActivity : Activity() {
         val info: ProviderModelInfo
     )
 
-    private fun readModelCatalogEntries(): List<CatalogEntry> {
+    private fun readModelCatalogEntries(
+        currentProviderBaseUrls: Map<String, String>? = null
+    ): List<CatalogEntry> {
         // A provider ID can be reused by an imported backup. Never expose cached models
         // from the previous endpoint under the newly imported provider identity.
         if (store.isStorageUncertain()) return emptyList()
         val raw = runCatching { modelCatalogPrefs.getString("models_json", "[]") }.getOrNull()
             ?: return emptyList()
-        val currentProviderBaseUrls = runCatching {
+        val validatedProviderBaseUrls = currentProviderBaseUrls ?: runCatching {
             store.allConfigs().associate { config ->
                 config.optString("id") to config.optString("baseUrl")
             }
@@ -4676,7 +4684,7 @@ class MainActivity : Activity() {
         return out.asSequence()
             .filter { entry ->
                 pl.aimasterpro.app.core.ProviderCatalogCachePolicy.isEntryCurrent(
-                    entry.providerId, entry.baseUrl, currentProviderBaseUrls
+                    entry.providerId, entry.baseUrl, validatedProviderBaseUrls
                 )
             }
             .distinctBy { "${it.providerId}:${it.info.id}" }

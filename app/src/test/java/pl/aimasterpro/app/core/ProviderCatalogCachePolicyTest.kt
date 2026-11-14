@@ -44,4 +44,30 @@ class ProviderCatalogCachePolicyTest {
             mapOf("provider-a" to "https://api.example.com/v2")
         ))
     }
+
+    @Test fun providerSnapshotIncludesOnlyUniqueBaseProviders() {
+        val base = ProviderScreenProfileRecord(
+            "provider-a", "Provider A", "OPENAI_COMPATIBLE", "https://api.example/v1", "", "key",
+            true, "", false, false
+        )
+        val model = base.copy(id = "model-a", name = "Model A", parentProviderId = "provider-a")
+        val duplicateA = base.copy(name = "Duplicate A", baseUrl = "https://other.example/v1")
+        val blankEndpoint = base.copy(id = "provider-empty", baseUrl = "")
+        assertEquals(
+            mapOf("provider-a" to "https://api.example/v1"),
+            ProviderCatalogCachePolicy.currentProviderBaseUrls(listOf(base, model, duplicateA, blankEndpoint))
+        )
+    }
+
+    @Test fun providerSnapshotDoesNotDropEndpointWhenSecretIsUnavailable() {
+        val unreadable = ProviderScreenProfileRecord(
+            "provider-a", "Provider A", "OPENAI_COMPATIBLE", "https://api.example/v1", "", "",
+            true, "", false, true
+        )
+        assertEquals(
+            mapOf("provider-a" to "https://api.example/v1"),
+            ProviderCatalogCachePolicy.currentProviderBaseUrls(listOf(unreadable))
+        )
+    }
+
 }
