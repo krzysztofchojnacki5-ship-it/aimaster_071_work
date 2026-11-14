@@ -4224,9 +4224,36 @@ class MainActivity : Activity() {
             )
             return
         }
-        val allSaved = savedSnapshot.mapNotNull { j -> runCatching { loadProvider(j.optString("id")) }.getOrNull() }
+        // Resolve every profile from this one already-decrypted snapshot. Calling loadProvider()
+        // here would re-read each config (and each Keystore secret) on the UI thread.
+        val storedProfiles = savedSnapshot.mapNotNull { j ->
+            val id = j.optString("id")
+            if (id.isBlank()) return@mapNotNull null
+            val kind = runCatching { ProviderKind.valueOf(j.optString("kind")) }
+                .getOrDefault(ProviderKind.OPENAI_COMPATIBLE)
+            pl.aimasterpro.app.core.ProviderScreenProfileRecord(
+                id = id,
+                name = j.optString("name", id),
+                kind = kind.name,
+                baseUrl = j.optString("baseUrl"),
+                model = j.optString("model"),
+                apiKey = j.optString("apiKey").trim().removePrefix("Bearer ").trim(),
+                enabled = j.optBoolean("enabled", true),
+                parentProviderId = j.optString("parentProviderId", ""),
+                allowInsecureLanOllama = j.optBoolean("allowInsecureLanOllama", false),
+                secretUnavailable = j.optBoolean("_secretUnavailable", false)
+            )
+        }
+        val allSaved = pl.aimasterpro.app.core.ProviderScreenReadPolicy.resolveProfiles(storedProfiles).map { profile ->
+            ProviderConfig(
+                profile.id, profile.name,
+                runCatching { ProviderKind.valueOf(profile.kind) }.getOrDefault(ProviderKind.OPENAI_COMPATIBLE),
+                profile.baseUrl, profile.model, profile.apiKey, profile.enabled,
+                profile.parentProviderId, profile.allowInsecureLanOllama
+            )
+        }
         val baseProfiles = allSaved.filter { it.parentProviderId.isBlank() }
-        val unavailableSecretIds = store.unavailableSecretProviderIds()
+        val unavailableSecretIds = storedProfiles.filter { it.secretUnavailable }.map { it.id }.sorted()
         if (unavailableSecretIds.isNotEmpty()) {
             val canReplaceSecrets = store.canReplaceUnreadableSecrets()
             val recoveryCard = card(
@@ -4238,12 +4265,11 @@ class MainActivity : Activity() {
                 }
             )
             if (canReplaceSecrets) unavailableSecretIds.forEach { id ->
-                val raw = store.readConfig(id) ?: return@forEach
-                val kind = runCatching { ProviderKind.valueOf(raw.optString("kind")) }.getOrDefault(ProviderKind.OPENAI_COMPATIBLE)
+                val raw = storedProfiles.firstOrNull { it.id == id } ?: return@forEach
+                val kind = runCatching { ProviderKind.valueOf(raw.kind) }.getOrDefault(ProviderKind.OPENAI_COMPATIBLE)
                 val recoveryProfile = ProviderConfig(
-                    raw.optString("id", id), raw.optString("name", id), kind,
-                    raw.optString("baseUrl"), raw.optString("model"), "",
-                    raw.optBoolean("enabled", true), raw.optString("parentProviderId", "")
+                    raw.id, raw.name, kind, raw.baseUrl, raw.model, "",
+                    raw.enabled, raw.parentProviderId, raw.allowInsecureLanOllama
                 )
                 action("NAPRAW KLUCZ: ${recoveryProfile.name}", recoveryCard) {
                     providerDialog(recoveryProfile, recoverSecret = true)
