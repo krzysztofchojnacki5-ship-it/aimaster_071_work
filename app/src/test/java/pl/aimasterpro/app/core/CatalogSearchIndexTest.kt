@@ -11,7 +11,7 @@ class CatalogSearchIndexTest {
             CatalogSearchRecord(Model("paid-b"), "Provider B Display B paid-b", false, false, false),
             CatalogSearchRecord(Model("unknown"), "Provider C Unknown unknown", false, null, true),
             CatalogSearchRecord(Model("local"), "Local Ollama local", true, null, false),
-            CatalogSearchRecord(Model("free"), "Provider A Free free", false, true, false)
+            CatalogSearchRecord(Model("free"), "Provider A Display Free free", false, true, false)
         )
     )
 
