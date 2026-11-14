@@ -4278,11 +4278,11 @@ class MainActivity : Activity() {
             }
         }
 
-        card("DOSTAWCY AI I KATALOG MODELI", "Zarządzaj zapisanymi profilami modeli u góry. Poniżej możesz przeglądać i pobierać katalog dostępnych modeli z aktywnych endpointów.")
+        card("DOSTAWCY AI I KATALOG MODELI", "Zarządzaj zapisanymi profilami modeli u góry. Stuknij w dowolny profil lub dostawcę, aby otworzyć menu zarządzania.")
 
-        // 1. ZAPISANE PROFILE MODELI (ZAWSZE WIDOCZNE NA SAMYM POCZĄTKU EKRANU)
+        // 1. ZAPISANE PROFILE MODELI (Czysta lista z tap-to-interact)
         val savedModelProfiles = allSaved.filter { it.parentProviderId.isNotBlank() }
-        val profilesCard = card("ZAPISANE PROFILE MODELI", "Aktywne profile modeli przypisane do agentów. Każdy profil ma własną nazwę i limit tokenów.")
+        val profilesCard = card("ZAPISANE PROFILE MODELI", "Aktywne profile modeli przypisane do agentów. Stuknij w profil, aby zarządzać jego opcjami.")
         if (savedModelProfiles.isEmpty()) {
             val emptyRow = LinearLayout(this).apply {
                 orientation = LinearLayout.VERTICAL
@@ -4298,8 +4298,17 @@ class MainActivity : Activity() {
         } else {
             savedModelProfiles.forEach { profile ->
                 val selected = resolvedMasterProviderId() == profile.id
-                val row = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(10), dp(9), dp(10), dp(9)); background = rounded(cardBg, 10, border) }
-                row.addView(TextView(this).apply { text = (if (selected) "✓ AKTYWNY • " else "") + profile.name; setTextColor(if (selected) orange else white); textSize = 13f; typeface = Typeface.DEFAULT_BOLD })
+                val row = LinearLayout(this).apply {
+                    orientation = LinearLayout.VERTICAL
+                    setPadding(dp(12), dp(10), dp(12), dp(10))
+                    background = rounded(cardBg, 12, border)
+                    isClickable = true
+                    isFocusable = true
+                    val lp = LinearLayout.LayoutParams(-1, -2)
+                    lp.bottomMargin = dp(8)
+                    layoutParams = lp
+                }
+                row.addView(TextView(this).apply { text = (if (selected) "✓ AKTYWNY • " else "") + profile.name; setTextColor(if (selected) orange else white); textSize = 14f; typeface = Typeface.DEFAULT_BOLD })
                 row.addView(TextView(this).apply { text = profile.model; setTextColor(muted); textSize = 11f; setPadding(0, dp(2), 0, dp(4)); setTextIsSelectable(true) })
                 val modelUsage = runCatching {
                     pl.aimasterpro.app.core.ApiTokenTracker.getModelTokenUsage(
@@ -4313,40 +4322,59 @@ class MainActivity : Activity() {
                 val bar = "█".repeat(filled) + "░".repeat(barLen - filled)
                 val modelUsageText = when {
                     modelUsage == null -> "[$bar] 0% zużycia • brak danych tokenów"
-                    modelLimit == null -> "[$bar] ${pct}% zużycia (${modelUsage.usedTokens} użytych + ${modelUsage.reservedTokens} zarezerwowanych • limit dzienny nieustawiony)"
+                    modelLimit == null -> "[$bar] ${pct}% zużycia (${modelUsage.usedTokens} użytych + ${modelUsage.reservedTokens} zarezerwowanych)"
                     else -> {
                         val state = when {
                             modelUsage.limitReached -> "LIMIT 100% — ZABLOKOWANE"
                             modelUsage.warningReached -> "OSTRZEŻENIE ≥${modelLimit.warningPercent}%"
                             else -> "Limit aktywny"
                         }
-                        "[$bar] ${pct}% zużycia ($state)\nZużyto: ${modelUsage.usedTokens} + ${modelUsage.reservedTokens} rez. / ${modelLimit.dailyLimitTokens} limit"
+                        "[$bar] ${pct}% zużycia ($state) • ${modelUsage.usedTokens} użytych / ${modelLimit.dailyLimitTokens} limit"
                     }
                 }
                 row.addView(TextView(this).apply {
                     text = modelUsageText
                     setTextColor(if (modelUsage == null || modelUsage.limitReached) Color.RED else if (modelUsage.warningReached) orange else muted)
                     textSize = 11f
-                    setPadding(0, dp(2), 0, dp(6))
+                    setPadding(0, dp(2), 0, dp(2))
                 })
-                action("Ustaw limit tokenów tego modelu", row) {
-                    showModelTokenLimitDialog(profile, modelUsage?.config)
+                row.addView(TextView(this).apply {
+                    text = "Stuknij, aby otworzyć menu opcji profilu..."
+                    setTextColor(cyan)
+                    textSize = 10f
+                    setPadding(0, dp(4), 0, 0)
+                })
+                row.setOnClickListener {
+                    val actions = arrayOf(
+                        "Ustaw jako model czatu",
+                        "Edytuj nazwę profilu",
+                        "Ustaw limit tokenów",
+                        "Testuj ten profil",
+                        "Kopiuj ID modelu"
+                    )
+                    AlertDialog.Builder(this)
+                        .setTitle("Opcje profilu: ${profile.name}")
+                        .setItems(actions) { _, which ->
+                            when (which) {
+                                0 -> {
+                                    if (persistAgentProviderAssignment(AgentRole.MASTER, profile.id)) {
+                                        showShell("Modele"); showProviders(); toast("Aktywny model czatu: ${profile.model}")
+                                    }
+                                }
+                                1 -> showEditModelProfileNameDialog(profile)
+                                2 -> showModelTokenLimitDialog(profile, modelUsage?.config)
+                                3 -> testProvider(profile)
+                                4 -> copyText(profile.model)
+                            }
+                        }
+                        .show()
                 }
-                action("EDYTUJ NAZWĘ PROFILU", row) {
-                    showEditModelProfileNameDialog(profile)
-                }
-                action("Ustaw jako model czatu", row) {
-                    if (!persistAgentProviderAssignment(AgentRole.MASTER, profile.id)) return@action
-                    showShell("Modele"); showProviders(); toast("Aktywny model czatu: ${profile.model}")
-                }
-                action("Kopiuj ID modelu", row) { copyText(profile.model) }
-                action("Testuj ten profil", row) { testProvider(profile) }
-                profilesCard.addView(row, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(8) })
+                profilesCard.addView(row)
             }
         }
 
-        // 2. DOSTAWCY I KLUCZE API
-        val providersCard = card("Dostawcy i klucze API", "Klucze są szyfrowane przez Android Keystore. Profil dostawcy przechowuje połączenie.")
+        // 2. DOSTAWCY I KLUCZE API (Czysta lista z tap-to-interact)
+        val providersCard = card("Dostawcy i klucze API", "Klucze są szyfrowane przez Android Keystore. Stuknij w dostawcę, aby zarządzać połączeniem.")
         baseProfiles.forEach { p ->
             val usageRead = pl.aimasterpro.app.core.ProviderScreenReadPolicy.readUsage {
                 TokenTracker.getUsage(this, p.id).totalTokens
@@ -4357,23 +4385,52 @@ class MainActivity : Activity() {
             val hasKey = p.apiKey.isNotBlank() || pl.aimasterpro.app.core.FreeModelsCatalog.isLocalOllamaEndpoint(p.baseUrl)
             val statusText = if (!hasKey) "Brak klucza API" else if (p.baseUrl.isBlank()) "Uzupełnij Base URL" else "Dane dostawcy zapisane"
             val box = LinearLayout(this).apply {
-                orientation = LinearLayout.VERTICAL; setPadding(dp(12), dp(10), dp(12), dp(10)); background = rounded(cardBg, 12, border)
-                val lp = LinearLayout.LayoutParams(-1, -2); lp.bottomMargin = dp(8); layoutParams = lp
+                orientation = LinearLayout.VERTICAL
+                setPadding(dp(12), dp(10), dp(12), dp(10))
+                background = rounded(cardBg, 12, border)
+                isClickable = true
+                isFocusable = true
+                val lp = LinearLayout.LayoutParams(-1, -2)
+                lp.bottomMargin = dp(8)
+                layoutParams = lp
             }
             box.addView(TextView(this).apply { text = p.name; textSize = 15f; typeface = Typeface.DEFAULT_BOLD; setTextColor(white) })
             val usageLabel = usageRead.totalTokens?.let { "$it tokenów zarejestrowanych" } ?: "licznik tokenów niedostępny"
-            box.addView(TextView(this).apply { text = "${p.baseUrl}\nModel bazowy: ${p.model.ifBlank { "nie wybrano — utwórz profil z katalogu" }}\n$statusText • $usageLabel"; textSize = 11f; setTextColor(muted); setPadding(0, dp(3), 0, dp(6)) })
-            fun providerButton(label: String, click: () -> Unit) {
-                val b = TextView(this).apply { text = label; textSize = 12f; gravity = Gravity.CENTER; setTextColor(white); setPadding(dp(10), dp(9), dp(10), dp(9)); background = ripple(panel, 9); setOnClickListener { click() } }
-                box.addView(b, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(5) })
+            box.addView(TextView(this).apply { text = "${p.baseUrl}\nModel bazowy: ${p.model.ifBlank { "nie wybrano — utwórz profil z katalogu" }}\n$statusText • $usageLabel"; textSize = 11f; setTextColor(muted); setPadding(0, dp(3), 0, dp(2)) })
+            box.addView(TextView(this).apply {
+                text = "Stuknij, aby otworzyć menu zarządzania dostawcą..."
+                setTextColor(cyan)
+                textSize = 10f
+                setPadding(0, dp(4), 0, 0)
+            })
+            box.setOnClickListener {
+                val actions = mutableListOf(
+                    "Pobierz / odśwież modele",
+                    "Testuj aktualny model",
+                    "Edytuj dostawcę / klucz",
+                    "Resetuj licznik tokenów"
+                )
+                if (pl.aimasterpro.app.core.OllamaModelManager.isOllamaProvider(p)) {
+                    actions.add(0, "Pobierz model lokalny (Ollama)")
+                }
+                AlertDialog.Builder(this)
+                    .setTitle("Dostawca: ${p.name}")
+                    .setItems(actions.toTypedArray()) { _, which ->
+                        val actionName = actions[which]
+                        when {
+                            actionName.contains("Pobierz model lokalny") -> showOllamaModelPullDialog(p)
+                            actionName.contains("Pobierz / odśwież") -> discover(p)
+                            actionName.contains("Testuj aktualny") -> {
+                                if (p.model.isBlank()) toast("Najpierw wybierz model w katalogu.") else testProvider(p)
+                            }
+                            actionName.contains("Edytuj dostawcę") -> providerDialog(p)
+                            actionName.contains("Resetuj licznik") -> {
+                                TokenTracker.resetUsage(this, p.id); showShell("Modele"); showProviders()
+                            }
+                        }
+                    }
+                    .show()
             }
-            providerButton("POBIERZ / ODŚWIEŻ MODELE") { discover(p) }
-            if (pl.aimasterpro.app.core.OllamaModelManager.isOllamaProvider(p)) {
-                providerButton("⬇ POBIERZ MODEL LOKALNY (OLLAMA)") { showOllamaModelPullDialog(p) }
-            }
-            providerButton("TESTUJ AKTUALNY MODEL") { if (p.model.isBlank()) toast("Najpierw wybierz model w katalogu.") else testProvider(p) }
-            providerButton("EDYTUJ DOSTAWCĘ / KLUCZ") { providerDialog(p) }
-            providerButton("RESETUJ LICZNIK TOKENÓW") { TokenTracker.resetUsage(this, p.id); showShell("Modele"); showProviders() }
             providersCard.addView(box)
         }
         action("Wczytaj bazę / kopię zapasową", providersCard) { chooseBackupToImport() }
