@@ -97,6 +97,13 @@ class ProviderCatalogCachePolicyTest {
         ))
     }
 
+    @Test fun legacyOllamaMigrationMatchesOnlyExactDefaultPath() {
+        assertTrue(ProviderCatalogCachePolicy.isLegacyOllamaEmulatorEndpoint("HTTP://10.0.2.2:11434/v1/"))
+        assertTrue(ProviderCatalogCachePolicy.isLegacyOllamaEmulatorEndpoint("http://10.0.2.2:11434"))
+        assertFalse(ProviderCatalogCachePolicy.isLegacyOllamaEmulatorEndpoint("http://10.0.2.2:11434/V1"))
+        assertFalse(ProviderCatalogCachePolicy.isLegacyOllamaEmulatorEndpoint("http://10.0.2.2:11434/v1?tenant=custom"))
+    }
+
     @Test fun invalidEndpointCannotValidateCachedCatalog() {
         assertFalse(ProviderCatalogCachePolicy.isEntryCurrent(
             "provider-a", "not a valid endpoint",
