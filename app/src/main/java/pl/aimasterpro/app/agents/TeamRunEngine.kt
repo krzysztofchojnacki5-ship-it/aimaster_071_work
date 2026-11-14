@@ -639,7 +639,7 @@ class TeamRunEngine(
         tasks.forEach { task ->
             task.writeScope.forEach { raw ->
                 val p = Paths.get(raw.replace('\\', '/'))
-                require(!p.isAbsolute) { "writeScope musi być względny: $raw" }
+                require(!p.isAbsolute && !raw.startsWith("/") && !raw.startsWith("\\")) { "writeScope musi być względny: $raw" }
                 require(!(raw.length >= 3 && raw[0].isLetter() && raw[1] == ':' && (raw[2] == '/' || raw[2].code == 92))) { "writeScope nie może używać ścieżki bezwzględnej Windows: $raw" }
                 val normalized = p.normalize()
                 require(!normalized.startsWith("..")) { "writeScope nie może wychodzić poza workspace: $raw" }
