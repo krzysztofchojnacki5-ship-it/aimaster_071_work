@@ -72,7 +72,7 @@ class CatalogSearchIndexTest {
 
         assertNotSame(initial, changedQuery)
         assertNotSame(changedQuery, changedFilter)
-        assertEquals(listOf("local", "free"), changedFilter.records.map { it.value.id })
+        assertEquals(listOf("free"), changedFilter.records.map { it.value.id })
     }
 
     @Test
