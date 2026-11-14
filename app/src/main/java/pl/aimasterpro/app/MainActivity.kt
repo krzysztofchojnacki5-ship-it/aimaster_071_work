@@ -4327,8 +4327,7 @@ class MainActivity : Activity() {
         fun renderCatalog(query: String, filter: Int) {
             modelsContainer.removeAllViews()
             val searchResult = catalogSearchIndex.search(query, filter)
-            val entries = searchResult.records.map { it.value }
-            if (entries.isEmpty()) {
+            if (searchResult.records.isEmpty()) {
                 modelsContainer.addView(TextView(this).apply {
                     text = "Katalog jest pusty.\n\n1. Dodaj klucz API w profilu dostawcy.\n2. Kliknij ODŚWIEŻ WSZYSTKICH DOSTAWCÓW.\n3. Wybierz model i utwórz dla niego profil.\n\nLista nie korzysta ze starych, wpisanych na stałe nazw modeli."
                     setTextColor(muted); textSize = 13f; setPadding(0, dp(12), 0, dp(12))
@@ -4337,7 +4336,7 @@ class MainActivity : Activity() {
             }
             modelsContainer.addView(TextView(this).apply {
                 val lastSync = runCatching { modelCatalogPrefs.getLong("last_sync", 0L) }.getOrDefault(0L)
-                text = "Wyniki: ${entries.size} • darmowe/lokalne: ${searchResult.freeCount} • płatne: ${searchResult.paidCount} • nieznana cena: ${searchResult.unknownCount}\nOstatnia synchronizacja: ${lastSync.takeIf { it > 0L }?.let { java.text.SimpleDateFormat("dd.MM.yyyy HH:mm", java.util.Locale.getDefault()).format(java.util.Date(it)) } ?: "brak"}"
+                text = "Wyniki: ${searchResult.records.size} • darmowe/lokalne: ${searchResult.freeCount} • płatne: ${searchResult.paidCount} • nieznana cena: ${searchResult.unknownCount}\nOstatnia synchronizacja: ${lastSync.takeIf { it > 0L }?.let { java.text.SimpleDateFormat("dd.MM.yyyy HH:mm", java.util.Locale.getDefault()).format(java.util.Date(it)) } ?: "brak"}"
                 setTextColor(cyan); textSize = 11f; setPadding(0, 0, 0, dp(8))
             })
             searchResult.records.take(80).forEach { indexedEntry ->
