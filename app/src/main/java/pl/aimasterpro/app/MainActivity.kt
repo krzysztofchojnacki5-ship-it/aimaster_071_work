@@ -1514,7 +1514,8 @@ class MainActivity : Activity() {
         val baseId = config.parentProviderId.ifBlank { config.id }
         val entry = readModelCatalogEntries().firstOrNull {
             it.providerId == baseId && it.info.id == config.model &&
-                it.baseUrl.trimEnd('/').equals(config.baseUrl.trimEnd('/'), true)
+                pl.aimasterpro.app.core.ProviderCatalogCachePolicy.normalizeBaseUrl(it.baseUrl) ==
+                    pl.aimasterpro.app.core.ProviderCatalogCachePolicy.normalizeBaseUrl(config.baseUrl)
         }
         when (entry?.info?.freeByPricing) {
             false -> return false
@@ -6045,7 +6046,7 @@ class MainActivity : Activity() {
             val configuredId = agentProviders[role.name] ?: return@mapNotNull null
             val config = loadProvider(configuredId)?.takeIf { providerReady(it) && isVerifiedFreeConfig(it) }
                 ?: return@mapNotNull null
-            val fingerprint = "${config.baseUrl.trimEnd('/').lowercase(java.util.Locale.ROOT)}:${config.model.lowercase(java.util.Locale.ROOT)}"
+            val fingerprint = "${pl.aimasterpro.app.core.ProviderCatalogCachePolicy.normalizeBaseUrl(config.baseUrl)}:${config.model}"
             pl.aimasterpro.app.agents.PatchPeerReviewPlanner.Assignment(spec, fingerprint)
         }
         val requestId = UUID.randomUUID().toString()
@@ -8324,7 +8325,7 @@ class MainActivity : Activity() {
                             // Stop old-profile requests before the provider set changes.
                             cancelProviderWorkBeforeConfigReplacement()
                             val previousCatalogIdentity = store.allConfigs().associate { saved ->
-                                saved.optString("id") to saved.optString("baseUrl").trimEnd('/').lowercase(java.util.Locale.ROOT)
+                                saved.optString("id") to pl.aimasterpro.app.core.ProviderCatalogCachePolicy.normalizeBaseUrl(saved.optString("baseUrl"))
                             }
                             require(store.replaceAllConfigs(configs)) { "Import nie został zatwierdzony. Dotychczasowe konfiguracje pozostały bez zmian." }
 
@@ -8342,7 +8343,7 @@ class MainActivity : Activity() {
                             configs.forEach { imported ->
                                 val providerId = imported.optString("id")
                                 val oldBase = previousCatalogIdentity[providerId].orEmpty()
-                                val newBase = imported.optString("baseUrl").trimEnd('/').lowercase(java.util.Locale.ROOT)
+                                val newBase = pl.aimasterpro.app.core.ProviderCatalogCachePolicy.normalizeBaseUrl(imported.optString("baseUrl"))
                                 if (oldBase.isNotBlank() && oldBase != newBase) {
                                     runCatching {
                                         pl.aimasterpro.app.core.ApiTokenTracker.replaceCatalogPricingForProvider(
