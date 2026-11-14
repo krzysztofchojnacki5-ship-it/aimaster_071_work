@@ -4295,16 +4295,20 @@ class MainActivity : Activity() {
                     )
                 }.getOrNull()
                 val modelLimit = modelUsage?.config?.takeIf { it.enabled }
+                val pct = modelUsage?.usagePercent ?: 0
+                val barLen = 10
+                val filled = (pct * barLen / 100).coerceIn(0, barLen)
+                val bar = "█".repeat(filled) + "░".repeat(barLen - filled)
                 val modelUsageText = when {
-                    modelUsage == null -> "Nie można bezpiecznie odczytać zużycia tokenów. Nie traktuję tego jako 0."
-                    modelLimit == null -> "Zużycie dzisiaj: ${modelUsage.usedTokens} użytych + ${modelUsage.reservedTokens} zarezerwowanych tokenów • limit indywidualny nieustawiony"
+                    modelUsage == null -> "[$bar] 0% zużycia • brak danych tokenów"
+                    modelLimit == null -> "[$bar] ${pct}% zużycia (${modelUsage.usedTokens} użytych + ${modelUsage.reservedTokens} zarezerwowanych • limit dzienny nieustawiony)"
                     else -> {
                         val state = when {
-                            modelUsage.limitReached -> "LIMIT 100% — nowe zadania blokowane"
+                            modelUsage.limitReached -> "LIMIT 100% — ZABLOKOWANE"
                             modelUsage.warningReached -> "OSTRZEŻENIE ≥${modelLimit.warningPercent}%"
-                            else -> "limit dostępny"
+                            else -> "Limit aktywny"
                         }
-                        "Dzisiaj: ${modelUsage.usedTokens} użytych + ${modelUsage.reservedTokens} zarezerwowanych / ${modelLimit.dailyLimitTokens} tokenów • ${modelUsage.usagePercent}% • $state"
+                        "[$bar] ${pct}% zużycia ($state)\nZużyto: ${modelUsage.usedTokens} + ${modelUsage.reservedTokens} rez. / ${modelLimit.dailyLimitTokens} limit"
                     }
                 }
                 row.addView(TextView(this).apply {
