@@ -665,6 +665,33 @@ class ApiTokenTrackerTest {
         assertEquals(0.91, profile.outputPer1MUsd, 0.0000001)
     }
 
+    @Test fun pricingCatalogSnapshotIsReusedAndInvalidatedWhenStoredCatalogChanges() {
+        val prefs = context.getSharedPreferences("api_token_pricing_v1", Context.MODE_PRIVATE)
+        val first = """[{"providerId":"cache-provider","modelName":"vendor/cache-model","baseUrl":"https://cache.example/v1","inputPer1MUsd":0.11,"outputPer1MUsd":0.22,"explicitlyFree":false}]"""
+        assertTrue(prefs.edit().putString("catalog_model_prices", first).commit())
+
+        val firstRead = ApiTokenTracker.getPricing(
+            context, "vendor/cache-model", "cache-provider", "https://cache.example/v1"
+        )
+        val secondRead = ApiTokenTracker.getPricing(
+            context, "vendor/cache-model", "cache-provider", "https://cache.example/v1"
+        )
+        assertEquals(0.11, firstRead.inputPer1MUsd, 0.0000001)
+        assertEquals(0.11, secondRead.inputPer1MUsd, 0.0000001)
+        assertEquals("Repeated lookups must reuse one validated index", 1,
+            ApiTokenTracker.pricingCatalogSnapshotBuildCountForTests())
+
+        val updated = first.replace("0.11", "0.33").replace("0.22", "0.44")
+        assertTrue(prefs.edit().putString("catalog_model_prices", updated).commit())
+        val refreshed = ApiTokenTracker.getPricing(
+            context, "vendor/cache-model", "cache-provider", "https://cache.example/v1"
+        )
+        assertEquals(0.33, refreshed.inputPer1MUsd, 0.0000001)
+        assertEquals(0.44, refreshed.outputPer1MUsd, 0.0000001)
+        assertEquals("A changed persisted catalog must rebuild the index", 2,
+            ApiTokenTracker.pricingCatalogSnapshotBuildCountForTests())
+    }
+
     @Test fun usageLedgerChargesUsingDiscoveredCatalogPrices() {
         ApiTokenTracker.replaceCatalogPricingForProvider(
             context, "catalog-billing-provider", "https://billing.example/v1",
