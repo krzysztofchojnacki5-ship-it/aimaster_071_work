@@ -446,4 +446,70 @@ class AgentHandoffStoreTest {
         assertEquals(oversized, prefs.getString("messages", null))
     }
 
+    @Test fun inboxCapacityReclaimsOnlyTheOldestTerminalHandoff() {
+        fun handoff(index: Int, state: AgentHandoffStore.State) = AgentHandoffStore.Handoff(
+            id = "handoff-${index.toString().padStart(3, '0')}", taskId = "task-retention-01", runId = 1,
+            senderAgentId = "critical-reviewer", recipientAgentId = "unit-test-engineer",
+            payload = "payload $index", state = state, createdAt = index + 1L, updatedAt = index + 1L,
+            claimedAt = if (state == AgentHandoffStore.State.PENDING) 0L else index + 1L
+        )
+        val records = List(400) { index ->
+            val state = when (index) {
+                0 -> AgentHandoffStore.State.PENDING
+                1 -> AgentHandoffStore.State.ACKNOWLEDGED
+                2 -> AgentHandoffStore.State.CLAIMED
+                3 -> AgentHandoffStore.State.REJECTED
+                else -> AgentHandoffStore.State.MANUALLY_RESOLVED
+            }
+            handoff(index, state)
+        }
+
+        val retained = AgentHandoffStore.messagesWithRoomForOne(records)
+
+        assertEquals(399, retained?.size)
+        assertEquals("handoff-000", retained?.first()?.id)
+        assertEquals("handoff-002", retained?.get(1)?.id)
+        assertEquals("handoff-003", retained?.get(2)?.id)
+        assertFalse(retained.orEmpty().any { it.id == "handoff-001" })
+    }
+
+    @Test fun inboxCapacityNeverEvictsPendingOrClaimedWork() {
+        fun handoff(index: Int, state: AgentHandoffStore.State) = AgentHandoffStore.Handoff(
+            id = "active-${index.toString().padStart(3, '0')}", taskId = "task-retention-01", runId = 1,
+            senderAgentId = "critical-reviewer", recipientAgentId = "unit-test-engineer",
+            payload = "payload $index", state = state, createdAt = index + 1L, updatedAt = index + 1L,
+            claimedAt = if (state == AgentHandoffStore.State.PENDING) 0L else index + 1L
+        )
+        val states = AgentHandoffStore.messagesWithRoomForOne(List(400) { index ->
+            handoff(index, if (index % 2 == 0) AgentHandoffStore.State.PENDING else AgentHandoffStore.State.CLAIMED)
+        })
+
+        assertEquals(399, states?.size)
+        assertTrue(states.orEmpty().all {
+            it.state == AgentHandoffStore.State.PENDING || it.state == AgentHandoffStore.State.CLAIMED
+        })
+    }
+
+    @Test fun inboxCapacityRejectsWhenAllRecordsAreActive() {
+        val records = List(400) { index -> AgentHandoffStore.Handoff(
+            id = "active-${index.toString().padStart(3, '0')}", taskId = "task-retention-01", runId = 1,
+            senderAgentId = "critical-reviewer", recipientAgentId = "unit-test-engineer",
+            payload = "payload $index", state = AgentHandoffStore.State.PENDING,
+            createdAt = index + 1L, updatedAt = index + 1L
+        ) }
+
+        assertNull(AgentHandoffStore.messagesWithRoomForOne(records))
+        assertEquals(400, records.size)
+    }
+
+    @Test fun inboxCapacityLeavesMessagesUntouchedBelowLimit() {
+        val records = listOf(AgentHandoffStore.Handoff(
+            id = "handoff-small-01", taskId = "task-retention-01", runId = 1,
+            senderAgentId = "critical-reviewer", recipientAgentId = "unit-test-engineer",
+            payload = "payload", state = AgentHandoffStore.State.PENDING, createdAt = 1L, updatedAt = 1L
+        ))
+
+        assertTrue(records === AgentHandoffStore.messagesWithRoomForOne(records))
+    }
+
 }

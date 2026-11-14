@@ -61,11 +61,11 @@ object AgentHandoffStore {
             if (existing != null) return@synchronized existing.taskId == taskId && existing.runId == runId &&
                 existing.senderAgentId == senderAgentId && existing.recipientAgentId == recipientAgentId &&
                 existing.payload == safe
-            // Keep the inbox bounded without letting old terminal records permanently
-            // exhaust capacity. Never evict PENDING or CLAIMED work: CLAIMED may represent
-            // an external provider request whose outcome is uncertain.
-            if (current.messages.size >= MAX_MESSAGES) return@synchronized false
-            write(context, current.messages + Handoff(
+            // Retain the bounded inbox without allowing completed history to permanently
+            // block new work. Active records are never evicted: CLAIMED may represent an
+            // external provider request whose outcome is uncertain.
+            val retained = messagesWithRoomForOne(current.messages) ?: return@synchronized false
+            write(context, retained + Handoff(
                 messageId, taskId, runId, senderAgentId, recipientAgentId,
                 safe, State.PENDING, now, now
             ))
@@ -197,6 +197,17 @@ object AgentHandoffStore {
 
 
     private fun valid(value: String): Boolean = value.length <= MAX_ID && idPattern.matches(value)
+
+    /** Frees one slot by dropping only the oldest terminal record; preserves inbox order. */
+    internal fun messagesWithRoomForOne(messages: List<Handoff>): List<Handoff>? {
+        if (messages.size < MAX_MESSAGES) return messages
+        val oldestTerminal = messages.indexOfFirst {
+            it.state == State.ACKNOWLEDGED || it.state == State.REJECTED ||
+                it.state == State.MANUALLY_RESOLVED
+        }
+        if (oldestTerminal < 0) return null
+        return messages.filterIndexed { index, _ -> index != oldestTerminal }
+    }
 
     private fun read(context: Context): Snapshot {
         if (SharedPreferencesWriteHealth.isUncertain(PREFS)) {
