@@ -789,6 +789,66 @@ object ApiTokenTracker {
         }
     }
 
+    private data class PricingCatalogSnapshot(
+        val raw: String,
+        val exactRows: Map<List<String>, JSONObject>,
+        val rowsByModelAndBase: Map<Pair<String, String>, List<JSONObject>>
+    )
+
+    @Volatile private var pricingCatalogSnapshotCache: PricingCatalogSnapshot? = null
+    private var pricingCatalogSnapshotBuildCount = 0
+
+    /** Reads, validates and indexes the persisted price catalog once per distinct stored value. */
+    @Synchronized
+    private fun readPricingCatalogSnapshot(context: Context): PricingCatalogSnapshot {
+        val raw = context.getSharedPreferences(PRICING_PREFS, Context.MODE_PRIVATE)
+            .getString("catalog_model_prices", "[]") ?: "[]"
+        pricingCatalogSnapshotCache?.takeIf { it.raw == raw }?.let { return it }
+
+        val catalog = try {
+            JSONArray(raw)
+        } catch (error: Exception) {
+            throw IllegalStateException("Zapisany katalog cen jest uszkodzony; bezpieczna wycena została wstrzymana.", error)
+        }
+        require(catalog.length() <= 10_000) { "Katalog cen przekracza bezpieczny rozmiar." }
+
+        val exactRows = linkedMapOf<List<String>, JSONObject>()
+        val rowsByModelAndBase = linkedMapOf<Pair<String, String>, MutableList<JSONObject>>()
+        for (index in 0 until catalog.length()) {
+            val row = catalog.opt(index) as? JSONObject
+                ?: throw IllegalStateException("Katalog cen zawiera wpis, który nie jest obiektem.")
+            val rowProvider = row.opt("providerId") as? String
+            val rowModel = row.opt("modelName") as? String
+            val rowBase = row.opt("baseUrl") as? String
+            require(!rowProvider.isNullOrBlank() && !rowModel.isNullOrBlank() && !rowBase.isNullOrBlank()) {
+                "Katalog cen zawiera niekompletną tożsamość wpisu."
+            }
+            val rowNormalizedBase = rowBase.trimEnd('/').lowercase(Locale.ROOT)
+            val identity = listOf(rowProvider, rowNormalizedBase, rowModel)
+            require(!exactRows.containsKey(identity)) {
+                "Katalog cen zawiera zduplikowaną tożsamość modelu."
+            }
+            val freeValue = row.opt("explicitlyFree")
+            require(freeValue == null || freeValue === JSONObject.NULL || freeValue is Boolean) {
+                "Katalog cen zawiera nieprawidłową flagę bezpłatnego modelu."
+            }
+            exactRows[identity] = row
+            rowsByModelAndBase.getOrPut(rowModel to rowNormalizedBase) { mutableListOf() }.add(row)
+        }
+        return PricingCatalogSnapshot(
+            raw = raw,
+            exactRows = exactRows.toMap(),
+            rowsByModelAndBase = rowsByModelAndBase.mapValues { it.value.toList() }
+        ).also {
+            pricingCatalogSnapshotCache = it
+            pricingCatalogSnapshotBuildCount++
+        }
+    }
+
+    internal fun pricingCatalogSnapshotBuildCountForTests(): Int = synchronized(this) {
+        pricingCatalogSnapshotBuildCount
+    }
+
     private fun readCatalogRate(row: JSONObject, key: String): Double? {
         if (!row.has(key) || row.isNull(key)) return null
         val value = row.opt(key) as? Number
@@ -802,42 +862,12 @@ object ApiTokenTracker {
 
     @Synchronized
     fun getPricing(context: Context, modelName: String, providerId: String = "", baseUrl: String = ""): ModelPricing {
-        val raw = context.getSharedPreferences(PRICING_PREFS, Context.MODE_PRIVATE)
-            .getString("catalog_model_prices", "[]") ?: "[]"
-        val catalog = try {
-            JSONArray(raw)
-        } catch (error: Exception) {
-            throw IllegalStateException("Zapisany katalog cen jest uszkodzony; bezpieczna wycena została wstrzymana.", error)
-        }
-        require(catalog.length() <= 10_000) { "Katalog cen przekracza bezpieczny rozmiar." }
-
+        val snapshot = readPricingCatalogSnapshot(context)
         val normalizedBase = baseUrl.trimEnd('/').lowercase(Locale.ROOT)
-        var exact: JSONObject? = null
-        val baseMatches = mutableListOf<JSONObject>()
-        val identities = mutableSetOf<List<String>>()
-        for (index in 0 until catalog.length()) {
-            val row = catalog.opt(index) as? JSONObject
-                ?: throw IllegalStateException("Katalog cen zawiera wpis, który nie jest obiektem.")
-            val rowProvider = row.opt("providerId") as? String
-            val rowModel = row.opt("modelName") as? String
-            val rowBase = row.opt("baseUrl") as? String
-            require(!rowProvider.isNullOrBlank() && !rowModel.isNullOrBlank() && !rowBase.isNullOrBlank()) {
-                "Katalog cen zawiera niekompletną tożsamość wpisu."
-            }
-            val rowNormalizedBase = rowBase.trimEnd('/').lowercase(Locale.ROOT)
-            require(identities.add(listOf(rowProvider, rowNormalizedBase, rowModel))) {
-                "Katalog cen zawiera zduplikowaną tożsamość modelu."
-            }
-            val freeValue = row.opt("explicitlyFree")
-            require(freeValue == null || freeValue === JSONObject.NULL || freeValue is Boolean) {
-                "Katalog cen zawiera nieprawidłową flagę bezpłatnego modelu."
-            }
-
-            if (rowModel == modelName && rowNormalizedBase == normalizedBase) {
-                if (rowProvider == providerId) exact = row
-                else if (normalizedBase.isNotBlank()) baseMatches += row
-            }
-        }
+        val exact = snapshot.exactRows[listOf(providerId, normalizedBase, modelName)]
+        val baseMatches = if (normalizedBase.isBlank()) emptyList() else
+            snapshot.rowsByModelAndBase[modelName to normalizedBase].orEmpty()
+                .filter { it.optString("providerId") != providerId }
 
         require(exact != null || baseMatches.size <= 1) {
             "Katalog cen zawiera niejednoznaczne dopasowanie modelu dla adresu bazowego."
@@ -882,16 +912,10 @@ object ApiTokenTracker {
         // Model profiles have their own IDs but inherit catalog identity from the parent provider.
         // Resolve that one unambiguous provider entry before checking the user's exact-scope consent.
         val canonicalProvider = runCatching {
-            val catalog = JSONArray(context.getSharedPreferences(PRICING_PREFS, Context.MODE_PRIVATE)
-                .getString("catalog_model_prices", "[]") ?: "[]")
             val normalizedBase = baseUrl.trim().trimEnd('/').lowercase(Locale.ROOT)
-            val matches = (0 until catalog.length()).mapNotNull { index ->
-                catalog.optJSONObject(index)?.takeIf { row ->
-                    row.optString("modelName") == modelName &&
-                        row.optString("baseUrl").trim().trimEnd('/').lowercase(Locale.ROOT) == normalizedBase
-                }?.optString("providerId")?.takeIf(String::isNotBlank)
-            }.distinct()
-            matches.singleOrNull()
+            readPricingCatalogSnapshot(context).rowsByModelAndBase[modelName to normalizedBase]
+                .orEmpty().mapNotNull { it.optString("providerId").takeIf(String::isNotBlank) }
+                .distinct().singleOrNull()
         }.getOrNull() ?: return false
         return UnknownPriceApprovalStore.isApproved(context, canonicalProvider, baseUrl, modelName)
     }
@@ -1261,6 +1285,8 @@ object ApiTokenTracker {
     internal fun resetInMemoryStateForTests() {
         sessionRecords.clear()
         activeReservations.clear()
+        pricingCatalogSnapshotCache = null
+        pricingCatalogSnapshotBuildCount = 0
     }
 
     data class LimitCheckResult(
