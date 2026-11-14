@@ -76,4 +76,32 @@ class ProviderCatalogCachePolicyTest {
             ProviderCatalogCachePolicy.currentProviderBaseUrls(listOf(unreadable))
         )
     }
+    @Test fun endpointPathCaseRemainsSignificant() {
+        assertFalse(ProviderCatalogCachePolicy.isEntryCurrent(
+            "provider-a", "https://api.example.com/v1",
+            mapOf("provider-a" to "https://api.example.com/V1")
+        ))
+    }
+
+    @Test fun queryParametersRemainSignificant() {
+        assertFalse(ProviderCatalogCachePolicy.isEntryCurrent(
+            "provider-a", "https://api.example.com/v1?tenant=alpha",
+            mapOf("provider-a" to "https://api.example.com/v1?tenant=beta")
+        ))
+    }
+
+    @Test fun schemeAndHostAreCaseInsensitive() {
+        assertTrue(ProviderCatalogCachePolicy.isEntryCurrent(
+            "provider-a", "HTTPS://API.EXAMPLE.COM/v1",
+            mapOf("provider-a" to "https://api.example.com/v1")
+        ))
+    }
+
+    @Test fun invalidEndpointCannotValidateCachedCatalog() {
+        assertFalse(ProviderCatalogCachePolicy.isEntryCurrent(
+            "provider-a", "not a valid endpoint",
+            mapOf("provider-a" to "not a valid endpoint")
+        ))
+    }
+
 }
