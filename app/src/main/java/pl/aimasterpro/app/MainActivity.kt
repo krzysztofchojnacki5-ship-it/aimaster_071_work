@@ -4278,12 +4278,12 @@ class MainActivity : Activity() {
             }
         }
 
-        card("DOSTAWCY AI I KATALOG MODELI", "Zarządzaj zapisanymi profilami modeli i dostawcami u góry. Poniżej możesz przeglądać i pobierać katalog dostępnych modeli z aktywnych endpointów.")
+        card("DOSTAWCY AI I KATALOG MODELI", "Zarządzaj zapisanymi profilami modeli u góry. Poniżej możesz przeglądać i pobierać katalog dostępnych modeli z aktywnych endpointów.")
 
-        // 1. ZAPISANE PROFILE MODELI (Najwyżej, aby były od razu pod ręką)
+        // 1. ZAPISANE PROFILE MODELI (ABSOLUTNIE NAJWYŻEJ NA EKRANIE)
         val savedModelProfiles = allSaved.filter { it.parentProviderId.isNotBlank() }
         if (savedModelProfiles.isNotEmpty()) {
-            val profilesCard = card("ZAPISANE PROFILE MODELI", "Każdy profil ma własny identyfikator i nazwę wyświetlaną, korzystając z klucza API dostawcy bazowego.")
+            val profilesCard = card("ZAPISANE PROFILE MODELI", "Aktywne profile modeli przypisane do agentów. Każdy profil ma własną nazwę i limit tokenów.")
             savedModelProfiles.forEach { profile ->
                 val selected = resolvedMasterProviderId() == profile.id
                 val row = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(10), dp(9), dp(10), dp(9)); background = rounded(cardBg, 10, border) }
@@ -4330,7 +4330,7 @@ class MainActivity : Activity() {
         }
 
         // 2. DOSTAWCY I KLUCZE API
-        val providersCard = card("Dostawcy i klucze API", "Klucze są szyfrowane przez Android Keystore. Profil dostawcy przechowuje połączenie; profile modeli powstają z katalogu poniżej.")
+        val providersCard = card("Dostawcy i klucze API", "Klucze są szyfrowane przez Android Keystore. Profil dostawcy przechowuje połączenie.")
         baseProfiles.forEach { p ->
             val usageRead = pl.aimasterpro.app.core.ProviderScreenReadPolicy.readUsage {
                 TokenTracker.getUsage(this, p.id).totalTokens
@@ -4363,7 +4363,7 @@ class MainActivity : Activity() {
         action("Wczytaj bazę / kopię zapasową", providersCard) { chooseBackupToImport() }
         action("Eksportuj zaszyfrowaną bazę modeli i kluczy", providersCard) { promptBackupPassword(export = true) }
 
-        // 3. KATALOG MODELI (Poniżej zapisanych profili, z grupowaniem po dostawcy)
+        // 3. KATALOG MODELI (Odkryte z API, na dole)
         val syncCard = card("Katalog modeli (Odkryte z API)", "Wybierz model z listy poniżej, aby utworzyć dla niego konfigurowalny profil. Wyniki są pogrupowane według dostawców.")
         action("⟳ ODŚWIEŻ WSZYSTKICH DOSTAWCÓW", syncCard) { refreshAllModelCatalogs(showToast = true) }
         action("＋ Dodaj dostawcę / endpoint", syncCard) {
