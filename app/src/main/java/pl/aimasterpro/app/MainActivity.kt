@@ -4278,9 +4278,93 @@ class MainActivity : Activity() {
             }
         }
 
-        card("DOSTAWCY AI I KATALOG MODELI", "Tutaj konfigurujesz dostawców, pobierasz katalog dostępnych modeli i dodajesz profile modeli przypisywane agentom. Po imporcie bazy katalog trzeba odświeżyć ręcznie.")
+        card("DOSTAWCY AI I KATALOG MODELI", "Zarządzaj zapisanymi profilami modeli i dostawcami u góry. Poniżej możesz przeglądać i pobierać katalog dostępnych modeli z aktywnych endpointów.")
 
-        val syncCard = card("Katalog modeli", "Dane pochodzą z API skonfigurowanych dostawców. Cena nieznana nie jest traktowana jako darmowa.")
+        // 1. ZAPISANE PROFILE MODELI (Najwyżej, aby były od razu pod ręką)
+        val savedModelProfiles = allSaved.filter { it.parentProviderId.isNotBlank() }
+        if (savedModelProfiles.isNotEmpty()) {
+            val profilesCard = card("ZAPISANE PROFILE MODELI", "Każdy profil ma własny identyfikator i nazwę wyświetlaną, korzystając z klucza API dostawcy bazowego.")
+            savedModelProfiles.forEach { profile ->
+                val selected = resolvedMasterProviderId() == profile.id
+                val row = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(10), dp(9), dp(10), dp(9)); background = rounded(cardBg, 10, border) }
+                row.addView(TextView(this).apply { text = (if (selected) "✓ AKTYWNY • " else "") + profile.name; setTextColor(if (selected) orange else white); textSize = 13f; typeface = Typeface.DEFAULT_BOLD })
+                row.addView(TextView(this).apply { text = profile.model; setTextColor(muted); textSize = 11f; setPadding(0, dp(2), 0, dp(4)); setTextIsSelectable(true) })
+                val modelUsage = runCatching {
+                    pl.aimasterpro.app.core.ApiTokenTracker.getModelTokenUsage(
+                        this, profile.id, profile.baseUrl, profile.model
+                    )
+                }.getOrNull()
+                val modelLimit = modelUsage?.config?.takeIf { it.enabled }
+                val modelUsageText = when {
+                    modelUsage == null -> "Nie można bezpiecznie odczytać zużycia tokenów. Nie traktuję tego jako 0."
+                    modelLimit == null -> "Zużycie dzisiaj: ${modelUsage.usedTokens} użytych + ${modelUsage.reservedTokens} zarezerwowanych tokenów • limit indywidualny nieustawiony"
+                    else -> {
+                        val state = when {
+                            modelUsage.limitReached -> "LIMIT 100% — nowe zadania blokowane"
+                            modelUsage.warningReached -> "OSTRZEŻENIE ≥${modelLimit.warningPercent}%"
+                            else -> "limit dostępny"
+                        }
+                        "Dzisiaj: ${modelUsage.usedTokens} użytych + ${modelUsage.reservedTokens} zarezerwowanych / ${modelLimit.dailyLimitTokens} tokenów • ${modelUsage.usagePercent}% • $state"
+                    }
+                }
+                row.addView(TextView(this).apply {
+                    text = modelUsageText
+                    setTextColor(if (modelUsage == null || modelUsage.limitReached) Color.RED else if (modelUsage.warningReached) orange else muted)
+                    textSize = 11f
+                    setPadding(0, dp(2), 0, dp(6))
+                })
+                action("Ustaw limit tokenów tego modelu", row) {
+                    showModelTokenLimitDialog(profile, modelUsage?.config)
+                }
+                action("EDYTUJ NAZWĘ PROFILU", row) {
+                    showEditModelProfileNameDialog(profile)
+                }
+                action("Ustaw jako model czatu", row) {
+                    if (!persistAgentProviderAssignment(AgentRole.MASTER, profile.id)) return@action
+                    showShell("Modele"); showProviders(); toast("Aktywny model czatu: ${profile.model}")
+                }
+                action("Kopiuj ID modelu", row) { copyText(profile.model) }
+                action("Testuj ten profil", row) { testProvider(profile) }
+                profilesCard.addView(row, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(8) })
+            }
+        }
+
+        // 2. DOSTAWCY I KLUCZE API
+        val providersCard = card("Dostawcy i klucze API", "Klucze są szyfrowane przez Android Keystore. Profil dostawcy przechowuje połączenie; profile modeli powstają z katalogu poniżej.")
+        baseProfiles.forEach { p ->
+            val usageRead = pl.aimasterpro.app.core.ProviderScreenReadPolicy.readUsage {
+                TokenTracker.getUsage(this, p.id).totalTokens
+            }
+            if (!usageRead.available) {
+                android.util.Log.w("AiFORTecaProviders", "Licznik tokenów niedostępny dla profilu ${p.id}; ekran dostawców pozostaje dostępny.")
+            }
+            val hasKey = p.apiKey.isNotBlank() || pl.aimasterpro.app.core.FreeModelsCatalog.isLocalOllamaEndpoint(p.baseUrl)
+            val statusText = if (!hasKey) "Brak klucza API" else if (p.baseUrl.isBlank()) "Uzupełnij Base URL" else "Dane dostawcy zapisane"
+            val box = LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL; setPadding(dp(12), dp(10), dp(12), dp(10)); background = rounded(cardBg, 12, border)
+                val lp = LinearLayout.LayoutParams(-1, -2); lp.bottomMargin = dp(8); layoutParams = lp
+            }
+            box.addView(TextView(this).apply { text = p.name; textSize = 15f; typeface = Typeface.DEFAULT_BOLD; setTextColor(white) })
+            val usageLabel = usageRead.totalTokens?.let { "$it tokenów zarejestrowanych" } ?: "licznik tokenów niedostępny"
+            box.addView(TextView(this).apply { text = "${p.baseUrl}\nModel bazowy: ${p.model.ifBlank { "nie wybrano — utwórz profil z katalogu" }}\n$statusText • $usageLabel"; textSize = 11f; setTextColor(muted); setPadding(0, dp(3), 0, dp(6)) })
+            fun providerButton(label: String, click: () -> Unit) {
+                val b = TextView(this).apply { text = label; textSize = 12f; gravity = Gravity.CENTER; setTextColor(white); setPadding(dp(10), dp(9), dp(10), dp(9)); background = ripple(panel, 9); setOnClickListener { click() } }
+                box.addView(b, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(5) })
+            }
+            providerButton("POBIERZ / ODŚWIEŻ MODELE") { discover(p) }
+            if (pl.aimasterpro.app.core.OllamaModelManager.isOllamaProvider(p)) {
+                providerButton("⬇ POBIERZ MODEL LOKALNY (OLLAMA)") { showOllamaModelPullDialog(p) }
+            }
+            providerButton("TESTUJ AKTUALNY MODEL") { if (p.model.isBlank()) toast("Najpierw wybierz model w katalogu.") else testProvider(p) }
+            providerButton("EDYTUJ DOSTAWCĘ / KLUCZ") { providerDialog(p) }
+            providerButton("RESETUJ LICZNIK TOKENÓW") { TokenTracker.resetUsage(this, p.id); showShell("Modele"); showProviders() }
+            providersCard.addView(box)
+        }
+        action("Wczytaj bazę / kopię zapasową", providersCard) { chooseBackupToImport() }
+        action("Eksportuj zaszyfrowaną bazę modeli i kluczy", providersCard) { promptBackupPassword(export = true) }
+
+        // 3. KATALOG MODELI (Poniżej zapisanych profili, z grupowaniem po dostawcy)
+        val syncCard = card("Katalog modeli (Odkryte z API)", "Wybierz model z listy poniżej, aby utworzyć dla niego konfigurowalny profil. Wyniki są pogrupowane według dostawców.")
         action("⟳ ODŚWIEŻ WSZYSTKICH DOSTAWCÓW", syncCard) { refreshAllModelCatalogs(showToast = true) }
         action("＋ Dodaj dostawcę / endpoint", syncCard) {
             providerDialog(ProviderConfig("custom_" + System.currentTimeMillis(), "Własny endpoint", ProviderKind.OPENAI_COMPATIBLE, "", "", ""))
@@ -4295,8 +4379,6 @@ class MainActivity : Activity() {
         val modelsContainer = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         syncCard.addView(modelsContainer, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(8) })
 
-        // Read and validate the catalog once for this screen. Search/filter changes below
-        // operate only on this immutable in-memory snapshot, never re-open SecureStore.
         val currentProviderBaseUrls = pl.aimasterpro.app.core.ProviderCatalogCachePolicy.currentProviderBaseUrls(storedProfiles)
         val catalogSnapshot = readModelCatalogEntries(currentProviderBaseUrls)
 
@@ -4310,7 +4392,6 @@ class MainActivity : Activity() {
             Triple(entry.providerId, entry.baseUrl, entry.info.id)
         )
 
-        // Build normalized search text and classification once for this immutable screen snapshot.
         val catalogSearchIndex = pl.aimasterpro.app.core.CatalogSearchIndex(
             catalogSnapshot.map { entry ->
                 val local = pl.aimasterpro.app.core.FreeModelsCatalog.isLocalOllamaEndpoint(entry.baseUrl)
@@ -4329,7 +4410,7 @@ class MainActivity : Activity() {
             val searchResult = catalogSearchIndex.search(query, filter)
             if (searchResult.records.isEmpty()) {
                 modelsContainer.addView(TextView(this).apply {
-                    text = "Katalog jest pusty.\n\n1. Dodaj klucz API w profilu dostawcy.\n2. Kliknij ODŚWIEŻ WSZYSTKICH DOSTAWCÓW.\n3. Wybierz model i utwórz dla niego profil.\n\nLista nie korzysta ze starych, wpisanych na stałe nazw modeli."
+                    text = "Katalog jest pusty.\n\n1. Dodaj klucz API w profilu dostawcy.\n2. Kliknij ODŚWIEŻ WSZYSTKICH DOSTAWCÓW.\n3. Wybierz model i utwórz dla niego profil."
                     setTextColor(muted); textSize = 13f; setPadding(0, dp(12), 0, dp(12))
                 })
                 return
@@ -4339,99 +4420,105 @@ class MainActivity : Activity() {
                 text = "Wyniki: ${searchResult.records.size} • darmowe/lokalne: ${searchResult.freeCount} • płatne: ${searchResult.paidCount} • nieznana cena: ${searchResult.unknownCount}\nOstatnia synchronizacja: ${lastSync.takeIf { it > 0L }?.let { java.text.SimpleDateFormat("dd.MM.yyyy HH:mm", java.util.Locale.getDefault()).format(java.util.Date(it)) } ?: "brak"}"
                 setTextColor(cyan); textSize = 11f; setPadding(0, 0, 0, dp(8))
             })
-            searchResult.records.take(80).forEach { indexedEntry ->
-                val entry = indexedEntry.value
-                val info = entry.info
-                val isLocal = indexedEntry.isLocal
-                val unknownPrice = indexedEntry.unknownPrice
-                val approvedUnknownPrice = unknownPrice && pl.aimasterpro.app.core.UnknownPriceApprovalStore.isApproved(
-                    this, entry.providerId, entry.baseUrl, info.id
-                )
-                val freeLabel = when {
-                    isLocal -> "LOKALNY • BEZ OPŁAT API"
-                    info.freeByPricing == true && info.promptPricePerMillion != null && info.completionPricePerMillion != null -> "FREE • CENA API = 0 (limity konta mogą obowiązywać)"
-                    info.freeByPricing == true -> "FREE • JAWNE OZNACZENIE DOSTAWCY"
-                    unknownPrice && info.freeByPricing == false -> "PŁATNY • STAWKA NIEZNANA"
-                    unknownPrice -> "CENA NIEZNANA • ZGODA WYMAGANA"
-                    info.freeByPricing == false -> "PŁATNY"
-                    else -> "CENA NIEPOTWIERDZONA"
-                }
-                val freeColor = when {
-                    isLocal || info.freeByPricing == true -> Color.rgb(65, 205, 120)
-                    info.freeByPricing == false -> Color.rgb(255, 125, 95)
-                    else -> orange
-                }
-                val row = LinearLayout(this).apply {
-                    orientation = LinearLayout.VERTICAL
-                    setPadding(dp(12), dp(10), dp(12), dp(10))
-                    background = rounded(cardBg, 12, border)
-                    val lp = LinearLayout.LayoutParams(-1, -2); lp.bottomMargin = dp(8); layoutParams = lp
-                }
-                row.addView(TextView(this).apply { text = entry.providerName; textSize = 11f; setTextColor(cyan); typeface = Typeface.DEFAULT_BOLD })
-                row.addView(TextView(this).apply { text = info.name; textSize = 14f; setTextColor(white); typeface = Typeface.DEFAULT_BOLD; setPadding(0, dp(3), 0, 0) })
-                row.addView(TextView(this).apply { text = info.id; textSize = 11f; setTextColor(muted); setTextIsSelectable(true); setPadding(0, dp(2), 0, dp(3)) })
-                val priceText = when {
-                    isLocal -> "Lokalny model — bez opłat za API; koszty zależą od własnego sprzętu/prądu."
-                    info.promptPricePerMillion != null && info.completionPricePerMillion != null -> "Wejście: \$${"%.4f".format(info.promptPricePerMillion)} / 1M • Wyjście: \$${"%.4f".format(info.completionPricePerMillion)} / 1M tokenów (USD)"
-                    else -> "Dostawca nie zwrócił kompletnej stawki. Nie zakładam ceny 0 ani bezpłatnego użycia."
-                }
-                val contextText = info.contextLength?.let { " • kontekst: ${it} tokenów" }.orEmpty()
-                row.addView(TextView(this).apply { text = "$freeLabel\n$priceText$contextText\nWykryto na liście dostawcy; test odpowiedzi wykonaj przyciskiem TESTUJ."; textSize = 11f; setTextColor(freeColor); setPadding(0, 0, 0, dp(5)) })
-                val buttons = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
-                fun smallButton(label: String, click: () -> Unit) {
-                    val b = TextView(this@MainActivity).apply {
-                        text = label; textSize = 11f; setTextColor(white); gravity = Gravity.CENTER
-                        setPadding(dp(10), dp(8), dp(10), dp(8)); background = ripple(panel, 9)
-                        setOnClickListener { click() }
+
+            // Grupowanie pobranych modeli po dostawcy (providerName)
+            val grouped = searchResult.records.take(120).groupBy { it.value.providerName }
+            grouped.forEach { (providerName, records) ->
+                modelsContainer.addView(TextView(this@MainActivity).apply {
+                    text = "─── $providerName (${records.size}) ───"
+                    setTextColor(cyan); textSize = 12f; typeface = Typeface.DEFAULT_BOLD
+                    setPadding(0, dp(12), 0, dp(4))
+                })
+                records.forEach { indexedEntry ->
+                    val entry = indexedEntry.value
+                    val info = entry.info
+                    val isLocal = indexedEntry.isLocal
+                    val unknownPrice = indexedEntry.unknownPrice
+                    val approvedUnknownPrice = unknownPrice && pl.aimasterpro.app.core.UnknownPriceApprovalStore.isApproved(
+                        this@MainActivity, entry.providerId, entry.baseUrl, info.id
+                    )
+                    val freeLabel = when {
+                        isLocal -> "LOKALNY • BEZ OPŁAT API"
+                        info.freeByPricing == true && info.promptPricePerMillion != null && info.completionPricePerMillion != null -> "FREE • CENA API = 0"
+                        info.freeByPricing == true -> "FREE • JAWNE OZNACZENIE"
+                        unknownPrice && info.freeByPricing == false -> "PŁATNY • STAWKA NIEZNANA"
+                        unknownPrice -> "CENA NIEZNANA • ZGODA WYMAGANA"
+                        info.freeByPricing == false -> "PŁATNY"
+                        else -> "CENA NIEPOTWIERDZONA"
                     }
-                    buttons.addView(b, LinearLayout.LayoutParams(0, -2, 1f).apply { marginEnd = dp(5) })
-                }
-                smallButton("KOPIUJ ID") { copyText(info.id) }
-                smallButton("DODAJ PROFIL") {
-                    val provider = loadProvider(entry.providerId)
-                    if (provider == null) toast("Profil dostawcy już nie istnieje. Odśwież katalog.")
-                    else createModelProfile(provider, info)
-                }
-                smallButton("TESTUJ") {
-                    val provider = loadProvider(entry.providerId)
-                    if (provider == null) toast("Brak profilu dostawcy.")
-                    else testSpecificModel(provider, info)
-                }
-                if (unknownPrice) {
-                    smallButton(if (approvedUnknownPrice) "COFNIJ ZGODĘ" else "ZEZWÓL NA UŻYCIE") {
-                        if (approvedUnknownPrice) {
-                            val revoked = pl.aimasterpro.app.core.UnknownPriceApprovalStore.setApproved(
-                                this, entry.providerId, entry.baseUrl, info.id, false
-                            )
-                            if (revoked) {
-                                toast("Cofnięto zgodę dla ${info.id}.")
-                                renderCatalog(search.text.toString(), filterSpinner.selectedItemPosition)
-                            } else toast("Nie udało się bezpiecznie zmienić rejestru zgód.")
-                        } else {
-                            AlertDialog.Builder(this)
-                                .setTitle("Zgoda na model z nieznaną ceną")
-                                .setMessage(
-                                    "Model ${info.id} nie ma kompletnej, zweryfikowanej stawki API. Nie oznacza to, że jest darmowy. Dostawca może naliczyć opłatę według własnego cennika.\n\n" +
-                                        "Zezwolenie dotyczy tylko tego dostawcy, endpointu i modelu. Nadal obowiązują limity tokenów. Przy aktywnym miesięcznym limicie kosztów model z nieznaną ceną pozostanie zablokowany."
+                    val freeColor = when {
+                        isLocal || info.freeByPricing == true -> Color.rgb(65, 205, 120)
+                        info.freeByPricing == false -> Color.rgb(255, 125, 95)
+                        else -> orange
+                    }
+                    val row = LinearLayout(this@MainActivity).apply {
+                        orientation = LinearLayout.VERTICAL
+                        setPadding(dp(12), dp(10), dp(12), dp(10))
+                        background = rounded(cardBg, 12, border)
+                        val lp = LinearLayout.LayoutParams(-1, -2); lp.bottomMargin = dp(8); layoutParams = lp
+                    }
+                    row.addView(TextView(this@MainActivity).apply { text = info.name; textSize = 14f; setTextColor(white); typeface = Typeface.DEFAULT_BOLD })
+                    row.addView(TextView(this@MainActivity).apply { text = info.id; textSize = 11f; setTextColor(muted); setTextIsSelectable(true); setPadding(0, dp(2), 0, dp(3)) })
+                    val priceText = when {
+                        isLocal -> "Lokalny model — bez opłat za API."
+                        info.promptPricePerMillion != null && info.completionPricePerMillion != null -> "Wejście: \$${"%.4f".format(info.promptPricePerMillion)} / 1M • Wyjście: \$${"%.4f".format(info.completionPricePerMillion)} / 1M"
+                        else -> "Stawka API nieznana."
+                    }
+                    val contextText = info.contextLength?.let { " • kontekst: ${it} tokenów" }.orEmpty()
+                    row.addView(TextView(this@MainActivity).apply { text = "$freeLabel\n$priceText$contextText"; textSize = 11f; setTextColor(freeColor); setPadding(0, 0, 0, dp(5)) })
+                    val buttons = LinearLayout(this@MainActivity).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
+                    fun smallButton(label: String, click: () -> Unit) {
+                        val b = TextView(this@MainActivity).apply {
+                            text = label; textSize = 11f; setTextColor(white); gravity = Gravity.CENTER
+                            setPadding(dp(10), dp(8), dp(10), dp(8)); background = ripple(panel, 9)
+                            setOnClickListener { click() }
+                        }
+                        buttons.addView(b, LinearLayout.LayoutParams(0, -2, 1f).apply { marginEnd = dp(5) })
+                    }
+                    smallButton("KOPIUJ ID") { copyText(info.id) }
+                    smallButton("DODAJ PROFIL") {
+                        val provider = loadProvider(entry.providerId)
+                        if (provider == null) toast("Profil dostawcy już nie istnieje. Odśwież katalog.")
+                        else createModelProfile(provider, info)
+                    }
+                    smallButton("TESTUJ") {
+                        val provider = loadProvider(entry.providerId)
+                        if (provider == null) toast("Brak profilu dostawcy.")
+                        else testSpecificModel(provider, info)
+                    }
+                    if (unknownPrice) {
+                        smallButton(if (approvedUnknownPrice) "COFNIJ ZGODĘ" else "ZEZWÓL") {
+                            if (approvedUnknownPrice) {
+                                val revoked = pl.aimasterpro.app.core.UnknownPriceApprovalStore.setApproved(
+                                    this@MainActivity, entry.providerId, entry.baseUrl, info.id, false
                                 )
-                                .setNegativeButton("Anuluj", null)
-                                .setPositiveButton("Zgadzam się — zezwól") { _, _ ->
-                                    val saved = pl.aimasterpro.app.core.UnknownPriceApprovalStore.setApproved(
-                                        this, entry.providerId, entry.baseUrl, info.id, true
-                                    )
-                                    if (saved) {
-                                        toast("Zgoda zapisana wyłącznie dla ${info.id}.")
-                                        renderCatalog(search.text.toString(), filterSpinner.selectedItemPosition)
-                                    } else toast("Nie udało się zapisać zgody. Model pozostaje zablokowany.")
-                                }
-                                .show()
+                                if (revoked) {
+                                    toast("Cofnięto zgodę dla ${info.id}.")
+                                    renderCatalog(search.text.toString(), filterSpinner.selectedItemPosition)
+                                } else toast("Nie udało się zmienić rejestru zgód.")
+                            } else {
+                                AlertDialog.Builder(this@MainActivity)
+                                    .setTitle("Zgoda na model z nieznaną ceną")
+                                    .setMessage("Model ${info.id} nie ma zweryfikowanej stawki API. Zezwolenie dotyczy tylko tego modelu.")
+                                    .setNegativeButton("Anuluj", null)
+                                    .setPositiveButton("Zezwól") { _, _ ->
+                                        val saved = pl.aimasterpro.app.core.UnknownPriceApprovalStore.setApproved(
+                                            this@MainActivity, entry.providerId, entry.baseUrl, info.id, true
+                                        )
+                                        if (saved) {
+                                            toast("Zgoda zapisana dla ${info.id}.")
+                                            renderCatalog(search.text.toString(), filterSpinner.selectedItemPosition)
+                                        } else toast("Nie udało się zapisać zgody.")
+                                    }
+                                    .show()
+                            }
                         }
                     }
+                    row.addView(buttons)
+                    modelsContainer.addView(row)
                 }
-                row.addView(buttons)
-                modelsContainer.addView(row)
             }
-            if (searchResult.records.size > 80) modelsContainer.addView(TextView(this).apply { text = "Pokazano pierwsze 80 wyników. Użyj wyszukiwarki lub filtra, aby zawęzić listę."; setTextColor(muted); textSize = 11f })
+            if (searchResult.records.size > 120) modelsContainer.addView(TextView(this).apply { text = "Pokazano pierwsze 120 wyników. Użyj wyszukiwarki."; setTextColor(muted); textSize = 11f })
         }
         renderCatalog("", 0)
         search.addTextChangedListener(object : TextWatcher {
@@ -4875,19 +4962,61 @@ class MainActivity : Activity() {
         val modelUuid = UUID.nameUUIDFromBytes("${baseId}:${info.id}".toByteArray(Charsets.UTF_8)).toString().replace("-", "")
         val profileId = "${baseId}__model_${modelUuid}"
         val existing = loadProvider(profileId)
-        val profile = existing ?: provider.copy(
-            id = profileId,
-            name = "${provider.name} • ${info.name}",
-            model = info.id,
-            apiKey = "", // klucz pozostaje wyłącznie w profilu bazowym dostawcy
-            parentProviderId = baseId
-        )
-        if (!saveProvider(profile.copy(apiKey = ""))) {
-            toast("Nie udało się zapisać profilu modelu. Nie dodano go do konfiguracji.")
-            return
+        val defaultName = "${provider.name} • ${info.name}"
+
+        val input = EditText(this).apply {
+            setText(existing?.name ?: defaultName)
+            setTextColor(white)
+            isSingleLine = true
         }
-        showShell("Modele"); showProviders()
-        toast("Dodano profil modelu: ${info.name}. Przypisz go odpowiedniej roli w zakładce Agenci.")
+        AlertDialog.Builder(this)
+            .setTitle("Utwórz profil modelu")
+            .setMessage("Możesz edytować nazwę wyświetlaną nowego profilu:")
+            .setView(input)
+            .setNegativeButton("Anuluj", null)
+            .setPositiveButton("Zapisz") { _, _ ->
+                val customName = input.text.toString().trim().ifBlank { defaultName }
+                val profile = existing ?: provider.copy(
+                    id = profileId,
+                    name = customName,
+                    model = info.id,
+                    apiKey = "",
+                    parentProviderId = baseId
+                )
+                val finalProfile = profile.copy(name = customName, apiKey = "")
+                if (!saveProvider(finalProfile)) {
+                    toast("Nie udało się zapisać profilu modelu. Nie dodano go do konfiguracji.")
+                    return@setPositiveButton
+                }
+                showShell("Modele"); showProviders()
+                toast("Dodano profil modelu: $customName.")
+            }
+            .show()
+    }
+
+    private fun showEditModelProfileNameDialog(profile: ProviderConfig) {
+        val input = EditText(this).apply {
+            setText(profile.name)
+            setTextColor(white)
+            isSingleLine = true
+        }
+        AlertDialog.Builder(this)
+            .setTitle("Edytuj nazwę profilu modelu")
+            .setView(input)
+            .setNegativeButton("Anuluj", null)
+            .setPositiveButton("Zapisz") { _, _ ->
+                val newName = input.text.toString().trim()
+                if (newName.isNotBlank()) {
+                    val updated = profile.copy(name = newName)
+                    if (saveProvider(updated)) {
+                        toast("Zaktualizowano nazwę profilu.")
+                        showShell("Modele"); showProviders()
+                    } else {
+                        toast("Nie udało się zapisać zmiany.")
+                    }
+                }
+            }
+            .show()
     }
 
     private fun recordModelTestUsage(
