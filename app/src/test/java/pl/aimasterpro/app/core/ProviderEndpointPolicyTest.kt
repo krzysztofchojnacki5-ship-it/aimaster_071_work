@@ -12,6 +12,7 @@ class ProviderEndpointPolicyTest {
         assertTrue(ProviderEndpointPolicy.validate("http://LOCALHOST:11434/v1", "").allowed)
         assertTrue(ProviderEndpointPolicy.validate("http://127.0.0.1:11434/v1", "").allowed)
         assertTrue(ProviderEndpointPolicy.validate("http://10.0.2.2:11434/v1", "").allowed)
+        assertTrue(ProviderEndpointPolicy.validate("http://[::1]:11434/v1", "").allowed)
     }
 
     @Test fun rejectsUnsupportedSchemesMalformedAuthorityAndInvalidPorts() {
@@ -36,6 +37,11 @@ class ProviderEndpointPolicyTest {
         assertEquals("SECURITY_HTTP", ProviderEndpointPolicy.validate("http://172.15.0.2:11434/v1", "", true).category)
         assertTrue(ProviderEndpointPolicy.validate("http://172.16.0.2:11434/v1", "", true).allowed)
         assertTrue(ProviderEndpointPolicy.validate("http://10.1.2.3:11434/v1", "", true).allowed)
+        assertEquals("SECURITY_HTTP", ProviderEndpointPolicy.validate("http://[fd12:3456::1]:11434/v1", "").category)
+        assertTrue(ProviderEndpointPolicy.validate("http://[fd12:3456::1]:11434/v1", "", true).allowed)
+        assertTrue(ProviderEndpointPolicy.validate("http://[fe80::1]:11434/v1", "", true).allowed)
+        assertEquals("SECURITY_HTTP", ProviderEndpointPolicy.validate("http://[2001:4860:4860::8888]:11434/v1", "", true).category)
+        assertEquals("SECURITY_HTTP", ProviderEndpointPolicy.validate("http://[fe80::1%25eth0]:11434/v1", "", true).category)
     }
 
     @Test fun rejectsUrlCredentialsAndAllCredentialBearingCleartextEndpoints() {

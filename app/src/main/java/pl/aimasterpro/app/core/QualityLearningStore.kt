@@ -54,7 +54,7 @@ object QualityLearningStore {
     /** One current rating per target. Re-rating updates the current value and preserves an audit trail. */
     @Synchronized fun rate(context: Context, targetId: String, targetType: String, rating: Int, comment: String,
                            agentId: String = "", providerId: String = "", model: String = "", category: String = "") {
-        require(targetId.isNotBlank()) { "Brak identyfikatora ocenianego elementu" }
+        require(targetId.isNotBlank() && targetId.length <= 240) { "Nieprawidłowy identyfikator ocenianego elementu" }
         require(rating == -1 || rating == 1) { "Ocena musi wynosić +1 albo -1" }
         val normalizedType = targetType.ifBlank { "UNKNOWN" }.take(30)
         if (readArrayStrict(context, FEEDBACK_KEY) == null) {
@@ -89,7 +89,11 @@ object QualityLearningStore {
 
     @Synchronized fun addProposal(context: Context, text: String, evidenceCount: Int, confidence: String,
                                   sourceTaskIds: List<String>, agents: List<String>, models: List<String>): Proposal {
-        require(text.isNotBlank())
+        require(text.isNotBlank() && text.length <= 3000)
+        require(sourceTaskIds.size <= 100 && sourceTaskIds.all { it.isNotBlank() && it.length <= 240 })
+        require(agents.size <= 50 && agents.all { it.isNotBlank() && it.length <= 100 })
+        require(models.size <= 50 && models.all { it.isNotBlank() && it.length <= 200 })
+        require(confidence.length <= 40)
         check(readArrayStrict(context, PROPOSALS_KEY) != null) {
             "Rejestr propozycji jest uszkodzony; zapis został wstrzymany bez nadpisywania danych."
         }
@@ -103,8 +107,30 @@ object QualityLearningStore {
         return p
     }
 
+    /** User-confirmed proposal decision; all related memory writes share one audited gate. */
+    @Synchronized fun setProposalStatus(
+        context: Context, id: String, status: String, approvalRef: String
+    ): Boolean {
+        val mutation = when (status) {
+            "APPROVED" -> MemoryGovernance.Mutation.APPROVE_PROPOSAL
+            "REJECTED" -> MemoryGovernance.Mutation.REJECT_PROPOSAL
+            else -> return false
+        }
+        val request = MemoryGovernance.Request(
+            actor = MemoryGovernance.Actor.USER,
+            mutation = mutation,
+            objectId = id,
+            reason = if (status == "APPROVED") "Użytkownik zatwierdził propozycję uczenia."
+                else "Użytkownik odrzucił propozycję uczenia.",
+            approvalRef = approvalRef
+        )
+        return MemoryMutationGate.execute(context, request) { permit ->
+            setProposalStatusRaw(context, id, status, permit)
+        }
+    }
+
     /** Only APPROVED proposals enter shared model memory. Rejected proposals remain auditable. */
-    @Synchronized fun setProposalStatus(context: Context, id: String, status: String): Boolean {
+    @Synchronized private fun setProposalStatusRaw(context: Context, id: String, status: String, permit: MemoryMutationPermit): Boolean {
         require(status in setOf("APPROVED", "REJECTED", "PROPOSAL"))
         if (readArrayStrict(context, PROPOSALS_KEY) == null) return false
         val all = proposals(context).toMutableList()
@@ -116,16 +142,16 @@ object QualityLearningStore {
         if (!saveProposals(context, all)) return false
         val memoryEntry = "[UCZENIE ZATWIERDZONE ${old.id.take(8)}; dowody=${old.evidenceCount}; pewność=${old.confidence}] ${old.text}".take(1000)
         if (status == "APPROVED") {
-            val sharedSaved = AiMemoryStore.addMemory(context, memoryEntry)
+            val sharedSaved = AiMemoryStore.addMemory(context, memoryEntry, permit, objectId = old.id)
             // Preserve agent scope: approved specialist lessons are not broadcast to unrelated agents.
             val sourceRef = "proposal:${old.id}"
             val agentSaves = old.affectedAgents.filter(String::isNotBlank).map { agentId ->
-                AgentOperationalMemoryStore.addApproved(context, agentId, old.text,
+                AgentOperationalMemoryStore.addApproved(context, agentId, old.text, permit, objectId = old.id,
                     category = "wniosek jakościowy", sourceTaskIds = listOf(sourceRef), confidence = old.confidence) != null
             }
             if (!sharedSaved || agentSaves.any { !it }) {
-                AiMemoryStore.removeMemory(context, memoryEntry)
-                AgentOperationalMemoryStore.removeBySource(context, sourceRef)
+                AiMemoryStore.removeMemory(context, memoryEntry, permit, objectId = old.id)
+                AgentOperationalMemoryStore.removeBySource(context, sourceRef, permit)
                 all[index] = old
                 if (!saveProposals(context, all)) {
                     android.util.Log.e("AIMasterQuality", "Nie udało się wycofać statusu APPROVED po błędzie zapisu pamięci.")
@@ -133,8 +159,8 @@ object QualityLearningStore {
                 return false
             }
         } else if (old.status == "APPROVED") {
-            val sharedRemoved = AiMemoryStore.removeMemory(context, memoryEntry)
-            val agentRemoved = AgentOperationalMemoryStore.removeBySource(context, "proposal:${old.id}")
+            val sharedRemoved = AiMemoryStore.removeMemory(context, memoryEntry, permit, objectId = old.id)
+            val agentRemoved = AgentOperationalMemoryStore.removeBySource(context, "proposal:${old.id}", permit)
             if (!sharedRemoved || !agentRemoved) {
                 all[index] = old
                 if (!saveProposals(context, all)) {
@@ -159,24 +185,110 @@ object QualityLearningStore {
         proposals(context).forEach { proposal ->
             val memoryEntry = "[UCZENIE ZATWIERDZONE ${proposal.id.take(8)}; dowody=${proposal.evidenceCount}; pewność=${proposal.confidence}] ${proposal.text}".take(1000)
             val sourceRef = "proposal:${proposal.id}"
-            if (proposal.status == "APPROVED") {
-                if (AiMemoryStore.addMemory(context, memoryEntry)) synchronized++
-                else android.util.Log.e("AIMasterQuality", "Nie udało się uzgodnić pamięci wspólnej dla propozycji ${proposal.id}.")
-                proposal.affectedAgents.forEach { agentId ->
-                    if (AgentOperationalMemoryStore.addApproved(context, agentId, proposal.text,
-                        category = "wniosek jakościowy", sourceTaskIds = listOf(sourceRef),
-                        confidence = proposal.confidence) != null) synchronized++
-                    else android.util.Log.e("AIMasterQuality", "Nie udało się uzgodnić pamięci agenta dla propozycji ${proposal.id}.")
+            val approved = proposal.status == "APPROVED"
+            val sharedPresent = AiMemoryStore.containsExactMemory(context, memoryEntry)
+            val agentStates = proposal.affectedAgents.map { agentId ->
+                AgentOperationalMemoryStore.hasApprovedSource(context, agentId, proposal.text, sourceRef)
+            }
+            val anyAgentSource = AgentOperationalMemoryStore.hasAnySource(context, sourceRef)
+            val agentsWithSource = AgentOperationalMemoryStore.agentsWithSource(context, sourceRef)
+            if (sharedPresent == null || agentStates.any { it == null } ||
+                anyAgentSource == null || agentsWithSource == null) {
+                android.util.Log.e("AIMasterQuality", "Pominięto uzgadnianie propozycji ${proposal.id}: co najmniej jeden magazyn pamięci jest nieczytelny.")
+                return@forEach
+            }
+            val expectedAgents = proposal.affectedAgents.map { it.trim().lowercase(java.util.Locale.ROOT) }.filter(String::isNotEmpty).toSet()
+            val hasUnexpectedAgentSource = agentsWithSource.any { it !in expectedAgents }
+            val needsRepair = if (approved) {
+                sharedPresent != true || agentStates.any { it != true } || hasUnexpectedAgentSource
+            } else {
+                sharedPresent == true || anyAgentSource == true
+            }
+            val unresolved = MemoryAuditLog.unresolvedOperations(context, proposal.id)
+            if (unresolved == null) {
+                android.util.Log.e("AIMasterQuality", "Pominięto uzgadnianie propozycji ${proposal.id}: dziennik audytu jest nieczytelny.")
+                return@forEach
+            }
+            val pendingUser = unresolved.filter {
+                it.actor == MemoryGovernance.Actor.USER.name &&
+                    it.mutation in setOf(
+                        MemoryGovernance.Mutation.APPROVE_PROPOSAL.name,
+                        MemoryGovernance.Mutation.REJECT_PROPOSAL.name
+                    )
+            }
+            val pendingRecovery = unresolved.filter { it.actor == MemoryGovernance.Actor.SYSTEM_RECOVERY.name }
+
+            // Never replay a repair when the durable stores already match the proposal ledger.
+            // Close any interrupted recovery first; only then may its originating USER intent close.
+            if (!needsRepair) {
+                var recoveryClosuresSucceeded = true
+                pendingRecovery.forEach { pending ->
+                    if (!MemoryAuditLog.resolveUnresolved(context, pending,
+                            "Odzyskiwanie zweryfikowane względem trwałego rejestru propozycji.")) {
+                        recoveryClosuresSucceeded = false
+                        android.util.Log.e("AIMasterQuality", "Nie udało się zamknąć audytu odzyskiwania dla propozycji ${proposal.id}.")
+                    }
+                }
+                if (recoveryClosuresSucceeded) {
+                    pendingUser.forEach { pending ->
+                        if (!MemoryAuditLog.resolveUnresolved(context, pending,
+                                "Stan propozycji i magazynów został zweryfikowany względem trwałego rejestru.")) {
+                            android.util.Log.e("AIMasterQuality", "Nie udało się zamknąć pierwotnej operacji ${pending.mutation} dla propozycji ${proposal.id}.")
+                        }
+                    }
+                }
+                return@forEach
+            }
+            // An interrupted recovery with stores that still disagree is not safe to replay.
+            if (pendingRecovery.isNotEmpty()) {
+                android.util.Log.e("AIMasterQuality", "Propozycja ${proposal.id} wymaga ręcznej kontroli: poprzednie odzyskiwanie pozostało nierozstrzygnięte.")
+                return@forEach
+            }
+            // Startup reconciliation is also required when stores disagree with the
+            // durable proposal ledger but no USER intent remains unresolved.
+            val request = MemoryGovernance.Request(
+                actor = MemoryGovernance.Actor.SYSTEM_RECOVERY,
+                mutation = if (approved) MemoryGovernance.Mutation.RECONCILE_APPROVED_PROPOSAL
+                    else MemoryGovernance.Mutation.RECONCILE_REVOKED_PROPOSAL,
+                objectId = proposal.id,
+                reason = if (approved) "Uzgodnienie pamięci z propozycją trwale zatwierdzoną."
+                    else "Usunięcie pamięci powiązanej z propozycją niezatwierdzoną lub cofniętą.",
+                approvalRef = sourceRef
+            )
+            val recovered = MemoryMutationGate.execute(context, request) { permit ->
+                if (approved) {
+                    // Remove this proposal's provenance from every agent first. Rebuild only
+                    // the explicitly approved scope, so stale/foreign agent copies cannot survive.
+                    val staleAgentSourcesRemoved = AgentOperationalMemoryStore.removeBySource(context, sourceRef, permit)
+                    val sharedSaved = AiMemoryStore.addMemory(context, memoryEntry, permit, objectId = proposal.id)
+                    val agentSaves = proposal.affectedAgents.map { agentId ->
+                        AgentOperationalMemoryStore.addApproved(context, agentId, proposal.text, permit, objectId = proposal.id,
+                            category = "wniosek jakościowy", sourceTaskIds = listOf(sourceRef),
+                            confidence = proposal.confidence) != null
+                    }
+                    staleAgentSourcesRemoved && sharedSaved && agentSaves.all { it } &&
+                        AiMemoryStore.containsExactMemory(context, memoryEntry) == true &&
+                        proposal.affectedAgents.all { agentId ->
+                            AgentOperationalMemoryStore.hasApprovedSource(context, agentId, proposal.text, sourceRef) == true
+                        }
+                } else {
+                    val sharedRemoved = AiMemoryStore.removeMemory(context, memoryEntry, permit, objectId = proposal.id)
+                    val agentRemoved = AgentOperationalMemoryStore.removeBySource(context, sourceRef, permit)
+                    sharedRemoved && agentRemoved &&
+                        AiMemoryStore.containsExactMemory(context, memoryEntry) == false &&
+                        AgentOperationalMemoryStore.hasAnySource(context, sourceRef) == false
+                }
+            }
+            if (recovered) {
+                if (approved && needsRepair) synchronized++
+                pendingUser.forEach { pending ->
+                    if (!MemoryAuditLog.resolveUnresolved(context, pending,
+                            "Stan pamięci został uzgodniony i zweryfikowany względem trwałego rejestru propozycji.")) {
+                        android.util.Log.e("AIMasterQuality", "Nie udało się zamknąć pierwotnej operacji ${pending.mutation} dla propozycji ${proposal.id}.")
+                    }
                 }
             } else {
-                // A crash after REJECTED/PROPOSAL was committed but before memory cleanup
-                // must not leave a revoked lesson active indefinitely.
-                if (!AiMemoryStore.removeMemory(context, memoryEntry)) {
-                    android.util.Log.e("AIMasterQuality", "Nie udało się usunąć cofniętej reguły wspólnej dla propozycji ${proposal.id}.")
-                }
-                if (!AgentOperationalMemoryStore.removeBySource(context, sourceRef)) {
-                    android.util.Log.e("AIMasterQuality", "Nie udało się usunąć cofniętej reguły agenta dla propozycji ${proposal.id}.")
-                }
+                android.util.Log.e("AIMasterQuality", "Nie udało się uzgodnić pamięci dla propozycji ${proposal.id}; operacja pozostaje nierozstrzygnięta.")
             }
         }
         return synchronized
@@ -279,7 +391,11 @@ object QualityLearningStore {
                     val id = row.getString("id")
                     val targetId = row.getString("targetId")
                     val targetType = row.getString("targetType")
-                    require(id.isNotBlank() && seenIds.add(id) && targetId.isNotBlank() && targetType.isNotBlank())
+                    require(id.isNotBlank() && id.length <= 120 && seenIds.add(id) &&
+                        targetId.isNotBlank() && targetId.length <= 240 && targetType.isNotBlank() && targetType.length <= 30)
+                    require(row.getString("comment").length <= 1000 &&
+                        row.getString("agent").length <= 100 && row.getString("provider").length <= 100 &&
+                        row.getString("model").length <= 160 && row.getString("category").length <= 100)
                     require(seenFeedbackTargets.add(listOf(targetType, targetId))) {
                         "Quality journal contains more than one current rating for the same target."
                     }
@@ -290,7 +406,7 @@ object QualityLearningStore {
                         require(history.length() <= 50)
                         for (i in 0 until history.length()) {
                             val item = history.getJSONObject(i)
-                            require(item.opt("comment") is String)
+                            require(item.opt("comment") is String && item.getString("comment").length <= 1000)
                             require(exactLong(item.opt("rating")) in setOf(-1L, 1L))
                             require(exactLong(item.opt("timestamp")) >= 0L)
                         }
@@ -298,17 +414,20 @@ object QualityLearningStore {
                 } else if (key == PROPOSALS_KEY) {
                     require(listOf("id", "text", "status", "confidence").all { row.opt(it) is String })
                     val id = row.getString("id")
-                    require(id.isNotBlank() && seenIds.add(id) && row.getString("text").isNotBlank())
+                    require(id.isNotBlank() && id.length <= 120 && seenIds.add(id) &&
+                        row.getString("text").isNotBlank() && row.getString("text").length <= 3000 &&
+                        row.getString("confidence").length <= 40)
                     require(row.getString("status") in setOf("PROPOSAL", "APPROVED", "REJECTED"))
                     require(exactLong(row.opt("created")) >= 0L && exactLong(row.opt("updated")) >= 0L)
                     require(exactLong(row.opt("evidence")) in 0..Int.MAX_VALUE.toLong())
                     listOf("tasks", "agents", "models").forEach { field ->
                         val values = row.optJSONArray(field) ?: error("Invalid proposal provenance.")
-                        require(values.length() <= 100)
+                        require(values.length() <= if (field == "tasks") 100 else 50)
                         val seenValues = hashSetOf<String>()
                         for (i in 0 until values.length()) {
                             val value = values.opt(i)
-                            require(value is String && value.isNotBlank() && seenValues.add(value))
+                            val maxLength = when (field) { "tasks" -> 240; "agents" -> 100; else -> 200 }
+                            require(value is String && value.isNotBlank() && value.length <= maxLength && seenValues.add(value))
                         }
                     }
                 } else error("Unknown quality journal key.")

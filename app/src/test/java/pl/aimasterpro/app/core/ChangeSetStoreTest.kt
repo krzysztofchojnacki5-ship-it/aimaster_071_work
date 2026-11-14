@@ -540,4 +540,13 @@ class ChangeSetStoreTest {
         assertFalse(HostActiveChangeSetStore.setActive(context, "chat-active", "workspace-sha", item.id))
         assertFalse(HostActiveChangeSetStore.invalidate(context, item.id))
     }
+    @Test fun hostActivePointerRejectsOversizedRawRecordAndPreservesIt() {
+        val oversized = " ".repeat(16_001)
+        val storage = FaultingPreferenceStore(value = oversized)
+        val result = HostActiveChangeSetStore.readActive(context, "chat-active", "workspace-sha", storage)
+        assertEquals(HostActiveChangeSetStore.ReadStatus.INVALID, result.status)
+        assertEquals(oversized, storage.value)
+        assertFalse(runCatching { HostActiveChangeSetStore.setActive(context, "C".repeat(201), "workspace-sha", appliedForHostScope().id) }.isSuccess)
+    }
+
 }

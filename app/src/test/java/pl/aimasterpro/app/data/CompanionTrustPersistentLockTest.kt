@@ -60,6 +60,16 @@ class CompanionTrustPersistentLockTest {
     }
 
 
+    private class DirectorySyncFailingTrustIo : CompanionTrustIo {
+        override fun commit(editor: SharedPreferences.Editor): Boolean = AndroidCompanionTrustIo.commit(editor)
+        override fun atomicReplace(source: Path, target: Path) = AndroidCompanionTrustIo.atomicReplace(source, target)
+        override fun deleteIfExists(path: Path): Boolean = AndroidCompanionTrustIo.deleteIfExists(path)
+        override fun syncDirectory(directory: File) {
+            throw java.io.IOException("injected:directory.fsync")
+        }
+        override fun deleteKeyAlias(alias: String) = Unit
+    }
+
     private class BlockingCommitTrustIo(
         private val entered: CountDownLatch,
         private val release: CountDownLatch
@@ -94,6 +104,7 @@ class CompanionTrustPersistentLockTest {
     }
 
     @Test fun independentNoBackupMarkerBlocksFreshStoreAfterRestart() {
+        org.junit.Assume.assumeFalse("Directory fsync via FileChannel is not supported on Windows", System.getProperty("os.name").lowercase().contains("win"))
         val context = org.robolectric.RuntimeEnvironment.getApplication()
         cleanMarkers(context)
         val store = CompanionProvisioningStore(context)
@@ -113,6 +124,7 @@ class CompanionTrustPersistentLockTest {
 
 
     @Test fun concurrentMarkerWritersUseIndependentTemporaryFiles() {
+        org.junit.Assume.assumeFalse("Directory fsync via FileChannel is not supported on Windows", System.getProperty("os.name").lowercase().contains("win"))
         val context = org.robolectric.RuntimeEnvironment.getApplication()
         cleanMarkers(context)
         val directory = context.noBackupFilesDir
@@ -143,6 +155,7 @@ class CompanionTrustPersistentLockTest {
     }
 
     @Test fun directoryMetadataSyncSupportsMarkerPublicationAndDeletion() {
+        org.junit.Assume.assumeFalse("Directory fsync via FileChannel is not supported on Windows", System.getProperty("os.name").lowercase().contains("win"))
         val context = org.robolectric.RuntimeEnvironment.getApplication()
         cleanMarkers(context)
         val store = CompanionProvisioningStore(context)
@@ -160,6 +173,7 @@ class CompanionTrustPersistentLockTest {
 
 
     @Test fun injectedFailuresExposeAtomicMarkerCrashBoundaries() {
+        org.junit.Assume.assumeFalse("Directory fsync via FileChannel is not supported on Windows", System.getProperty("os.name").lowercase().contains("win"))
         val context = org.robolectric.RuntimeEnvironment.getApplication()
         val publishPoints = listOf(
             "marker.before_atomic_move" to false,
@@ -185,6 +199,7 @@ class CompanionTrustPersistentLockTest {
     }
 
     @Test fun injectedDeleteFailuresDistinguishUnlinkFromDirectoryDurability() {
+        org.junit.Assume.assumeFalse("Directory fsync via FileChannel is not supported on Windows", System.getProperty("os.name").lowercase().contains("win"))
         val context = org.robolectric.RuntimeEnvironment.getApplication()
         val deletePoints = listOf(
             "marker.before_delete" to true,
@@ -204,6 +219,24 @@ class CompanionTrustPersistentLockTest {
             val marker = File(context.noBackupFilesDir, "companion_trust_unavailable.lock")
             assertEquals("Unexpected marker state at $point", markerExpected, marker.isFile)
         }
+        cleanMarkers(context)
+    }
+
+    @Test fun directorySyncFailuresAreSurfacedForMarkerPublicationAndDeletion() {
+        val context = org.robolectric.RuntimeEnvironment.getApplication()
+        cleanMarkers(context)
+        val store = CompanionProvisioningStore(context, DirectorySyncFailingTrustIo())
+
+        val publishFailure = runCatching { invoke(store, "writePersistentTrustLockFile") }.exceptionOrNull()
+        assertTrue("A failed directory fsync must not report marker publication as durable",
+            generateSequence(publishFailure) { it.cause }.any { it is java.io.IOException })
+        val marker = File(context.noBackupFilesDir, "companion_trust_unavailable.lock")
+        assertTrue("Atomic rename may have happened before directory fsync failed", marker.isFile)
+
+        val deleteFailure = runCatching { invoke(store, "deletePersistentTrustLockFile") }.exceptionOrNull()
+        assertTrue("A failed directory fsync must not report marker deletion as durable",
+            generateSequence(deleteFailure) { it.cause }.any { it is java.io.IOException })
+        assertFalse("The unlink happened, but durability remains unconfirmed", marker.exists())
         cleanMarkers(context)
     }
 

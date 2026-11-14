@@ -32,6 +32,16 @@ class TaskResultArchiveTest {
         assertTrue(ChatHistoryStore.writeRoot(context, root))
     }
 
+    @Test fun queueExecutionArchiveIdsAreStableAndIsolatedByAgentAndRun() {
+        val first = TaskResultArchive.executionTaskId("task-parent-123", "researcher", 1)
+        assertEquals("q-task-parent-123-researcher-r1", first)
+        assertEquals(first, TaskResultArchive.executionTaskId("task-parent-123", "researcher", 1))
+        assertNotEquals(first, TaskResultArchive.executionTaskId("task-parent-123", "developer", 1))
+        assertNotEquals(first, TaskResultArchive.executionTaskId("task-parent-123", "researcher", 2))
+        assertTrue(runCatching { TaskResultArchive.executionTaskId("", "researcher", 1) }.isFailure)
+        assertTrue(runCatching { TaskResultArchive.executionTaskId("task-parent", "researcher", 0) }.isFailure)
+    }
+
     @Test fun successfulReportIsDurableAndAddressableByTaskId() {
         assertTrue(TaskResultArchive.put(
             context, "task-1", "developer", "Pełny raport agenta.", "provider-a", "model-a", 1_000L
@@ -59,6 +69,87 @@ class TaskResultArchiveTest {
         assertFalse(stored.contains("sk-12345678901234567890"))
         assertFalse(stored.contains("abcdefghijklmnopqrstuvwxyz123456"))
         assertTrue(TaskResultArchive.get(context, "secret-task")?.report?.contains("[REDACTED]") == true)
+    }
+
+    @Test fun archivedAgentAndProviderMetadataRedactCredentialsBeforePersistence() {
+        val rawAgent = "developer api_key=sk_live_1234567890"
+        val rawProvider = "provider token=Bearer abcdefghijklmnopqrstuvwxyz123456"
+        val rawModel = "model secret=sk-proj-12345678901234567890"
+        assertTrue(TaskResultArchive.put(
+            context, "metadata-secret-task", rawAgent, "Raport bez sekretów.",
+            rawProvider, rawModel, 1_500L
+        ))
+
+        val entry = TaskResultArchive.get(context, "metadata-secret-task")!!
+        val stored = prefs.getString("entries", null).orEmpty()
+        assertFalse(stored.contains("sk_live_1234567890"))
+        assertFalse(stored.contains("abcdefghijklmnopqrstuvwxyz123456"))
+        assertFalse(stored.contains("sk-proj-12345678901234567890"))
+        assertTrue(entry.agentId.contains("[REDACTED]"))
+        assertTrue(entry.providerId.contains("[REDACTED]"))
+        assertTrue(entry.model.contains("[REDACTED]"))
+    }
+
+    @Test fun archiveRejectsChatLookupKeyThatWouldChangeUnderSecretRedaction() {
+        val unsafeChatId = "chat-api_key=sk_live_1234567890"
+        assertFalse(TaskResultArchive.put(
+            context, "unsafe-chat-key-task", "developer", "Raport.",
+            "provider-a", "model-a", 1_600L, unsafeChatId
+        ))
+        assertNull(TaskResultArchive.get(context, "unsafe-chat-key-task"))
+        assertTrue(TaskResultArchive.latest(context).isEmpty())
+    }
+
+    @Test fun restoredLegacyMetadataIsRedactedBeforeEnteringChatTimeline() {
+        val chatId = "chat-legacy-metadata"
+        createChat(chatId)
+        val legacy = JSONArray().put(JSONObject()
+            .put("taskId", "legacy-metadata-task")
+            .put("agentId", "developer api_key=sk_live_1234567890")
+            .put("report", "Legacy report.")
+            .put("providerId", "provider token=Bearer abcdefghijklmnopqrstuvwxyz123456")
+            .put("model", "model secret=sk-proj-12345678901234567890")
+            .put("createdAt", 1_700L)
+            .put("chatId", chatId))
+        assertTrue(prefs.edit().putString("entries", legacy.toString()).commit())
+
+        assertEquals(1, TaskResultArchive.restoreArchivedReports(context))
+        val activity = ChatHistoryStore.readRoot(context)!!
+            .getJSONObject("chats").getJSONObject(chatId).getJSONArray("agentActivity")
+        val restored = activity.optString(0)
+        assertFalse(restored.contains("sk_live_1234567890"))
+        assertFalse(restored.contains("abcdefghijklmnopqrstuvwxyz123456"))
+        assertFalse(restored.contains("sk-proj-12345678901234567890"))
+        assertTrue(restored.contains("[REDACTED]"))
+        assertTrue(restored.contains("Legacy report."))
+    }
+
+    @Test fun metadataRedactionDoesNotAlterTaskOrChatIdentityKeys() {
+        val chatId = "chat-stable-identity"
+        createChat(chatId)
+        assertTrue(TaskResultArchive.put(
+            context, "task-stable-identity", "unit-test-engineer",
+            "Stable report.", "provider-a", "model-a", 1_800L, chatId
+        ))
+        val entry = TaskResultArchive.get(context, "task-stable-identity")!!
+        assertEquals("task-stable-identity", entry.taskId)
+        assertEquals("chat-stable-identity", entry.chatId)
+        assertEquals("unit-test-engineer", entry.agentId)
+        assertEquals("provider-a", entry.providerId)
+        assertEquals("model-a", entry.model)
+    }
+
+    @Test fun metadataSanitizationRunsBeforeArchiveCapacityAndSerializationChecks() {
+        val rawProvider = "provider api_key=sk_live_1234567890"
+        val rawModel = "model bearer=Bearer abcdefghijklmnopqrstuvwxyz123456"
+        assertTrue(TaskResultArchive.put(
+            context, "metadata-order-task", "developer", "Report.",
+            rawProvider, rawModel, 1_900L
+        ))
+        val serialized = prefs.getString("entries", null).orEmpty()
+        assertTrue(serialized.contains("[REDACTED]"))
+        assertFalse(serialized.contains("sk_live_1234567890"))
+        assertFalse(serialized.contains("abcdefghijklmnopqrstuvwxyz123456"))
     }
 
     @Test fun emptyArchiveIsReadableAndDistinguishedFromCorruption() {
@@ -333,4 +424,83 @@ class TaskResultArchiveTest {
         assertEquals(1, (0 until rows.length()).count { rows.getString(it).contains("[TASK_REPORT_ID:report-after-apply]") })
     }
 
+
+    @Test fun archiveReaderRejectsRowsBeyondCapacityWithoutRewritingData() {
+        val rows = JSONArray()
+        repeat(81) { index ->
+            rows.put(JSONObject()
+                .put("taskId", "overflow-task-$index")
+                .put("agentId", "RESEARCHER")
+                .put("report", "Report $index")
+                .put("providerId", "provider-a")
+                .put("model", "model-a")
+                .put("createdAt", 40_000L + index))
+        }
+        val corrupt = rows.toString()
+        assertTrue(prefs.edit().putString("entries", corrupt).commit())
+
+        assertFalse(TaskResultArchive.isArchiveReadable(context))
+        assertFalse(TaskResultArchive.put(
+            context, "new-task", "RESEARCHER", "New report", "provider-a", "model-a", 50_000L
+        ))
+        assertEquals(corrupt, prefs.getString("entries", null))
+    }
+
+    @Test fun putRejectsOversizedArchiveMetadataAndChatIdsBeforeWriting() {
+        assertFalse(TaskResultArchive.put(context, "t".repeat(513), "RESEARCHER", "Report", "p", "m", 1_000L))
+        assertFalse(TaskResultArchive.put(context, "task-agent", "a".repeat(121), "Report", "p", "m", 1_000L))
+        assertFalse(TaskResultArchive.put(context, "task-provider", "RESEARCHER", "Report", "p".repeat(201), "m", 1_000L))
+        assertFalse(TaskResultArchive.put(context, "task-model", "RESEARCHER", "Report", "p", "m".repeat(241), 1_000L))
+        assertFalse(TaskResultArchive.put(context, "task-chat", "RESEARCHER", "Report", "p", "m", 1_000L, "c".repeat(201)))
+        assertTrue(TaskResultArchive.latest(context).isEmpty())
+    }
+
+    @Test fun archiveReaderRejectsOversizedMetadataAndChatIdWithoutRewritingData() {
+        val corrupt = JSONArray().put(JSONObject()
+            .put("taskId", "task-metadata")
+            .put("agentId", "RESEARCHER")
+            .put("report", "Saved report")
+            .put("providerId", "provider-a")
+            .put("model", "m".repeat(241))
+            .put("createdAt", 1_000L)
+            .put("chatId", "chat")).toString()
+        assertTrue(prefs.edit().putString("entries", corrupt).commit())
+
+        assertFalse(TaskResultArchive.isArchiveReadable(context))
+        assertEquals(corrupt, prefs.getString("entries", null))
+    }
+
+    @Test fun archiveReaderRejectsOversizedRawPayloadBeforeParsingAndPreservesIt() {
+        val oversized = " ".repeat(3_000_001)
+        assertTrue(prefs.edit().putString("entries", oversized).commit())
+
+        assertFalse(TaskResultArchive.isArchiveReadable(context))
+        assertFalse(TaskResultArchive.put(
+            context, "new-task", "RESEARCHER", "New report", "provider-a", "model-a", 50_000L
+        ))
+        assertEquals(oversized, prefs.getString("entries", null))
+    }
+
+    @Test fun archiveCapacityRejectsNewReportWithoutEvictingOlderReportsButAllowsReplacement() {
+        repeat(80) { index ->
+            assertTrue(TaskResultArchive.put(
+                context, "capacity-task-$index", "RESEARCHER", "Report $index",
+                "provider-a", "model-a", 60_000L + index
+            ))
+        }
+        val before = TaskResultArchive.latest(context).map { it.taskId }
+        assertEquals(80, before.size)
+        assertFalse(TaskResultArchive.put(
+            context, "capacity-overflow", "RESEARCHER", "Must not evict data",
+            "provider-a", "model-a", 70_000L
+        ))
+        assertEquals(before, TaskResultArchive.latest(context).map { it.taskId })
+        assertNotNull(TaskResultArchive.get(context, "capacity-task-79"))
+        assertTrue(TaskResultArchive.put(
+            context, "capacity-task-79", "RESEARCHER", "Updated in place",
+            "provider-b", "model-b", 71_000L
+        ))
+        assertEquals(80, TaskResultArchive.latest(context).size)
+        assertEquals("Updated in place", TaskResultArchive.get(context, "capacity-task-79")?.report)
+    }
 }

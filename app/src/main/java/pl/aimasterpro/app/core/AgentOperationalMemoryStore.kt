@@ -13,6 +13,7 @@ object AgentOperationalMemoryStore {
     private const val KEY = "entries"
     private const val MAX_ENTRIES = 300
     private const val MAX_ENTRY_CHARS = 1200
+    private const val MAX_RAW_CHARS = 1_000_000
     private val termRegex = Regex("[\\p{L}\\p{N}]{3,}")
     private val stopWords = setOf("oraz", "który", "która", "które", "jest", "być", "dla", "the", "and", "for", "with", "that", "this")
 
@@ -28,36 +29,92 @@ object AgentOperationalMemoryStore {
 
     @Synchronized fun all(context: Context): List<Entry> = read(context) ?: emptyList()
 
-    @Synchronized fun addApproved(
-        context: Context, agentId: String, text: String, category: String = "",
-        sourceTaskIds: List<String> = emptyList(), confidence: String = "zatwierdzona"
+    /** Null means the operational-memory ledger is unreadable. */
+    @Synchronized
+    internal fun hasApprovedSource(context: Context, agentId: String, text: String, sourceTaskId: String): Boolean? {
+        val cleanAgent = agentId.trim()
+        val cleanText = text.trim().replace(Regex("[\\t ]+"), " ")
+        if (cleanText.length !in 8..MAX_ENTRY_CHARS) return false
+        return read(context)?.any { entry ->
+            entry.agentId.equals(cleanAgent, true) && entry.text == cleanText && sourceTaskId in entry.sourceTaskIds
+        }
+    }
+
+    /** Checks for any lesson still carrying a proposal provenance marker. */
+    @Synchronized
+    internal fun hasAnySource(context: Context, sourceTaskId: String): Boolean? =
+        read(context)?.any { sourceTaskId in it.sourceTaskIds }
+
+    /** Returns every agent currently carrying a proposal marker; null means unreadable. */
+    @Synchronized
+    internal fun agentsWithSource(context: Context, sourceTaskId: String): Set<String>? =
+        read(context)?.filter { sourceTaskId in it.sourceTaskIds }?.map { it.agentId.lowercase(Locale.ROOT) }?.toSet()
+
+    @Synchronized internal fun addApproved(
+        context: Context, agentId: String, text: String, permit: MemoryMutationPermit, objectId: String,
+        category: String = "", sourceTaskIds: List<String> = emptyList(), confidence: String = "zatwierdzona"
+    ): Entry? {
+        if (objectId.isBlank()) return null
+        val directScoped = MemoryMutationGate.isValid(
+            permit, setOf(MemoryGovernance.Mutation.ADD_AGENT_LESSON), objectId
+        )
+        val proposalScoped = MemoryMutationGate.isValid(permit, setOf(
+            MemoryGovernance.Mutation.APPROVE_PROPOSAL,
+            MemoryGovernance.Mutation.RECONCILE_APPROVED_PROPOSAL
+        ), objectId)
+        if (!directScoped && !proposalScoped) return null
+        if (proposalScoped && "proposal:$objectId" !in sourceTaskIds) return null
+        if (directScoped && sourceTaskIds.any { it.startsWith("proposal:") }) return null
+        return addApprovedRaw(context, agentId, text, category, sourceTaskIds, confidence)
+    }
+
+    @Synchronized private fun addApprovedRaw(
+        context: Context, agentId: String, text: String, category: String,
+        sourceTaskIds: List<String>, confidence: String
     ): Entry? = runCatching {
         SharedPreferencesWriteHealth.withHealthyAccess(PREFS) {
 
-        val agent = agentId.trim().take(100)
-        val clean = text.trim().replace(Regex("[\\t ]+"), " ").take(MAX_ENTRY_CHARS)
-        if (agent.isBlank() || clean.length < 8) return@withHealthyAccess null
+        val agent = agentId.trim()
+        val rawText = text.trim().replace(Regex("[\\t ]+"), " ")
+        val clean = CommunicationLogSanitizer.sanitize(rawText)
+        val cleanCategory = CommunicationLogSanitizer.sanitize(category.trim())
+        val cleanConfidence = CommunicationLogSanitizer.sanitize(confidence.trim())
+        val sources = sourceTaskIds.map(String::trim)
+        if (agent.isBlank() || agent.length > 100 || clean.length !in 8..MAX_ENTRY_CHARS ||
+            cleanCategory.length > 80 || cleanConfidence.isBlank() || cleanConfidence.length > 40 ||
+            sources.size > 30 || sources.any { it.isBlank() || it.length > 200 } ||
+            sources.distinct().size != sources.size) return@withHealthyAccess null
         val entries = read(context)?.toMutableList() ?: return@withHealthyAccess null
         val duplicateIndex = entries.indexOfFirst { it.agentId.equals(agent, true) && it.text.equals(clean, true) }
         if (duplicateIndex >= 0) {
             val duplicate = entries[duplicateIndex]
-            if (sourceTaskIds.all { it in duplicate.sourceTaskIds }) return@withHealthyAccess duplicate
+            val mergedSources = (duplicate.sourceTaskIds + sources).distinct()
+            if (mergedSources.size > 30) return@withHealthyAccess null
+            if (mergedSources == duplicate.sourceTaskIds && duplicate.confidence == cleanConfidence) {
+                return@withHealthyAccess duplicate
+            }
             val merged = duplicate.copy(
-                sourceTaskIds = (duplicate.sourceTaskIds + sourceTaskIds).filter(String::isNotBlank).distinct().take(30),
-                confidence = if (duplicate.confidence == confidence) confidence.take(40) else "wielokrotnie zatwierdzona"
+                sourceTaskIds = mergedSources,
+                confidence = if (duplicate.confidence == cleanConfidence) cleanConfidence else "wielokrotnie zatwierdzona"
             )
             entries[duplicateIndex] = merged
             return@withHealthyAccess if (write(context, entries)) merged else null
         }
-        val item = Entry(UUID.randomUUID().toString(), agent, clean, category.trim().take(80),
-            System.currentTimeMillis(), sourceTaskIds.filter(String::isNotBlank).distinct().take(30), confidence.take(40))
+        if (entries.size >= MAX_ENTRIES) return@withHealthyAccess null
+        val item = Entry(UUID.randomUUID().toString(), agent, clean, cleanCategory,
+            System.currentTimeMillis(), sources, cleanConfidence)
         entries.add(0, item)
-        return@withHealthyAccess if (write(context, entries.take(MAX_ENTRIES))) item else null
+        return@withHealthyAccess if (write(context, entries)) item else null
     
         }
     }.getOrNull()
 
-    @Synchronized fun remove(context: Context, id: String): Boolean = runCatching {
+    @Synchronized internal fun remove(context: Context, id: String, permit: MemoryMutationPermit): Boolean {
+        if (!MemoryMutationGate.isValid(permit, setOf(MemoryGovernance.Mutation.REMOVE_AGENT_LESSON), id)) return false
+        return removeRaw(context, id)
+    }
+
+    @Synchronized private fun removeRaw(context: Context, id: String): Boolean = runCatching {
         SharedPreferencesWriteHealth.withHealthyAccess(PREFS) {
 
         val entries = read(context) ?: return@withHealthyAccess false
@@ -68,7 +125,24 @@ object AgentOperationalMemoryStore {
         }
     }.getOrDefault(false)
 
-    @Synchronized fun removeBySource(context: Context, sourceTaskId: String): Boolean = runCatching {
+    @Synchronized internal fun removeBySource(context: Context, sourceTaskId: String, permit: MemoryMutationPermit): Boolean {
+        if (sourceTaskId.isBlank()) return false
+        val directRemoval = MemoryMutationGate.isValid(
+            permit, setOf(MemoryGovernance.Mutation.REMOVE_AGENT_LESSON), sourceTaskId
+        )
+        val proposalId = sourceTaskId.removePrefix("proposal:")
+        val proposalRemoval = sourceTaskId.startsWith("proposal:") && proposalId.isNotBlank() &&
+            MemoryMutationGate.isValid(permit, setOf(
+                MemoryGovernance.Mutation.APPROVE_PROPOSAL,
+                MemoryGovernance.Mutation.REJECT_PROPOSAL,
+                MemoryGovernance.Mutation.RECONCILE_APPROVED_PROPOSAL,
+                MemoryGovernance.Mutation.RECONCILE_REVOKED_PROPOSAL
+            ), proposalId)
+        if (!directRemoval && !proposalRemoval) return false
+        return removeBySourceRaw(context, sourceTaskId)
+    }
+
+    @Synchronized private fun removeBySourceRaw(context: Context, sourceTaskId: String): Boolean = runCatching {
         SharedPreferencesWriteHealth.withHealthyAccess(PREFS) {
 
         if (sourceTaskId.isBlank()) return@withHealthyAccess false
@@ -114,6 +188,7 @@ object AgentOperationalMemoryStore {
         val raw = SharedPreferencesWriteHealth.withHealthyAccess(PREFS) {
             context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString(KEY, null)
         } ?: "[]"
+        require(raw.length <= MAX_RAW_CHARS) { "Operational memory exceeds its supported raw size." }
         val array = JSONArray(raw)
         require(array.length() <= MAX_ENTRIES) { "Operational memory exceeds its supported size." }
         val seenIds = hashSetOf<String>()
@@ -133,8 +208,11 @@ object AgentOperationalMemoryStore {
             val id = requiredText("id").trim()
             val agent = requiredText("agentId").trim()
             val text = requiredText("text").trim()
-            require(id.isNotBlank() && seenIds.add(id) && agent.isNotBlank() && text.isNotBlank()) {
-                "Operational memory entry is missing unique identity or content."
+            require(id.isNotBlank() && id.length <= 120 && seenIds.add(id) &&
+                agent.isNotBlank() && agent.length <= 100 &&
+                text.length in 8..MAX_ENTRY_CHARS &&
+                CommunicationLogSanitizer.sanitize(text) == text) {
+                "Operational memory entry is missing unique identity or exceeds supported field limits."
             }
             val createdValue = o.opt("createdAt")
             require(createdValue is Int || createdValue is Long || createdValue is Double || createdValue is Float) {
@@ -142,31 +220,54 @@ object AgentOperationalMemoryStore {
             }
             val createdAt = if (createdValue is Int || createdValue is Long) (createdValue as Number).toLong()
                 else BigDecimal.valueOf((createdValue as Number).toDouble()).longValueExact()
-            require(createdAt >= 0L) { "Operational memory timestamp cannot be negative." }
+            require(createdAt > 0L) { "Operational memory timestamp must be positive." }
             val sources = if (!o.has("sourceTaskIds")) emptyList() else {
                 val sourceArray = o.optJSONArray("sourceTaskIds") ?: error("Operational memory provenance is invalid.")
                 require(sourceArray.length() <= 30)
                 (0 until sourceArray.length()).map { index ->
                     val value = sourceArray.opt(index)
-                    require(value is String && value.isNotBlank()) { "Operational memory provenance contains an invalid ID." }
+                    require(value is String && value.isNotBlank() && value.length <= 200) {
+                        "Operational memory provenance contains an invalid ID."
+                    }
                     value
                 }.also { require(it.distinct().size == it.size) }
             }
-            Entry(id, agent, text.take(MAX_ENTRY_CHARS), optionalText("category").take(80),
-                createdAt, sources, optionalText("confidence").take(40))
+            val category = optionalText("category")
+            val confidence = optionalText("confidence")
+            require(category.length <= 80 && confidence.length <= 40 &&
+                CommunicationLogSanitizer.sanitize(category) == category &&
+                CommunicationLogSanitizer.sanitize(confidence) == confidence) {
+                "Operational memory metadata exceeds supported field limits."
+            }
+            Entry(id, agent, text, category, createdAt, sources, confidence)
         }
     }.getOrNull()
 
+    private fun validEntry(entry: Entry): Boolean =
+        entry.id.isNotBlank() && entry.id.length <= 120 &&
+            entry.agentId.isNotBlank() && entry.agentId.length <= 100 &&
+            entry.text.length in 8..MAX_ENTRY_CHARS &&
+            CommunicationLogSanitizer.sanitize(entry.text) == entry.text &&
+            entry.category.length <= 80 && entry.confidence.length <= 40 &&
+            CommunicationLogSanitizer.sanitize(entry.category) == entry.category &&
+            CommunicationLogSanitizer.sanitize(entry.confidence) == entry.confidence &&
+            entry.createdAt > 0L && entry.sourceTaskIds.size <= 30 &&
+            entry.sourceTaskIds.all { it.isNotBlank() && it.length <= 200 } &&
+            entry.sourceTaskIds.distinct().size == entry.sourceTaskIds.size
+
     private fun write(context: Context, entries: List<Entry>): Boolean = runCatching {
-        if (SharedPreferencesWriteHealth.isUncertain(PREFS)) return@runCatching false
+        if (SharedPreferencesWriteHealth.isUncertain(PREFS) ||
+            entries.size > MAX_ENTRIES || entries.any { !validEntry(it) }) return@runCatching false
         val array = JSONArray()
-        entries.take(MAX_ENTRIES).forEach { e ->
+        entries.forEach { e ->
             array.put(JSONObject().put("id", e.id).put("agentId", e.agentId).put("text", e.text)
                 .put("category", e.category).put("createdAt", e.createdAt)
                 .put("sourceTaskIds", JSONArray(e.sourceTaskIds)).put("confidence", e.confidence))
         }
+        val serialized = array.toString()
+        if (serialized.length > MAX_RAW_CHARS) return@runCatching false
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
-            .putString(KEY, array.toString()).let { SharedPreferencesWriteHealth.commit(PREFS, it) }
+            .putString(KEY, serialized).let { SharedPreferencesWriteHealth.commit(PREFS, it) }
     }.getOrDefault(false)
 
     private fun strings(array: JSONArray?): List<String> = if (array == null) emptyList() else

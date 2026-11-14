@@ -61,6 +61,7 @@ import java.io.File
 import java.io.InputStreamReader
 import java.util.UUID
 import java.util.concurrent.Executors
+import java.util.concurrent.atomic.AtomicBoolean
 
 class MainActivity : Activity() {
     // ---- Paleta (ciemny motyw w stylu ChatGPT; pomarańcz/turkus zostają jako akcenty) ----
@@ -77,6 +78,9 @@ class MainActivity : Activity() {
     private val markdownLinkRegex = Regex("\\[([^\\]]+)]\\((https?://[^\\s)]+)\\)")
 
     private val executor = Executors.newSingleThreadExecutor()
+    /** Prevent overlapping catalog refreshes from import, manual refresh and screen navigation. */
+    private val modelCatalogRefreshInFlight = AtomicBoolean(false)
+    private val modelCatalogRefreshGeneration = pl.aimasterpro.app.core.ProviderCatalogSyncGeneration()
     private lateinit var store: SecureStore
     private lateinit var client: ProviderClient
     private lateinit var root: FrameLayout
@@ -89,6 +93,8 @@ class MainActivity : Activity() {
     /** Stable request IDs aligned with assistant messages; legacy chats may have no IDs. */
     private val assistantTaskIds = mutableListOf<String>()
     private val modelCatalogPrefs by lazy { getSharedPreferences("model_catalog_v1", Context.MODE_PRIVATE) }
+    /** Reuses parsed model-catalog data while the persisted JSON remains unchanged. */
+    private val modelCatalogSnapshotCache = pl.aimasterpro.app.core.RawSnapshotCache<List<CatalogEntry>>()
     private val agentActivity = mutableListOf<String>()
     /** Live communication timeline; callbacks from parallel agent workers are serialized before UI updates. */
     private var collaborationListLayout: LinearLayout? = null
@@ -96,6 +102,8 @@ class MainActivity : Activity() {
     private var collaborationSummaryText: TextView? = null
     private var collaborationChatId: String = ""
     private val collaborationRenderedEntries = mutableListOf<String>()
+    /** Dedicated live view of durable MASTER-queue agent messages. */
+    private var queueCommunicationListLayout: LinearLayout? = null
     private val agentProviders = mutableMapOf<String, String>()
     /** False until every persisted role assignment has been reconciled successfully. */
     private var agentAssignmentsHealthy = true
@@ -128,6 +136,8 @@ class MainActivity : Activity() {
     @Volatile private var activeChatTaskId = ""
     @Volatile private var activeChatTaskAgentId = ""
     @Volatile private var activeMasterWorkTaskId = ""
+    @Volatile private var activeQueueTaskId = ""
+    @Volatile private var activeQueueRequestScope: ProviderClient.RequestScope? = null
     private var draft = ""
     private var composerInput: EditText? = null
 
@@ -143,6 +153,13 @@ class MainActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         store = SecureStore(this)
+        val recoveredQueueTasks = runCatching {
+            pl.aimasterpro.app.core.MasterTaskQueueStore.recoverInterruptedRuns(this)
+        }.getOrDefault(0)
+        if (recoveredQueueTasks > 0) android.util.Log.w(
+            "AiFORTecaQueue",
+            "Odzyskano $recoveredQueueTasks przerwanych zadań MASTER-a jako BLOCKED. Nie wznowiono automatycznie niepewnych żądań API."
+        )
         val pausedMasterWork = runCatching {
             pl.aimasterpro.app.core.MasterWorkJournalStore.pauseActive(this)
         }.getOrDefault(0)
@@ -214,6 +231,7 @@ class MainActivity : Activity() {
             "Przywrócono $restoredChatResponses odpowiedzi czatu po przerwaniu procesu."
         )
         seedDefaultProviders()
+        migrateLegacyOllamaEmulatorEndpoint()
         selectedProviderId = runCatching { chatPrefs.getString("selected_provider", "gemini") }.getOrNull() ?: ""
         restoreMessages()
         client = ProviderClient()
@@ -248,7 +266,7 @@ class MainActivity : Activity() {
         window.statusBarColor = bg
         window.navigationBarColor = bg
         window.setBackgroundDrawable(ColorDrawable(bg))
-        navigate("Czat")
+        navigate("Centrum")
         recoverPendingPatchReceiptAtStartup()
     }
 
@@ -292,13 +310,21 @@ class MainActivity : Activity() {
         // Resolve role and conversation before building the top bar so its model/provider are correct.
         when (label) {
             "Czat" -> {
-                val lastId = chatPrefs.getString("last_user_chat_id", "") ?: ""
+                val lastId = pl.aimasterpro.app.core.ChatHistoryStore.readLastUserChatId(this)
+                    ?: run {
+                        toast("Nie można bezpiecznie odczytać ostatniej rozmowy. Historia pozostała bez zmian; uruchom aplikację ponownie.")
+                        return
+                    }
                 val targetId = if (lastId.isNotBlank()) lastId else UUID.randomUUID().toString()
                 if (!restoreMessagesForCurrentChat(targetId)) return
                 selectedAgent = AgentRole.MASTER
             }
             "Asystent" -> {
                 val assistantId = assistantChatId()
+                    ?: run {
+                        toast("Nie można bezpiecznie odczytać identyfikatora rozmowy Asystenta. Przejście zostało wstrzymane.")
+                        return
+                    }
                 if (!isAssistantChatId(currentChatId) && currentChatId.isNotBlank() && !saveCurrentId()) {
                     toast("Nie udało się trwale zapisać bieżącej rozmowy. Przejście do Asystenta zostało wstrzymane.")
                     return
@@ -311,9 +337,12 @@ class MainActivity : Activity() {
         when (label) {
             "Czat", "Asystent" -> showChat(snapshotAlreadyRestored = true)
             "Centrum" -> showCommandCenter()
+            "Zadania" -> showTasksCenter()
+            "Pamięć" -> showMemory()
             "Rozmowy" -> showAgentCollaborationScreen()
             "Monitor API" -> showApiMonitoringScreen()
             "Diagnostyka" -> showDiagnostics()
+            "Ustawienia" -> showSettings()
             "Modele" -> showProviders()
             "Agenci" -> showAgents()
             else -> showHelp()
@@ -331,6 +360,7 @@ class MainActivity : Activity() {
             collaborationSummaryText = null
             collaborationChatId = ""
             collaborationRenderedEntries.clear()
+            queueCommunicationListLayout = null
         }
         screen = title
         pulse?.cancel(); pulse = null
@@ -445,22 +475,38 @@ class MainActivity : Activity() {
     }
 
     private fun buildTabs(active: String): View {
+        // AiFORTeca 0.2: navigation is organized around the MASTER-led agent workspace.
+        // Legacy screens remain available through these departments; no stored data is migrated or discarded.
+        val departments = listOf(
+            Triple("⌂", "MASTER", "Centrum"),
+            Triple("♟", "Zespół", "Agenci"),
+            Triple("☷", "Zadania", "Zadania"),
+            Triple("🧠", "Pamięć", "Pamięć"),
+            Triple("⇄", "Komunikacja", "Rozmowy"),
+            Triple("◇", "Dostawcy i modele", "Modele"),
+            Triple("⌁", "Diagnostyka", "Diagnostyka"),
+            Triple("⚙", "Ustawienia", "Ustawienia"),
+            Triple("✉", "Czat", "Czat")
+        )
         val hs = HorizontalScrollView(this)
         hs.isHorizontalScrollBarEnabled = false
         val row = LinearLayout(this)
         row.orientation = LinearLayout.HORIZONTAL
         row.setPadding(dp(6), 0, dp(6), 0)
-        listOf("Centrum", "Czat", "Asystent", "Rozmowy", "Monitor API", "Diagnostyka", "Modele", "Agenci", "Pomoc").forEach { label ->
-            val isActive = label == active
-            val tab = LinearLayout(this)
-            tab.orientation = LinearLayout.VERTICAL
-            tab.setOnClickListener { navigate(label) }
+        departments.forEach { (glyph, label, destination) ->
+            val isActive = destination == active
+            val tab = LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL
+                gravity = Gravity.CENTER
+                background = ripple(if (isActive) panel else Color.TRANSPARENT, 12)
+                setOnClickListener { navigate(destination) }
+            }
             val tv = TextView(this)
-            tv.text = label
-            tv.textSize = 14f
+            tv.text = "$glyph  $label"
+            tv.textSize = 13f
             tv.setTextColor(if (isActive) white else muted)
             if (isActive) tv.typeface = Typeface.DEFAULT_BOLD
-            tv.setPadding(dp(14), dp(10), dp(14), dp(8))
+            tv.setPadding(dp(12), dp(11), dp(12), dp(9))
             tab.addView(tv)
             val underline = View(this)
             underline.setBackgroundColor(if (isActive) orange else Color.TRANSPARENT)
@@ -589,10 +635,7 @@ class MainActivity : Activity() {
 
     private fun providerReady(config: ProviderConfig?): Boolean {
         if (config == null || config.model.isBlank() || config.baseUrl.isBlank()) return false
-        val localNoAuth = config.id.equals("ollama", true) ||
-            config.baseUrl.contains("127.0.0.1:11434") ||
-            config.baseUrl.contains("localhost:11434") ||
-            config.baseUrl.contains("10.0.2.2:11434")
+        val localNoAuth = pl.aimasterpro.app.core.FreeModelsCatalog.isLocalOllamaEndpoint(config.baseUrl)
         return localNoAuth || config.apiKey.isNotBlank()
     }
 
@@ -651,7 +694,7 @@ class MainActivity : Activity() {
         head.orientation = LinearLayout.HORIZONTAL
         head.gravity = Gravity.CENTER_VERTICAL
         val brand = TextView(this)
-        brand.text = "AI Master Pro"
+        brand.text = "AiFORTeca"
         brand.textSize = 19f
         brand.typeface = Typeface.DEFAULT_BOLD
         brand.setTextColor(white)
@@ -697,10 +740,15 @@ class MainActivity : Activity() {
         divider.setBackgroundColor(Color.rgb(48, 48, 48))
         d.addView(divider, LinearLayout.LayoutParams(-1, 1).apply { topMargin = dp(6); bottomMargin = dp(4) })
         d.addView(drawerRow("Biblioteka plików", R.drawable.ic_copy) { closeDrawer(); showLibrary() })
-        d.addView(drawerRow("Modele i klucze API", R.drawable.ic_expand) { closeDrawer(); navigate("Modele") })
+        d.addView(drawerRow("Dostawcy i modele", R.drawable.ic_expand) { closeDrawer(); navigate("Modele") })
+        d.addView(drawerRow("Centrum MASTER", R.drawable.ic_menu) { closeDrawer(); navigate("Centrum") })
         d.addView(drawerRow("Zespół agentów", R.drawable.ic_menu) { closeDrawer(); navigate("Agenci") })
+        d.addView(drawerRow("Zadania i kolejka", R.drawable.ic_menu) { closeDrawer(); navigate("Zadania") })
+        d.addView(drawerRow("Pamięć systemu", R.drawable.ic_copy) { closeDrawer(); navigate("Pamięć") })
+        d.addView(drawerRow("Komunikacja agentów", R.drawable.ic_menu) { closeDrawer(); navigate("Rozmowy") })
+        d.addView(drawerRow("Ustawienia systemu", R.drawable.ic_menu) { closeDrawer(); navigate("Ustawienia") })
         val ver = TextView(this)
-        ver.text = "Wersja 0.5.0"
+        ver.text = "AiFORTeca • wersja 0.2"
         ver.textSize = 11f
         ver.setTextColor(muted)
         ver.setPadding(dp(12), dp(6), 0, dp(2))
@@ -1443,14 +1491,75 @@ class MainActivity : Activity() {
     //  Wysyłanie wiadomości
     // =====================================================================
 
-    private fun isVerifiedFreeConfig(config: ProviderConfig): Boolean {
-        if (config.id.equals("ollama", true) || config.baseUrl.contains("11434") || config.baseUrl.contains("localhost") || config.baseUrl.contains("127.0.0.1")) return true
-        val baseId = config.parentProviderId.ifBlank { config.id }
-        val entry = readModelCatalogEntries().firstOrNull { it.providerId == baseId && it.info.id == config.model }
-        val pricingFree = entry?.info?.freeByPricing
-        if (pricingFree != null) return pricingFree
-        return pl.aimasterpro.app.core.FreeModelsCatalog.isFreeModel(baseId, config.model, config.baseUrl)
+    private fun ensureBudgetReservationTarget(
+        reservationId: String,
+        taskId: String,
+        agentId: String,
+        provider: ProviderConfig
+    ): Boolean {
+        val accepted = runCatching {
+            pl.aimasterpro.app.core.ApiTokenTracker.retargetReservationTask(
+                this, reservationId, taskId, agentId,
+                provider.id, provider.baseUrl, provider.model
+            )
+        }.getOrDefault(false)
+        if (!accepted) android.util.Log.w(
+            "AiFORTecaBudget",
+            "Zablokowano żądanie przed HTTP: brak rezerwacji dla " +
+                provider.id + "/" + provider.model + " • task=" + taskId
+        )
+        return accepted
     }
+
+    private fun isVerifiedFreeConfig(config: ProviderConfig): Boolean {
+        if (pl.aimasterpro.app.core.FreeModelsCatalog.isLocalOllamaEndpoint(config.baseUrl)) return true
+        val baseId = config.parentProviderId.ifBlank { config.id }
+        val entry = readModelCatalogEntries().firstOrNull {
+            it.providerId == baseId && it.info.id == config.model &&
+                pl.aimasterpro.app.core.ProviderCatalogCachePolicy.normalizeBaseUrl(it.baseUrl) ==
+                    pl.aimasterpro.app.core.ProviderCatalogCachePolicy.normalizeBaseUrl(config.baseUrl)
+        }
+        when (entry?.info?.freeByPricing) {
+            false -> return false
+            true -> {
+                val pricing = runCatching {
+                    pl.aimasterpro.app.core.ApiTokenTracker.getPricing(this, config.model, baseId, config.baseUrl)
+                }.getOrNull() ?: return false
+                return pricing.inputPer1MUsd == 0.0 && pricing.outputPer1MUsd == 0.0 &&
+                    (pricing.cachedInputPer1MUsd == null || pricing.cachedInputPer1MUsd == 0.0) &&
+                    (pricing.cacheWriteInputPer1MUsd == null || pricing.cacheWriteInputPer1MUsd == 0.0) &&
+                    (pricing.cacheWriteInput1hPer1MUsd == null || pricing.cacheWriteInput1hPer1MUsd == 0.0) &&
+                    (pricing.internalReasoningPer1MUsd == null || pricing.internalReasoningPer1MUsd == 0.0)
+            }
+            null -> return pl.aimasterpro.app.core.FreeModelsCatalog.isFreeModel(baseId, config.model, config.baseUrl)
+        }
+    }
+
+    private fun isUnknownPriceCatalogEntry(entry: CatalogEntry): Boolean {
+        if (pl.aimasterpro.app.core.FreeModelsCatalog.isLocalOllamaEndpoint(entry.baseUrl)) return false
+        val error = runCatching {
+            pl.aimasterpro.app.core.ApiTokenTracker.getPricing(
+                this, entry.info.id, entry.providerId, entry.baseUrl
+            )
+        }.exceptionOrNull()
+        return error is pl.aimasterpro.app.core.UnknownModelPricingException
+    }
+
+    private fun isApprovedUnknownPriceConfig(config: ProviderConfig): Boolean {
+        if (isVerifiedFreeConfig(config)) return false
+        val baseId = config.parentProviderId.ifBlank { config.id }
+        val entry = readModelCatalogEntries().firstOrNull {
+            it.providerId == baseId && it.info.id == config.model &&
+                pl.aimasterpro.app.core.ProviderCatalogCachePolicy.normalizeBaseUrl(it.baseUrl).let { endpoint -> endpoint.isNotBlank() && endpoint == pl.aimasterpro.app.core.ProviderCatalogCachePolicy.normalizeBaseUrl(config.baseUrl) }
+        } ?: return false
+        if (!isUnknownPriceCatalogEntry(entry)) return false
+        return pl.aimasterpro.app.core.UnknownPriceApprovalStore.isApproved(
+            this, baseId, config.baseUrl, config.model
+        )
+    }
+
+    private fun isProviderAllowedForRouting(config: ProviderConfig): Boolean =
+        isVerifiedFreeConfig(config) || isApprovedUnknownPriceConfig(config)
 
     private fun chatWithFallback(config: ProviderConfig, systemPrompt: String, userText: String, mime: String, b64: String,
                                  requestTaskId: String, requestAgentId: String, requestChatId: String,
@@ -1463,19 +1572,19 @@ class MainActivity : Activity() {
         }
         val allConfigs = store.allConfigs().mapNotNull { j -> runCatching { loadProvider(j.optString("id")) }.getOrNull() }
         val primaryBaseId = config.parentProviderId.ifBlank { config.id }
-        val freeBackups = allConfigs.filter {
-            it.id != config.id && providerReady(it) && isVerifiedFreeConfig(it) &&
+        val allowedBackups = allConfigs.filter {
+            it.id != config.id && providerReady(it) && isProviderAllowedForRouting(it) &&
                 !(it.model == config.model && it.parentProviderId.ifBlank { it.id } == primaryBaseId)
         }.distinctBy { "${it.parentProviderId.ifBlank { it.id }}:${it.model}" }
-        val primaryIsFree = isVerifiedFreeConfig(config)
+        val primaryAllowed = isProviderAllowedForRouting(config)
         val ordered = pl.aimasterpro.app.core.ModelHealthTracker.rank(
-            this, (if (primaryIsFree) listOf(config) else emptyList()) + freeBackups
+            this, (if (primaryAllowed) listOf(config) else emptyList()) + allowedBackups
         )
-        if (!primaryIsFree) {
-            logAgentForChat(requestChatId, "⛔ Zabezpieczenie kosztów: profil ${config.name} / ${config.model} nie ma potwierdzonego darmowego statusu. Pomijam go i sprawdzam wyłącznie zweryfikowane darmowe profile.")
+        if (!primaryAllowed) {
+            logAgentForChat(requestChatId, "⛔ Zabezpieczenie kosztów: profil ${config.name} / ${config.model} nie jest zweryfikowany jako darmowy ani jawnie zatwierdzony jako model z nieznaną ceną. Pomijam go.")
         }
         if (ordered.isEmpty()) {
-            throw IllegalStateException("Brak skonfigurowanego, zweryfikowanego darmowego modelu. Nie wysłano żądania do płatnego lub niezweryfikowanego API.")
+            throw IllegalStateException("Brak modelu dozwolonego przez politykę kosztów. Nie wysłano żądania do płatnego lub niezatwierdzonego API.")
         }
         var ownedBudgetReservationId = ""
         var effectiveBudgetReservationId = budgetReservationId
@@ -1505,10 +1614,33 @@ class MainActivity : Activity() {
 
         var lastErr: Throwable? = null
         var requestAttempt = 0
+        var budgetedProvider = if (budgetReservationId.isBlank()) ordered.first() else config
         val estimatedRequestInput = (systemPrompt.length.toLong() + userText.length.toLong() + 2L) / 3L
         try {
             for (cfg in ordered) {
+                if (!isProviderAllowedForRouting(cfg)) {
+                    val reason = "Zgoda lub status kosztowy modelu ${cfg.model} nie jest już aktywny. Pomijam profil przed HTTP."
+                    runCatching { logAgentForChat(requestChatId, "⛔ $reason") }
+                    lastErr = IllegalStateException(reason)
+                    continue
+                }
                 if (Thread.currentThread().isInterrupted) throw ProviderException(null, "Żądanie anulowane przez użytkownika.", category = "CANCELLED")
+                val reservationTargetChanged = !cfg.id.equals(budgetedProvider.id, true) ||
+                    pl.aimasterpro.app.core.ProviderCatalogCachePolicy.normalizeBaseUrl(cfg.baseUrl).let { endpoint -> endpoint.isBlank() || endpoint != pl.aimasterpro.app.core.ProviderCatalogCachePolicy.normalizeBaseUrl(budgetedProvider.baseUrl) } ||
+                    !cfg.model.equals(budgetedProvider.model, true)
+                if (reservationTargetChanged) {
+                    val retargeted = ensureBudgetReservationTarget(
+                        effectiveBudgetReservationId, requestTaskId, requestAgentId, cfg
+                    )
+                    if (!retargeted) {
+                        val reason = "Smart Budget zablokował failover do " + cfg.name + "/" + cfg.model + ": nie udało się przenieść rezerwacji na limit i wycenę tego modelu."
+                        runCatching { logAgentForChat(requestChatId, "⛔ " + reason) }
+                        lastErr = IllegalStateException(reason)
+                        continue
+                    }
+                    budgetedProvider = cfg
+                    runCatching { logAgentForChat(requestChatId, "🧠 Smart Budget: rezerwacja przeniesiona na " + cfg.name + "/" + cfg.model + "; limit modelu sprawdzony przed HTTP.") }
+                }
                 if (!providerReady(cfg)) continue
                 val quotaKey = pl.aimasterpro.app.core.ProviderQuotaScheduler.key(cfg.parentProviderId.ifBlank { cfg.id }, cfg.baseUrl, cfg.model)
                 val persistedWait = runCatching { pl.aimasterpro.app.core.ProviderCooldownStore.remainingMs(this, cfg) }.getOrDefault(0L)
@@ -1718,7 +1850,7 @@ class MainActivity : Activity() {
             toast("Wysyłanie zablokowane: przypisania agentów nie zostały bezpiecznie uzgodnione. Otwórz MODELE i wykonaj pełny import/uzgodnienie konfiguracji.")
             return
         }
-        if (isThinking) { toast("Poczekaj na zakończenie poprzedniej odpowiedzi."); return }
+        if (isThinking || activeQueueTaskId.isNotBlank()) { toast("Poczekaj na zakończenie bieżącego zadania MASTER-a."); return }
         var prompt = input.text.toString().trim()
         if (attachedText.isNotBlank()) prompt += "\n\n[Załączony plik tekstowy: $attachedName]\n$attachedText"
         if (attachedName.isNotBlank() && attachedText.isBlank()) prompt += "\n\nZałącznik: $attachedName ($attachedMime). Przeanalizuj załącznik, jeśli ten dostawca obsługuje jego format."
@@ -1862,6 +1994,8 @@ class MainActivity : Activity() {
                             }
                         }
                         val memoryContext = pl.aimasterpro.app.core.AiMemoryStore.contextString(this, prompt, maxChars = 2_200)
+                        val projectSourceContext = buildProjectSourceContext(prompt)
+                        logProjectSourceContext(chatId, projectSourceContext)
                         val evidenceContext = buildMasterEvidenceContext(chatId)
                         masterEvidenceForQualityGate = evidenceContext
                         logAgentForChat(chatId, "🧾 Dowody MASTER-a: ${evidenceContext.status} • rekordy=${evidenceContext.evidenceCount} • claims=${evidenceContext.agentClaimCount}.")
@@ -1870,6 +2004,9 @@ class MainActivity : Activity() {
                             if (memoryContext.isNotBlank()) append("\n\nPamięć ciągła:\n").append(memoryContext)
                             if (decisionContext.isNotBlank()) append("\n\nHistoria decyzji MASTER-a:\n").append(decisionContext)
                             if (errorContext.isNotBlank()) append("\n\nZnane incydenty i błędy:\n").append(errorContext)
+                            if (projectSourceContext.status == pl.aimasterpro.app.core.ProjectSourceContextBuilder.Status.READY) {
+                                append("\n\n").append(projectSourceContext.contextText)
+                            }
                             append("\n\n").append(evidenceContext.contextText)
                         }
                         val resp = chatWithFallback(
@@ -1919,21 +2056,27 @@ class MainActivity : Activity() {
                     }
                     // Specialist IDs and chat-role IDs are separate namespaces. Resolve each
                     // specialist to the matching user-configured role profile, but only use it
-                    // when the profile is complete and explicitly classified as free/local.
-                    // Otherwise use the already selected MASTER profile; TeamRunEngine performs
-                    // a second independent free-model guard before every network request.
+                    // when the profile is complete and allowed by the cost policy (verified free
+                    // or explicitly approved unknown price). TeamRunEngine repeats this guard.
                     val batchAgentConfigsMap = tasks.mapNotNull { task ->
-                        val spec = AgentCatalog.find(task.agentId) ?: return@mapNotNull null
+                        val spec = activeAgentCatalog.firstOrNull { it.id == task.agentId } ?: return@mapNotNull null
                         val role = AgentProviderRouting.roleFor(spec)
                         val assignedId = agentProviders[role.name] ?: resolvedMasterProviderId().orEmpty()
                         val assigned = loadProvider(assignedId)
                         val usableAssigned = assigned?.takeIf { candidate ->
-                            providerReady(candidate) && isVerifiedFreeConfig(candidate)
+                            providerReady(candidate) && isProviderAllowedForRouting(candidate)
                         }
                         task.agentId to (usableAssigned ?: safeConfig)
                     }.toMap()
 
-                    val projectContext = pl.aimasterpro.app.core.ProjectCodebase.fullContext()
+                    val projectSourceContext = buildProjectSourceContext(prompt)
+                    logProjectSourceContext(chatId, projectSourceContext)
+                    val projectContext = buildString {
+                        append(pl.aimasterpro.app.core.ProjectCodebase.fullContext())
+                        if (projectSourceContext.status == pl.aimasterpro.app.core.ProjectSourceContextBuilder.Status.READY) {
+                            append("\n\n").append(projectSourceContext.contextText)
+                        }
+                    }
                     val explicitTeamRequest = listOf("cały zespół", "caly zespol", "wszyscy agenci", "uruchom cały zespół", "uruchom caly zespol").any(prompt.lowercase(java.util.Locale.ROOT)::contains)
                     val adaptivePlan = pl.aimasterpro.app.core.AdaptiveExecutionPolicy.plan(prompt, tasks.size, explicitTeamRequest, routing.mode == pl.aimasterpro.app.agents.AgentRoutingPolicy.Mode.TEAM)
                     val adaptiveTasks = tasks.take(adaptivePlan.maxAgents)
@@ -1962,7 +2105,7 @@ class MainActivity : Activity() {
                     else logAgentForChat(chatId, "🧠 Adaptacyjny budżet: ${adaptivePlan.reason}.")
                     val cacheFingerprints = adaptiveTasks.associate { task ->
                         val cfg = batchAgentConfigsMap[task.agentId] ?: safeConfig
-                        val specialistPrompt = AgentCatalog.find(task.agentId)?.systemPrompt.orEmpty()
+                        val specialistPrompt = activeAgentCatalog.firstOrNull { it.id == task.agentId }?.systemPrompt.orEmpty()
                         task.id to pl.aimasterpro.app.core.TaskResultCache.fingerprint(task.agentId,
                             task.goal + "\n" + specialistPrompt + "\n" + mode.systemInstruction, task.prompt,
                             projectContext, sendMime, sendBase64, cfg.id, cfg.baseUrl, cfg.model)
@@ -1976,7 +2119,7 @@ class MainActivity : Activity() {
                     val cachedTaskIds = cachedResults.map { it.taskId }.toSet()
                     val tasksToRun = adaptiveTasks.filterNot { it.id in cachedTaskIds }
                     val budgetRequests = tasksToRun.map { task ->
-                        val spec = AgentCatalog.find(task.agentId)
+                        val spec = activeAgentCatalog.firstOrNull { it.id == task.agentId }
                         val cfg = batchAgentConfigsMap[task.agentId] ?: safeConfig
                         val inputChars = (spec?.systemPrompt.orEmpty().length + mode.systemInstruction.length +
                             projectContext.length + task.prompt.length + 1800)
@@ -1999,13 +2142,21 @@ class MainActivity : Activity() {
                         mode.systemInstruction.length.toLong() + 8_000L
                     val masterSynthesisReserve = ((synthesisInputReserveChars + 2L) / 3L) +
                         maxOf(adaptivePlan.synthesisReserveTokens, 4_096L)
-                    val synthesisPricing = pl.aimasterpro.app.core.ApiTokenTracker.getPricing(
-                        this, safeConfig.model, safeConfig.id, safeConfig.baseUrl
-                    )
-                    val synthesisExchangeRate = pl.aimasterpro.app.core.ApiTokenTracker.getExchangeRate(this)
-                    // Conservative cost hold: price the whole synthesis token allowance at the
-                    // higher of input/output rates so parallel stages cannot consume its monthly budget.
-                    val masterSynthesisReserveCostPln =
+                    val synthesisPricing = try {
+                        pl.aimasterpro.app.core.ApiTokenTracker.getPricing(
+                            this, safeConfig.model, safeConfig.id, safeConfig.baseUrl
+                        )
+                    } catch (error: pl.aimasterpro.app.core.UnknownModelPricingException) {
+                        if (pl.aimasterpro.app.core.ApiTokenTracker.getLimits(this).monthlyCostPlnLimit > 0.0) throw error
+                        null
+                    }
+                    // Unknown pricing does not disable token reservations. When no financial
+                    // cap is configured, reserve synthesis tokens and leave monetary cost unknown.
+                    val masterSynthesisReserveCostPln = if (synthesisPricing == null) 0.0 else {
+                        val synthesisExchangeRate = pl.aimasterpro.app.core.ApiTokenTracker.getExchangeRate(this)
+                        require(synthesisExchangeRate.isFinite() && synthesisExchangeRate > 0.0) {
+                            "Nieprawidłowy kurs USD/PLN; rezerwacja syntezy MASTER-a została wstrzymana."
+                        }
                         (masterSynthesisReserve.toDouble() * maxOf(
                             maxOf(
                                 maxOf(
@@ -2022,6 +2173,7 @@ class MainActivity : Activity() {
                                 synthesisPricing.internalReasoningPer1MUsd ?: synthesisPricing.outputPer1MUsd
                             )
                         ) * synthesisExchangeRate) / 1_000_000.0
+                    }
                     val budgetPlan = pl.aimasterpro.app.core.ApiTokenTracker.planBatch(
                         this, budgetRequests, globalReserveTokens = masterSynthesisReserve,
                         globalReserveAgentId = "MASTER", globalReserveCostPln = masterSynthesisReserveCostPln
@@ -2050,12 +2202,13 @@ class MainActivity : Activity() {
                     logAgentForChat(chatId, "🧠 Smart Budget: cache=${cachedResults.size}, nowe wywołania=${budgetedTasks.size}/${tasksToRun.size}; rezerwa=${budgetPlan.estimatedReservedTokens} tokenów + synteza MASTER-a.")
 
                     val freshResults = try {
-                        if (budgetedTasks.isEmpty()) emptyList() else TeamRunEngine(client, maxParallel = adaptivePlan.maxAgents.coerceAtLeast(1)).runBatch(
+                        if (budgetedTasks.isEmpty()) emptyList() else TeamRunEngine(client, maxParallel = adaptivePlan.maxAgents.coerceAtLeast(1), agentCatalog = activeAgentCatalog).runBatch(
                             tasks = budgetedTasks,
                             provider = safeConfig,
                             agentProvidersMap = batchAgentConfigsMap,
                             fallbackProviders = listOf(safeConfig),
                             isFreeProvider = { candidate -> isVerifiedFreeConfig(candidate) },
+                            isProviderAllowed = { candidate -> isProviderAllowedForRouting(candidate) },
                             mode = mode,
                             projectContext = projectContext,
                             attachmentMime = sendMime,
@@ -2140,7 +2293,7 @@ class MainActivity : Activity() {
                                         task == null -> null
                                         else -> pl.aimasterpro.app.core.TaskResultCache.fingerprint(
                                             task.agentId,
-                                            task.goal + "\n" + AgentCatalog.find(task.agentId)?.systemPrompt.orEmpty() +
+                                            task.goal + "\n" + activeAgentCatalog.firstOrNull { it.id == task.agentId }?.systemPrompt.orEmpty() +
                                                 "\n" + mode.systemInstruction,
                                             task.prompt, projectContext, sendMime, sendBase64,
                                             actualConfig.id, actualConfig.baseUrl, actualConfig.model
@@ -2162,8 +2315,9 @@ class MainActivity : Activity() {
                                 if (store.isStorageUncertain()) {
                                     logAgentForChat(chatId, "⛔ Magazyn konfiguracji ma niepewny stan. Żądanie do dostawcy nie zostało wysłane; uruchom ponownie aplikację.")
                                     false
-                                } else {
-                                    val safeBaseUrl = pl.aimasterpro.app.core.TaskCheckpointStore.safeBaseUrlForCheckpoint(actualProvider.baseUrl)
+                                } else if (!ensureBudgetReservationTarget(budgetPlan.reservationId, task.id, task.agentId, actualProvider)) {
+                                    false
+                                } else {                                    val safeBaseUrl = pl.aimasterpro.app.core.TaskCheckpointStore.safeBaseUrlForCheckpoint(actualProvider.baseUrl)
                                     pl.aimasterpro.app.core.TaskCheckpointStore.record(
                                         this,
                                         pl.aimasterpro.app.core.TaskCheckpointStore.Event(
@@ -2201,7 +2355,7 @@ class MainActivity : Activity() {
                                 providerId = result.providerId, model = result.model, status = result.status.name,
                                 durationMs = result.durationMs, attempts = result.attempts,
                                 category = if (result.status == pl.aimasterpro.app.agents.TeamTaskResult.Status.COMPLETED)
-                                    (AgentCatalog.find(result.agentId)?.category ?: "") else "agent_failure",
+                                    (activeAgentCatalog.firstOrNull { it.id == result.agentId }?.category ?: "") else "agent_failure",
                                 taskId = result.taskId,
                                 inputTokens = recordedTokenRows.filter { it.taskId == result.taskId }.sumOf { it.inputTokens.coerceAtLeast(0L) },
                                 outputTokens = recordedTokenRows.filter { it.taskId == result.taskId }.sumOf { it.outputTokens.coerceAtLeast(0L) }
@@ -2238,7 +2392,7 @@ class MainActivity : Activity() {
                         emptyList<pl.aimasterpro.app.agents.TeamTaskResult>()
                     } else {
                         val reviewBudgetRequests = peerReviewTasks.map { task ->
-                            val spec = AgentCatalog.find(task.agentId)
+                            val spec = activeAgentCatalog.firstOrNull { it.id == task.agentId }
                             val cfg = batchAgentConfigsMap[task.agentId] ?: safeConfig
                             val inputChars = (spec?.systemPrompt.orEmpty().length + mode.systemInstruction.length + task.prompt.length + 1_200)
                             pl.aimasterpro.app.core.BudgetRequest(
@@ -2269,12 +2423,13 @@ class MainActivity : Activity() {
                         } else {
                             logAgentForChat(chatId, "🤝 Peer Review: uruchamiam ${allowedReviews.size}/${peerReviewTasks.size} niezależnych recenzji. Każdy recenzent otrzymuje raport innego agenta; dodatkowe wywołania są objęte Smart Budget.")
                             try {
-                                TeamRunEngine(client, maxParallel = minOf(2, adaptivePlan.maxAgents.coerceAtLeast(1))).runBatch(
+                                TeamRunEngine(client, maxParallel = minOf(2, adaptivePlan.maxAgents.coerceAtLeast(1)), agentCatalog = activeAgentCatalog).runBatch(
                                     tasks = allowedReviews,
                                     provider = safeConfig,
                                     agentProvidersMap = batchAgentConfigsMap,
                                     fallbackProviders = listOf(safeConfig),
                                     isFreeProvider = { candidate -> isVerifiedFreeConfig(candidate) },
+                            isProviderAllowed = { candidate -> isProviderAllowedForRouting(candidate) },
                                     mode = mode,
                                     projectContext = projectContext,
                                     attachmentMime = "",
@@ -2323,8 +2478,9 @@ class MainActivity : Activity() {
                                         if (store.isStorageUncertain()) {
                                             logAgentForChat(chatId, "⛔ Magazyn konfiguracji ma niepewny stan. Żądanie do dostawcy nie zostało wysłane; uruchom ponownie aplikację.")
                                             false
-                                        } else {
-                                            val safeBaseUrl = pl.aimasterpro.app.core.TaskCheckpointStore.safeBaseUrlForCheckpoint(actualProvider.baseUrl)
+                                        } else if (!ensureBudgetReservationTarget(reviewBudget.reservationId, task.id, task.agentId, actualProvider)) {
+                                    false
+                                } else {                                            val safeBaseUrl = pl.aimasterpro.app.core.TaskCheckpointStore.safeBaseUrlForCheckpoint(actualProvider.baseUrl)
                                             pl.aimasterpro.app.core.TaskCheckpointStore.record(
                                                 this,
                                                 pl.aimasterpro.app.core.TaskCheckpointStore.Event(
@@ -2682,6 +2838,15 @@ class MainActivity : Activity() {
                     assistantTaskIds.add(requestTaskId)
                     persistMessages()
                 } else appendToStoredChat(chatId, "assistant", reply, requestTaskId)
+                if (chatResultPersisted) {
+                    val acknowledged = runCatching {
+                        pl.aimasterpro.app.core.ChatResponseArchive.acknowledgePersisted(this, requestTaskId)
+                    }.getOrDefault(false)
+                    if (!acknowledged) android.util.Log.w(
+                        "AIMasterRecovery",
+                        "Odpowiedź $requestTaskId jest w historii, ale wpis archiwum pozostaje do ponownego uzgodnienia."
+                    )
+                }
                 val hasMasterJournal = pl.aimasterpro.app.core.MasterWorkJournalStore.get(this, requestTaskId) != null
                 val qualityGateBlocked = masterQualityGateEvaluation?.completionAllowed == false
                 val blockedGateNames = masterQualityGateEvaluation?.results.orEmpty().filter {
@@ -2802,9 +2967,10 @@ class MainActivity : Activity() {
             })
         }
         box.addView(pickerHeader("Model dla MASTER"))
-        val configs = store.allConfigs().mapNotNull { j -> runCatching { loadProvider(j.optString("id")) }.getOrNull() }.filter { providerReady(it) && isModelPresentInCatalog(it) }
+        val configs = store.allConfigs().mapNotNull { j -> runCatching { loadProvider(j.optString("id")) }.getOrNull() }
+            .filter { providerReady(it) && isModelPresentInCatalog(it) && isProviderAllowedForRouting(it) }
         configs.forEach { p ->
-            val sub = p.model + if (p.apiKey.isBlank() && !p.id.equals("ollama", true)) " • brak klucza API" else if (p.id.equals("ollama", true)) " • lokalny / bez klucza" else ""
+            val sub = p.model + if (p.apiKey.isBlank() && !pl.aimasterpro.app.core.FreeModelsCatalog.isLocalOllamaEndpoint(p.baseUrl)) " • brak klucza API" else if (pl.aimasterpro.app.core.FreeModelsCatalog.isLocalOllamaEndpoint(p.baseUrl)) " • lokalny / bez klucza" else ""
             box.addView(pickerRow(p.name, sub, p.id == resolvedMasterProviderId()) {
                 if (!persistAgentProviderAssignment(AgentRole.MASTER, p.id)) return@pickerRow
                 dialog.dismiss(); navigate("Czat")
@@ -3011,28 +3177,16 @@ class MainActivity : Activity() {
             toast("Nie można bezpiecznie unieważnić aktywnego zakresu dowodów. Zmiana czatu została zablokowana.")
             return
         }
-        val r = pl.aimasterpro.app.core.ChatHistoryStore.readRoot(this)
-            ?: run { toast("Historia rozmów jest uszkodzona; otwarcie czatu zostało zablokowane."); return }
-        currentChatId = id
-        messages.clear()
-        assistantTaskIds.clear()
-        agentActivity.clear()
+        if (!restoreMessagesForCurrentChat(id)) return
         draft = ""
-        val chatObj = r.optJSONObject("chats")?.optJSONObject(id)
-        val arr = chatObj?.optJSONArray("messages") ?: JSONArray()
-        for (i in 0 until arr.length()) { val item = arr.getJSONObject(i); messages.add(item.optString("role") to item.optString("text")) }
-        val taskIds = chatObj?.optJSONArray("assistantTaskIds") ?: JSONArray()
-        for (i in 0 until taskIds.length()) assistantTaskIds.add(taskIds.optString(i))
-        alignAssistantTaskIds()
-        val actArr = chatObj?.optJSONArray("agentActivity") ?: JSONArray()
-        for (i in 0 until actArr.length()) { agentActivity.add(actArr.getString(i)) }
-        saveCurrentId()
         if (isAssistantChatId(id)) {
             selectedAgent = AgentRole.ASSISTANT
             showShell("Asystent")
-            showChat()
+            showChat(snapshotAlreadyRestored = true)
         } else {
-            navigate("Czat")
+            selectedAgent = AgentRole.MASTER
+            showShell("Czat")
+            showChat(snapshotAlreadyRestored = true)
         }
     }
 
@@ -3110,9 +3264,9 @@ class MainActivity : Activity() {
         if (!saved) android.util.Log.e("AIMasterChat", "Nie udało się trwale zapisać aktywności agentów.")
     }
 
-    /** Zapamiętuje tylko ID bieżącej rozmowy (bez zmiany kolejności listy). */
-    private fun assistantChatId(): String =
-        chatPrefs.getString("assistant_chat_id", "assistant_dedicated_chat_id")?.takeIf { it.isNotBlank() } ?: "assistant_dedicated_chat_id"
+    /** Reads the dedicated assistant conversation pointer through the durable history gate. */
+    private fun assistantChatId(): String? =
+        pl.aimasterpro.app.core.ChatHistoryStore.readAssistantChatId(this)
 
     private fun isAssistantChatId(id: String): Boolean =
         id == "assistant_dedicated_chat_id" || id.startsWith("assistant-")
@@ -3239,6 +3393,13 @@ class MainActivity : Activity() {
 
         // Parse the complete snapshot before touching live UI state. A failed read/parse must
         // not leave messages, task IDs, and agent activity belonging to different conversations.
+        // Persist the target first. If commit is ambiguous, keep the previous live conversation.
+        if (!pl.aimasterpro.app.core.ChatHistoryStore.selectChat(this, chatId)) {
+            android.util.Log.e("AIMasterChat", "Nie udało się trwale zatwierdzić wyboru rozmowy $chatId.")
+            toast("Nie udało się trwale otworzyć rozmowy. Pozostawiono poprzedni widok.")
+            return false
+        }
+
         messages.clear()
         messages.addAll(snapshot.messages)
         assistantTaskIds.clear()
@@ -3256,14 +3417,16 @@ class MainActivity : Activity() {
             return
         }
         val newId = "assistant-${UUID.randomUUID()}"
-        chatPrefs.edit().putString("assistant_chat_id", newId).apply()
+        if (!pl.aimasterpro.app.core.ChatHistoryStore.selectChat(this, newId)) {
+            toast("Nie udało się trwale utworzyć rozmowy Asystenta. Poprzednia rozmowa pozostała aktywna.")
+            return
+        }
         currentChatId = newId
         messages.clear()
         assistantTaskIds.clear()
         agentActivity.clear()
         attachedText = ""; attachedName = ""; attachedMime = ""; attachedBase64 = ""
         draft = ""
-        persistMessages()
         navigate("Asystent")
     }
 
@@ -3361,6 +3524,55 @@ class MainActivity : Activity() {
         if (screen == "Rozmowy" && collaborationChatId == chatId) {
             runOnUiThread { refreshCollaborationTimeline(chatId) }
         }
+    }
+
+    /** Reads only manifest-owned source files while holding the process-wide workspace gate. */
+    private fun buildProjectSourceContext(
+        prompt: String
+    ): pl.aimasterpro.app.core.ProjectSourceContextBuilder.Result {
+        val busy = pl.aimasterpro.app.core.ProjectSourceContextBuilder.Result(
+            pl.aimasterpro.app.core.ProjectSourceContextBuilder.Status.WORKSPACE_BUSY, "", emptyList(), 0, 0
+        )
+        return runCatching {
+            pl.aimasterpro.app.core.ProjectWorkspaceOperationLock.tryWithLock {
+                val workspace = pl.aimasterpro.app.core.ProjectWorkspaceStore(File(filesDir, "project_workspace"))
+                val info = workspace.currentInfo()
+                    ?: return@tryWithLock pl.aimasterpro.app.core.ProjectSourceContextBuilder.Result(
+                        pl.aimasterpro.app.core.ProjectSourceContextBuilder.Status.NOT_IMPORTED, "", emptyList(), 0, 0
+                    )
+                val integrity = workspace.verifyCurrentWorkspace()
+                if (!integrity.valid) {
+                    return@tryWithLock pl.aimasterpro.app.core.ProjectSourceContextBuilder.Result(
+                        pl.aimasterpro.app.core.ProjectSourceContextBuilder.Status.INTEGRITY_FAILED, "", emptyList(),
+                        integrity.missing.size + integrity.modified.size + integrity.unexpected.size, 0
+                    )
+                }
+                pl.aimasterpro.app.core.ProjectSourceContextBuilder.build(info.files, prompt, readFile = { path, maxBytes ->
+                    workspace.readTextFile(path, maxBytes)
+                })
+            } ?: busy
+        }.getOrElse { error ->
+            android.util.Log.w("AiFORTecaSourceContext", "Bezpieczny odczyt kontekstu projektu został zablokowany.", error)
+            pl.aimasterpro.app.core.ProjectSourceContextBuilder.Result(
+                pl.aimasterpro.app.core.ProjectSourceContextBuilder.Status.INTEGRITY_FAILED, "", emptyList(), 1, 0
+            )
+        }
+    }
+
+    private fun logProjectSourceContext(
+        chatId: String,
+        result: pl.aimasterpro.app.core.ProjectSourceContextBuilder.Result
+    ) {
+        val state = when (result.status) {
+            pl.aimasterpro.app.core.ProjectSourceContextBuilder.Status.READY -> "PROJEKT DOSTĘPNY"
+            pl.aimasterpro.app.core.ProjectSourceContextBuilder.Status.NOT_IMPORTED -> "BRAK IMPORTU"
+            pl.aimasterpro.app.core.ProjectSourceContextBuilder.Status.WORKSPACE_BUSY -> "OBSZAR ROBOCZY ZAJĘTY"
+            pl.aimasterpro.app.core.ProjectSourceContextBuilder.Status.INTEGRITY_FAILED -> "ODCZYT ZABLOKOWANY — KONTROLA INTEGRALNOŚCI"
+            pl.aimasterpro.app.core.ProjectSourceContextBuilder.Status.NO_MATCHES -> "BRAK PASUJĄCYCH PLIKÓW"
+            pl.aimasterpro.app.core.ProjectSourceContextBuilder.Status.BLOCKED_FILES -> "ODCZYT ZABLOKOWANY — PLIKI"
+        }
+        if (chatId.isBlank()) android.util.Log.i("AiFORTecaSourceContext", "Kontekst źródłowy: $state • pliki=${result.selectedPaths.size} • znaki=${result.totalChars} • pominięte=${result.skippedFiles}.")
+        else logAgentForChat(chatId, "📂 Kontekst źródłowy: $state • pliki=${result.selectedPaths.size} • znaki=${result.totalChars} • pominięte=${result.skippedFiles}.")
     }
 
     /** Evidence is selected only from the durable host-owned active ChangeSet pointer. */
@@ -3757,6 +3969,78 @@ class MainActivity : Activity() {
         collaborationChatId = currentChatId
         collaborationRenderedEntries.clear()
         refreshCollaborationTimeline(currentChatId, scrollToEnd = true)
+
+        val queueHeader = TextView(this).apply {
+            text = "KOMUNIKACJA KOLEJKI MASTER • TRWAŁY DZIENNIK"
+            textSize = 12f
+            typeface = Typeface.DEFAULT_BOLD
+            setTextColor(cyan)
+            setPadding(dp(2), dp(18), 0, dp(8))
+        }
+        col.addView(queueHeader)
+        val queueTimeline = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        val queueScroll = ScrollView(this).apply {
+            isFillViewport = false
+            addView(queueTimeline)
+            layoutParams = LinearLayout.LayoutParams(-1, dp(420))
+        }
+        col.addView(queueScroll)
+        queueCommunicationListLayout = queueTimeline
+        refreshQueueCommunicationTimeline()
+    }
+
+    /** Shows durable queue messages with explicit sender, recipient, provider/model and timestamp. */
+    private fun refreshQueueCommunicationTimeline() {
+        val target = queueCommunicationListLayout ?: return
+        target.removeAllViews()
+        val snapshot = pl.aimasterpro.app.core.MasterTaskQueueStore.snapshot(this)
+        if (snapshot.status != pl.aimasterpro.app.core.MasterTaskQueueStore.ReadStatus.AVAILABLE) {
+            val unavailable = TextView(this).apply {
+                text = "Dziennik kolejki niedostępny (${snapshot.errorCode}). Nie pokazuję niezweryfikowanych danych."
+                setTextColor(Color.rgb(255, 120, 120))
+                setPadding(dp(12), dp(12), dp(12), dp(12))
+            }
+            target.addView(unavailable)
+            return
+        }
+        val titles = snapshot.tasks.associate { it.id to it.title }
+        val agentIdsByName = pl.aimasterpro.app.core.AgentManagerStore.enabledCatalog(this)
+            .associate { it.name to it.id }
+        val events = snapshot.events.filter { pl.aimasterpro.app.core.MasterTaskQueueStore.isConversationMessage(it) }.takeLast(120).asReversed()
+        if (events.isEmpty()) {
+            val empty = TextView(this).apply {
+                text = "Brak komunikatów z kolejki MASTER-a. Wiadomości pojawią się tutaj podczas rzeczywistego wykonania zadań."
+                setTextColor(muted)
+                setPadding(dp(12), dp(12), dp(12), dp(12))
+            }
+            target.addView(empty)
+            return
+        }
+        val formatter = java.text.SimpleDateFormat("dd.MM HH:mm:ss", java.util.Locale.getDefault())
+        events.forEach { event ->
+            val senderId = agentIdsByName[event.actor] ?: event.actor
+            val actualProgress = snapshot.events.lastOrNull {
+                it.taskId == event.taskId && it.operation == "AGENT_PROGRESS" &&
+                    it.actor == "agent:$senderId" && it.providerId.isNotBlank()
+            }
+            val providerId = actualProgress?.providerId?.ifBlank { event.providerId } ?: event.providerId
+            val model = actualProgress?.model?.ifBlank { event.model } ?: event.model
+            val provider = listOf(providerId, model).filter { it.isNotBlank() }.joinToString(" / ")
+                .ifBlank { "profil modelu nieustalony" }
+            val stamp = formatter.format(java.util.Date(event.timestamp))
+            val row = TextView(this).apply {
+                text = buildString {
+                    appendLine("${event.actor} → ${event.recipient.ifBlank { "odbiorca nieokreślony" }}")
+                    appendLine("${titles[event.taskId] ?: event.taskId} • $provider • $stamp • ${event.toStatus}")
+                    append(event.detail)
+                }
+                textSize = 12f
+                setTextColor(white)
+                setPadding(dp(12), dp(10), dp(12), dp(10))
+                background = ripple(cardBg, 10)
+            }
+            target.addView(row, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(6) })
+        }
     }
 
     private fun createAgentActivityCard(entry: String): View {
@@ -3895,7 +4179,37 @@ class MainActivity : Activity() {
         defaults.filter { it.id !in existingIds }.forEach { saveProvider(it) }
     }
 
+    /**
+     * 10.0.2.2 is an Android-emulator-only host alias, not a reachable PC address on a physical phone.
+     * Migrate only the untouched legacy default; preserve user-entered endpoints and selected models.
+     */
+    private fun migrateLegacyOllamaEmulatorEndpoint() {
+        val legacy = loadProvider("ollama") ?: return
+        if (!pl.aimasterpro.app.core.ProviderCatalogCachePolicy.isLegacyOllamaEmulatorEndpoint(legacy.baseUrl)) return
+        val migrated = legacy.copy(baseUrl = "", enabled = false, allowInsecureLanOllama = false)
+        if (!saveProvider(migrated)) {
+            android.util.Log.e("AiFORTecaMigration", "Nie udało się wyczyścić emulatorowego adresu Ollama. Profil pozostawiono bez zmian.")
+        } else {
+            android.util.Log.i("AiFORTecaMigration", "Usunięto wyłącznie domyślny adres emulatora 10.0.2.2. Wpisz adres IP komputera w sieci LAN.")
+        }
+    }
+
     private fun showProviders() {
+        try {
+            showProvidersContent()
+        } catch (error: Exception) {
+            android.util.Log.e("AiFORTecaProviders", "Nie udało się zbudować ekranu dostawców.", error)
+            if (::content.isInitialized) {
+                content.removeAllViews()
+                card(
+                    "⚠ NIE UDAŁO SIĘ OTWORZYĆ ZAKŁADKI DOSTAWCÓW",
+                    "Ekran został zabezpieczony przed zamknięciem aplikacji. Dane profili nie zostały zmienione. Typ błędu: ${error.javaClass.simpleName}. Zamknij komunikat i spróbuj ponownie; jeśli problem się powtarza, wygeneruj raport z MASTER."
+                )
+            }
+        }
+    }
+
+    private fun showProvidersContent() {
         if (store.isStorageUncertain()) {
             card(
                 "⚠ MAGAZYN KONFIGURACJI WYMAGA PONOWNEGO URUCHOMIENIA",
@@ -3903,9 +4217,44 @@ class MainActivity : Activity() {
             )
             return
         }
-        val allSaved = store.allConfigs().mapNotNull { j -> runCatching { loadProvider(j.optString("id")) }.getOrNull() }
+        val savedSnapshot = runCatching { store.allConfigs() }.getOrElse { error ->
+            android.util.Log.e("AiFORTecaProviders", "Nie można odczytać profili dostawców.", error)
+            card(
+                "⚠ NIE MOŻNA ODCZYTAĆ PROFILI DOSTAWCÓW",
+                "Magazyn konfiguracji zgłosił błąd odczytu. Nie zmieniono żadnych profili ani kluczy. Typ błędu: ${error.javaClass.simpleName}. Zamknij i uruchom ponownie aplikację; jeśli problem pozostaje, wygeneruj raport z MASTER."
+            )
+            return
+        }
+        // Resolve every profile from this one already-decrypted snapshot. Calling loadProvider()
+        // here would re-read each config (and each Keystore secret) on the UI thread.
+        val storedProfiles = savedSnapshot.mapNotNull { j ->
+            val id = j.optString("id")
+            if (id.isBlank()) return@mapNotNull null
+            val kind = runCatching { ProviderKind.valueOf(j.optString("kind")) }
+                .getOrDefault(ProviderKind.OPENAI_COMPATIBLE)
+            pl.aimasterpro.app.core.ProviderScreenProfileRecord(
+                id = id,
+                name = j.optString("name", id),
+                kind = kind.name,
+                baseUrl = j.optString("baseUrl"),
+                model = j.optString("model"),
+                apiKey = j.optString("apiKey").trim().removePrefix("Bearer ").trim(),
+                enabled = j.optBoolean("enabled", true),
+                parentProviderId = j.optString("parentProviderId", ""),
+                allowInsecureLanOllama = j.optBoolean("allowInsecureLanOllama", false),
+                secretUnavailable = j.optBoolean("_secretUnavailable", false)
+            )
+        }
+        val allSaved = pl.aimasterpro.app.core.ProviderScreenReadPolicy.resolveProfiles(storedProfiles).map { profile ->
+            ProviderConfig(
+                profile.id, profile.name,
+                runCatching { ProviderKind.valueOf(profile.kind) }.getOrDefault(ProviderKind.OPENAI_COMPATIBLE),
+                profile.baseUrl, profile.model, profile.apiKey, profile.enabled,
+                profile.parentProviderId, profile.allowInsecureLanOllama
+            )
+        }
         val baseProfiles = allSaved.filter { it.parentProviderId.isBlank() }
-        val unavailableSecretIds = store.unavailableSecretProviderIds()
+        val unavailableSecretIds = storedProfiles.filter { it.secretUnavailable }.map { it.id }.sorted()
         if (unavailableSecretIds.isNotEmpty()) {
             val canReplaceSecrets = store.canReplaceUnreadableSecrets()
             val recoveryCard = card(
@@ -3917,12 +4266,11 @@ class MainActivity : Activity() {
                 }
             )
             if (canReplaceSecrets) unavailableSecretIds.forEach { id ->
-                val raw = store.readConfig(id) ?: return@forEach
-                val kind = runCatching { ProviderKind.valueOf(raw.optString("kind")) }.getOrDefault(ProviderKind.OPENAI_COMPATIBLE)
+                val raw = storedProfiles.firstOrNull { it.id == id } ?: return@forEach
+                val kind = runCatching { ProviderKind.valueOf(raw.kind) }.getOrDefault(ProviderKind.OPENAI_COMPATIBLE)
                 val recoveryProfile = ProviderConfig(
-                    raw.optString("id", id), raw.optString("name", id), kind,
-                    raw.optString("baseUrl"), raw.optString("model"), "",
-                    raw.optBoolean("enabled", true), raw.optString("parentProviderId", "")
+                    raw.id, raw.name, kind, raw.baseUrl, raw.model, "",
+                    raw.enabled, raw.parentProviderId, raw.allowInsecureLanOllama
                 )
                 action("NAPRAW KLUCZ: ${recoveryProfile.name}", recoveryCard) {
                     providerDialog(recoveryProfile, recoverSecret = true)
@@ -3930,9 +4278,166 @@ class MainActivity : Activity() {
             }
         }
 
-        card("MODELE • centrum zarządzania", "Jedno miejsce do pobierania modeli, sprawdzania cen, kopiowania identyfikatorów i tworzenia profili modeli. Agenci korzystają później z gotowych profili.")
+        card("DOSTAWCY AI I KATALOG MODELI", "Zarządzaj zapisanymi profilami modeli u góry. Stuknij w dowolny profil lub dostawcę, aby otworzyć menu zarządzania.")
 
-        val syncCard = card("Katalog modeli", "Dane pochodzą z API skonfigurowanych dostawców. Cena nieznana nie jest traktowana jako darmowa.")
+        // 1. ZAPISANE PROFILE MODELI (Czysta lista z tap-to-interact)
+        val savedModelProfiles = allSaved.filter { it.parentProviderId.isNotBlank() }
+        val profilesCard = card("ZAPISANE PROFILE MODELI", "Aktywne profile modeli przypisane do agentów. Stuknij w profil, aby zarządzać jego opcjami.")
+        if (savedModelProfiles.isEmpty()) {
+            val emptyRow = LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL
+                setPadding(dp(12), dp(10), dp(12), dp(10))
+                background = rounded(cardBg, 10, border)
+            }
+            emptyRow.addView(TextView(this).apply {
+                text = "Brak zapisanych profili modeli.\n\nJak utworzyć profil:\n1. Skonfiguruj dostawcę i klucz API w sekcji poniżej ('Dostawcy i klucze API').\n2. Kliknij 'ODŚWIEŻ WSZYSTKICH DOSTAWCÓW' w katalogu poniżej.\n3. Wybierz model z listy i kliknij przycisk 'DODAJ PROFIL'."
+                setTextColor(muted)
+                textSize = 12f
+            })
+            profilesCard.addView(emptyRow)
+        } else {
+            savedModelProfiles.forEach { profile ->
+                val selected = resolvedMasterProviderId() == profile.id
+                val row = LinearLayout(this).apply {
+                    orientation = LinearLayout.VERTICAL
+                    setPadding(dp(12), dp(10), dp(12), dp(10))
+                    background = rounded(cardBg, 12, border)
+                    isClickable = true
+                    isFocusable = true
+                    val lp = LinearLayout.LayoutParams(-1, -2)
+                    lp.bottomMargin = dp(8)
+                    layoutParams = lp
+                }
+                row.addView(TextView(this).apply { text = (if (selected) "✓ AKTYWNY • " else "") + profile.name; setTextColor(if (selected) orange else white); textSize = 14f; typeface = Typeface.DEFAULT_BOLD })
+                row.addView(TextView(this).apply { text = profile.model; setTextColor(muted); textSize = 11f; setPadding(0, dp(2), 0, dp(4)); setTextIsSelectable(true) })
+                val modelUsage = runCatching {
+                    pl.aimasterpro.app.core.ApiTokenTracker.getModelTokenUsage(
+                        this, profile.id, profile.baseUrl, profile.model
+                    )
+                }.getOrNull()
+                val modelLimit = modelUsage?.config?.takeIf { it.enabled }
+                val pct = modelUsage?.usagePercent ?: 0
+                val barLen = 10
+                val filled = (pct * barLen / 100).coerceIn(0, barLen)
+                val bar = "█".repeat(filled) + "░".repeat(barLen - filled)
+                val modelUsageText = when {
+                    modelUsage == null -> "[$bar] 0% zużycia • brak danych tokenów"
+                    modelLimit == null -> "[$bar] ${pct}% zużycia (${modelUsage.usedTokens} użytych + ${modelUsage.reservedTokens} zarezerwowanych)"
+                    else -> {
+                        val state = when {
+                            modelUsage.limitReached -> "LIMIT 100% — ZABLOKOWANE"
+                            modelUsage.warningReached -> "OSTRZEŻENIE ≥${modelLimit.warningPercent}%"
+                            else -> "Limit aktywny"
+                        }
+                        "[$bar] ${pct}% zużycia ($state) • ${modelUsage.usedTokens} użytych / ${modelLimit.dailyLimitTokens} limit"
+                    }
+                }
+                row.addView(TextView(this).apply {
+                    text = modelUsageText
+                    setTextColor(if (modelUsage == null || modelUsage.limitReached) Color.RED else if (modelUsage.warningReached) orange else muted)
+                    textSize = 11f
+                    setPadding(0, dp(2), 0, dp(2))
+                })
+                row.addView(TextView(this).apply {
+                    text = "Stuknij, aby otworzyć menu opcji profilu..."
+                    setTextColor(cyan)
+                    textSize = 10f
+                    setPadding(0, dp(4), 0, 0)
+                })
+                row.setOnClickListener {
+                    val actions = arrayOf(
+                        "Ustaw jako model czatu",
+                        "Edytuj nazwę profilu",
+                        "Ustaw limit tokenów",
+                        "Testuj ten profil",
+                        "Kopiuj ID modelu"
+                    )
+                    AlertDialog.Builder(this)
+                        .setTitle("Opcje profilu: ${profile.name}")
+                        .setItems(actions) { _, which ->
+                            when (which) {
+                                0 -> {
+                                    if (persistAgentProviderAssignment(AgentRole.MASTER, profile.id)) {
+                                        showShell("Modele"); showProviders(); toast("Aktywny model czatu: ${profile.model}")
+                                    }
+                                }
+                                1 -> showEditModelProfileNameDialog(profile)
+                                2 -> showModelTokenLimitDialog(profile, modelUsage?.config)
+                                3 -> testProvider(profile)
+                                4 -> copyText(profile.model)
+                            }
+                        }
+                        .show()
+                }
+                profilesCard.addView(row)
+            }
+        }
+
+        // 2. DOSTAWCY I KLUCZE API (Czysta lista z tap-to-interact)
+        val providersCard = card("Dostawcy i klucze API", "Klucze są szyfrowane przez Android Keystore. Stuknij w dostawcę, aby zarządzać połączeniem.")
+        baseProfiles.forEach { p ->
+            val usageRead = pl.aimasterpro.app.core.ProviderScreenReadPolicy.readUsage {
+                TokenTracker.getUsage(this, p.id).totalTokens
+            }
+            if (!usageRead.available) {
+                android.util.Log.w("AiFORTecaProviders", "Licznik tokenów niedostępny dla profilu ${p.id}; ekran dostawców pozostaje dostępny.")
+            }
+            val hasKey = p.apiKey.isNotBlank() || pl.aimasterpro.app.core.FreeModelsCatalog.isLocalOllamaEndpoint(p.baseUrl)
+            val statusText = if (!hasKey) "Brak klucza API" else if (p.baseUrl.isBlank()) "Uzupełnij Base URL" else "Dane dostawcy zapisane"
+            val box = LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL
+                setPadding(dp(12), dp(10), dp(12), dp(10))
+                background = rounded(cardBg, 12, border)
+                isClickable = true
+                isFocusable = true
+                val lp = LinearLayout.LayoutParams(-1, -2)
+                lp.bottomMargin = dp(8)
+                layoutParams = lp
+            }
+            box.addView(TextView(this).apply { text = p.name; textSize = 15f; typeface = Typeface.DEFAULT_BOLD; setTextColor(white) })
+            val usageLabel = usageRead.totalTokens?.let { "$it tokenów zarejestrowanych" } ?: "licznik tokenów niedostępny"
+            box.addView(TextView(this).apply { text = "${p.baseUrl}\nModel bazowy: ${p.model.ifBlank { "nie wybrano — utwórz profil z katalogu" }}\n$statusText • $usageLabel"; textSize = 11f; setTextColor(muted); setPadding(0, dp(3), 0, dp(2)) })
+            box.addView(TextView(this).apply {
+                text = "Stuknij, aby otworzyć menu zarządzania dostawcą..."
+                setTextColor(cyan)
+                textSize = 10f
+                setPadding(0, dp(4), 0, 0)
+            })
+            box.setOnClickListener {
+                val actions = mutableListOf(
+                    "Pobierz / odśwież modele",
+                    "Testuj aktualny model",
+                    "Edytuj dostawcę / klucz",
+                    "Resetuj licznik tokenów"
+                )
+                if (pl.aimasterpro.app.core.OllamaModelManager.isOllamaProvider(p)) {
+                    actions.add(0, "Pobierz model lokalny (Ollama)")
+                }
+                AlertDialog.Builder(this)
+                    .setTitle("Dostawca: ${p.name}")
+                    .setItems(actions.toTypedArray()) { _, which ->
+                        val actionName = actions[which]
+                        when {
+                            actionName.contains("Pobierz model lokalny") -> showOllamaModelPullDialog(p)
+                            actionName.contains("Pobierz / odśwież") -> discover(p)
+                            actionName.contains("Testuj aktualny") -> {
+                                if (p.model.isBlank()) toast("Najpierw wybierz model w katalogu.") else testProvider(p)
+                            }
+                            actionName.contains("Edytuj dostawcę") -> providerDialog(p)
+                            actionName.contains("Resetuj licznik") -> {
+                                TokenTracker.resetUsage(this, p.id); showShell("Modele"); showProviders()
+                            }
+                        }
+                    }
+                    .show()
+            }
+            providersCard.addView(box)
+        }
+        action("Wczytaj bazę / kopię zapasową", providersCard) { chooseBackupToImport() }
+        action("Eksportuj zaszyfrowaną bazę modeli i kluczy", providersCard) { promptBackupPassword(export = true) }
+
+        // 3. KATALOG MODELI (Odkryte z API, na dole)
+        val syncCard = card("Katalog modeli (Odkryte z API)", "Wybierz model z listy poniżej, aby utworzyć dla niego konfigurowalny profil. Wyniki są pogrupowane według dostawców.")
         action("⟳ ODŚWIEŻ WSZYSTKICH DOSTAWCÓW", syncCard) { refreshAllModelCatalogs(showToast = true) }
         action("＋ Dodaj dostawcę / endpoint", syncCard) {
             providerDialog(ProviderConfig("custom_" + System.currentTimeMillis(), "Własny endpoint", ProviderKind.OPENAI_COMPATIBLE, "", "", ""))
@@ -3947,92 +4452,146 @@ class MainActivity : Activity() {
         val modelsContainer = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         syncCard.addView(modelsContainer, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(8) })
 
+        val currentProviderBaseUrls = pl.aimasterpro.app.core.ProviderCatalogCachePolicy.currentProviderBaseUrls(storedProfiles)
+        val catalogSnapshot = readModelCatalogEntries(currentProviderBaseUrls)
+
+        val catalogEntriesByIdentity = catalogSnapshot.associateBy {
+            Triple(it.providerId, it.baseUrl, it.info.id)
+        }
+        val priceStatusCache = pl.aimasterpro.app.core.CatalogPriceStatusCache<Triple<String, String, String>, Boolean> { identity ->
+            catalogEntriesByIdentity[identity]?.let { isUnknownPriceCatalogEntry(it) } ?: false
+        }
+        fun hasUnknownPrice(entry: CatalogEntry): Boolean = priceStatusCache.get(
+            Triple(entry.providerId, entry.baseUrl, entry.info.id)
+        )
+
+        val catalogSearchIndex = pl.aimasterpro.app.core.CatalogSearchIndex(
+            catalogSnapshot.map { entry ->
+                val local = pl.aimasterpro.app.core.FreeModelsCatalog.isLocalOllamaEndpoint(entry.baseUrl)
+                pl.aimasterpro.app.core.CatalogSearchRecord(
+                    value = entry,
+                    searchText = "${entry.providerName} ${entry.info.name} ${entry.info.id}",
+                    isLocal = local,
+                    freeByPricing = entry.info.freeByPricing,
+                    unknownPrice = !local && hasUnknownPrice(entry)
+                )
+            }
+        )
+
         fun renderCatalog(query: String, filter: Int) {
             modelsContainer.removeAllViews()
-            val entries = readModelCatalogEntries().filter { entry ->
-                val hay = "${entry.providerName} ${entry.info.name} ${entry.info.id}".lowercase()
-                val matchesQuery = query.isBlank() || hay.contains(query.lowercase())
-                val local = entry.providerId.contains("ollama", true) || entry.baseUrl.contains("11434")
-                val matchesFilter = when (filter) {
-                    1 -> local || entry.info.freeByPricing == true
-                    2 -> entry.info.freeByPricing == false
-                    3 -> !local && entry.info.freeByPricing == null
-                    else -> true
-                }
-                matchesQuery && matchesFilter
-            }.sortedBy { entry ->
-                val local = entry.providerId.contains("ollama", true) || entry.baseUrl.contains("11434")
-                when { local || entry.info.freeByPricing == true -> 0; entry.info.freeByPricing == null -> 1; else -> 2 }
-            }
-            if (entries.isEmpty()) {
+            val searchResult = catalogSearchIndex.search(query, filter)
+            if (searchResult.records.isEmpty()) {
                 modelsContainer.addView(TextView(this).apply {
-                    text = "Katalog jest pusty.\n\n1. Dodaj klucz API w profilu dostawcy.\n2. Kliknij ODŚWIEŻ WSZYSTKICH DOSTAWCÓW.\n3. Wybierz model i utwórz dla niego profil.\n\nLista nie korzysta ze starych, wpisanych na stałe nazw modeli."
+                    text = "Katalog jest pusty.\n\n1. Dodaj klucz API w profilu dostawcy.\n2. Kliknij ODŚWIEŻ WSZYSTKICH DOSTAWCÓW.\n3. Wybierz model i utwórz dla niego profil."
                     setTextColor(muted); textSize = 13f; setPadding(0, dp(12), 0, dp(12))
                 })
                 return
             }
-            val freeCount = entries.count { it.info.freeByPricing == true || it.providerId.contains("ollama", true) || it.baseUrl.contains("11434") }
-            val paidCount = entries.count { it.info.freeByPricing == false }
-            val unknownCount = entries.size - freeCount - paidCount
             modelsContainer.addView(TextView(this).apply {
-                text = "Wyniki: ${entries.size} • darmowe/lokalne: $freeCount • płatne: $paidCount • nieznana cena: $unknownCount\nOstatnia synchronizacja: ${modelCatalogPrefs.getLong("last_sync", 0L).takeIf { it > 0L }?.let { java.text.SimpleDateFormat("dd.MM.yyyy HH:mm", java.util.Locale.getDefault()).format(java.util.Date(it)) } ?: "brak"}"
+                val lastSync = runCatching { modelCatalogPrefs.getLong("last_sync", 0L) }.getOrDefault(0L)
+                text = "Wyniki: ${searchResult.records.size} • darmowe/lokalne: ${searchResult.freeCount} • płatne: ${searchResult.paidCount} • nieznana cena: ${searchResult.unknownCount}\nOstatnia synchronizacja: ${lastSync.takeIf { it > 0L }?.let { java.text.SimpleDateFormat("dd.MM.yyyy HH:mm", java.util.Locale.getDefault()).format(java.util.Date(it)) } ?: "brak"}"
                 setTextColor(cyan); textSize = 11f; setPadding(0, 0, 0, dp(8))
             })
-            entries.take(80).forEach { entry ->
-                val info = entry.info
-                val isLocal = entry.providerId.contains("ollama", true) || entry.baseUrl.contains("11434")
-                val freeLabel = when {
-                    isLocal -> "LOKALNY • BEZ OPŁAT API"
-                    info.freeByPricing == true && info.promptPricePerMillion != null && info.completionPricePerMillion != null -> "FREE • CENA API = 0 (limity konta mogą obowiązywać)"
-                    info.freeByPricing == true -> "FREE • JAWNE OZNACZENIE DOSTAWCY"
-                    info.freeByPricing == false -> "PŁATNY"
-                    else -> "CENA NIEZNANA"
-                }
-                val freeColor = when {
-                    isLocal || info.freeByPricing == true -> Color.rgb(65, 205, 120)
-                    info.freeByPricing == false -> Color.rgb(255, 125, 95)
-                    else -> orange
-                }
-                val row = LinearLayout(this).apply {
-                    orientation = LinearLayout.VERTICAL
-                    setPadding(dp(12), dp(10), dp(12), dp(10))
-                    background = rounded(cardBg, 12, border)
-                    val lp = LinearLayout.LayoutParams(-1, -2); lp.bottomMargin = dp(8); layoutParams = lp
-                }
-                row.addView(TextView(this).apply { text = entry.providerName; textSize = 11f; setTextColor(cyan); typeface = Typeface.DEFAULT_BOLD })
-                row.addView(TextView(this).apply { text = info.name; textSize = 14f; setTextColor(white); typeface = Typeface.DEFAULT_BOLD; setPadding(0, dp(3), 0, 0) })
-                row.addView(TextView(this).apply { text = info.id; textSize = 11f; setTextColor(muted); setTextIsSelectable(true); setPadding(0, dp(2), 0, dp(3)) })
-                val priceText = when {
-                    isLocal -> "Lokalny model — bez opłat za API; koszty zależą od własnego sprzętu/prądu."
-                    info.promptPricePerMillion != null && info.completionPricePerMillion != null -> "Wejście: \$${"%.4f".format(info.promptPricePerMillion)} / 1M • Wyjście: \$${"%.4f".format(info.completionPricePerMillion)} / 1M tokenów (USD)"
-                    else -> "Dostawca nie zwrócił danych cenowych w katalogu modeli."
-                }
-                val contextText = info.contextLength?.let { " • kontekst: ${it} tokenów" }.orEmpty()
-                row.addView(TextView(this).apply { text = "$freeLabel\n$priceText$contextText\nWykryto na liście dostawcy; test odpowiedzi wykonaj przyciskiem TESTUJ."; textSize = 11f; setTextColor(freeColor); setPadding(0, 0, 0, dp(5)) })
-                val buttons = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
-                fun smallButton(label: String, click: () -> Unit) {
-                    val b = TextView(this@MainActivity).apply {
-                        text = label; textSize = 11f; setTextColor(white); gravity = Gravity.CENTER
-                        setPadding(dp(10), dp(8), dp(10), dp(8)); background = ripple(panel, 9)
-                        setOnClickListener { click() }
+
+            // Grupowanie pobranych modeli po dostawcy (providerName)
+            val grouped = searchResult.records.take(120).groupBy { it.value.providerName }
+            grouped.forEach { (providerName, records) ->
+                modelsContainer.addView(TextView(this@MainActivity).apply {
+                    text = "─── $providerName (${records.size}) ───"
+                    setTextColor(cyan); textSize = 12f; typeface = Typeface.DEFAULT_BOLD
+                    setPadding(0, dp(12), 0, dp(4))
+                })
+                records.forEach { indexedEntry ->
+                    val entry = indexedEntry.value
+                    val info = entry.info
+                    val isLocal = indexedEntry.isLocal
+                    val unknownPrice = indexedEntry.unknownPrice
+                    val approvedUnknownPrice = unknownPrice && pl.aimasterpro.app.core.UnknownPriceApprovalStore.isApproved(
+                        this@MainActivity, entry.providerId, entry.baseUrl, info.id
+                    )
+                    val freeLabel = when {
+                        isLocal -> "LOKALNY • BEZ OPŁAT API"
+                        info.freeByPricing == true && info.promptPricePerMillion != null && info.completionPricePerMillion != null -> "FREE • CENA API = 0"
+                        info.freeByPricing == true -> "FREE • JAWNE OZNACZENIE"
+                        unknownPrice && info.freeByPricing == false -> "PŁATNY • STAWKA NIEZNANA"
+                        unknownPrice -> "CENA NIEZNANA • ZGODA WYMAGANA"
+                        info.freeByPricing == false -> "PŁATNY"
+                        else -> "CENA NIEPOTWIERDZONA"
                     }
-                    buttons.addView(b, LinearLayout.LayoutParams(0, -2, 1f).apply { marginEnd = dp(5) })
+                    val freeColor = when {
+                        isLocal || info.freeByPricing == true -> Color.rgb(65, 205, 120)
+                        info.freeByPricing == false -> Color.rgb(255, 125, 95)
+                        else -> orange
+                    }
+                    val row = LinearLayout(this@MainActivity).apply {
+                        orientation = LinearLayout.VERTICAL
+                        setPadding(dp(12), dp(10), dp(12), dp(10))
+                        background = rounded(cardBg, 12, border)
+                        val lp = LinearLayout.LayoutParams(-1, -2); lp.bottomMargin = dp(8); layoutParams = lp
+                    }
+                    row.addView(TextView(this@MainActivity).apply { text = info.name; textSize = 14f; setTextColor(white); typeface = Typeface.DEFAULT_BOLD })
+                    row.addView(TextView(this@MainActivity).apply { text = info.id; textSize = 11f; setTextColor(muted); setTextIsSelectable(true); setPadding(0, dp(2), 0, dp(3)) })
+                    val priceText = when {
+                        isLocal -> "Lokalny model — bez opłat za API."
+                        info.promptPricePerMillion != null && info.completionPricePerMillion != null -> "Wejście: \$${"%.4f".format(info.promptPricePerMillion)} / 1M • Wyjście: \$${"%.4f".format(info.completionPricePerMillion)} / 1M"
+                        else -> "Stawka API nieznana."
+                    }
+                    val contextText = info.contextLength?.let { " • kontekst: ${it} tokenów" }.orEmpty()
+                    row.addView(TextView(this@MainActivity).apply { text = "$freeLabel\n$priceText$contextText"; textSize = 11f; setTextColor(freeColor); setPadding(0, 0, 0, dp(5)) })
+                    val buttons = LinearLayout(this@MainActivity).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
+                    fun smallButton(label: String, click: () -> Unit) {
+                        val b = TextView(this@MainActivity).apply {
+                            text = label; textSize = 11f; setTextColor(white); gravity = Gravity.CENTER
+                            setPadding(dp(10), dp(8), dp(10), dp(8)); background = ripple(panel, 9)
+                            setOnClickListener { click() }
+                        }
+                        buttons.addView(b, LinearLayout.LayoutParams(0, -2, 1f).apply { marginEnd = dp(5) })
+                    }
+                    smallButton("KOPIUJ ID") { copyText(info.id) }
+                    smallButton("DODAJ PROFIL") {
+                        val provider = loadProvider(entry.providerId)
+                        if (provider == null) toast("Profil dostawcy już nie istnieje. Odśwież katalog.")
+                        else createModelProfile(provider, info)
+                    }
+                    smallButton("TESTUJ") {
+                        val provider = loadProvider(entry.providerId)
+                        if (provider == null) toast("Brak profilu dostawcy.")
+                        else testSpecificModel(provider, info)
+                    }
+                    if (unknownPrice) {
+                        smallButton(if (approvedUnknownPrice) "COFNIJ ZGODĘ" else "ZEZWÓL") {
+                            if (approvedUnknownPrice) {
+                                val revoked = pl.aimasterpro.app.core.UnknownPriceApprovalStore.setApproved(
+                                    this@MainActivity, entry.providerId, entry.baseUrl, info.id, false
+                                )
+                                if (revoked) {
+                                    toast("Cofnięto zgodę dla ${info.id}.")
+                                    renderCatalog(search.text.toString(), filterSpinner.selectedItemPosition)
+                                } else toast("Nie udało się zmienić rejestru zgód.")
+                            } else {
+                                AlertDialog.Builder(this@MainActivity)
+                                    .setTitle("Zgoda na model z nieznaną ceną")
+                                    .setMessage("Model ${info.id} nie ma zweryfikowanej stawki API. Zezwolenie dotyczy tylko tego modelu.")
+                                    .setNegativeButton("Anuluj", null)
+                                    .setPositiveButton("Zezwól") { _, _ ->
+                                        val saved = pl.aimasterpro.app.core.UnknownPriceApprovalStore.setApproved(
+                                            this@MainActivity, entry.providerId, entry.baseUrl, info.id, true
+                                        )
+                                        if (saved) {
+                                            toast("Zgoda zapisana dla ${info.id}.")
+                                            renderCatalog(search.text.toString(), filterSpinner.selectedItemPosition)
+                                        } else toast("Nie udało się zapisać zgody.")
+                                    }
+                                    .show()
+                            }
+                        }
+                    }
+                    row.addView(buttons)
+                    modelsContainer.addView(row)
                 }
-                smallButton("KOPIUJ ID") { copyText(info.id) }
-                smallButton("DODAJ PROFIL") {
-                    val provider = loadProvider(entry.providerId)
-                    if (provider == null) toast("Profil dostawcy już nie istnieje. Odśwież katalog.")
-                    else createModelProfile(provider, info)
-                }
-                smallButton("TESTUJ") {
-                    val provider = loadProvider(entry.providerId)
-                    if (provider == null) toast("Brak profilu dostawcy.")
-                    else testSpecificModel(provider, info)
-                }
-                row.addView(buttons)
-                modelsContainer.addView(row)
             }
-            if (entries.size > 80) modelsContainer.addView(TextView(this).apply { text = "Pokazano pierwsze 80 wyników. Użyj wyszukiwarki lub filtra, aby zawęzić listę."; setTextColor(muted); textSize = 11f })
+            if (searchResult.records.size > 120) modelsContainer.addView(TextView(this).apply { text = "Pokazano pierwsze 120 wyników. Użyj wyszukiwarki."; setTextColor(muted); textSize = 11f })
         }
         renderCatalog("", 0)
         search.addTextChangedListener(object : TextWatcher {
@@ -4047,56 +4606,8 @@ class MainActivity : Activity() {
             }
         }
 
-        val providersCard = card("Dostawcy i klucze API", "Klucze są szyfrowane przez Android Keystore. Profil dostawcy przechowuje połączenie; profile modeli powstają z listy powyżej.")
-        baseProfiles.forEach { p ->
-            val usage = TokenTracker.getUsage(this, p.id)
-            val hasKey = p.apiKey.isNotBlank() || p.id.equals("ollama", true) || p.baseUrl.contains("11434")
-            val statusText = if (!hasKey) "Brak klucza API" else if (p.baseUrl.isBlank()) "Uzupełnij Base URL" else "Dane dostawcy zapisane"
-            val box = LinearLayout(this).apply {
-                orientation = LinearLayout.VERTICAL; setPadding(dp(12), dp(10), dp(12), dp(10)); background = rounded(cardBg, 12, border)
-                val lp = LinearLayout.LayoutParams(-1, -2); lp.bottomMargin = dp(8); layoutParams = lp
-            }
-            box.addView(TextView(this).apply { text = p.name; textSize = 15f; typeface = Typeface.DEFAULT_BOLD; setTextColor(white) })
-            box.addView(TextView(this).apply { text = "${p.baseUrl}\nModel bazowy: ${p.model.ifBlank { "nie wybrano — utwórz profil z katalogu" }}\n$statusText • ${usage.totalTokens} tokenów zarejestrowanych"; textSize = 11f; setTextColor(muted); setPadding(0, dp(3), 0, dp(6)) })
-            fun providerButton(label: String, click: () -> Unit) {
-                val b = TextView(this).apply { text = label; textSize = 12f; gravity = Gravity.CENTER; setTextColor(white); setPadding(dp(10), dp(9), dp(10), dp(9)); background = ripple(panel, 9); setOnClickListener { click() } }
-                box.addView(b, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(5) })
-            }
-            providerButton("POBIERZ / ODŚWIEŻ MODELE") { discover(p) }
-            if (pl.aimasterpro.app.core.OllamaModelManager.isOllamaProvider(p)) {
-                providerButton("⬇ POBIERZ MODEL LOKALNY (OLLAMA)") { showOllamaModelPullDialog(p) }
-            }
-            providerButton("TESTUJ AKTUALNY MODEL") { if (p.model.isBlank()) toast("Najpierw wybierz model w katalogu.") else testProvider(p) }
-            providerButton("EDYTUJ DOSTAWCĘ / KLUCZ") { providerDialog(p) }
-            providerButton("RESETUJ LICZNIK TOKENÓW") { TokenTracker.resetUsage(this, p.id); showShell("Modele"); showProviders() }
-            providersCard.addView(box)
-        }
-        action("Wczytaj bazę / kopię zapasową", providersCard) { chooseBackupToImport() }
-        action("Eksportuj zaszyfrowaną bazę modeli i kluczy", providersCard) { promptBackupPassword(export = true) }
-
-        val savedModelProfiles = allSaved.filter { it.parentProviderId.isNotBlank() }
-        if (savedModelProfiles.isNotEmpty()) {
-            val profilesCard = card("ZAPISANE PROFILE MODELI", "Każdy profil ma własny identyfikator modelu, ale korzysta z klucza API profilu bazowego. Dzięki temu różni agenci mogą używać różnych modeli tego samego dostawcy.")
-            savedModelProfiles.forEach { profile ->
-                val selected = resolvedMasterProviderId() == profile.id
-                val row = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(10), dp(9), dp(10), dp(9)); background = rounded(cardBg, 10, border) }
-                row.addView(TextView(this).apply { text = (if (selected) "✓ AKTYWNY • " else "") + profile.name; setTextColor(if (selected) orange else white); textSize = 13f; typeface = Typeface.DEFAULT_BOLD })
-                row.addView(TextView(this).apply { text = profile.model; setTextColor(muted); textSize = 11f; setPadding(0, dp(2), 0, dp(4)); setTextIsSelectable(true) })
-                action("Ustaw jako model czatu", row) {
-                    if (!persistAgentProviderAssignment(AgentRole.MASTER, profile.id)) return@action
-                    showShell("Modele"); showProviders(); toast("Aktywny model czatu: ${profile.model}")
-                }
-                action("Kopiuj ID modelu", row) { copyText(profile.model) }
-                action("Testuj ten profil", row) { testProvider(profile) }
-                profilesCard.addView(row, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(8) })
-            }
-        }
-
-        // Synchronizacja automatyczna najwyżej raz na 6 godzin; ręczne odświeżenie działa zawsze.
-        val lastAttempt = modelCatalogPrefs.getLong("last_attempt", 0L)
-        if (lastAttempt == 0L || System.currentTimeMillis() - lastAttempt > 6 * 60 * 60 * 1000L) {
-            refreshAllModelCatalogs(showToast = false)
-        }
+        // Rendering this screen must never trigger network I/O. Imports start one
+        // controlled refresh after the new provider set and assignments are committed.
     }
 
     /** Opens the native Ollama pull workflow; cloud-provider catalog discovery never downloads model weights. */
@@ -4224,8 +4735,35 @@ class MainActivity : Activity() {
         val info: ProviderModelInfo
     )
 
-    private fun readModelCatalogEntries(): List<CatalogEntry> {
-        val raw = modelCatalogPrefs.getString("models_json", "[]") ?: "[]"
+    private fun readModelCatalogEntries(
+        currentProviderBaseUrls: Map<String, String>? = null
+    ): List<CatalogEntry> {
+        // A provider ID can be reused by an imported backup. Never expose cached models
+        // from the previous endpoint under the newly imported provider identity.
+        if (store.isStorageUncertain()) return emptyList()
+        val raw = runCatching { modelCatalogPrefs.getString("models_json", "[]") }.getOrNull()
+            ?: return emptyList()
+        val validatedProviderBaseUrls = currentProviderBaseUrls ?: runCatching {
+            store.allConfigs().associate { config ->
+                config.optString("id") to config.optString("baseUrl")
+            }
+        }.getOrElse { return emptyList() }
+
+        // Parse the persisted JSON once per distinct value. Provider identity validation
+        // remains per call, so imports or endpoint changes cannot reuse stale visibility.
+        val parsedEntries = modelCatalogSnapshotCache.get(raw) { parseModelCatalogSnapshot(raw) }
+        return parsedEntries.asSequence()
+            .filter { entry ->
+                pl.aimasterpro.app.core.ProviderCatalogCachePolicy.isEntryCurrent(
+                    entry.providerId, entry.baseUrl, validatedProviderBaseUrls
+                )
+            }
+            .distinctBy { "${it.providerId}:${it.info.id}" }
+            .sortedWith(compareBy({ it.providerName.lowercase() }, { it.info.id.lowercase() }))
+            .toList()
+    }
+
+    private fun parseModelCatalogSnapshot(raw: String): List<CatalogEntry> {
         val arr = runCatching { JSONArray(raw) }.getOrDefault(JSONArray())
         val out = mutableListOf<CatalogEntry>()
         for (i in 0 until arr.length()) {
@@ -4244,7 +4782,7 @@ class MainActivity : Activity() {
                 prompt, completion, free, o.optString("description"), cachedPrompt, cachedPromptWrite, cachedPromptWrite1h, internalReasoning
             )))
         }
-        return out.distinctBy { "${it.providerId}:${it.info.id}" }.sortedWith(compareBy({ it.providerName.lowercase() }, { it.info.id.lowercase() }))
+        return out.toList()
     }
 
     private fun saveModelCatalogForProvider(provider: ProviderConfig, models: List<ProviderModelInfo>) {
@@ -4281,7 +4819,7 @@ class MainActivity : Activity() {
 
     private fun providerCredentialsReady(config: ProviderConfig): Boolean {
         if (config.baseUrl.isBlank()) return false
-        val local = config.id.equals("ollama", true) || config.baseUrl.contains("11434") || config.baseUrl.contains("localhost") || config.baseUrl.contains("127.0.0.1")
+        val local = pl.aimasterpro.app.core.FreeModelsCatalog.isLocalOllamaEndpoint(config.baseUrl)
         return local || config.apiKey.isNotBlank()
     }
 
@@ -4291,56 +4829,126 @@ class MainActivity : Activity() {
             navigate("Modele")
             return
         }
-        val providers = store.allConfigs().mapNotNull { j -> runCatching { loadProvider(j.optString("id")) }.getOrNull() }
-            .filter { it.parentProviderId.isBlank() && providerCredentialsReady(it) }
-        if (providers.isEmpty()) {
-            if (showToast) toast("Brak skonfigurowanych dostawców. Dodaj Base URL i klucz API.")
+        if (!modelCatalogRefreshInFlight.compareAndSet(false, true)) {
+            if (showToast) toast("Synchronizacja katalogów już trwa.")
             return
         }
-        status.text = "Pobieranie katalogów modeli…"
-        executor.execute {
-            if (store.isStorageUncertain()) {
-                runOnUiThread {
-                    status.text = "Magazyn konfiguracji wymaga ponownego uruchomienia"
-                    if (showToast) toast("Pobieranie katalogów przerwane. Uruchom ponownie AI MASTER PRO.")
+
+        val refreshGeneration = modelCatalogRefreshGeneration.snapshot()
+        try {
+            val providers = runCatching {
+                store.allConfigs().mapNotNull { j ->
+                    runCatching { loadProvider(j.optString("id")) }.getOrNull()
+                }.filter { it.parentProviderId.isBlank() && providerCredentialsReady(it) }
+            }.getOrElse { error ->
+                modelCatalogRefreshInFlight.set(false)
+                status.text = "Nie można odczytać konfiguracji dostawców"
+                if (showToast) toast("Nie udało się odczytać konfiguracji: ${error.message ?: "błąd magazynu"}")
+                return
+            }
+            if (providers.isEmpty()) {
+                modelCatalogRefreshInFlight.set(false)
+                status.text = "Brak dostawców gotowych do synchronizacji"
+                if (showToast) toast("Brak skonfigurowanych dostawców. Dodaj Base URL i klucz API.")
+                return
+            }
+
+            status.text = "Pobieranie katalogów modeli…"
+            executor.execute {
+                try {
+                    if (store.isStorageUncertain()) {
+                        runOnUiThread {
+                            status.text = "Magazyn konfiguracji wymaga ponownego uruchomienia"
+                            if (showToast) toast("Pobieranie katalogów przerwane. Uruchom ponownie AiFORTecę.")
+                        }
+                        return@execute
+                    }
+
+                    val report = pl.aimasterpro.app.core.ProviderCatalogSyncRunner.synchronize(
+                        providers = providers,
+                        isCancelled = { store.isStorageUncertain() || !modelCatalogRefreshGeneration.isCurrent(refreshGeneration) },
+                        discover = { provider -> client.discoverModelDetails(provider) },
+                        save = { provider, discovered ->
+                            val committed = modelCatalogRefreshGeneration.commitIfCurrent(refreshGeneration) {
+                                if (store.isStorageUncertain()) {
+                                    throw java.util.concurrent.CancellationException("Magazyn konfiguracji jest niepewny.")
+                                }
+                                saveModelCatalogForProvider(provider, discovered)
+                            }
+                            if (!committed) throw java.util.concurrent.CancellationException("Konfiguracja dostawców uległa zmianie.")
+                        }
+                    )
+                    val success = report.successCount
+                    val failures = report.failures.map { "${it.provider.name}: ${it.message}" }
+
+                    if (report.stopped || store.isStorageUncertain()) {
+                        runOnUiThread {
+                            status.text = "Synchronizacja przerwana: magazyn konfiguracji wymaga ponownego uruchomienia"
+                            if (showToast) toast("Nie zapisano wyników synchronizacji.")
+                        }
+                        return@execute
+                    }
+
+                    val now = System.currentTimeMillis()
+                    val editor = modelCatalogPrefs.edit().putLong("last_attempt", now)
+                    if (success > 0) editor.putLong("last_sync", now)
+                    var metadataSaved = false
+                    val metadataCommitted = modelCatalogRefreshGeneration.commitIfCurrent(refreshGeneration) {
+                        if (!store.isStorageUncertain()) metadataSaved = editor.commit()
+                    }
+                    if (!metadataCommitted || store.isStorageUncertain()) return@execute
+                    runOnUiThread {
+                        if (isFinishing || isDestroyed) return@runOnUiThread
+                        status.text = if (metadataSaved) {
+                            "Katalog modeli: $success/${providers.size} dostawców"
+                        } else {
+                            "Katalog pobrany, ale nie zapisano czasu synchronizacji"
+                        }
+                        // Refresh the visible list only; showProviders no longer starts requests.
+                        if (screen == "Modele") {
+                            showShell("Modele")
+                            showProviders()
+                        }
+                        if (showToast) toast(
+                            if (success > 0) "Pobrano modele od $success/${providers.size} dostawców."
+                            else "Nie udało się pobrać katalogów. Sprawdź klucze i adresy API."
+                        )
+                        if (failures.isNotEmpty() && (showToast || success == 0)) {
+                            AlertDialog.Builder(this).setTitle("Synchronizacja katalogów zakończona z błędami")
+                                .setMessage(failures.joinToString("\n\n").take(5000))
+                                .setPositiveButton("OK", null).show()
+                        }
+                    }
+                } catch (error: Exception) {
+                    android.util.Log.e("AiFORTecaCatalog", "Nieoczekiwany błąd synchronizacji katalogów.", error)
+                    runOnUiThread {
+                        if (!isFinishing && !isDestroyed) {
+                            status.text = "Synchronizacja katalogów nie powiodła się"
+                            if (showToast) toast("Błąd synchronizacji katalogów: ${error.message ?: "nieznany błąd"}")
+                        }
+                    }
+                } finally {
+                    // Release the single-flight gate before checking the generation. This closes
+                    // the race where import invalidates immediately after the check, requests a
+                    // refresh while the gate is still held, and then loses that refresh on return.
+                    modelCatalogRefreshInFlight.set(false)
+                    val providerSnapshotWasInvalidated = !modelCatalogRefreshGeneration.isCurrent(refreshGeneration)
+                    // An import may have requested a refresh while this old generation still
+                    // held the single-flight gate. Retry once for the new provider snapshot.
+                    if (providerSnapshotWasInvalidated && !isFinishing && !isDestroyed) {
+                        runOnUiThread {
+                            if (!isFinishing && !isDestroyed && screen == "Modele") {
+                                refreshAllModelCatalogs(showToast = false)
+                            }
+                        }
+                    }
                 }
-                return@execute
             }
-            var success = 0
-            val failures = mutableListOf<String>()
-            providers.forEach { provider ->
-                if (store.isStorageUncertain()) return@forEach
-                val result = if (store.isStorageUncertain()) Result.failure(IllegalStateException("SecureStore uncertain"))
-                    else runCatching { client.discoverModelDetails(provider) }
-                if (store.isStorageUncertain()) return@forEach
-                if (result.isSuccess) {
-                    val discovered = result.getOrDefault(emptyList())
-                    if (discovered.isNotEmpty()) {
-                        saveModelCatalogForProvider(provider, discovered)
-                        success++
-                    } else failures.add("${provider.name}: API zwróciło pustą listę; zachowano poprzedni katalog")
-                } else failures.add("${provider.name}: ${result.exceptionOrNull()?.message ?: "błąd"}")
-            }
-            if (store.isStorageUncertain()) {
-                runOnUiThread {
-                    status.text = "Synchronizacja przerwana: magazyn konfiguracji wymaga ponownego uruchomienia"
-                    if (showToast) toast("Nie zapisano wyników synchronizacji.")
-                }
-                return@execute
-            }
-            runOnUiThread {
-                val now = System.currentTimeMillis()
-                val editor = modelCatalogPrefs.edit().putLong("last_attempt", now)
-                if (success > 0) editor.putLong("last_sync", now)
-                editor.apply()
-                status.text = "Katalog modeli: $success/${providers.size} dostawców"
-                showShell("Modele"); showProviders()
-                if (showToast) toast(if (success > 0) "Pobrano modele od $success/${providers.size} dostawców." else "Nie udało się pobrać katalogów. Sprawdź klucze i adresy API.")
-                if (success == 0 && failures.isNotEmpty()) {
-                    AlertDialog.Builder(this).setTitle("Nie udało się pobrać katalogu")
-                        .setMessage(failures.joinToString("\n\n").take(5000)).setPositiveButton("OK", null).show()
-                }
-            }
+        } catch (error: Exception) {
+            modelCatalogRefreshInFlight.set(false)
+            android.util.Log.e("AiFORTecaCatalog", "Nie udało się uruchomić synchronizacji katalogów.", error)
+            status.text = "Nie udało się uruchomić synchronizacji katalogów"
+            if (showToast) toast("Nie udało się uruchomić synchronizacji: ${error.message ?: "błąd"}")
         }
     }
 
@@ -4349,19 +4957,61 @@ class MainActivity : Activity() {
         val modelUuid = UUID.nameUUIDFromBytes("${baseId}:${info.id}".toByteArray(Charsets.UTF_8)).toString().replace("-", "")
         val profileId = "${baseId}__model_${modelUuid}"
         val existing = loadProvider(profileId)
-        val profile = existing ?: provider.copy(
-            id = profileId,
-            name = "${provider.name} • ${info.name}",
-            model = info.id,
-            apiKey = "", // klucz pozostaje wyłącznie w profilu bazowym dostawcy
-            parentProviderId = baseId
-        )
-        if (!saveProvider(profile.copy(apiKey = ""))) {
-            toast("Nie udało się zapisać profilu modelu. Nie dodano go do konfiguracji.")
-            return
+        val defaultName = "${provider.name} • ${info.name}"
+
+        val input = EditText(this).apply {
+            setText(existing?.name ?: defaultName)
+            setTextColor(white)
+            isSingleLine = true
         }
-        showShell("Modele"); showProviders()
-        toast("Dodano profil modelu: ${info.name}. Przypisz go odpowiedniej roli w zakładce Agenci.")
+        AlertDialog.Builder(this)
+            .setTitle("Utwórz profil modelu")
+            .setMessage("Możesz edytować nazwę wyświetlaną nowego profilu:")
+            .setView(input)
+            .setNegativeButton("Anuluj", null)
+            .setPositiveButton("Zapisz") { _, _ ->
+                val customName = input.text.toString().trim().ifBlank { defaultName }
+                val profile = existing ?: provider.copy(
+                    id = profileId,
+                    name = customName,
+                    model = info.id,
+                    apiKey = "",
+                    parentProviderId = baseId
+                )
+                val finalProfile = profile.copy(name = customName, apiKey = "")
+                if (!saveProvider(finalProfile)) {
+                    toast("Nie udało się zapisać profilu modelu. Nie dodano go do konfiguracji.")
+                    return@setPositiveButton
+                }
+                showShell("Modele"); showProviders()
+                toast("Dodano profil modelu: $customName.")
+            }
+            .show()
+    }
+
+    private fun showEditModelProfileNameDialog(profile: ProviderConfig) {
+        val input = EditText(this).apply {
+            setText(profile.name)
+            setTextColor(white)
+            isSingleLine = true
+        }
+        AlertDialog.Builder(this)
+            .setTitle("Edytuj nazwę profilu modelu")
+            .setView(input)
+            .setNegativeButton("Anuluj", null)
+            .setPositiveButton("Zapisz") { _, _ ->
+                val newName = input.text.toString().trim()
+                if (newName.isNotBlank()) {
+                    val updated = profile.copy(name = newName)
+                    if (saveProvider(updated)) {
+                        toast("Zaktualizowano nazwę profilu.")
+                        showShell("Modele"); showProviders()
+                    } else {
+                        toast("Nie udało się zapisać zmiany.")
+                    }
+                }
+            }
+            .show()
     }
 
     private fun recordModelTestUsage(
@@ -4500,7 +5150,44 @@ class MainActivity : Activity() {
         val kindOptions = listOf("OpenAI-compatible", "Google Gemini API", "Anthropic API")
         kindSpinner.adapter = ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item, kindOptions)
         kindSpinner.setSelection(when (old.kind) { ProviderKind.OPENAI_COMPATIBLE -> 0; ProviderKind.GEMINI -> 1; ProviderKind.ANTHROPIC -> 2 })
-        listOf(TextView(this).apply { text = "Typ dostawcy"; setTextColor(white) }, kindSpinner, name, url, model, key, allowLanOllama, lanSecurityNote).forEach { box.addView(it); if (it is EditText) it.setPadding(dp(12), dp(8), dp(12), dp(8)) }
+        val detectionStatus = TextView(this).apply {
+            setTextColor(muted); textSize = 11f
+        }
+        val detectProviderButton = TextView(this).apply {
+            text = "WYKRYJ DOSTAWCĘ Z KLUCZA"
+            textSize = 12f; gravity = Gravity.CENTER; setTextColor(white)
+            setPadding(dp(12), dp(10), dp(12), dp(10)); background = ripple(panel, 9)
+            setOnClickListener {
+                val entered = key.text.toString().trim().removePrefix("Bearer ").trim()
+                val detected = pl.aimasterpro.app.core.ProviderKeyDetector.detect(entered)
+                if (detected == null) {
+                    detectionStatus.text = if (pl.aimasterpro.app.core.ProviderKeyDetector.isAmbiguousGenericSecret(entered)) {
+                        "Prefiks sk- jest niejednoznaczny i występuje u wielu dostawców. Wybierz typ ręcznie; nie zgaduję."
+                    } else {
+                        "Nie rozpoznano prefiksu. Wybierz typ i Base URL ręcznie."
+                    }
+                    toast("Nie udało się jednoznacznie rozpoznać dostawcy.")
+                } else {
+                    kindSpinner.setSelection(when (detected.kind) {
+                        ProviderKind.GEMINI -> 1
+                        ProviderKind.ANTHROPIC -> 2
+                        else -> 0
+                    })
+                    val endpointWasEmpty = url.text.toString().trim().isBlank()
+                    if (endpointWasEmpty) url.setText(detected.defaultBaseUrl)
+                    if (old.name.equals("Własny endpoint", true) || name.text.toString().isBlank()) {
+                        name.setText(detected.providerName)
+                    }
+                    detectionStatus.text = "Rozpoznano: ${detected.providerName}. ${if (endpointWasEmpty) "Ustawiono domyślny Base URL." else "Zachowano wpisany Base URL."} Klucz analizowano wyłącznie lokalnie."
+                    toast("Wykryto dostawcę: ${detected.providerName}.")
+                }
+            }
+        }
+        listOf(
+            TextView(this).apply { text = "Typ dostawcy"; setTextColor(white) },
+            kindSpinner, name, url, model, key, detectProviderButton, detectionStatus,
+            allowLanOllama, lanSecurityNote
+        ).forEach { box.addView(it); if (it is EditText) it.setPadding(dp(12), dp(8), dp(12), dp(8)) }
         AlertDialog.Builder(this).setTitle(if (recoverSecret) "Odzyskiwanie profilu dostawcy" else "Konfiguracja dostawcy").setView(box)
             .setNegativeButton("Anuluj", null)
             .setPositiveButton("Zapisz") { _, _ ->
@@ -4664,7 +5351,7 @@ class MainActivity : Activity() {
             return
         }
         loadAgentActivity()
-        card("Zespół agentów", "Tutaj przydzielasz gotowe profile modeli do ról, ustawiasz tryb pracy i testujesz połączenie. Katalog modeli oraz klucze API są zarządzane wyłącznie w zakładce MODELE.")
+        card("ZESPÓŁ AGENTÓW • STUDIO", "Panel operacyjny zespołu AiFORTeca. MASTER koordynuje zadania, a specjaliści otrzymują role, profile modeli i własny zakres odpowiedzialności. Zarządzanie agentami pozostaje oddzielone od konfiguracji dostawców.")
 
         val mode = currentWorkMode()
         val modeCard = card("Tryb pracy: ${mode.label}", mode.description)
@@ -4675,7 +5362,12 @@ class MainActivity : Activity() {
                 toast("Ustawiono tryb: ${candidate.label}")
             }
         }
-        val catalogCard = card("Biblioteka specjalizacji", "Definicje ról i zadań nie wymagają osobnych kluczy API. Wykonanie każdej roli korzysta z profilu modelu przypisanego poniżej.")
+        val masterProfile = loadProvider(resolvedMasterProviderId().orEmpty())
+        val masterState = if (!agentAssignmentsHealthy) "PRZYPISANIA WYMAGAJĄ UZGODNIENIA" else if (masterProfile == null) "BRAK PROFILU MASTER" else "PROFIL MASTER WYBRANY"
+        val masterCard = card("MASTER • KOORDYNATOR GŁÓWNY", "$masterState\nModel: ${masterProfile?.model?.ifBlank { "nie wybrano" } ?: "nieprzypisany"}\nDostawca: ${masterProfile?.name ?: "brak"}\nMASTER przydziela zadania, nadzoruje wyniki specjalistów i przygotowuje końcową syntezę.")
+        action("OTWÓRZ CENTRUM MASTER", masterCard) { navigate("Centrum") }
+
+        val catalogCard = card("KATALOG AGENTÓW I SPECJALIZACJI", "Zarządzaj aktywnością agentów, dodawaj własne specjalizacje i przypisuj profile modeli. Definicje ról nie wymagają osobnych kluczy API.")
         val agentManagerSnapshot = pl.aimasterpro.app.core.AgentManagerStore.snapshot(this)
         val totalManagedAgents = AgentCatalog.all.size + agentManagerSnapshot.customAgents.size
         val enabledManagedAgents = if (agentManagerSnapshot.status == pl.aimasterpro.app.core.AgentManagerStore.ReadStatus.AVAILABLE)
@@ -4691,61 +5383,91 @@ class MainActivity : Activity() {
         }
         val configs = store.allConfigs().mapNotNull { j -> runCatching { loadProvider(j.optString("id")) }.getOrNull() }.filter { providerReady(it) && isModelPresentInCatalog(it) }
         if (configs.isEmpty()) {
-            val missing = card("Brak gotowych profili modeli", "Najpierw otwórz MODELE, skonfiguruj dostawcę, pobierz jego listę i utwórz profil wybranego modelu. Wróć tutaj, aby przypisać go agentom.")
+            val missing = card("Brak gotowych profili modeli", "Najpierw otwórz MODELE, skonfiguruj dostawcę, pobierz jego listę i utwórz profil modelu. Wybór obejmuje zweryfikowane modele darmowe oraz modele z nieznaną ceną, dla których jawnie zapisano zgodę. Wróć tutaj, aby przypisać model agentom.")
             action("OTWÓRZ KATALOG MODELI", missing) { navigate("Modele") }
         }
         AgentRole.values().forEach { role ->
             val assignedId = agentProviders[role.name] ?: "groq"
-            val box = card(role.label, role.purpose)
+            val assignedCfg = configs.firstOrNull { it.id == assignedId }
             val state = agentConnection[role.name] ?: "unknown"
-            val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL; setPadding(0, 8, 0, 6) }
-            val color = when (state) { "connected", "tested" -> Color.rgb(45, 210, 90); "testing" -> orange; "error" -> Color.RED; else -> muted }
-            row.addView(TextView(this).apply { text = "●"; textSize = 22f; setTextColor(color) })
-            row.addView(TextView(this).apply {
-                text = when (state) { "connected" -> "Połączenie przypisanego profilu potwierdzone"; "tested" -> "Test kandydata zakończony powodzeniem — przypisanie bez zmian"; "testing" -> "Testowanie połączenia…"; "error" -> "Błąd / brak połączenia"; else -> "Nie sprawdzono połączenia" }
-                textSize = 12f; setTextColor(muted); setPadding(8, 0, 0, 0)
-            })
-            box.addView(row)
-            val spinner = Spinner(this)
-            spinner.adapter = ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item,
-                if (configs.isEmpty()) listOf("Brak profili — skonfiguruj w MODELE") else configs.map { "${it.name} — ${it.model}" })
-            val idx = configs.indexOfFirst { it.id == assignedId }.let { if (it < 0) 0 else it }
-            if (configs.isNotEmpty()) spinner.setSelection(idx)
-            box.addView(TextView(this).apply { text = "Dostawca / model"; textSize = 12f; setTextColor(white); setPadding(0, 8, 0, 0) })
-            box.addView(spinner)
-            action("Zapisz przypisanie", box) {
-                if (configs.isEmpty()) { toast("Najpierw dodaj dostawcę w zakładce Modele."); return@action }
-                val cfg = configs[spinner.selectedItemPosition]
-                if (!persistAgentProviderAssignment(role, cfg.id)) return@action
-                agentConnection[role.name] = "unknown"
-                showShell("Agenci"); showAgents()
-                toast("${role.label}: przypisano ${cfg.name}")
+            val stateText = when (state) {
+                "connected" -> "Połączenie potwierdzone"
+                "tested" -> "Test OK"
+                "testing" -> "Testowanie..."
+                "error" -> "Błąd połączenia"
+                else -> "Nie sprawdzono"
             }
-            action("Testuj połączenie agenta", box) {
-                if (configs.isEmpty()) { toast("Brak dostawców."); return@action }
-                val cfg = configs[spinner.selectedItemPosition]
-                if (!providerReady(cfg)) {
-                    agentConnection[role.name] = "error"
-                    showShell("Agenci"); showAgents()
-                    toast("Uzupełnij adres, model i klucz API dla ${cfg.name}."); return@action
-                }
-                agentConnection[role.name] = "testing"
-                showShell("Agenci"); showAgents()
-                val testScope = client.beginRequestScope()
-                executor.execute {
-                    val result = runBudgetedModelTest(cfg, "AGENT:${role.name}", "Odpowiadaj krótko po polsku.", "Odpowiedz dokładnie: AGENT OK", testScope)
-                    runOnUiThread {
-                        agentConnection[role.name] = if (result.isSuccess) "tested" else "error"
-                        logAgent("${role.label}: test połączenia ${if (result.isSuccess) "OK" else "BŁĄD"} • ${cfg.name} / ${cfg.model}")
-                        showShell("Agenci"); showAgents()
-                        if (result.isSuccess) toast("${role.label}: kandydat odpowiada; przypisanie nie zostało zmienione")
-                        else AlertDialog.Builder(this).setTitle("Test agenta nieudany")
-                            .setMessage((result.exceptionOrNull()?.message ?: "Nieznany błąd API") + "\n\n" + (result.exceptionOrNull() as? ProviderException)?.responseBody.orEmpty())
-                            .setPositiveButton("OK", null).show()
+            val box = card(
+                role.label,
+                "${role.purpose}\nPrzypisany model: ${assignedCfg?.name ?: "nie wybrano"} • ${assignedCfg?.model ?: "brak"}\nStatus: $stateText\n\nStuknij, aby zarządzać agentem..."
+            )
+            box.isClickable = true
+            box.isFocusable = true
+            box.setOnClickListener {
+                val actions = arrayOf(
+                    "Użyj w czacie",
+                    "Zmień przypisany model",
+                    "Testuj połączenie agenta"
+                )
+                AlertDialog.Builder(this)
+                    .setTitle("Agent: ${role.label}")
+                    .setItems(actions) { _, which ->
+                        when (which) {
+                            0 -> {
+                                selectedAgent = role
+                                showShell("Czat"); showChat()
+                                toast("Wybrano agenta: ${role.label}")
+                            }
+                            1 -> {
+                                if (configs.isEmpty()) {
+                                    toast("Najpierw dodaj profile modeli w zakładce Modele.")
+                                    return@setItems
+                                }
+                                val configNames = configs.map { "${it.name} — ${it.model}" }.toTypedArray()
+                                val currentIdx = configs.indexOfFirst { it.id == assignedId }.coerceAtLeast(0)
+                                AlertDialog.Builder(this@MainActivity)
+                                    .setTitle("Wybierz model dla: ${role.label}")
+                                    .setSingleChoiceItems(configNames, currentIdx) { dialog, idx ->
+                                        val cfg = configs[idx]
+                                        if (persistAgentProviderAssignment(role, cfg.id)) {
+                                            agentConnection[role.name] = "unknown"
+                                            showShell("Agenci"); showAgents()
+                                            toast("${role.label}: przypisano ${cfg.name}")
+                                        }
+                                        dialog.dismiss()
+                                    }
+                                    .setNegativeButton("Anuluj", null)
+                                    .show()
+                            }
+                            2 -> {
+                                if (configs.isEmpty()) { toast("Brak dostawców."); return@setItems }
+                                val cfg = assignedCfg ?: configs.first()
+                                if (!providerReady(cfg)) {
+                                    agentConnection[role.name] = "error"
+                                    showShell("Agenci"); showAgents()
+                                    toast("Uzupełnij adres, model i klucz API dla ${cfg.name}.")
+                                    return@setItems
+                                }
+                                agentConnection[role.name] = "testing"
+                                showShell("Agenci"); showAgents()
+                                val testScope = client.beginRequestScope()
+                                executor.execute {
+                                    val result = runBudgetedModelTest(cfg, "AGENT:${role.name}", "Odpowiadaj krótko po polsku.", "Odpowiedz dokładnie: AGENT OK", testScope)
+                                    runOnUiThread {
+                                        agentConnection[role.name] = if (result.isSuccess) "tested" else "error"
+                                        logAgent("${role.label}: test połączenia ${if (result.isSuccess) "OK" else "BŁĄD"} • ${cfg.name} / ${cfg.model}")
+                                        showShell("Agenci"); showAgents()
+                                        if (result.isSuccess) toast("${role.label}: kandydat odpowiada; przypisanie nie zostało zmienione")
+                                        else AlertDialog.Builder(this@MainActivity).setTitle("Test agenta nieudany")
+                                            .setMessage((result.exceptionOrNull()?.message ?: "Nieznany błąd API") + "\n\n" + (result.exceptionOrNull() as? ProviderException)?.responseBody.orEmpty())
+                                            .setPositiveButton("OK", null).show()
+                                    }
+                                }
+                            }
+                        }
                     }
-                }
+                    .show()
             }
-            action("Użyj w czacie", box) { selectedAgent = role; showShell("Czat"); showChat(); toast("Wybrano agenta: ${role.label}") }
         }
         val logCard = card("Rozmowy i komunikacja między agentami", "Śledź w czasie rzeczywistym dialogi, zadania, raporty oraz błędy (np. limit tokenów, awarie API).")
         action("💬 Otwórz podgląd rozmów miedzy agentami (Live / Błędy)", logCard) { showAgentCollaborationViewer() }
@@ -4844,13 +5566,21 @@ class MainActivity : Activity() {
                 }
                 row.addView(toggle)
                 if (agent.id.startsWith("custom-")) {
+                    val edit = TextView(this).apply {
+                        text = "Edytuj"
+                        setTextColor(orange); textSize = 12f; setPadding(dp(8), 0, 0, 0)
+                        setOnClickListener { showCreateCustomAgentDialog(agent) }
+                    }
+                    row.addView(edit)
                     val remove = TextView(this).apply {
                         text = "Usuń"
                         setTextColor(Color.RED); textSize = 12f; setPadding(dp(8), 0, 0, 0)
                         setOnClickListener {
                             AlertDialog.Builder(this@MainActivity)
                                 .setTitle("Usunąć własnego agenta?")
-                                .setMessage("Profil ${agent.name} zostanie usunięty z lokalnego katalogu.")
+                                .setMessage(
+                                    "Profil ${agent.name} zostanie usunięty, a jego identyfikator zapamiętany, aby ten sam profil nie został przypadkowo przywrócony. Przypisanie modelu do roli ${pl.aimasterpro.app.agents.AgentProviderRouting.roleFor(agent).label} pozostanie bez zmian, ponieważ jest wspólne dla wszystkich agentów tej roli."
+                                )
                                 .setPositiveButton("Usuń") { _, _ ->
                                     if (pl.aimasterpro.app.core.AgentManagerStore.removeCustomAgent(this@MainActivity, agent.id)) {
                                         logAgent("Menadżer agentów: usunięto profil ${agent.id}")
@@ -4878,7 +5608,7 @@ class MainActivity : Activity() {
         render("")
     }
 
-    private fun showCreateCustomAgentDialog() {
+    private fun showCreateCustomAgentDialog(existing: pl.aimasterpro.app.agents.AgentSpec? = null) {
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(16), dp(12), dp(16), dp(8))
@@ -4894,13 +5624,15 @@ class MainActivity : Activity() {
                 isSingleLine = true
             }
         }
-        val name = field("Nazwa agenta")
-        val responsibility = field("Zakres odpowiedzialności", true)
-        val keywords = field("Słowa kluczowe, oddzielone przecinkami")
-        val prompt = field("Dodatkowe instrukcje systemowe (bez kluczy API i haseł)", true)
+        val name = field("Nazwa agenta").apply { setText(existing?.name.orEmpty()) }
+        val responsibility = field("Zakres odpowiedzialności", true).apply { setText(existing?.responsibility.orEmpty()) }
+        val keywords = field("Słowa kluczowe, oddzielone przecinkami").apply { setText(existing?.keywords?.joinToString(", ").orEmpty()) }
+        val prompt = field("Dodatkowe instrukcje systemowe (bez kluczy API i haseł)", true).apply { setText(existing?.systemPromptOverride.orEmpty()) }
         val categories = AgentCatalog.all.map { it.category }.distinct().sorted()
         val category = Spinner(this).apply {
             adapter = ArrayAdapter(this@MainActivity, android.R.layout.simple_spinner_dropdown_item, categories)
+            val selected = categories.indexOf(existing?.category)
+            setSelection(if (selected >= 0) selected else 0)
         }
         root.addView(TextView(this).apply { text = "Nazwa"; setTextColor(white) })
         root.addView(name)
@@ -4918,9 +5650,9 @@ class MainActivity : Activity() {
         })
 
         val dialog = AlertDialog.Builder(this)
-            .setTitle("Dodaj własnego agenta")
+            .setTitle(if (existing == null) "Dodaj własnego agenta" else "Edytuj własnego agenta")
             .setView(root)
-            .setPositiveButton("Zapisz", null)
+            .setPositiveButton(if (existing == null) "Dodaj" else "Zapisz zmiany", null)
             .setNegativeButton("Anuluj", null)
             .create()
         dialog.setOnShowListener {
@@ -4936,18 +5668,24 @@ class MainActivity : Activity() {
                     "Jesteś agentem $agentName. Twoja odpowiedzialność: $agentResponsibility. Nie zmyślaj dowodów i nie ujawniaj sekretów."
                 }
                 val agent = pl.aimasterpro.app.agents.AgentSpec(
-                    id = "custom-${java.util.UUID.randomUUID().toString().take(8)}",
+                    id = existing?.id ?: "custom-${java.util.UUID.randomUUID().toString().take(8)}",
                     name = agentName,
                     category = categories.getOrElse(category.selectedItemPosition) { categories.first() },
                     responsibility = agentResponsibility,
                     keywords = agentKeywords,
                     systemPromptOverride = customPrompt
                 )
-                if (!pl.aimasterpro.app.core.AgentManagerStore.addCustomAgent(this, agent)) {
-                    toast("Nie udało się zapisać profilu. Sprawdź limit 24 profili i stan magazynu.")
+                val saved = if (existing == null) {
+                    pl.aimasterpro.app.core.AgentManagerStore.addCustomAgent(this, agent)
+                } else {
+                    pl.aimasterpro.app.core.AgentManagerStore.updateCustomAgent(this, agent)
+                }
+                if (!saved) {
+                    toast(if (existing == null) "Nie udało się dodać profilu. Sprawdź limit 24 profili i stan magazynu."
+                        else "Nie udało się zapisać zmian. Istniejący profil pozostał bez zmian.")
                     return@setOnClickListener
                 }
-                logAgent("Menadżer agentów: dodano własny profil ${agent.id}")
+                logAgent("Menadżer agentów: ${if (existing == null) "dodano" else "zaktualizowano"} własny profil ${agent.id}")
                 dialog.dismiss()
                 showAgentCatalogManager()
             }
@@ -4967,7 +5705,7 @@ class MainActivity : Activity() {
     }
 
     private fun assignModelToAgent(role: AgentRole, modelSpec: pl.aimasterpro.app.core.FreeModelSpec) {
-        if (!modelSpec.freeStatus.isAllowedForSelection || !pl.aimasterpro.app.core.FreeModelsCatalog.isFreeModel(modelSpec.providerId, modelSpec.modelId)) {
+        if (!modelSpec.freeStatus.isAllowedForSelection || !pl.aimasterpro.app.core.FreeModelsCatalog.isFreeModel(modelSpec.providerId, modelSpec.modelId, modelSpec.endpointBaseUrl)) {
             toast("Ten model nie ma potwierdzonego darmowego statusu. Nie można go przypisać.")
             return
         }
@@ -5067,12 +5805,12 @@ class MainActivity : Activity() {
         fun populateList(query: String) {
             modelsContainer.removeAllViews()
             val all = pl.aimasterpro.app.core.FreeModelsCatalog.loadCatalog(this)
-            val verifiedCount = all.count { it.freeStatus.isAllowedForSelection && pl.aimasterpro.app.core.FreeModelsCatalog.isFreeModel(it.providerId, it.modelId) }
+            val verifiedCount = all.count { it.freeStatus.isAllowedForSelection && pl.aimasterpro.app.core.FreeModelsCatalog.isFreeModel(it.providerId, it.modelId, it.endpointBaseUrl) }
             val unknownCount = all.count { it.freeStatus == pl.aimasterpro.app.core.FreeStatus.UNKNOWN }
             catalogSummaryTv.text = "Potwierdzone darmowe: $verifiedCount   •   Niezweryfikowane: $unknownCount (zablokowane)"
             val filtered = all.filter {
                 it.freeStatus.isAllowedForSelection &&
-                pl.aimasterpro.app.core.FreeModelsCatalog.isFreeModel(it.providerId, it.modelId) &&
+                pl.aimasterpro.app.core.FreeModelsCatalog.isFreeModel(it.providerId, it.modelId, it.endpointBaseUrl) &&
                 (query.isBlank() || it.modelName.contains(query, true) || it.modelId.contains(query, true) || it.providerName.contains(query, true))
             }
             if (filtered.isEmpty()) {
@@ -5159,12 +5897,14 @@ class MainActivity : Activity() {
                                 cfg.baseUrl.contains("groq.com", true) -> "groq"
                                 cfg.baseUrl.contains("generativelanguage.googleapis.com", true) -> "gemini"
                                 cfg.baseUrl.contains("api.mistral.ai", true) -> "mistral"
-                                cfg.baseUrl.contains("11434") || cfg.name.contains("ollama", true) -> "ollama"
+                                pl.aimasterpro.app.core.FreeModelsCatalog.isLocalOllamaEndpoint(cfg.baseUrl) -> "ollama"
                                 else -> cfg.id
                             }
                             refreshedProviders.add(canonicalProvider)
                             result.getOrDefault(emptyList()).forEach { mid ->
-                                val spec = pl.aimasterpro.app.core.FreeModelsCatalog.classifyDiscoveredModel(canonicalProvider, mid, cfg.name, cfg.id)
+                                val spec = pl.aimasterpro.app.core.FreeModelsCatalog.classifyDiscoveredModel(
+                                    canonicalProvider, mid, cfg.name, cfg.id, cfg.baseUrl
+                                )
                                 if (discoveredList.none { it.providerId == spec.providerId && it.modelId == spec.modelId }) discoveredList.add(spec)
                             }
                         }
@@ -5470,7 +6210,7 @@ class MainActivity : Activity() {
             val configuredId = agentProviders[role.name] ?: return@mapNotNull null
             val config = loadProvider(configuredId)?.takeIf { providerReady(it) && isVerifiedFreeConfig(it) }
                 ?: return@mapNotNull null
-            val fingerprint = "${config.baseUrl.trimEnd('/').lowercase(java.util.Locale.ROOT)}:${config.model.lowercase(java.util.Locale.ROOT)}"
+            val fingerprint = "${pl.aimasterpro.app.core.ProviderCatalogCachePolicy.normalizeBaseUrl(config.baseUrl)}:${config.model}"
             pl.aimasterpro.app.agents.PatchPeerReviewPlanner.Assignment(spec, fingerprint)
         }
         val requestId = UUID.randomUUID().toString()
@@ -5550,6 +6290,7 @@ class MainActivity : Activity() {
                         agentProvidersMap = configByAgent,
                         fallbackProviders = emptyList(),
                         isFreeProvider = { candidate -> isVerifiedFreeConfig(candidate) },
+                            isProviderAllowed = { candidate -> isProviderAllowedForRouting(candidate) },
                         mode = reviewMode,
                         projectContext = "Recenzja patcha dla pliku $path. Treść diffu znajduje się w poleceniu recenzenta.",
                         onLog = { sender, recipient, message, eventStatus ->
@@ -5601,8 +6342,9 @@ class MainActivity : Activity() {
                             if (store.isStorageUncertain()) {
                                 logAgentForChat(chatId, "⛔ Magazyn konfiguracji ma niepewny stan. Żądanie do dostawcy nie zostało wysłane; uruchom ponownie aplikację.")
                                 false
-                            } else {
-                                val safeBaseUrl = pl.aimasterpro.app.core.TaskCheckpointStore.safeBaseUrlForCheckpoint(actualProvider.baseUrl)
+                            } else if (!ensureBudgetReservationTarget(reviewBudget.reservationId, task.id, task.agentId, actualProvider)) {
+                                    false
+                                } else {                                val safeBaseUrl = pl.aimasterpro.app.core.TaskCheckpointStore.safeBaseUrlForCheckpoint(actualProvider.baseUrl)
                                 pl.aimasterpro.app.core.TaskCheckpointStore.record(
                                     this,
                                     pl.aimasterpro.app.core.TaskCheckpointStore.Event(
@@ -5705,9 +6447,16 @@ class MainActivity : Activity() {
         val interruptedTasks = taskStates.filter { it.status in setOf("INTERRUPTED", "TIMED_OUT", "CANCELLED", "FAILED", "BLOCKED") }
         val recentFailures = events.filter { it.status.uppercase(java.util.Locale.ROOT) in setOf("FAILED", "ERROR", "BLOCKED", "CANCELLED", "TIMED_OUT", "INTERRUPTED") }.take(5)
 
-        card("AI MASTER PRO • COMMAND CENTER", "Jeden ekran kontroli zespołu, budżetu, jakości, pamięci i bezpieczeństwa zmian. Dane operacyjne są lokalne; odczyt tego panelu nie uruchamia zapytań API.")
+        card("AiFORTeca 0.2 • CENTRUM MASTER", "Główne centrum sterowania zespołem AI. Wybierz dział: agenci, zadania, pamięć, komunikacja, dostawcy lub diagnostyka. Dane operacyjne pozostają lokalne; odczyt panelu nie uruchamia zapytań API.");
+        val departmentsCard = card("Działy AiFORTeci", "Każdy obszar ma własny ekran. MASTER pozostaje koordynatorem, a istniejące mechanizmy i dane są zachowane.")
+        action("♟  ZESPÓŁ AGENTÓW", departmentsCard) { navigate("Agenci") }
+        action("☷  ZADANIA I KOLEJKA MASTER-A", departmentsCard) { navigate("Zadania") }
+        action("🧠  PAMIĘĆ SYSTEMU", departmentsCard) { navigate("Pamięć") }
+        action("⇄  KOMUNIKACJA AGENTÓW", departmentsCard) { navigate("Rozmowy") }
+        action("◇  DOSTAWCY I MODELE", departmentsCard) { navigate("Modele") }
+        action("✉  OTWÓRZ CZAT MASTER-A", departmentsCard) { navigate("Czat") }
         card("Stan wykonania", "Status: ${if (isThinking) "PRACA W TOKU" else "GOTOWY"}\n${if (isThinking) thinkingLabel else "Brak aktywnego zadania."}\nAgenci z historią: ${agentStats.size} • katalog agentów: ${pl.aimasterpro.app.agents.AgentCatalog.all.size}\nZdarzenia dziennika: ${events.size} • ostatnie 5 awarii/blokad: ${recentFailures.size}\nCheckpointy zadań: ${taskStates.size} • przerwane/nieudane: ${interruptedTasks.size}")
-        card("Budżet API", "Dzisiaj: ${budget.recordedTodayTokens} zużytych + ${budget.activeReservedTokens} zarezerwowanych / ${budget.dailyLimitTokens} tokenów\nPozostało: ${budget.remainingTokens}\nKoszt 30 dni: ${"%.4f".format(java.util.Locale.US, budget.recorded30DayCostPln)} zł / ${"%.2f".format(java.util.Locale.US, budget.monthlyCostLimitPln)} zł\nRezerwa kosztów: ${"%.4f".format(java.util.Locale.US, budget.activeReservedCostPln)} zł")
+        card("Budżet API", "Dzisiaj: ${budget.recordedTodayTokens} zużytych + ${budget.activeReservedTokens} zarezerwowanych / ${budget.dailyLimitTokens} tokenów\nPozostało: ${budget.remainingTokens}\nKoszt znany 30 dni: ${"%.4f".format(java.util.Locale.US, budget.recorded30DayCostPln)} zł / ${"%.2f".format(java.util.Locale.US, budget.monthlyCostLimitPln)} zł\nRekordy z nieznanym kosztem: ${budget.unknownCostRecords} (nie są traktowane jako 0 zł)\nRezerwa kosztów: ${"%.4f".format(java.util.Locale.US, budget.activeReservedCostPln)} zł")
         card("Jakość i pamięć", "Oceny: ${quality.total} • pozytywne: ${quality.positive} • negatywne: ${quality.negative}\nAgenci ocenieni przez użytkownika: ${quality.ratedAgents}\nZatwierdzone wnioski jakościowe: ${quality.approved}\nPamięć operacyjna per agent: ${memories.size}/300 wpisów")
         card("Dostawcy i limity", if (cooldowns.isEmpty()) "Brak aktywnych trwałych cooldownów po HTTP 429." else cooldowns.joinToString("\n") { state ->
             val seconds = ((state.until - now).coerceAtLeast(0L) / 1000L)
@@ -6195,13 +6944,161 @@ class MainActivity : Activity() {
             }.show()
     }
 
+    private fun showSettings() {
+        card("USTAWIENIA AIFORTECA", "Centralne wejście do konfiguracji systemu. Zmiany w dostawcach, przypisaniach agentów i pamięci pozostają w swoich działach, z zachowaniem istniejących danych.")
+        card("Ochrona danych", "Nie wykonuj masowego resetu ani automatycznego czyszczenia. Klucze API, profile dostawców, rozmowy, zadania, definicje agentów i pamięć są danymi trwałymi. Operacje o skutkach nieodwracalnych wymagają osobnego potwierdzenia.")
+        action("Dostawcy i modele", onClick = { navigate("Modele") })
+        action("Zespół agentów", onClick = { navigate("Agenci") })
+        action("Pamięć wspólna", onClick = { navigate("Pamięć") })
+        action("Diagnostyka i limity", onClick = { navigate("Diagnostyka") })
+        card("Stan wdrożenia kontroli zmian", "Panel ustawień jest punktem wejścia. Audytowalny rejestr operacji zapisu, aktualizacji i usuwania oraz system uprawnień agentów są osobnym wymaganiem wdrożeniowym — nie oznaczamy ich jako ukończonych, dopóki nie obejmą wszystkich magazynów danych.")
+    }
+
     private fun showDiagnostics() {
         val usage = pl.aimasterpro.app.core.ApiTokenTracker.budgetUsageSnapshot(this)
         val used = usage.recordedTodayTokens + usage.activeReservedTokens
         val percent = (used * 100.0 / usage.dailyLimitTokens.coerceAtLeast(1L)).toInt().coerceIn(0, 999)
         card("Centrum diagnostyczne", "Szybka kontrola lokalnego budżetu, rezerwacji i konfiguracji. Klucze API nie są wyświetlane ani kopiowane.")
         addCompanionTrustCard()
-        card("Smart Budget — stan dzienny", "Zużyto według API: ${usage.recordedTodayTokens} tokenów\nAktywne rezerwacje: ${usage.activeReservedTokens} tokenów\nŁącznie zajęte: $used / ${usage.dailyLimitTokens} ($percent%)\nPozostało do rezerwacji: ${usage.remainingTokens} tokenów\nLimit na jednego agenta: ${usage.perAgentLimitTokens} tokenów\nKoszt zapisany z 30 dni: ${String.format(java.util.Locale.US, "%.4f", usage.recorded30DayCostPln)} PLN\nAktywny koszt zarezerwowany: ${String.format(java.util.Locale.US, "%.4f", usage.activeReservedCostPln)} PLN\nLimit kosztów: ${if (usage.monthlyCostLimitPln > 0.0) "${usage.monthlyCostLimitPln} PLN" else "wyłączony"}")
+        // Unified read-only feed: queue transitions plus durable handoff states.
+        val queueDiagnostics = pl.aimasterpro.app.core.MasterTaskQueueStore.snapshot(this)
+        val handoffDiagnostics = pl.aimasterpro.app.core.AgentHandoffStore.snapshot(this)
+        val diagnosticsFeed = pl.aimasterpro.app.core.DiagnosticsEventFeed.build(
+            queueDiagnostics, handoffDiagnostics, limit = 12
+        )
+        card("Ostatnie zdarzenia kolejki i agentów",
+            "Połączony wycinek trwałego dziennika kolejki i skrzynki przekazań. Treści raportów agentów nie są kopiowane do diagnostyki.")
+        action("↻ Odśwież zdarzenia", onClick = {
+            showShell("Diagnostyka")
+            showDiagnostics()
+        })
+        if (!diagnosticsFeed.isComplete) {
+            card("Częściowe źródła diagnostyczne",
+                "Dziennik kolejki: ${diagnosticsFeed.queueStatus} • Skrzynka przekazań: ${diagnosticsFeed.handoffStatus}. Dostępne wpisy pokazuję częściowo; niedostępne źródło nie jest traktowane jako puste.")
+        }
+        if (diagnosticsFeed.entries.isEmpty()) {
+            card("Brak dostępnych zdarzeń",
+                "Po utworzeniu zadania lub rozpoczęciu pracy zespołu pojawią się tu zdarzenia operacyjne.")
+        } else {
+            val taskTitles = queueDiagnostics.tasks.associate { it.id to it.title }
+            val eventTime = java.text.SimpleDateFormat("dd.MM HH:mm:ss", java.util.Locale.getDefault())
+            diagnosticsFeed.entries.forEach { event ->
+                val kind = when (event.operation) {
+                    "HANDOFF_PENDING" -> "PRZEKAZANIE OCZEKUJE"
+                    "HANDOFF_CLAIMED" -> "PRZEKAZANIE PRZEJĘTE"
+                    "HANDOFF_ACKNOWLEDGED" -> "PRZEKAZANIE POTWIERDZONE"
+                    "HANDOFF_REJECTED" -> "PRZEKAZANIE ODRZUCONE"
+                    "HANDOFF_MANUALLY_RESOLVED" -> "PRZEKAZANIE ZAMKNIĘTE — WYNIK NIEZNANY"
+                    "AGENT_TRACE" -> "ŚLAD TECHNICZNY AGENTA"
+                    "AGENT_MESSAGE" -> "WIADOMOŚĆ"
+                    "AGENT_PROGRESS" -> "POSTĘP AGENTA"
+                    "AGENT_RESULT" -> "WYNIK AGENTA"
+                    "TRANSITION" -> "ZMIANA STANU"
+                    "RECOVER_INTERRUPTED" -> "ODZYSKIWANIE PRZERWANEGO ZADANIA"
+                    "CREATE" -> "UTWORZENIE ZADANIA"
+                    "ASSIGN" -> "PRZYDZIAŁ AGENTÓW"
+                    else -> event.operation
+                }
+                val route = if (event.recipient.isNotBlank()) " → ${event.recipient}" else ""
+                val provider = listOf(event.providerId, event.model)
+                    .filter { it.isNotBlank() }.joinToString(" / ")
+                val metadata = listOf(
+                    taskTitles[event.taskId] ?: event.taskId,
+                    "${event.actor}${route}",
+                    provider,
+                    event.source,
+                    eventTime.format(java.util.Date(event.timestamp))
+                ).filter { it.isNotBlank() }.joinToString(" • ")
+                card(kind, "${metadata}\n${event.detail.take(350)}")
+            }
+        }
+
+        val handoffTime = java.text.SimpleDateFormat("dd.MM HH:mm:ss", java.util.Locale.getDefault())
+        if (handoffDiagnostics.status != pl.aimasterpro.app.core.AgentHandoffStore.ReadStatus.AVAILABLE) {
+            card("Skrzynka przekazań agentów — niedostępna",
+                "Stan: ${handoffDiagnostics.status}. Nie zakładam, że brak odczytu oznacza pustą skrzynkę.")
+        } else {
+            val taskStates = queueDiagnostics.tasks.associate { it.id to it.status }
+            val unresolved = handoffDiagnostics.messages.filter {
+                it.state == pl.aimasterpro.app.core.AgentHandoffStore.State.PENDING ||
+                    it.state == pl.aimasterpro.app.core.AgentHandoffStore.State.CLAIMED
+            }.takeLast(8).asReversed()
+            val pendingCount = handoffDiagnostics.messages.count {
+                it.state == pl.aimasterpro.app.core.AgentHandoffStore.State.PENDING
+            }
+            val claimedCount = handoffDiagnostics.messages.count {
+                it.state == pl.aimasterpro.app.core.AgentHandoffStore.State.CLAIMED
+            }
+            val manuallyResolved = handoffDiagnostics.messages
+                .filter { it.state == pl.aimasterpro.app.core.AgentHandoffStore.State.MANUALLY_RESOLVED }
+            val rejected = handoffDiagnostics.messages
+                .filter { it.state == pl.aimasterpro.app.core.AgentHandoffStore.State.REJECTED }
+            card("Skrzynka przekazań agentów",
+                "Oczekujące: $pendingCount • Przejęte bez potwierdzenia: $claimedCount • Odrzucone: ${rejected.size} • Ręcznie zamknięte jako nieznane: ${manuallyResolved.size}")
+            if (unresolved.isEmpty()) {
+                card("Brak nierozstrzygniętych przekazań",
+                    "Wszystkie zapisane przekazania mają stan końcowy.")
+            } else {
+                unresolved.forEach { handoff ->
+                    val running = taskStates[handoff.taskId] == pl.aimasterpro.app.core.MasterTaskQueueStore.Status.RUNNING
+                    val stateLabel = when (handoff.state) {
+                        pl.aimasterpro.app.core.AgentHandoffStore.State.PENDING ->
+                            if (running) "OCZEKUJE NA ODBIORCĘ" else "NIEODEBRANE PO ZATRZYMANIU ZADANIA"
+                        pl.aimasterpro.app.core.AgentHandoffStore.State.CLAIMED ->
+                            if (running) "PRZEJĘTE — W TOKU" else "NIEPEWNE PO PRZERWANIU — BEZ AUTOMATYCZNEGO PONOWIENIA"
+                        else -> handoff.state.name
+                    }
+                    val taskTitle = queueDiagnostics.tasks.firstOrNull { it.id == handoff.taskId }?.title ?: handoff.taskId
+                    card(stateLabel,
+                        "$taskTitle • ${handoff.senderAgentId} → ${handoff.recipientAgentId} • przebieg #${handoff.runId}\n" +
+                            "ID: ${handoff.id} • Utworzono: ${handoffTime.format(java.util.Date(handoff.createdAt))} • " +
+                            "Aktualizacja: ${handoffTime.format(java.util.Date(handoff.updatedAt))}")
+                    if (handoff.state == pl.aimasterpro.app.core.AgentHandoffStore.State.CLAIMED &&
+                        taskStates[handoff.taskId] == pl.aimasterpro.app.core.MasterTaskQueueStore.Status.BLOCKED) {
+                        action("Rozstrzygnij ręcznie — wynik nieznany") {
+                            android.app.AlertDialog.Builder(this)
+                                .setTitle("Zamknąć niepewne przekazanie?")
+                                .setMessage(
+                                    "To przekazanie zostało przejęte, ale nie potwierdzono odbioru. " +
+                                    "Nie wiadomo, czy agent wykonał żądanie zewnętrzne. " +
+                                    "Najpierw sprawdź historię API.\n\n" +
+                                    "Ręczne zamknięcie NIE oznacza wykonania, NIE potwierdza odbioru " +
+                                    "i NIE uruchamia ponownie żądania."
+                                )
+                                .setNegativeButton("Anuluj", null)
+                                .setPositiveButton("Zamknij jako nierozstrzygnięte") { _, _ ->
+                                    val saved = pl.aimasterpro.app.core.AgentHandoffStore.resolveUncertainClaim(
+                                        this, handoff.taskId, handoff.runId, handoff.id, "USER",
+                                        "Ręczne zamknięcie przez użytkownika jako wynik nieznany; brak potwierdzenia wykonania."
+                                    )
+                                    toast(if (saved) "Zapisano ręczne rozstrzygnięcie. Wynik nadal pozostaje nieznany."
+                                        else "Nie zapisano decyzji. Stan zadania lub przekazania mógł się zmienić.")
+                                    showShell("Diagnostyka")
+                                    showDiagnostics()
+                                }
+                                .show()
+                        }
+                    }
+                }
+            }
+            manuallyResolved.takeLast(5).asReversed().forEach { handoff ->
+                val taskTitle = queueDiagnostics.tasks.firstOrNull { it.id == handoff.taskId }?.title ?: handoff.taskId
+                card("RĘCZNIE ZAMKNIĘTE — WYNIK NIEZNANY",
+                    "$taskTitle • ${handoff.senderAgentId} → ${handoff.recipientAgentId} • przebieg #${handoff.runId}\n" +
+                        "ID: ${handoff.id} • Decyzja: ${handoff.resolutionActor} • " +
+                        handoffTime.format(java.util.Date(handoff.resolvedAt)) + "\n" +
+                        "Ręczne zamknięcie nie potwierdza wykonania żądania.")
+            }
+            rejected.takeLast(5).asReversed().forEach { handoff ->
+                val taskTitle = queueDiagnostics.tasks.firstOrNull { it.id == handoff.taskId }?.title ?: handoff.taskId
+                card("PRZEKAZANIE ODRZUCONE PRZEZ ODBIORCĘ",
+                    "$taskTitle • ${handoff.senderAgentId} → ${handoff.recipientAgentId} • przebieg #${handoff.runId}\n" +
+                        "ID: ${handoff.id} • Odrzucono: ${handoffTime.format(java.util.Date(handoff.updatedAt))}\n" +
+                        "Odbiorca odrzucił przekazanie; szczegóły pozostają w bezpiecznym dzienniku.")
+            }
+        }
+
+        card("Smart Budget — stan dzienny", "Zużyto według API: ${usage.recordedTodayTokens} tokenów\nAktywne rezerwacje: ${usage.activeReservedTokens} tokenów\nŁącznie zajęte: $used / ${usage.dailyLimitTokens} ($percent%)\nPozostało do rezerwacji: ${usage.remainingTokens} tokenów\nLimit na jednego agenta: ${usage.perAgentLimitTokens} tokenów\nKoszt znany z 30 dni: ${String.format(java.util.Locale.US, "%.4f", usage.recorded30DayCostPln)} PLN\nRekordy z nieznanym kosztem: ${usage.unknownCostRecords} (nie są liczone jako 0 PLN)\nAktywny koszt zarezerwowany: ${String.format(java.util.Locale.US, "%.4f", usage.activeReservedCostPln)} PLN\nLimit kosztów: ${if (usage.monthlyCostLimitPln > 0.0) "${usage.monthlyCostLimitPln} PLN" else "wyłączony"}")
         action("Otwórz Monitor API i limity budżetowe", onClick = {
             selectedMonitorPeriod = "Dzisiaj"
             showShell("Monitor API")
@@ -6217,6 +7114,7 @@ class MainActivity : Activity() {
                 appendLine("Pozostało: ${usage.remainingTokens}")
                 appendLine("Limit agenta: ${usage.perAgentLimitTokens}")
                 appendLine("Koszt 30 dni: ${String.format(java.util.Locale.US, "%.4f", usage.recorded30DayCostPln)} PLN")
+                appendLine("Rekordy z nieznanym kosztem 30 dni: ${usage.unknownCostRecords}")
                 appendLine("Aktywny koszt rezerwacji: ${String.format(java.util.Locale.US, "%.4f", usage.activeReservedCostPln)} PLN")
                 appendLine("Limit kosztów: ${usage.monthlyCostLimitPln} PLN (0 = wyłączony)")
                 appendLine("\nUwaga: darmowy model API nadal zużywa tokeny i może podlegać limitom dostawcy.")
@@ -6242,6 +7140,600 @@ class MainActivity : Activity() {
             }.show()
         })
         card("Ważne", "Darmowy model nie oznacza nielimitowanego użycia. Smart Budget nadal kontroluje dzienną pulę tokenów aplikacji, a dostawca może dodatkowo nakładać własne limity. Zwiększaj limit dzienny tylko wtedy, gdy świadomie akceptujesz większe zużycie.")
+    }
+
+    private fun showTasksCenter() {
+        val col = content
+        col.setPadding(dp(16), dp(14), dp(16), dp(24))
+        val queueStore = pl.aimasterpro.app.core.MasterTaskQueueStore
+        val queue = queueStore.snapshot(this)
+        val work = pl.aimasterpro.app.core.MasterWorkJournalStore.latest(this, 40)
+        val checkpoints = pl.aimasterpro.app.core.TaskCheckpointStore.latest(this)
+        val latestByTask = checkpoints.distinctBy { it.taskId }
+
+        card("CENTRUM ZADAŃ • MASTER", "Kolejka operacyjna połączona z TeamRunEngine i istniejącym Smart Budget. Przydziały uruchamiają rzeczywistą pracę agentów; raporty i wyniki są archiwizowane.")
+        if (queue.status != pl.aimasterpro.app.core.MasterTaskQueueStore.ReadStatus.AVAILABLE) {
+            card("KOLEJKA NIEDOSTĘPNA", "Stan magazynu: ${queue.status}\nKod: ${queue.errorCode}\nZapis i przydzielanie są zablokowane. Dane nie zostaną automatycznie nadpisane.")
+        } else {
+            val counts = pl.aimasterpro.app.core.MasterTaskQueueStore.Status.values().associateWith { status ->
+                queue.tasks.count { it.status == status }
+            }
+            card("STAN WORKSPACE", "Wszystkie: ${queue.tasks.size} • oczekujące: ${counts[pl.aimasterpro.app.core.MasterTaskQueueStore.Status.QUEUED]} • przydzielone: ${counts[pl.aimasterpro.app.core.MasterTaskQueueStore.Status.ASSIGNED]}\nW toku: ${counts[pl.aimasterpro.app.core.MasterTaskQueueStore.Status.RUNNING]} • wstrzymane: ${counts[pl.aimasterpro.app.core.MasterTaskQueueStore.Status.PAUSED]} • zablokowane: ${counts[pl.aimasterpro.app.core.MasterTaskQueueStore.Status.BLOCKED]}\nUkończone: ${counts[pl.aimasterpro.app.core.MasterTaskQueueStore.Status.COMPLETED]} • błędne: ${counts[pl.aimasterpro.app.core.MasterTaskQueueStore.Status.FAILED]} • anulowane: ${counts[pl.aimasterpro.app.core.MasterTaskQueueStore.Status.CANCELLED]}\nZdarzenia audytu: ${queue.events.size}")
+            action("＋ UTWÓRZ ZADANIE MASTER-A") {
+                val titleInput = field("Nazwa zadania")
+                val objectiveInput = field("Cel i kryteria wykonania")
+                objectiveInput.setSingleLine(false)
+                objectiveInput.minLines = 3
+                objectiveInput.maxLines = 5
+                val form = LinearLayout(this).apply {
+                    orientation = LinearLayout.VERTICAL
+                    setPadding(dp(20), dp(8), dp(20), 0)
+                    addView(titleInput)
+                    addView(objectiveInput, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(8) })
+                }
+                AlertDialog.Builder(this).setTitle("Nowe zadanie w kolejce")
+                    .setView(form)
+                    .setNegativeButton("Anuluj", null)
+                    .setPositiveButton("Dodaj do kolejki") { _, _ ->
+                        val taskTitle = titleInput.text.toString().trim()
+                        val objective = objectiveInput.text.toString().trim()
+                        if (queueStore.enqueue(this, "task-" + java.util.UUID.randomUUID().toString(),
+                                taskTitle, objective)) {
+                            toast("Zadanie zapisane. MASTER może teraz przydzielić agentów.")
+                            showShell("Zadania"); showTasksCenter()
+                        } else toast("Nie zapisano zadania. Sprawdź nazwę, cel i stan magazynu.")
+                    }.show()
+            }
+            action("↻ ODŚWIEŻ WORKSPACE", onClick = { showShell("Zadania"); showTasksCenter() })
+
+            if (queue.tasks.isEmpty()) {
+                card("KOLEJKA JEST PUSTA", "Dodaj zadanie. Następnie MASTER może przypisać jednego lub kilku aktywnych agentów.")
+            }
+            queue.tasks.sortedWith(compareBy<pl.aimasterpro.app.core.MasterTaskQueueStore.Task> { it.status.ordinal }
+                .thenBy { it.priority }.thenByDescending { it.updatedAt }).forEach { task ->
+                val assigned = task.assignedAgentIds.ifEmpty { listOf("brak") }.joinToString(", ")
+                val deps = task.dependencies.ifEmpty { listOf("brak") }.joinToString(", ")
+                val stamp = java.text.SimpleDateFormat("dd.MM.yyyy HH:mm", java.util.Locale.getDefault())
+                    .format(java.util.Date(task.updatedAt))
+                val relatedEvents = queue.events.filter { it.taskId == task.id }.takeLast(5).asReversed()
+                    .joinToString("\n") { "${it.actor} • ${it.fromStatus.ifBlank { "—" }} → ${it.toStatus} • ${it.detail}" }
+                val box = card("${task.title}  •  P${task.priority}", "Status: ${task.status}\nID: ${task.id}\nCel: ${task.objective}\nAgenci: $assigned\nZależności: $deps\nBieżący krok: ${task.currentStep}\nAktualizacja: $stamp")
+                if (task.runId > 0 && task.assignedAgentIds.isNotEmpty()) {
+                    val archive = pl.aimasterpro.app.core.TaskResultArchive
+                    if (!archive.isArchiveReadable(this)) {
+                        card("ARCHIWUM RAPORTÓW NIEDOSTĘPNE", "Nie można bezpiecznie odczytać raportów dla przebiegu ${task.runId}. Zachowano dane; nie pokazuję skrótów jako pełnych raportów.")
+                    } else {
+                        val archivedReports = task.assignedAgentIds.mapNotNull { agentId ->
+                            val reportId = archive.executionTaskId(task.id, agentId, task.runId)
+                            archive.get(this, reportId)?.let { agentId to it }
+                        }
+                        if (archivedReports.isNotEmpty()) {
+                            card("RAPORTY AGENTÓW • PRZEBIEG ${task.runId}",
+                                "Dostępne pełne raporty: ${archivedReports.size}/${task.assignedAgentIds.size}. Każdy raport jest przypisany do konkretnego agenta i numeru przebiegu.")
+                            archivedReports.forEach { (agentId, entry) ->
+                                action("📄 OTWÓRZ PEŁNY RAPORT • $agentId", box) {
+                                    showQueueAgentReport(task.title, agentId, entry)
+                                }
+                            }
+                        }
+                    }
+                }
+                if (task.status in setOf(pl.aimasterpro.app.core.MasterTaskQueueStore.Status.QUEUED,
+                        pl.aimasterpro.app.core.MasterTaskQueueStore.Status.PAUSED)) {
+                    action("PRZYDZIEL AGENTÓW", box) {
+                        val catalog = pl.aimasterpro.app.core.AgentManagerStore.enabledCatalog(this)
+                        if (catalog.isEmpty()) { toast("Brak aktywnych agentów albo magazyn katalogu jest niedostępny."); return@action }
+                        val selected = BooleanArray(catalog.size) { catalog[it].id in task.assignedAgentIds }
+                        AlertDialog.Builder(this).setTitle("Przydział: ${task.title}")
+                            .setMultiChoiceItems(catalog.map { "${it.name} — ${it.category}" }.toTypedArray(), selected) { _, which, checked ->
+                                selected[which] = checked
+                            }.setNegativeButton("Anuluj", null)
+                            .setPositiveButton("Zapisz przydział") { _, _ ->
+                                val ids = catalog.indices.filter { selected[it] }.map { catalog[it].id }
+                                if (queueStore.assign(this, task.id, ids)) {
+                                    toast("Zapisano przydział: ${ids.size} agentów.")
+                                    showShell("Zadania"); showTasksCenter()
+                                } else toast("Przydział odrzucony. Sprawdź status zadania i aktywność agentów.")
+                            }.show()
+                    }
+                }
+                if (task.status == pl.aimasterpro.app.core.MasterTaskQueueStore.Status.ASSIGNED) {
+                    action("▶ URUCHOM PRZYDZIELONY ZESPÓŁ", box) {
+                        executeQueuedMasterTask(task.id)
+                    }
+                }
+                if (task.status == pl.aimasterpro.app.core.MasterTaskQueueStore.Status.RUNNING) {
+                    action("■ ANULUJ AKTYWNE WYKONANIE", box) {
+                        AlertDialog.Builder(this).setTitle("Przerwać wykonanie zadania?")
+                            .setMessage("Aktywne żądania HTTP zostaną anulowane. Zadanie pozostanie w historii jako CANCELLED.")
+                            .setNegativeButton("Wróć", null)
+                            .setPositiveButton("Przerwij") { _, _ -> cancelQueuedMasterTask(task.id) }
+                            .show()
+                    }
+                }
+                if (task.status == pl.aimasterpro.app.core.MasterTaskQueueStore.Status.BLOCKED) {
+                    action("ODBLOCKUJ → KOLEJKA", box) {
+                        if (queueStore.transition(this, task.id, "MASTER",
+                                pl.aimasterpro.app.core.MasterTaskQueueStore.Status.QUEUED, "MASTER przywrócił zadanie do kolejki.")) {
+                            showShell("Zadania"); showTasksCenter()
+                        } else toast("Nie udało się odblokować zadania.")
+                    }
+                }
+                if (task.status == pl.aimasterpro.app.core.MasterTaskQueueStore.Status.ASSIGNED) {
+                    action("Ⅱ WSTRZYMAJ PRZED STARTEM", box) {
+                        if (queueStore.transition(this, task.id, "USER",
+                                pl.aimasterpro.app.core.MasterTaskQueueStore.Status.PAUSED, "Wstrzymano przydział przed wysłaniem żądań do modeli.")) {
+                            showShell("Zadania"); showTasksCenter()
+                        } else toast("Nie udało się wstrzymać zadania.")
+                    }
+                }
+                if (task.status in setOf(pl.aimasterpro.app.core.MasterTaskQueueStore.Status.QUEUED,
+                        pl.aimasterpro.app.core.MasterTaskQueueStore.Status.ASSIGNED,
+                        pl.aimasterpro.app.core.MasterTaskQueueStore.Status.PAUSED,
+                        pl.aimasterpro.app.core.MasterTaskQueueStore.Status.BLOCKED)) {
+                    action("ANULUJ ZADANIE", box) {
+                        AlertDialog.Builder(this).setTitle("Anulować zadanie?")
+                            .setMessage("Zadanie pozostanie w historii. Nie usuwam jego danych ani audytu.")
+                            .setNegativeButton("Wróć", null)
+                            .setPositiveButton("Anuluj zadanie") { _, _ ->
+                                if (queueStore.transition(this, task.id, "USER",
+                                        pl.aimasterpro.app.core.MasterTaskQueueStore.Status.CANCELLED, "Anulowano przez użytkownika.")) {
+                                    showShell("Zadania"); showTasksCenter()
+                                } else toast("Nie udało się anulować zadania.")
+                            }.show()
+                    }
+                }
+                if (relatedEvents.isNotBlank()) card("Historia • ${task.title}", relatedEvents)
+            }
+        }
+
+        val active = work.count { it.status == "ACTIVE" }
+        val blocked = work.count { it.status == "BLOCKED" }
+        val paused = work.count { it.status == "PAUSED" }
+        card("DZIENNIK PLANÓW MASTER-A", "Starsze plany: ${work.size} • aktywne: $active • wstrzymane: $paused • zablokowane: $blocked\nCheckpointy: ${latestByTask.size}. Dziennik pozostaje zachowany i nie jest automatycznie migrowany do nowej kolejki.")
+        work.take(20).forEach { record ->
+            val related = latestByTask.firstOrNull { it.taskId == record.taskId }
+            card(record.title, "Status: ${record.status}\nCel: ${record.objective}\nBieżący krok: ${record.currentStep}\nCheckpoint: ${related?.status ?: "brak"}\nNastępne kroki: ${record.nextSteps.take(4).joinToString(" • ").ifBlank { "nie określono" }}")
+        }
+        if (latestByTask.isNotEmpty()) {
+            card("OSTATNIE CHECKPOINTY", latestByTask.take(20).joinToString("\n") { event ->
+                "${event.agentId} • ${event.status} • ${event.detail.take(110)}"
+            })
+        }
+    }
+
+    /** Opens the complete sanitized report for one agent and one exact queue execution. */
+    private fun showQueueAgentReport(
+        taskTitle: String,
+        agentId: String,
+        entry: pl.aimasterpro.app.core.TaskResultArchive.Entry
+    ) {
+        val createdAt = java.text.SimpleDateFormat("dd.MM.yyyy HH:mm:ss", java.util.Locale.getDefault())
+            .format(java.util.Date(entry.createdAt))
+        val reportText = buildString {
+            append("Zadanie: ").append(taskTitle).append("\n")
+            append("Agent: ").append(agentId).append("\n")
+            append("Dostawca/model: ").append(entry.providerId).append(" / ").append(entry.model).append("\n")
+            append("Zapisano: ").append(createdAt).append("\n")
+            append("ID raportu: ").append(entry.taskId).append("\n\n")
+            append(entry.report)
+        }
+        val reportView = TextView(this).apply {
+            text = reportText
+            textSize = 14f
+            setTextColor(white)
+            setTextIsSelectable(true)
+            setPadding(dp(4), dp(8), dp(4), dp(12))
+            setLineSpacing(dp(3).toFloat(), 1f)
+        }
+        val scroll = ScrollView(this).apply {
+            isFillViewport = false
+            addView(reportView, android.view.ViewGroup.LayoutParams(-1, -2))
+        }
+        AlertDialog.Builder(this)
+            .setTitle("Pełny raport • $agentId")
+            .setView(scroll)
+            .setPositiveButton("Zamknij", null)
+            .show()
+    }
+
+    /**
+     * Executes a durable queue item through the same provider routing, cost-policy guard,
+     * Smart Budget, usage ledger, checkpoints and result archive used by MASTER chat.
+     */
+    private fun executeQueuedMasterTask(taskId: String) {
+        if (isThinking || store.isStorageUncertain() || !agentAssignmentsHealthy) {
+            toast("Nie można uruchomić kolejki: trwa inne żądanie albo konfiguracja nie jest bezpiecznie uzgodniona.")
+            return
+        }
+        val queueStore = pl.aimasterpro.app.core.MasterTaskQueueStore
+        val task = queueStore.snapshot(this).tasks.firstOrNull { it.id == taskId }
+        if (task == null || task.status != pl.aimasterpro.app.core.MasterTaskQueueStore.Status.ASSIGNED ||
+            task.assignedAgentIds.isEmpty() || task.runId == Int.MAX_VALUE) {
+            toast("Zadanie nie jest gotowe do uruchomienia.")
+            return
+        }
+        synchronized(masterJournalLifecycleLock) {
+            if (activeQueueTaskId.isNotBlank() || isThinking || activeChatTaskId.isNotBlank()) {
+                toast("Inne zadanie MASTER-a jest już uruchomione.")
+                return
+            }
+            activeQueueTaskId = taskId
+        }
+        val executionRunId = task.runId + 1
+        val enabledAgentCatalog = pl.aimasterpro.app.core.AgentManagerStore.enabledCatalog(this)
+        val specs = task.assignedAgentIds.mapNotNull { id ->
+            enabledAgentCatalog.firstOrNull { it.id == id }
+        }
+        if (specs.size != task.assignedAgentIds.size) {
+            activeQueueTaskId = ""
+            toast("Co najmniej jeden przydzielony agent nie istnieje w katalogu lub jest wyłączony.")
+            return
+        }
+        val configByAgent = specs.associate { spec ->
+            val role = pl.aimasterpro.app.agents.AgentProviderRouting.roleFor(spec)
+            val assignedId = agentProviders[role.name] ?: resolvedMasterProviderId().orEmpty()
+            spec.id to loadProvider(assignedId)
+        }
+        if (configByAgent.values.any { it == null || !providerReady(it) || !isProviderAllowedForRouting(it) }) {
+            activeQueueTaskId = ""
+            toast("Brak gotowego modelu dozwolonego przez politykę kosztów dla co najmniej jednego agenta. Nie wysłano żądań.")
+            return
+        }
+        val configs = configByAgent.mapValues { it.value!! }
+        val fallback = configs.values.first()
+        val mode = currentWorkMode()
+        val projectContextBase = runCatching { pl.aimasterpro.app.core.ProjectCodebase.fullContext() }.getOrDefault("")
+        val outputTokens = 1_400L
+        val teamTasks = specs.map { spec ->
+            pl.aimasterpro.app.agents.TeamTask(
+                id = pl.aimasterpro.app.core.TaskResultArchive.executionTaskId(task.id, spec.id, executionRunId),
+                agentId = spec.id,
+                goal = task.title,
+                prompt = "Zadanie MASTER-a: ${task.title}\n\nCel i kryteria wykonania:\n${task.objective}\n\nPrzeanalizuj cel, wykonaj przydzieloną pracę na podstawie dostępnego kontekstu i zwróć raport z ustaleniami, ograniczeniami oraz weryfikacją. Nie twierdź, że zmieniłeś pliki ani wykonałeś operacje, do których nie masz narzędzi."
+            )
+        }
+        val budgetRequests = teamTasks.mapIndexed { index, teamTask ->
+            val spec = enabledAgentCatalog.firstOrNull { it.id == teamTask.agentId }
+            val cfg = configs.getValue(teamTask.agentId)
+            // Reserve headroom for the bounded 8k-character durable report handoff.
+            val chars = (spec?.systemPrompt.orEmpty().length + mode.systemInstruction.length +
+                projectContextBase.length + 18_000 + teamTask.prompt.length + 1_800 +
+                if (index > 0) 8_000 else 0)
+            pl.aimasterpro.app.core.BudgetRequest(
+                taskId = teamTask.id, agentId = teamTask.agentId, providerId = cfg.id,
+                baseUrl = cfg.baseUrl, modelName = cfg.model,
+                estimatedInputTokens = ((chars + 2) / 3).toLong(),
+                estimatedOutputTokens = outputTokens
+            )
+        }
+        val budgetPlan = runCatching { pl.aimasterpro.app.core.ApiTokenTracker.planBatch(this, budgetRequests) }
+            .getOrElse {
+                activeQueueTaskId = ""
+                toast("Smart Budget nie mógł zarezerwować limitów: ${it.message ?: "błąd magazynu"}.")
+                return
+            }
+        if (budgetPlan.reservationId.isBlank() || budgetPlan.allowedTaskIds.isEmpty()) {
+            activeQueueTaskId = ""
+            toast("Smart Budget zablokował uruchomienie. Sprawdź limity w Monitorze API.")
+            return
+        }
+        val allowed = teamTasks.filter { it.id in budgetPlan.allowedTaskIds }
+        val blocked = teamTasks.filterNot { it.id in budgetPlan.allowedTaskIds }
+        if (!queueStore.transition(this, taskId, "MASTER", pl.aimasterpro.app.core.MasterTaskQueueStore.Status.RUNNING,
+                "MASTER uruchomił TeamRunEngine dla ${allowed.size}/${teamTasks.size} agentów.")) {
+            pl.aimasterpro.app.core.ApiTokenTracker.releaseBatchReservation(budgetPlan.reservationId)
+            activeQueueTaskId = ""
+            toast("Nie udało się trwale rozpocząć zadania. Nie wysłano żądań.")
+            return
+        }
+        val startedTask = queueStore.snapshot(this).tasks.firstOrNull { it.id == taskId }
+        if (startedTask == null || startedTask.status != pl.aimasterpro.app.core.MasterTaskQueueStore.Status.RUNNING ||
+            startedTask.runId != executionRunId) {
+            pl.aimasterpro.app.core.ApiTokenTracker.releaseBatchReservation(budgetPlan.reservationId)
+            activeQueueTaskId = ""
+            toast("Nie udało się potwierdzić numeru przebiegu kolejki. Nie wysłano żądań.")
+            return
+        }
+        blocked.forEach { item ->
+            queueStore.recordAgentResult(this, taskId, item.agentId, pl.aimasterpro.app.core.MasterTaskQueueStore.Status.BLOCKED,
+                budgetPlan.blockedReasons[item.id] ?: "Zablokowano przez Smart Budget.", expectedRunId = executionRunId)
+        }
+        toast("MASTER uruchamia ${allowed.size} agentów. Wyniki będą zapisane w historii zadania.")
+        val requestScope = client.beginRequestScope()
+        activeQueueRequestScope = requestScope
+        executor.execute {
+            try {
+                val sourceContextResult = buildProjectSourceContext(task.title + "\n" + task.objective)
+                logProjectSourceContext("", sourceContextResult)
+                val projectContext = buildString {
+                    append(projectContextBase)
+                    if (sourceContextResult.status == pl.aimasterpro.app.core.ProjectSourceContextBuilder.Status.READY) {
+                        append("\n\n").append(sourceContextResult.contextText)
+                    }
+                }
+                // Durable report handoffs are ordered: recipient N+1 must receive and claim N's report
+                // before its provider request starts. Parallel execution would violate that guarantee.
+                val results = TeamRunEngine(client, maxParallel = 1, agentCatalog = enabledAgentCatalog).use { engine ->
+                    engine.runBatch(
+                        tasks = allowed,
+                        provider = fallback,
+                        agentProvidersMap = configs,
+                        fallbackProviders = listOf(fallback),
+                        isFreeProvider = { candidate -> isVerifiedFreeConfig(candidate) },
+                            isProviderAllowed = { candidate -> isProviderAllowedForRouting(candidate) },
+                        mode = mode,
+                        projectContext = projectContext,
+                        onLog = { sender, recipient, message, eventStatus ->
+                            val senderSpec = enabledAgentCatalog.firstOrNull { it.id == sender || it.name == sender }
+                            val recipientSpec = enabledAgentCatalog.firstOrNull { it.id == recipient || it.name == recipient }
+                            val senderEndpoint = senderSpec?.let { "agent:${it.id}" } ?: when {
+                                sender.equals("MASTER", true) || sender.equals("SYSTEM", true) -> sender
+                                else -> "provider:${sender.take(100)}"
+                            }
+                            val recipientEndpoint = recipientSpec?.let { "agent:${it.id}" } ?: when {
+                                recipient.equals("MASTER", true) || recipient.equals("SYSTEM", true) -> recipient
+                                else -> "provider:${recipient.take(100)}"
+                            }
+                            val senderConfig = senderSpec?.let { configs[it.id] }
+                            val traced = queueStore.withActiveRun(this, taskId, executionRunId) {
+                                queueStore.recordAgentTrace(this, taskId, senderEndpoint, recipientEndpoint,
+                                    eventStatus, message, providerId = senderConfig?.id.orEmpty(),
+                                    model = senderConfig?.model.orEmpty(), expectedRunId = executionRunId)
+                            } == true
+                            if (!traced) android.util.Log.w("AiFORTecaQueue", "Pominięto ślad techniczny dla nieaktywnego przebiegu lub nie udało się go zapisać: $taskId • $sender → $recipient")
+                            android.util.Log.i("AiFORTecaQueue", "$taskId • TRACE • $sender → $recipient • $eventStatus • ${message.take(350)}")
+                        },
+                        onUsage = { agentId, subTaskId, actualProvider, usage ->
+                            pl.aimasterpro.app.core.ApiTokenTracker.recordQuery(
+                                this, actualProvider.id, actualProvider.model, agentId, subTaskId,
+                                usage.inputTokens, usage.outputTokens, usage.reasoningTokens, usage.cachedTokens,
+                                usage.status, actualProvider.baseUrl, budgetPlan.reservationId,
+                                "queue:$taskId:$subTaskId:${actualProvider.id}",
+                                usage.cacheWriteTokens, usage.cacheWrite1hTokens, usage.reasoningTokensKnown
+                            )
+                        },
+                        unknownOutputEstimateTokens = outputTokens,
+                        onUnknownUsage = { agentId, subTaskId, actualProvider, estimatedInput, estimatedOutput ->
+                            pl.aimasterpro.app.core.ApiTokenTracker.recordQuery(
+                                this, actualProvider.id, actualProvider.model, agentId, subTaskId,
+                                estimatedInput, estimatedOutput, status = "UNAVAILABLE",
+                                baseUrl = actualProvider.baseUrl, reservationId = budgetPlan.reservationId,
+                                idempotencyKey = "queue:$taskId:$subTaskId:${actualProvider.id}"
+                            )
+                        },
+                        rankProviders = { candidates -> pl.aimasterpro.app.core.ModelHealthTracker.rank(this, candidates) },
+                        onProviderHealth = { model, success, category, latency ->
+                            pl.aimasterpro.app.core.ModelHealthTracker.record(this, model, success, category, latency)
+                        },
+                        persistedCooldownMs = { model ->
+                            runCatching { pl.aimasterpro.app.core.ProviderCooldownStore.remainingMs(this, model) }.getOrDefault(0L)
+                        },
+                        onRateLimited = { model ->
+                            runCatching { pl.aimasterpro.app.core.ProviderCooldownStore.markRateLimited(this, model) }.getOrDefault(0L)
+                        },
+                        onProviderSuccess = { model ->
+                            runCatching { pl.aimasterpro.app.core.ProviderCooldownStore.markSuccess(this, model) }
+                        },
+                        onTaskState = { item, state, detail, providerId, model, attempts ->
+                            val persisted = queueStore.withActiveRun(this, taskId, executionRunId) {
+                                val checkpointSaved = pl.aimasterpro.app.core.TaskCheckpointStore.record(
+                                    this, pl.aimasterpro.app.core.TaskCheckpointStore.Event(
+                                        item.id, item.agentId, state, detail, System.currentTimeMillis(),
+                                        providerId, model, attempts, runId = executionRunId
+                                    )
+                                )
+                                val progressSaved = queueStore.recordAgentProgress(
+                                    this, taskId, item.agentId, state, detail, providerId, model, attempts,
+                                    expectedRunId = executionRunId
+                                )
+                                checkpointSaved to progressSaved
+                            }
+                            if (persisted == null) {
+                                android.util.Log.i("AiFORTecaQueue", "Pominięto spóźniony checkpoint po zatrzymaniu przebiegu $taskId • ${item.agentId} • $state")
+                            } else {
+                                if (!persisted.first) android.util.Log.e("AiFORTecaQueue", "Nie zapisano checkpointu $taskId/${item.agentId} • $state")
+                                if (!persisted.second) android.util.Log.w("AiFORTecaQueue", "Nie zapisano postępu kolejki $taskId/${item.agentId} • $state")
+                            }
+                        },
+                        onTaskResult = { result ->
+                            queueStore.withActiveRun(this, taskId, executionRunId) {
+                                val archived = pl.aimasterpro.app.core.TaskResultArchive.put(
+                                    this, result.taskId, result.agentId, result.report,
+                                    result.providerId, result.model
+                                )
+                                if (!archived) {
+                                    false
+                                } else {
+                                val index = allowed.indexOfFirst { it.agentId == result.agentId }
+                                val inboundId = if (index > 0) {
+                                    "h-${taskId.take(30)}-$executionRunId-${allowed[index - 1].agentId.take(20)}-${result.agentId.take(20)}"
+                                } else ""
+                                val previous = allowed.getOrNull(index - 1)
+                                val explicitlyRejected = result.handoffRejectionReason.isNotBlank()
+                                val inboundResolved = if (inboundId.isBlank()) true else if (explicitlyRejected) {
+                                    val rejected = pl.aimasterpro.app.core.AgentHandoffStore.reject(
+                                        this, taskId, executionRunId, inboundId, result.agentId,
+                                        result.handoffRejectionReason
+                                    )
+                                    rejected && previous != null &&
+                                        queueStore.recordAgentTrace(
+                                            this, taskId, "agent:${previous.agentId}", "agent:${result.agentId}",
+                                            "HANDOFF_REJECTED", result.handoffRejectionReason,
+                                            expectedRunId = executionRunId
+                                        )
+                                } else {
+                                    val acknowledged = pl.aimasterpro.app.core.AgentHandoffStore.acknowledge(
+                                        this, taskId, executionRunId, inboundId, result.agentId
+                                    )
+                                    acknowledged && previous != null &&
+                                        queueStore.recordAgentTrace(
+                                            this, taskId, "agent:${previous.agentId}", "agent:${result.agentId}",
+                                            "HANDOFF_ACKNOWLEDGED", "Odbiorca trwale zarchiwizował raport i potwierdził przekazanie.",
+                                            expectedRunId = executionRunId
+                                        )
+                                }
+                                val next = allowed.getOrNull(index + 1)
+                                val outboundSent = when {
+                                    !inboundResolved -> false
+                                    explicitlyRejected -> true // A rejection is terminal for this handoff chain.
+                                    next == null -> true
+                                    else -> {
+                                    val messageId = "h-${taskId.take(30)}-$executionRunId-${result.agentId.take(20)}-${next.agentId.take(20)}"
+                                    val sent = pl.aimasterpro.app.core.AgentHandoffStore.send(
+                                        this, taskId, executionRunId, messageId,
+                                        result.agentId, next.agentId, result.report.take(8_000)
+                                    )
+                                    sent && queueStore.recordAgentTrace(
+                                        this, taskId, "agent:${result.agentId}", "agent:${next.agentId}",
+                                        "HANDOFF_SENT", "Trwałe przekazanie raportu zapisane w skrzynce odbiorczej.",
+                                        expectedRunId = executionRunId
+                                    )
+                                    }
+                                }
+                                inboundResolved && outboundSent
+                                }
+                            } ?: false
+                        },
+                        handoffContextForTask = { item ->
+                            queueStore.withActiveRun(this, taskId, executionRunId) {
+                                val index = allowed.indexOfFirst { it.agentId == item.agentId }
+                                if (index <= 0) "" else {
+                                    val previous = allowed[index - 1]
+                                    val messageId = "h-${taskId.take(30)}-$executionRunId-${previous.agentId.take(20)}-${item.agentId.take(20)}"
+                                    val claimed = pl.aimasterpro.app.core.AgentHandoffStore.claim(
+                                        this, taskId, executionRunId, messageId, item.agentId
+                                    ) ?: throw pl.aimasterpro.app.agents.HandoffUnavailableException(
+                                        "Brak możliwego do przejęcia przekazania od agenta ${previous.agentId}; żądanie API odbiorcy nie zostanie wysłane."
+                                    )
+                                    val claimAudited = queueStore.recordAgentTrace(
+                                        this, taskId, "agent:${previous.agentId}", "agent:${item.agentId}",
+                                        "HANDOFF_CLAIMED", "Odbiorca przejął przekazanie przed wysłaniem własnego żądania API.",
+                                        expectedRunId = executionRunId
+                                    )
+                                    if (!claimAudited) throw IllegalStateException(
+                                        "Nie udało się trwale zapisać śladu przejęcia przekazania; żądanie API odbiorcy nie zostanie wysłane."
+                                    )
+                                    "Nadawca: ${claimed.senderAgentId}\nOdbiorca: ${claimed.recipientAgentId}\n\nRaport poprzedniego agenta:\n${claimed.payload}"
+                                }
+                            } ?: throw pl.aimasterpro.app.agents.HandoffUnavailableException(
+                                "Przebieg zadania został zatrzymany; odbiorca nie może przejąć przekazania ani wysłać żądania API."
+                            )
+                        },
+                        onRequestStarting = { item, actualProvider, estimatedInput, estimatedOutput, idempotencyKey, attempts ->
+                            queueStore.withActiveRun(this, taskId, executionRunId) {
+                                !store.isStorageUncertain() &&
+                                    ensureBudgetReservationTarget(budgetPlan.reservationId, item.id, item.agentId, actualProvider) &&
+                                    pl.aimasterpro.app.core.TaskCheckpointStore.record(
+                                        this, pl.aimasterpro.app.core.TaskCheckpointStore.Event(
+                                            item.id, item.agentId, "REQUESTING",
+                                            "Żądanie API rozpoczęte z kolejki MASTER-a.",
+                                            System.currentTimeMillis(), actualProvider.id, actualProvider.model, attempts,
+                                            estimatedInputTokens = estimatedInput, estimatedOutputTokens = estimatedOutput,
+                                            idempotencyKey = idempotencyKey,
+                                            baseUrl = pl.aimasterpro.app.core.TaskCheckpointStore.safeBaseUrlForCheckpoint(actualProvider.baseUrl),
+                                            runId = executionRunId
+                                        )
+                                    )
+                            } ?: false
+                        },
+                        requestScope = requestScope,
+                        onTaskFinished = { subTaskId ->
+                            pl.aimasterpro.app.core.ApiTokenTracker.completeReservationTask(budgetPlan.reservationId, subTaskId)
+                        }
+                    )
+                }
+                val finalizationSaved = queueStore.withActiveRun(this, taskId, executionRunId) {
+                    results.forEach { result ->
+                        val queueResult = when (result.status) {
+                            pl.aimasterpro.app.agents.TeamTaskResult.Status.COMPLETED -> pl.aimasterpro.app.core.MasterTaskQueueStore.Status.COMPLETED
+                            pl.aimasterpro.app.agents.TeamTaskResult.Status.FAILED -> pl.aimasterpro.app.core.MasterTaskQueueStore.Status.FAILED
+                            pl.aimasterpro.app.agents.TeamTaskResult.Status.BLOCKED -> pl.aimasterpro.app.core.MasterTaskQueueStore.Status.BLOCKED
+                        }
+                        val saved = queueStore.recordAgentResult(this, taskId, result.agentId, queueResult,
+                            "${result.status}: ${result.report.take(420)}", expectedRunId = executionRunId)
+                        if (!saved) android.util.Log.e("AiFORTecaQueue", "Nie zapisano wyniku agenta ${result.agentId} dla $taskId.")
+                    }
+                    val returned = results.map { it.agentId }.toSet()
+                    allowed.filterNot { it.agentId in returned }.forEach { item ->
+                        queueStore.recordAgentResult(this, taskId, item.agentId, pl.aimasterpro.app.core.MasterTaskQueueStore.Status.FAILED,
+                            "TeamRunEngine nie zwrócił wyniku dla tego agenta.", expectedRunId = executionRunId)
+                    }
+                    true
+                }
+                if (finalizationSaved != true) {
+                    android.util.Log.i("AiFORTecaQueue", "Pominięto finalizację wyników po zatrzymaniu przebiegu $taskId.")
+                }
+                runOnUiThread {
+                    if (!isFinishing) {
+                        val state = queueStore.snapshot(this)
+                        val finalTask = state.tasks.firstOrNull { it.id == taskId }
+                        toast("Zadanie $taskId: ${finalTask?.status ?: "brak potwierdzenia zapisu"}.")
+                        if (screen == "Zadania") { showShell("Zadania"); showTasksCenter() }
+                    }
+                }
+            } catch (error: Throwable) {
+                android.util.Log.e("AiFORTecaQueue", "Błąd wykonania zadania $taskId.", error)
+                val current = queueStore.snapshot(this).tasks.firstOrNull { it.id == taskId }
+                if (current?.status == pl.aimasterpro.app.core.MasterTaskQueueStore.Status.RUNNING) {
+                    current.assignedAgentIds.filter { agentId ->
+                        queueStore.snapshot(this).events.none {
+                            it.taskId == taskId && it.actor == "agent:$agentId" &&
+                                it.operation == "AGENT_RESULT" && it.runId == current.runId
+                        }
+                    }.forEach { agentId ->
+                        queueStore.recordAgentResult(this, taskId, agentId, pl.aimasterpro.app.core.MasterTaskQueueStore.Status.FAILED,
+                            "Błąd wykonania: ${error.message.orEmpty().take(400)}", expectedRunId = executionRunId)
+                    }
+                }
+                runOnUiThread {
+                    if (!isFinishing) {
+                        toast("Wykonanie zadania nie powiodło się: ${error.message ?: "błąd"}")
+                        if (screen == "Zadania") { showShell("Zadania"); showTasksCenter() }
+                    }
+                }
+            } finally {
+                pl.aimasterpro.app.core.ApiTokenTracker.requestBatchReservationRelease(budgetPlan.reservationId)
+                client.cancelRequestScope(requestScope)
+                if (activeQueueRequestScope === requestScope) activeQueueRequestScope = null
+                synchronized(masterJournalLifecycleLock) { if (activeQueueTaskId == taskId) activeQueueTaskId = "" }
+            }
+        }
+    }
+    /** Cancels the active queue batch and persists the user-requested terminal state first. */
+    private fun cancelQueuedMasterTask(taskId: String) {
+        val queueStore = pl.aimasterpro.app.core.MasterTaskQueueStore
+        val current = queueStore.snapshot(this).tasks.firstOrNull { it.id == taskId }
+        if (current?.status != pl.aimasterpro.app.core.MasterTaskQueueStore.Status.RUNNING) {
+            toast("Zadanie nie jest już aktywne.")
+            return
+        }
+        if (!queueStore.transition(this, taskId, "USER",
+                pl.aimasterpro.app.core.MasterTaskQueueStore.Status.CANCELLED,
+                "Użytkownik przerwał wykonanie; aktywne żądania HTTP są anulowane.")) {
+            toast("Nie udało się trwale zapisać anulowania. Nie zgłaszam zakończenia operacji.")
+            return
+        }
+        activeQueueRequestScope?.let { scope ->
+            runCatching { client.cancelRequestScope(scope) }
+        }
+        toast("Anulowano zadanie. Wyniki niepotwierdzone przed przerwaniem pozostają nieznane.")
+        if (screen == "Zadania") { showShell("Zadania"); showTasksCenter() }
+    }
+
+    /** Activity teardown is a recoverable interruption, not a successful or terminal completion. */
+    private fun interruptActiveQueuedTask(reason: String) {
+        val taskId = activeQueueTaskId
+        if (taskId.isBlank()) return
+        val queueStore = pl.aimasterpro.app.core.MasterTaskQueueStore
+        val current = runCatching { queueStore.snapshot(this).tasks.firstOrNull { it.id == taskId } }.getOrNull()
+        if (current?.status == pl.aimasterpro.app.core.MasterTaskQueueStore.Status.RUNNING) {
+            queueStore.transition(this, taskId, "MASTER",
+                pl.aimasterpro.app.core.MasterTaskQueueStore.Status.BLOCKED,
+                "$reason Nie wznowiono automatycznie z powodu niepewnego wyniku żądań.")
+        }
+        activeQueueRequestScope?.let { scope -> runCatching { client.cancelRequestScope(scope) } }
+        activeQueueRequestScope = null
     }
 
     private fun showMemory() {
@@ -6284,8 +7776,18 @@ class MainActivity : Activity() {
                 AlertDialog.Builder(this).setTitle("${entry.agentId} • pamięć")
                     .setMessage("${entry.text}\n\nPewność: ${entry.confidence}\nŹródła: ${entry.sourceTaskIds.size}")
                     .setNeutralButton("Usuń") { _, _ ->
-                        pl.aimasterpro.app.core.AgentOperationalMemoryStore.remove(this, entry.id)
-                        toast("Usunięto wpis pamięci agenta."); showShell("Pamięć"); showMemory()
+                        val request = pl.aimasterpro.app.core.MemoryGovernance.Request(
+                            actor = pl.aimasterpro.app.core.MemoryGovernance.Actor.USER,
+                            mutation = pl.aimasterpro.app.core.MemoryGovernance.Mutation.REMOVE_AGENT_LESSON,
+                            objectId = entry.id,
+                            reason = "Użytkownik potwierdził usunięcie wpisu pamięci agenta.",
+                            approvalRef = "ui-confirm:${java.util.UUID.randomUUID()}"
+                        )
+                        val removed = pl.aimasterpro.app.core.MemoryMutationGate.execute(this, request) { permit ->
+                            pl.aimasterpro.app.core.AgentOperationalMemoryStore.remove(this, entry.id, permit)
+                        }
+                        toast(if (removed) "Usunięto wpis pamięci agenta." else "Nie udało się usunąć wpisu pamięci agenta.")
+                        showShell("Pamięć"); showMemory()
                     }.setPositiveButton("OK", null).show()
             }.setNegativeButton("Zamknij", null).show()
         })
@@ -6387,12 +7889,16 @@ class MainActivity : Activity() {
                 val p = proposals[which]
                 AlertDialog.Builder(this).setTitle("Wniosek • ${p.status}").setMessage("${p.text}\n\nDowody: ${p.evidenceCount} • Pewność: ${p.confidence}\nZadania źródłowe: ${p.sourceTaskIds.joinToString().ifBlank { "brak" }}\nAgenci: ${p.affectedAgents.joinToString()}\nModele: ${p.affectedModels.joinToString()}")
                     .setPositiveButton("Zatwierdź i dodaj do pamięci") { _, _ ->
-                        val saved = pl.aimasterpro.app.core.QualityLearningStore.setProposalStatus(this, p.id, "APPROVED")
+                        val saved = pl.aimasterpro.app.core.QualityLearningStore.setProposalStatus(
+                            this, p.id, "APPROVED", "ui-confirm:${java.util.UUID.randomUUID()}"
+                        )
                         toast(if (saved) "Zatwierdzono. Wniosek będzie dołączany do pamięci MASTER-a."
                             else "Nie udało się trwale zatwierdzić wniosku i zsynchronizować pamięci.")
                         showShell("Pamięć"); showMemory()
                     }.setNegativeButton("Odrzuć") { _, _ ->
-                        val saved = pl.aimasterpro.app.core.QualityLearningStore.setProposalStatus(this, p.id, "REJECTED")
+                        val saved = pl.aimasterpro.app.core.QualityLearningStore.setProposalStatus(
+                            this, p.id, "REJECTED", "ui-confirm:${java.util.UUID.randomUUID()}"
+                        )
                         toast(if (saved) "Odrzucono wniosek."
                             else "Nie udało się trwale zmienić statusu wniosku.")
                         showShell("Pamięć"); showMemory()
@@ -6411,7 +7917,16 @@ class MainActivity : Activity() {
                 .setPositiveButton("Zapisz zasadę") { _, _ ->
                     val value = input.text.toString().trim()
                     if (value.isNotBlank()) {
-                        val saved = pl.aimasterpro.app.core.AiMemoryStore.addMemory(this, value)
+                        val request = pl.aimasterpro.app.core.MemoryGovernance.Request(
+                            actor = pl.aimasterpro.app.core.MemoryGovernance.Actor.USER,
+                            mutation = pl.aimasterpro.app.core.MemoryGovernance.Mutation.ADD_SHARED_RULE,
+                            objectId = "manual:${java.util.UUID.randomUUID()}",
+                            reason = "Użytkownik potwierdził dodanie zasady do pamięci wspólnej.",
+                            approvalRef = "ui-confirm:${java.util.UUID.randomUUID()}"
+                        )
+                        val saved = pl.aimasterpro.app.core.MemoryMutationGate.execute(this, request) { permit ->
+                            pl.aimasterpro.app.core.AiMemoryStore.addMemory(this, value, permit, objectId = request.objectId)
+                        }
                         toast(if (saved) "Zapisano zasadę. Będzie dołączana do kolejnych zadań."
                             else "Nie udało się zapisać zasady. Dotychczasowa pamięć pozostała bez zmian.")
                         showShell("Pamięć"); showMemory()
@@ -6461,6 +7976,7 @@ class MainActivity : Activity() {
         val estimatedCount = filtered.count { it.status.equals("ESTIMATED", true) }
         val unavailableCount = filtered.count { it.status.equals("UNAVAILABLE", true) }
         val unknownCount = filtered.size - realCount - estimatedCount - unavailableCount
+        val unknownCostCount = filtered.count { !it.costKnown }
 
         val header = card("Monitor API", "Lokalny rejestr zużycia z odpowiedzi API. Dane REAL pochodzą z usage zwróconego przez dostawcę; ESTIMATED to szacunek, gdy API nie podało liczników.")
         val headerActions = LinearLayout(this).apply {
@@ -6489,7 +8005,8 @@ class MainActivity : Activity() {
                 appendLine("Tokeny: ${stats.totalTokens} (wejście ${stats.inputTokens}, wyjście ${stats.outputTokens})")
                 appendLine("REAL: $realCount | ESTIMATED: $estimatedCount | UNAVAILABLE: $unavailableCount | inne: $unknownCount")
                 appendLine("Reasoning: ${stats.reasoningTokens} | Cached: ${stats.cachedTokens}")
-                appendLine("Koszt szacowany: ${'$'}${String.format(java.util.Locale.US, "%.6f", stats.costUsd)} USD / ${String.format(java.util.Locale.US, "%.4f", stats.costPln)} PLN")
+                appendLine("Koszt znany: ${'$'}${String.format(java.util.Locale.US, "%.6f", stats.costUsd)} USD / ${String.format(java.util.Locale.US, "%.4f", stats.costPln)} PLN")
+                appendLine("Rekordy z nieznanym kosztem: $unknownCostCount (nie są traktowane jako 0)")
                 appendLine()
                 filtered.take(100).forEach { r ->
                     appendLine("${java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.getDefault()).format(java.util.Date(r.timestamp))} | ${r.providerId} | ${r.modelName} | ${r.agentId} | ${r.totalTokens} tok | ${r.status}")
@@ -6557,13 +8074,13 @@ class MainActivity : Activity() {
         statTile(totalsRow, "Tokeny łącznie", String.format(java.util.Locale.US, "%,d", stats.totalTokens), "In ${stats.inputTokens} • Out ${stats.outputTokens}")
         col.addView(totalsRow)
         val costRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-        statTile(costRow, "Koszt szacowany", "${String.format(java.util.Locale.US, "%.2f", stats.costPln)} zł", "${'$'}${String.format(java.util.Locale.US, "%.4f", stats.costUsd)} USD")
+        statTile(costRow, "Koszt znany", "${String.format(java.util.Locale.US, "%.2f", stats.costPln)} zł", "${'$'}${String.format(java.util.Locale.US, "%.4f", stats.costUsd)} USD • nieznany koszt: $unknownCostCount wpisów")
         statTile(costRow, "Dane REAL", realCount.toString(), "ESTIMATED: $estimatedCount")
         col.addView(costRow)
 
-        val qualityCard = card("Jakość danych", "REAL = liczniki zwrócone przez API. ESTIMATED = przybliżenie z długości tekstu. UNAVAILABLE = brak wiarygodnego pomiaru.")
+        val qualityCard = card("Jakość danych", "REAL = liczniki zwrócone przez API. ESTIMATED = przybliżenie z długości tekstu. UNAVAILABLE = brak wiarygodnego pomiaru. Nieznany koszt nie oznacza bezpłatnego użycia.")
         qualityCard.addView(TextView(this).apply {
-            text = "REAL: $realCount     ESTIMATED: $estimatedCount     UNAVAILABLE: $unavailableCount     Inne: $unknownCount"
+            text = "REAL: $realCount     ESTIMATED: $estimatedCount     UNAVAILABLE: $unavailableCount     Inne: $unknownCount\nKoszt nieznany: $unknownCostCount"
             textSize = 12f
             setTextColor(white)
             setPadding(0, dp(5), 0, 0)
@@ -6579,7 +8096,8 @@ class MainActivity : Activity() {
         }
 
         fun addBreakdown(title: String, keyOf: (pl.aimasterpro.app.core.TokenRecord) -> String) {
-            val groups = filtered.groupBy(keyOf).mapValues { pl.aimasterpro.app.core.ApiTokenTracker.calculateSummary(it.value) }
+            val groupedRecords = filtered.groupBy(keyOf)
+            val groups = groupedRecords.mapValues { pl.aimasterpro.app.core.ApiTokenTracker.calculateSummary(it.value) }
             val breakdown = card(title, if (groups.isEmpty()) "Brak danych w tym okresie." else "Posortowano według łącznego zużycia tokenów.")
             groups.entries.sortedByDescending { it.value.totalTokens }.take(12).forEach { (name, summary) ->
                 val line = LinearLayout(this).apply {
@@ -6594,7 +8112,8 @@ class MainActivity : Activity() {
                     maxLines = 2
                 }, LinearLayout.LayoutParams(0, -2, 1f))
                 line.addView(TextView(this).apply {
-                    text = "${String.format(java.util.Locale.US, "%,d", summary.totalTokens)} tok\n${summary.totalQueries} zapyt. • ${String.format(java.util.Locale.US, "%.2f", summary.costPln)} zł"
+                    val unknownInGroup = groupedRecords[name].orEmpty().count { !it.costKnown }
+                    text = "${String.format(java.util.Locale.US, "%,d", summary.totalTokens)} tok\n${summary.totalQueries} zapyt. • koszt znany: ${String.format(java.util.Locale.US, "%.2f", summary.costPln)} zł${if (unknownInGroup > 0) " • nieznany: $unknownInGroup" else ""}"
                     textSize = 11f
                     setTextColor(muted)
                     gravity = Gravity.END
@@ -6607,6 +8126,7 @@ class MainActivity : Activity() {
         addBreakdown("Zużycie według dostawców", { it.providerId })
         addBreakdown("Zużycie według agentów", { it.agentId })
         addBreakdown("Zużycie według modeli", { it.modelName })
+        showPerModelTokenBudgets()
 
         val healthEvents = pl.aimasterpro.app.core.ModelHealthTracker.load(this)
         val healthCard = card("Kondycja modeli", "Lokalna historia sukcesów, błędów i czasu odpowiedzi. Na jej podstawie routing może preferować stabilniejsze modele; nie jest to odczyt limitów dostawcy.")
@@ -6645,9 +8165,10 @@ class MainActivity : Activity() {
         val today = pl.aimasterpro.app.core.ApiTokenTracker.filterRecords(allRecords, "Dzisiaj")
         val todayTokens = today.sumOf { it.totalTokens.coerceAtLeast(0L) }
         val monthRecords = pl.aimasterpro.app.core.ApiTokenTracker.filterRecords(allRecords, "30 dni")
-        val monthCost = monthRecords.sumOf { it.costPln.coerceAtLeast(0.0) }
+        val monthCost = monthRecords.filter { it.costKnown }.sumOf { it.costPln.coerceAtLeast(0.0) }
+        val unknownMonthCostCount = monthRecords.count { !it.costKnown }
         val activeReservations = pl.aimasterpro.app.core.ApiTokenTracker.activeReservationStats()
-        val limitCard = card("Limity i wykorzystanie", "Dzienny limit: ${limits.dailyTokenLimit} tokenów\nWykorzystano dzisiaj: $todayTokens (${(todayTokens * 100.0 / limits.dailyTokenLimit.coerceAtLeast(1L)).toInt().coerceIn(0, 999)}%)\nAktywne rezerwacje: ${activeReservations.tokens} tokenów / ${activeReservations.tasks} zadań\nMiesięczny limit kosztów: ${if (limits.monthlyCostPlnLimit > 0.0) "${limits.monthlyCostPlnLimit} PLN" else "wyłączony"}\nKoszt z ostatnich 30 dni: ${String.format(java.util.Locale.US, "%.4f", monthCost)} PLN\nLimit dzienny na agenta: ${limits.agentTokenLimit} tokenów")
+        val limitCard = card("Limity i wykorzystanie", "Dzienny limit: ${limits.dailyTokenLimit} tokenów\nWykorzystano dzisiaj: $todayTokens (${(todayTokens * 100.0 / limits.dailyTokenLimit.coerceAtLeast(1L)).toInt().coerceIn(0, 999)}%)\nAktywne rezerwacje: ${activeReservations.tokens} tokenów / ${activeReservations.tasks} zadań\nMiesięczny limit kosztów: ${if (limits.monthlyCostPlnLimit > 0.0) "${limits.monthlyCostPlnLimit} PLN" else "wyłączony"}\nKoszt znany z ostatnich 30 dni: ${String.format(java.util.Locale.US, "%.4f", monthCost)} PLN\nRekordy z nieznanym kosztem: $unknownMonthCostCount\nLimit dzienny na agenta: ${limits.agentTokenLimit} tokenów")
         action("⚙️ Skonfiguruj limity", limitCard) { showLimitsDialog() }
 
         val historyCard = card("Historia zapytań (${filtered.size})", "Najnowsze wpisy na początku. Dotknij wpisu, aby zobaczyć szczegóły.")
@@ -6657,13 +8178,13 @@ class MainActivity : Activity() {
             filtered.take(50).forEach { record ->
                 val timestamp = java.text.SimpleDateFormat("dd.MM HH:mm:ss", java.util.Locale.getDefault()).format(java.util.Date(record.timestamp))
                 val row = TextView(this).apply {
-                    text = "$timestamp  •  ${record.agentId}\n${record.providerId} / ${record.modelName}\n${String.format(java.util.Locale.US, "%,d", record.totalTokens)} tokenów  •  ${record.status}  •  ~${String.format(java.util.Locale.US, "%.4f", record.costPln)} zł"
+                    text = "$timestamp  •  ${record.agentId}\n${record.providerId} / ${record.modelName}\n${String.format(java.util.Locale.US, "%,d", record.totalTokens)} tokenów  •  ${record.status}  •  ${if (record.costKnown) "~${String.format(java.util.Locale.US, "%.4f", record.costPln)} zł" else "KOSZT NIEZNANY"}"
                     textSize = 11.5f
                     setTextColor(white)
                     setPadding(dp(4), dp(9), dp(4), dp(9))
                     setTextIsSelectable(true)
                     setOnClickListener {
-                        val details = "Data: $timestamp\nDostawca: ${record.providerId}\nModel: ${record.modelName}\nAgent: ${record.agentId}\nZadanie: ${record.taskId}\nWejście: ${record.inputTokens}\nWyjście: ${record.outputTokens}\nReasoning: ${record.reasoningTokens}\nCached: ${record.cachedTokens}\nRazem: ${record.totalTokens}\nStatus pomiaru: ${record.status}\nKoszt szacowany: ${record.costUsd} USD / ${record.costPln} PLN"
+                        val details = "Data: $timestamp\nDostawca: ${record.providerId}\nModel: ${record.modelName}\nAgent: ${record.agentId}\nZadanie: ${record.taskId}\nWejście: ${record.inputTokens}\nWyjście: ${record.outputTokens}\nReasoning: ${record.reasoningTokens}\nCached: ${record.cachedTokens}\nRazem: ${record.totalTokens}\nStatus pomiaru: ${record.status}\nKoszt: ${if (record.costKnown) "${record.costUsd} USD / ${record.costPln} PLN" else "NIEZNANY — brak kompletnej stawki API; nie oznacza 0 PLN"}"
                         AlertDialog.Builder(this@MainActivity).setTitle("Szczegóły zapytania").setMessage(details)
                             .setPositiveButton("Kopiuj") { _, _ -> copyText(details) }
                             .setNegativeButton("Zamknij", null).show()
@@ -6674,7 +8195,7 @@ class MainActivity : Activity() {
             }
         }
         action("Kopiuj historię okresu", historyCard) {
-            val report = filtered.joinToString("\n") { "${it.timestamp}|${it.providerId}|${it.modelName}|${it.agentId}|${it.inputTokens}|${it.outputTokens}|${it.status}|${it.costPln}" }
+            val report = filtered.joinToString("\n") { "${it.timestamp}|${it.providerId}|${it.modelName}|${it.agentId}|${it.inputTokens}|${it.outputTokens}|${it.status}|${if (it.costKnown) it.costPln else "UNKNOWN"}" }
             copyText(report.ifBlank { "Brak danych" })
         }
         action("Wyczyść historię Monitor API", historyCard) {
@@ -6699,6 +8220,168 @@ class MainActivity : Activity() {
                     }.start()
                 }.show()
         }
+    }
+
+    /**
+     * Per-model daily token budgets are managed alongside API usage so the user can
+     * inspect actual usage and edit the cap without leaving the monitoring workflow.
+     */
+    private fun showPerModelTokenBudgets() {
+        val budgetCard = card(
+            "Indywidualne limity modeli",
+            "Limit dotyczy dokładnej kombinacji dostawcy, endpointu i ID modelu. Ostrzeżenie pojawia się domyślnie przy 90%; rezerwacje zadań są uwzględniane przed wysłaniem żądań."
+        )
+        if (store.isStorageUncertain()) {
+            budgetCard.addView(TextView(this).apply {
+                text = "Magazyn profili jest niepewny. Edycja limitów modeli została wstrzymana."
+                setTextColor(Color.RED); textSize = 12f
+            })
+            return
+        }
+        val profiles = store.allConfigs().mapNotNull { raw ->
+            runCatching { loadProvider(raw.optString("id")) }.getOrNull()
+        }.filter { it.model.isNotBlank() && it.baseUrl.isNotBlank() }
+            .distinctBy { "${it.id}|${pl.aimasterpro.app.core.ProviderCatalogCachePolicy.normalizeBaseUrl(it.baseUrl).ifBlank { it.baseUrl.trim() }}|${it.model}" }
+            .sortedBy { it.name.lowercase(java.util.Locale.ROOT) }
+
+        if (profiles.isEmpty()) {
+            budgetCard.addView(TextView(this).apply {
+                text = "Brak skonfigurowanych profili modeli. Dodaj profil w zakładce MODELE, a następnie wróć tutaj, aby ustawić jego limit."
+                setTextColor(muted); textSize = 12f
+            })
+            return
+        }
+
+        profiles.forEach { cfg ->
+            val usage = runCatching {
+                pl.aimasterpro.app.core.ApiTokenTracker.getModelTokenUsage(
+                    this, cfg.id, cfg.baseUrl, cfg.model
+                )
+            }.getOrNull()
+            val enabledLimit = usage?.config?.takeIf { it.enabled }
+            val item = LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL
+                setPadding(dp(11), dp(10), dp(11), dp(10))
+                background = rounded(cardBg, 11, border)
+                val lp = LinearLayout.LayoutParams(-1, -2)
+                lp.bottomMargin = dp(8)
+                layoutParams = lp
+            }
+            item.addView(TextView(this).apply {
+                text = "${cfg.name} • ${cfg.model}"
+                setTextColor(white); textSize = 13f; typeface = Typeface.DEFAULT_BOLD
+            })
+            item.addView(TextView(this).apply {
+                text = "${cfg.id}  |  ${cfg.baseUrl}"
+                setTextColor(muted); textSize = 10f; setTextIsSelectable(true)
+                setPadding(0, dp(3), 0, dp(5))
+            })
+            val limitText = when {
+                usage == null -> "Nie można bezpiecznie odczytać zużycia tokenów. Nie traktuję tego jako 0."
+                enabledLimit == null -> if (usage.config == null) "Limit indywidualny: nieustawiony" else "Limit indywidualny: wyłączony"
+                else -> "Dzisiaj: ${usage.usedTokens} użytych + ${usage.reservedTokens} zarezerwowanych / ${enabledLimit.dailyLimitTokens} tokenów • ${usage.usagePercent}%"
+            }
+            item.addView(TextView(this).apply {
+                text = limitText
+                setTextColor(if (usage == null || usage.limitReached) Color.RED else if (usage.warningReached) orange else muted)
+                textSize = 11f
+            })
+            if (usage != null && enabledLimit != null) {
+                item.addView(android.widget.ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply {
+                    max = 100
+                    progress = usage.usagePercent.coerceIn(0, 100)
+                    isIndeterminate = false
+                }, LinearLayout.LayoutParams(-1, dp(8)).apply { topMargin = dp(6); bottomMargin = dp(6) })
+                val state = when {
+                    usage.limitReached -> "LIMIT 100% — nowe zadania tego modelu są blokowane."
+                    usage.warningReached -> "OSTRZEŻENIE — osiągnięto próg ${enabledLimit.warningPercent}%."
+                    else -> "Budżet modelu jest dostępny."
+                }
+                item.addView(TextView(this).apply {
+                    text = state
+                    setTextColor(if (usage.limitReached) Color.RED else if (usage.warningReached) orange else Color.rgb(65, 205, 120))
+                    textSize = 11f
+                })
+            } else if (usage != null) {
+                item.addView(TextView(this).apply {
+                    text = "Użycie dzisiaj: ${usage.usedTokens} tokenów • rezerwacje: ${usage.reservedTokens}"
+                    setTextColor(muted); textSize = 11f
+                })
+            }
+            val actions = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+            val edit = TextView(this).apply {
+                text = if (usage?.config == null) "USTAW LIMIT" else "EDYTUJ LIMIT"
+                setTextColor(white); textSize = 11f; gravity = Gravity.CENTER
+                setPadding(dp(12), dp(8), dp(12), dp(8)); background = ripple(panel, 9)
+                setOnClickListener { showModelTokenLimitDialog(cfg, usage?.config) }
+            }
+            actions.addView(edit, LinearLayout.LayoutParams(0, -2, 1f).apply { rightMargin = dp(6) })
+            if (usage?.config?.enabled == true) {
+                val disable = TextView(this).apply {
+                    text = "WYŁĄCZ"
+                    setTextColor(white); textSize = 11f; gravity = Gravity.CENTER
+                    setPadding(dp(12), dp(8), dp(12), dp(8)); background = ripple(panel, 9)
+                    setOnClickListener {
+                        val current = usage.config
+                        val saved = pl.aimasterpro.app.core.ApiTokenTracker.setModelTokenLimit(
+                            this@MainActivity, current.copy(enabled = false)
+                        )
+                        toast(if (saved) "Wyłączono indywidualny limit modelu." else "Nie udało się zapisać limitu.")
+                        showShell("Monitor API"); showApiMonitoringScreen()
+                    }
+                }
+                actions.addView(disable, LinearLayout.LayoutParams(0, -2, 1f))
+            }
+            item.addView(actions, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(7) })
+            budgetCard.addView(item)
+        }
+    }
+
+    private fun showModelTokenLimitDialog(
+        config: ProviderConfig,
+        existing: pl.aimasterpro.app.core.ModelTokenLimitConfig?
+    ) {
+        val box = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(20), dp(8), dp(20), 0)
+        }
+        val limit = field("Dzienny limit tokenów", existing?.dailyLimitTokens?.toString() ?: "100000", InputType.TYPE_CLASS_NUMBER)
+        val warning = field("Próg ostrzeżenia (%)", existing?.warningPercent?.toString() ?: "90", InputType.TYPE_CLASS_NUMBER)
+        val enabled = CheckBox(this).apply {
+            text = "Limit aktywny — blokuj nowe zadania po wyczerpaniu"
+            setTextColor(white)
+            isChecked = existing?.enabled ?: true
+        }
+        listOf(
+            TextView(this).apply { text = "Dzienny limit tokenów"; setTextColor(white) }, limit,
+            TextView(this).apply { text = "Ostrzegaj od (%)"; setTextColor(white); setPadding(0, dp(8), 0, 0) }, warning,
+            enabled
+        ).forEach { box.addView(it) }
+        AlertDialog.Builder(this)
+            .setTitle("Limit: ${config.name} / ${config.model}")
+            .setView(box)
+            .setNegativeButton("Anuluj", null)
+            .setPositiveButton("Zapisz") { _, _ ->
+                val daily = limit.text.toString().toLongOrNull()
+                val threshold = warning.text.toString().toIntOrNull()
+                if (daily == null || daily <= 0L || threshold == null || threshold !in 1..99) {
+                    toast("Podaj limit większy od zera i próg ostrzeżenia od 1 do 99%.")
+                    return@setPositiveButton
+                }
+                val saved = pl.aimasterpro.app.core.ApiTokenTracker.setModelTokenLimit(
+                    this,
+                    pl.aimasterpro.app.core.ModelTokenLimitConfig(
+                        providerId = config.id,
+                        baseUrl = config.baseUrl,
+                        modelName = config.model,
+                        dailyLimitTokens = daily,
+                        warningPercent = threshold,
+                        enabled = enabled.isChecked
+                    )
+                )
+                toast(if (saved) "Zapisano indywidualny limit modelu." else "Nie udało się trwale zapisać limitu.")
+                showShell("Monitor API"); showApiMonitoringScreen()
+            }.show()
     }
 
     private fun showLimitsDialog() {
@@ -6799,16 +8482,49 @@ class MainActivity : Activity() {
                     if (result.isFailure) { toast("Nie można odszyfrować bazy. Sprawdź hasło i plik."); return@setPositiveButton }
                     runCatching {
                         val configs = BackupCrypto.parseProviderConfigs(result.getOrThrow())
-                        // Stop old-profile requests before the provider set changes. The
-                        // persisted assignments are invalidated immediately after a successful swap.
-                        cancelProviderWorkBeforeConfigReplacement()
-                        require(store.replaceAllConfigs(configs)) { "Import nie został zatwierdzony. Dotychczasowe konfiguracje pozostały bez zmian." }
-                        val preferredMasterId = configs.first().optString("id", "gemini")
-                        require(reconcileAgentAssignmentsAfterImport(configs, preferredMasterId)) {
-                            "Konfiguracje zaimportowano, ale nie udało się trwale uzgodnić przypisań agentów. Nie uruchamiaj zadań; zamknij i uruchom ponownie aplikację."
+                        // Hold the generation gate through provider replacement, cache invalidation
+                        // and assignment reconciliation. A refresh cannot snapshot the old profiles
+                        // in the gap after invalidation but before the replacement is complete.
+                        modelCatalogRefreshGeneration.invalidateAndRun {
+                            // Stop old-profile requests before the provider set changes.
+                            cancelProviderWorkBeforeConfigReplacement()
+                            val previousCatalogIdentity = store.allConfigs().associate { saved ->
+                                saved.optString("id") to pl.aimasterpro.app.core.ProviderCatalogCachePolicy.normalizeBaseUrl(saved.optString("baseUrl"))
+                            }
+                            require(store.replaceAllConfigs(configs)) { "Import nie został zatwierdzony. Dotychczasowe konfiguracje pozostały bez zmian." }
+
+                            // The portable backup replaces provider identities. The on-device model
+                            // discovery cache is not part of that backup, so never show cached models
+                            // from an old endpoint under an imported provider that reused its ID.
+                            val catalogCleared = modelCatalogPrefs.edit()
+                                .remove("models_json")
+                                .remove("last_sync")
+                                .putLong("last_attempt", 0L)
+                                .commit()
+                            if (!catalogCleared) {
+                                android.util.Log.e("AiFORTecaImport", "Nie udało się trwale unieważnić cache katalogu modeli po imporcie.")
+                            }
+                            configs.forEach { imported ->
+                                val providerId = imported.optString("id")
+                                val oldBase = previousCatalogIdentity[providerId].orEmpty()
+                                val newBase = pl.aimasterpro.app.core.ProviderCatalogCachePolicy.normalizeBaseUrl(imported.optString("baseUrl"))
+                                if (oldBase.isNotBlank() && oldBase != newBase) {
+                                    runCatching {
+                                        pl.aimasterpro.app.core.ApiTokenTracker.replaceCatalogPricingForProvider(
+                                            this, providerId, oldBase, emptyList()
+                                        )
+                                    }.onFailure {
+                                        android.util.Log.e("AiFORTecaImport", "Nie udało się usunąć nieaktualnego cennika dostawcy $providerId.", it)
+                                    }
+                                }
+                            }
+                            val preferredMasterId = configs.first().optString("id", "gemini")
+                            require(reconcileAgentAssignmentsAfterImport(configs, preferredMasterId)) {
+                                "Konfiguracje zaimportowano, ale nie udało się trwale uzgodnić przypisań agentów. Nie uruchamiaj zadań; zamknij i uruchom ponownie aplikację."
+                            }
                         }
                         showShell("Modele"); showProviders()
-                        toast("Wczytano ${configs.size} konfiguracji modeli wraz z kluczami API.")
+                        toast("Wczytano ${configs.size} konfiguracji dostawców i kluczy. Aby pobrać modele, otwórz Katalog modeli i naciśnij ODŚWIEŻ WSZYSTKICH DOSTAWCÓW.")
                     }.onFailure {
                         if (store.isStorageUncertain()) {
                             client.cancelActiveRequests()
@@ -6971,27 +8687,32 @@ class MainActivity : Activity() {
         AlertDialog.Builder(this).setTitle("Import starej bazy")
             .setMessage("Znaleziono ${migrated.size} profili. Import odbywa się lokalnie. Profile z nieczytelnym, zaszyfrowanym polem klucza zostaną przeniesione bez klucza i będzie trzeba wpisać go ponownie. Zastąpić obecną konfigurację?")
             .setNegativeButton("Anuluj", null).setPositiveButton("Importuj") { _, _ ->
-                // Match encrypted-backup import: quiesce requests before replacing provider profiles.
-                cancelProviderWorkBeforeConfigReplacement()
-                if (!store.replaceAllConfigs(migrated)) {
+                // Keep import, cache invalidation and assignment migration atomic against new refresh snapshots.
+                val importCommitted = runCatching {
+                    modelCatalogRefreshGeneration.invalidateAndRun {
+                        cancelProviderWorkBeforeConfigReplacement()
+                        if (!store.replaceAllConfigs(migrated)) return@invalidateAndRun false
+                        modelCatalogPrefs.edit().remove("models_json").remove("last_sync").putLong("last_attempt", 0L).commit()
+                        seedMissingDefaultProviders()
+                        val preferredMasterId = migrated.firstOrNull { it.optString("id") == "gemini" }?.optString("id") ?: migrated.first().optString("id")
+                        val importedProviderRows = store.allConfigs()
+                        reconcileAgentAssignmentsAfterImport(importedProviderRows, preferredMasterId)
+                    }
+                }.getOrElse { error ->
+                    android.util.Log.e("AiFORTecaImport", "Nie udało się zakończyć importu starej bazy.", error)
+                    false
+                }
+                if (!importCommitted) {
                     if (store.isStorageUncertain()) {
                         client.cancelActiveRequests()
                         toast("Błąd zapisu magazynu. Przerwano aktywne żądania API. Zamknij całkowicie AI MASTER PRO i uruchom ponownie aplikację.")
                     } else {
-                        toast("Import nie został zatwierdzony. Dotychczasowe konfiguracje pozostały bez zmian.")
+                        toast("Import nie został zatwierdzony lub nie udało się uzgodnić przypisań agentów.")
                     }
                     return@setPositiveButton
                 }
-                modelCatalogPrefs.edit().remove("models_json").remove("last_sync").putLong("last_attempt", 0L).apply()
-                seedMissingDefaultProviders()
-                val preferredMasterId = migrated.firstOrNull { it.optString("id") == "gemini" }?.optString("id") ?: migrated.first().optString("id")
-                val importedProviderRows = store.allConfigs()
-                if (!reconcileAgentAssignmentsAfterImport(importedProviderRows, preferredMasterId)) {
-                    toast("Konfiguracje zaimportowano, ale nie udało się trwale uzgodnić przypisań agentów. Zamknij i uruchom ponownie aplikację.")
-                    return@setPositiveButton
-                }
                 showShell("Modele"); showProviders()
-                toast("Zaimportowano ${migrated.size} profili. Sprawdź pola kluczy API przed użyciem.")
+                toast("Zaimportowano ${migrated.size} profili. Sprawdź klucze API, a katalog modeli odśwież ręcznie przyciskiem ODŚWIEŻ WSZYSTKICH DOSTAWCÓW.")
             }.show()
     }
 
@@ -7025,6 +8746,7 @@ class MainActivity : Activity() {
 
     override fun onDestroy() {
         pulse?.cancel()
+        interruptActiveQueuedTask("Activity została zamknięta lub odtworzona.")
         // Persist this Activity's active chat task (MASTER or specialist); startup recovery remains a second layer.
         cancelActiveChatTaskForLifecycle("onDestroy")
         // Activity teardown must close blocking HTTP connections as well as interrupt workers.

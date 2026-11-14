@@ -24,7 +24,22 @@ object TaskResultArchive {
     private const val PREFS = "task_result_archive_v1"
     private const val KEY = "entries"
     private const val MAX_ENTRIES = 80
+    private const val MAX_RAW_CHARS = 3_000_000
+    private const val MAX_TASK_ID_CHARS = 512
+    private const val MAX_AGENT_ID_CHARS = 120
+    private const val MAX_PROVIDER_ID_CHARS = 200
+    private const val MAX_MODEL_CHARS = 240
+    private const val MAX_CHAT_ID_CHARS = 200
     private const val MAX_REPORT_CHARS = 32_000
+
+    /**
+     * Stable archive key shared by queue execution and the task workspace UI.
+     * The run epoch prevents a retry from displaying a previous attempt's report.
+     */
+    fun executionTaskId(parentTaskId: String, agentId: String, runId: Int): String {
+        require(parentTaskId.isNotBlank() && agentId.isNotBlank() && runId > 0)
+        return "q-${parentTaskId.take(42)}-${agentId.take(32)}-r$runId"
+    }
 
     @Synchronized
     fun put(
@@ -39,8 +54,23 @@ object TaskResultArchive {
     ): Boolean {
         return runCatching { SharedPreferencesWriteHealth.withHealthyAccess(PREFS) {
 
-        if (SharedPreferencesWriteHealth.isUncertain(PREFS) || taskId.isBlank() || agentId.isBlank() || providerId.isBlank() || model.isBlank() ||
-            chatId.length > 200) return@withHealthyAccess false
+        if (SharedPreferencesWriteHealth.isUncertain(PREFS) ||
+            taskId.isBlank() || taskId.length > MAX_TASK_ID_CHARS ||
+            agentId.isBlank() || agentId.length > MAX_AGENT_ID_CHARS ||
+            providerId.isBlank() || providerId.length > MAX_PROVIDER_ID_CHARS ||
+            model.isBlank() || model.length > MAX_MODEL_CHARS ||
+            chatId.length > MAX_CHAT_ID_CHARS) return@withHealthyAccess false
+        // Provider/model labels are user-controlled configuration metadata. Redact them
+        // before persistence because restored archive entries are rendered in chat history.
+        val safeAgentId = CommunicationLogSanitizer.sanitize(agentId.trim())
+        val safeProviderId = CommunicationLogSanitizer.sanitize(providerId.trim())
+        val safeModel = CommunicationLogSanitizer.sanitize(model.trim())
+        // Chat IDs are lookup keys, not display text: reject a transformed key rather than
+        // silently attaching a report to a different conversation.
+        if (safeAgentId.isBlank() || safeAgentId.length > MAX_AGENT_ID_CHARS ||
+            safeProviderId.isBlank() || safeProviderId.length > MAX_PROVIDER_ID_CHARS ||
+            safeModel.isBlank() || safeModel.length > MAX_MODEL_CHARS ||
+            CommunicationLogSanitizer.sanitize(chatId) != chatId) return@withHealthyAccess false
         val safeReport = CommunicationLogSanitizer.sanitize(report)
         if (safeReport.isBlank() || safeReport.length > MAX_REPORT_CHARS || createdAt < 0L) return@withHealthyAccess false
         val old = read(context) ?: run {
@@ -48,17 +78,20 @@ object TaskResultArchive {
             return@withHealthyAccess false
         }
         val next = JSONArray()
-        next.put(encode(Entry(taskId, agentId, safeReport, providerId, model, createdAt, chatId)))
+        next.put(encode(Entry(taskId, safeAgentId, safeReport, safeProviderId, safeModel, createdAt, chatId)))
         for (i in 0 until old.length()) {
             val row = old.getJSONObject(i)
             if (row.optString("taskId") != taskId) next.put(row)
         }
-        val trimmed = JSONArray()
-        for (i in 0 until minOf(next.length(), MAX_ENTRIES)) trimmed.put(next.getJSONObject(i))
+        // Never evict an unacknowledged specialist report to make room for a new one.
+        // Replacing an existing task remains possible at capacity because it was removed above.
+        if (next.length() > MAX_ENTRIES) return@withHealthyAccess false
+        val serialized = next.toString()
+        if (serialized.length > MAX_RAW_CHARS) return@withHealthyAccess false
         return@withHealthyAccess runCatching {
             SharedPreferencesWriteHealth.commit(
                 PREFS, context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
-                    .putString(KEY, trimmed.toString())
+                    .putString(KEY, serialized)
             )
         }.getOrDefault(false)
     
@@ -129,7 +162,10 @@ object TaskResultArchive {
                         !existing.contains("[TASK_REPORT_ID:") && existing.endsWith(entry.report)
                     }
                 if (hasUnmarkedLegacyCopy) return@forEach
-                rows.put("📦 Odzyskany raport agenta ${entry.agentId} (${entry.providerId}/${entry.model}) $marker\n${entry.report}")
+                val safeAgentLabel = CommunicationLogSanitizer.sanitize(entry.agentId).take(MAX_AGENT_ID_CHARS)
+                val safeProviderLabel = CommunicationLogSanitizer.sanitize(entry.providerId).take(MAX_PROVIDER_ID_CHARS)
+                val safeModelLabel = CommunicationLogSanitizer.sanitize(entry.model).take(MAX_MODEL_CHARS)
+                rows.put("📦 Odzyskany raport agenta $safeAgentLabel ($safeProviderLabel/$safeModelLabel) $marker\n${entry.report}")
                 while (rows.length() > 150) rows.remove(0)
                 chat.put("agentActivity", rows).put("updatedAt", maxOf(chat.optLong("updatedAt"), entry.createdAt))
                 restored++
@@ -165,8 +201,10 @@ object TaskResultArchive {
         val raw = SharedPreferencesWriteHealth.withHealthyAccess(PREFS) {
             context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString(KEY, null)
         } ?: return@runCatching JSONArray()
+        require(raw.length <= MAX_RAW_CHARS) { "Task result archive exceeds its supported raw size." }
         runCatching {
             val source = JSONArray(raw)
+            require(source.length() <= MAX_ENTRIES) { "Task result archive exceeds its capacity." }
             val seen = hashSetOf<String>()
             for (i in 0 until source.length()) {
                 val row = source.getJSONObject(i)
@@ -182,8 +220,12 @@ object TaskResultArchive {
                 val providerId = row.getString("providerId")
                 val model = row.getString("model")
                 val createdAt = (createdAtValue as Number).toLong()
-                require(taskId.isNotBlank() && seen.add(taskId))
-                require(agentId.isNotBlank() && providerId.isNotBlank() && model.isNotBlank())
+                val chatId = row.optString("chatId")
+                require(taskId.isNotBlank() && taskId.length <= MAX_TASK_ID_CHARS && seen.add(taskId))
+                require(agentId.isNotBlank() && agentId.length <= MAX_AGENT_ID_CHARS)
+                require(providerId.isNotBlank() && providerId.length <= MAX_PROVIDER_ID_CHARS)
+                require(model.isNotBlank() && model.length <= MAX_MODEL_CHARS)
+                require(chatId.length <= MAX_CHAT_ID_CHARS)
                 require(report.isNotBlank() && report.length <= MAX_REPORT_CHARS)
                 require(createdAt >= 0L)
             }

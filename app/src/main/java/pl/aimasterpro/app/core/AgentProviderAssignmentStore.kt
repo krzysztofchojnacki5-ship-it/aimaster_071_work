@@ -10,24 +10,31 @@ object AgentProviderAssignmentStore {
     private const val PREFS = "chat_state"
     private const val MASTER = "MASTER"
     private const val SELECTED_KEY = "selected_provider"
+    private const val MAX_ROLE_ID_CHARS = 80
+    private const val MAX_PROVIDER_ID_CHARS = 160
+    private const val MAX_ASSIGNMENTS = 120
+    private const val MAX_PROVIDER_IDS = 500
 
     fun read(
         context: Context,
         roleDefaults: Map<String, String>
     ): Map<String, String> {
+        require(validRoleDefaults(roleDefaults)) { "Invalid provider assignment defaults." }
         return SharedPreferencesWriteHealth.withHealthyAccess(PREFS) {
             val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
             roleDefaults.mapValues { (role, defaultId) ->
                 // Missing/blank is a legitimate first-run state; a type mismatch is corruption.
                 // Let it propagate so callers cannot silently route to a different provider.
-                prefs.getString(key(role), null)?.takeIf { it.isNotBlank() } ?: defaultId
+                val stored = prefs.getString(key(role), null)
+                require(stored == null || stored.length <= MAX_PROVIDER_ID_CHARS) { "Stored provider assignment exceeds its supported length." }
+                stored?.takeIf { it.isNotBlank() } ?: defaultId
             }
         }
     }
 
     /** Returns false on a failed/throwing commit; callers must not mutate in-memory state then. */
     fun save(context: Context, role: String, providerId: String): Boolean {
-        if (role.isBlank() || providerId.isBlank() || SharedPreferencesWriteHealth.isUncertain(PREFS)) return false
+        if (!validRole(role) || !validProviderId(providerId) || SharedPreferencesWriteHealth.isUncertain(PREFS)) return false
         return runCatching {
             val editor = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
                 .putString(key(role), providerId)
@@ -47,7 +54,7 @@ object AgentProviderAssignmentStore {
         validProviderIds: Set<String>,
         legacyMasterId: String?
     ): Map<String, String>? {
-        if (validProviderIds.isEmpty() || validProviderIds.any { it.isBlank() } || SharedPreferencesWriteHealth.isUncertain(PREFS)) return null
+        if (!validRoleDefaults(roleDefaults) || validProviderIds.isEmpty() || validProviderIds.size > MAX_PROVIDER_IDS || validProviderIds.any { !validProviderId(it) } || SharedPreferencesWriteHealth.isUncertain(PREFS)) return null
         return runCatching {
             SharedPreferencesWriteHealth.withHealthyAccess(PREFS) {
             val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
@@ -110,6 +117,12 @@ object AgentProviderAssignmentStore {
             }
         }.getOrNull()
     }
+
+    private fun validRole(role: String): Boolean = role.isNotBlank() && role.length <= MAX_ROLE_ID_CHARS
+    private fun validProviderId(id: String): Boolean = id.isNotBlank() && id.length <= MAX_PROVIDER_ID_CHARS
+    private fun validRoleDefaults(values: Map<String, String>): Boolean =
+        values.isNotEmpty() && values.size <= MAX_ASSIGNMENTS &&
+            values.all { (role, provider) -> validRole(role) && validProviderId(provider) }
 
     private fun key(role: String): String = "agent_provider_$role"
 }

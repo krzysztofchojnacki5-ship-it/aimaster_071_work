@@ -25,6 +25,7 @@ class TeamRunEngineNetworkTest {
         val activeRequests = AtomicInteger()
         val peakParallel = AtomicInteger()
         val communicationLog = Collections.synchronizedList(mutableListOf<String>())
+        val unknownUsageRecords = AtomicInteger()
         val server = TestHttpServer { body, _ ->
             val active = activeRequests.incrementAndGet()
             peakParallel.updateAndGet { old -> maxOf(old, active) }
@@ -63,12 +64,14 @@ class TeamRunEngineNetworkTest {
                 mode = WorkMode.PLANNING,
                 onLog = { sender, recipient, message, status ->
                     communicationLog.add("$sender->$recipient [$status]: $message")
-                }
+                },
+                onUnknownUsage = { _, _, _, _, _ -> unknownUsageRecords.incrementAndGet() }
             )
             assertEquals(7, results.size)
             assertEquals(1, results.count { it.status == TeamTaskResult.Status.FAILED })
             assertEquals(6, results.count { it.status == TeamTaskResult.Status.COMPLETED })
             assertEquals(7, server.requestCount.get())
+            assertEquals("Ambiguous HTTP 500 must be durably accounted before the task is marked FAILED", 1, unknownUsageRecords.get())
             assertTrue("Expected parallel execution", peakParallel.get() > 1)
             assertTrue("Parallel requests must remain capped at four", peakParallel.get() <= 4)
             assertTrue(results.first { it.agentId == "accessibility-specialist" }.report.contains("HTTP 500"))
@@ -156,6 +159,146 @@ class TeamRunEngineNetworkTest {
     }
 
     @Test
+    fun sequentialHandoffContextIsIncludedInTheNextAgentsActualRequest() {
+        ProviderQuotaScheduler.resetForTests()
+        val requests = Collections.synchronizedList(mutableListOf<String>())
+        val server = TestHttpServer { body, _ ->
+            requests.add(body)
+            200 to """{"choices":[{"message":{"content":"report-from-agent"}}],"usage":{"prompt_tokens":5,"completion_tokens":4,"total_tokens":9}}"""
+        }
+        try {
+            val config = ProviderConfig(
+                "handoff-sequence-test", "Handoff sequence test", ProviderKind.OPENAI_COMPATIBLE,
+                "http://127.0.0.1:${server.address.port}/v1", "test-model", ""
+            )
+            val handoffs = java.util.concurrent.ConcurrentHashMap<String, String>()
+            val results = TeamRunEngine(ProviderClient(), maxParallel = 1).runBatch(
+                tasks = listOf(
+                    TeamTask("handoff-first", "qa-architect", "First", "Analyze the task"),
+                    TeamTask("handoff-second", "unit-test-engineer", "Second", "Continue the analysis")
+                ),
+                provider = config,
+                agentProvidersMap = mapOf("qa-architect" to config, "unit-test-engineer" to config),
+                isFreeProvider = { true },
+                mode = WorkMode.PLANNING,
+                handoffContextForTask = { task ->
+                    handoffs[task.id].orEmpty()
+                },
+                onTaskResult = { result ->
+                    if (result.agentId == "qa-architect") {
+                        handoffs["handoff-second"] = "PREVIOUS_AGENT_REPORT: ${result.report}"
+                    }
+                    true
+                }
+            )
+            assertEquals(2, results.size)
+            assertTrue(results.all { it.status == TeamTaskResult.Status.COMPLETED })
+            assertEquals(2, requests.size)
+            assertTrue("The second provider request must include the first agent's handoff",
+                requests[1].contains("PREVIOUS_AGENT_REPORT: report-from-agent"))
+        } finally {
+            ProviderQuotaScheduler.resetForTests()
+            server.stop(0)
+        }
+    }
+
+    @Test
+    fun explicitVersionedHandoffRejectionBlocksTheChainBeforeAnotherProviderRequest() {
+        ProviderQuotaScheduler.resetForTests()
+        val requests = Collections.synchronizedList(mutableListOf<String>())
+        val server = TestHttpServer { body, _ ->
+            requests.add(body)
+            val content = if (body.contains("ID zadania: handoff-second")) {
+                """AIFORTECA_HANDOFF_REJECT_V1:{"reason":"Nie mogę bezpiecznie przyjąć raportu."}"""
+            } else {
+                "first-agent-report"
+            }
+            200 to """{"choices":[{"message":{"content":${org.json.JSONObject.quote(content)}}}],"usage":{"prompt_tokens":5,"completion_tokens":4,"total_tokens":9}}"""
+        }
+        try {
+            val config = ProviderConfig(
+                "handoff-reject-test", "Handoff rejection test", ProviderKind.OPENAI_COMPATIBLE,
+                "http://127.0.0.1:${server.address.port}/v1", "test-model", ""
+            )
+            val delivered = java.util.concurrent.ConcurrentHashMap<String, String>()
+            val results = TeamRunEngine(ProviderClient(), maxParallel = 1).runBatch(
+                tasks = listOf(
+                    TeamTask("handoff-first", "qa-architect", "First", "Analyze the task"),
+                    TeamTask("handoff-second", "unit-test-engineer", "Second", "Continue the analysis"),
+                    TeamTask("handoff-third", "critical-reviewer", "Third", "Review the result")
+                ),
+                provider = config,
+                agentProvidersMap = mapOf(
+                    "qa-architect" to config,
+                    "unit-test-engineer" to config,
+                    "critical-reviewer" to config
+                ),
+                isFreeProvider = { true },
+                mode = WorkMode.PLANNING,
+                handoffContextForTask = { task ->
+                    delivered[task.id] ?: if (task.id == "handoff-first") "" else
+                        throw HandoffUnavailableException("No accepted handoff for ${task.id}")
+                },
+                onTaskResult = { result ->
+                    if (result.agentId == "qa-architect") delivered["handoff-second"] = "FIRST_REPORT"
+                    if (result.agentId == "unit-test-engineer") {
+                        assertEquals(TeamTaskResult.Status.BLOCKED, result.status)
+                        assertEquals("Nie mogę bezpiecznie przyjąć raportu.", result.handoffRejectionReason)
+                    }
+                    true
+                }
+            )
+            assertEquals(3, results.size)
+            assertEquals(TeamTaskResult.Status.COMPLETED, results[0].status)
+            assertEquals(TeamTaskResult.Status.BLOCKED, results[1].status)
+            assertEquals("Nie mogę bezpiecznie przyjąć raportu.", results[1].handoffRejectionReason)
+            assertEquals(TeamTaskResult.Status.BLOCKED, results[2].status)
+            assertEquals("The rejected handoff must stop downstream provider calls", 2, server.requestCount.get())
+            assertTrue(requests[1].contains("PROTOKÓŁ ODRZUCENIA PRZEKAZANIA"))
+        } finally {
+            ProviderQuotaScheduler.resetForTests()
+            server.stop(0)
+        }
+    }
+
+    @Test
+    fun malformedExplicitHandoffRejectionFailsClosedButOrdinaryProseDoesNotTriggerIt() {
+        ProviderQuotaScheduler.resetForTests()
+        val server = TestHttpServer { body, _ ->
+            val content = when {
+                body.contains("ID zadania: malformed-rejection") -> "AIFORTECA_HANDOFF_REJECT_V1:{bad-json"
+                else -> "W raporcie wspomniano AIFORTECA_HANDOFF_REJECT_V1:, ale to zwykły tekst."
+            }
+            200 to """{"choices":[{"message":{"content":${org.json.JSONObject.quote(content)}}}],"usage":{"prompt_tokens":3,"completion_tokens":2,"total_tokens":5}}"""
+        }
+        try {
+            val config = ProviderConfig(
+                "handoff-reject-parse-test", "Handoff rejection parse test", ProviderKind.OPENAI_COMPATIBLE,
+                "http://127.0.0.1:${server.address.port}/v1", "test-model", ""
+            )
+            val results = TeamRunEngine(ProviderClient()).runBatch(
+                tasks = listOf(
+                    TeamTask("malformed-rejection", "qa-architect", "Malformed", "Return the directive"),
+                    TeamTask("ordinary-prose", "unit-test-engineer", "Ordinary", "Return normal report")
+                ),
+                provider = config,
+                agentProvidersMap = mapOf("qa-architect" to config, "unit-test-engineer" to config),
+                isFreeProvider = { true },
+                mode = WorkMode.PLANNING,
+                handoffContextForTask = { "INBOUND_CONTEXT" }
+            )
+            assertEquals(TeamTaskResult.Status.BLOCKED, results[0].status)
+            assertTrue(results[0].handoffRejectionReason.contains("nieprawidłowy"))
+            assertEquals(TeamTaskResult.Status.COMPLETED, results[1].status)
+            assertTrue(results[1].handoffRejectionReason.isEmpty())
+            assertEquals(2, server.requestCount.get())
+        } finally {
+            ProviderQuotaScheduler.resetForTests()
+            server.stop(0)
+        }
+    }
+
+    @Test
     fun completedReportIsPersistedBeforeTerminalCheckpoint() {
         ProviderQuotaScheduler.resetForTests()
         val server = TestHttpServer { _, _ ->
@@ -198,7 +341,9 @@ class TeamRunEngineNetworkTest {
                 onTaskResult = { false },
                 onTaskState = { _, state, _, _, _, _ -> if (state == "RESULT_PERSIST_PENDING") pendingState = state }
             ).single()
-            assertEquals(TeamTaskResult.Status.COMPLETED, notPersisted.status)
+            assertEquals(TeamTaskResult.Status.BLOCKED, notPersisted.status)
+            assertEquals("result-pending-task", notPersisted.taskId)
+            assertTrue(notPersisted.report.isNotBlank())
             assertEquals("RESULT_PERSIST_PENDING", pendingState)
         } finally {
             ProviderQuotaScheduler.resetForTests()
@@ -237,7 +382,7 @@ class TeamRunEngineNetworkTest {
                 onTaskFinished = { lifecycle.add("finished") }
             ).single()
 
-            assertEquals(TeamTaskResult.Status.COMPLETED, result.status)
+            assertEquals(TeamTaskResult.Status.BLOCKED, result.status)
             assertEquals("valid-agent-report", result.report)
             assertEquals("A successful response must not trigger a second provider request", 1, server.requestCount.get())
             assertTrue("The local accounting failure must remain visible", logs.any { it.contains("USAGE_RECORD_FAILED") })

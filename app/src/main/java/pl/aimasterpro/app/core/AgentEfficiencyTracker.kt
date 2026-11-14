@@ -11,6 +11,13 @@ object AgentEfficiencyTracker {
     private const val PREFS = "agent_efficiency_history_v1"
     private const val KEY = "outcomes"
     private const val MAX_ITEMS = 500
+    private const val MAX_RAW_CHARS = 1_000_000
+    private const val MAX_TASK_CHARS = 160
+    private const val MAX_AGENT_CHARS = 100
+    private const val MAX_STATUS_CHARS = 40
+    private const val MAX_PROVIDER_CHARS = 100
+    private const val MAX_MODEL_CHARS = 160
+    private const val MAX_ERROR_CHARS = 80
 
     data class Outcome(
         val timestamp: Long,
@@ -26,8 +33,11 @@ object AgentEfficiencyTracker {
 
     @Synchronized
     fun record(context: Context, outcome: Outcome) {
-        if (outcome.timestamp < 0L || outcome.taskId.isBlank() || outcome.agentId.isBlank() ||
-            outcome.status.isBlank() || outcome.durationMs < 0L || outcome.attempts < 0) {
+        if (outcome.timestamp <= 0L || outcome.taskId.isBlank() || outcome.agentId.isBlank() ||
+            outcome.status.isBlank() || outcome.durationMs < 0L || outcome.attempts < 0 ||
+            outcome.taskId.length > MAX_TASK_CHARS || outcome.agentId.length > MAX_AGENT_CHARS ||
+            outcome.status.length > MAX_STATUS_CHARS || outcome.providerId.length > MAX_PROVIDER_CHARS ||
+            outcome.model.length > MAX_MODEL_CHARS || outcome.errorCategory.length > MAX_ERROR_CHARS) {
             android.util.Log.e("AIMasterEfficiency", "Nie zapisano wyniku: nieprawidłowa tożsamość lub liczniki.")
             return
         }
@@ -35,21 +45,33 @@ object AgentEfficiencyTracker {
             android.util.Log.e("AIMasterEfficiency", "Nie zapisano wyniku: historia efektywności jest uszkodzona.")
             return
         }
-        all.add(0, outcome.copy(
-            taskId = outcome.taskId.take(160), agentId = outcome.agentId.take(100),
-            status = outcome.status.take(40), providerId = outcome.providerId.take(100),
-            model = outcome.model.take(160), errorCategory = outcome.errorCategory.take(80)
-        ))
+        val safeOutcome = outcome.copy(
+            providerId = CommunicationLogSanitizer.sanitize(outcome.providerId),
+            model = CommunicationLogSanitizer.sanitize(outcome.model),
+            errorCategory = CommunicationLogSanitizer.sanitize(outcome.errorCategory)
+        )
+        if (safeOutcome.providerId.length > MAX_PROVIDER_CHARS ||
+            safeOutcome.model.length > MAX_MODEL_CHARS ||
+            safeOutcome.errorCategory.length > MAX_ERROR_CHARS) {
+            android.util.Log.e("AIMasterEfficiency", "Nie zapisano wyniku: oczyszczone metadane przekraczają limity.")
+            return
+        }
+        all.add(0, safeOutcome)
         val json = JSONArray()
         all.take(MAX_ITEMS).forEach { o ->
             json.put(JSONObject().put("ts", o.timestamp).put("task", o.taskId).put("agent", o.agentId)
                 .put("status", o.status).put("duration", o.durationMs).put("attempts", o.attempts)
                 .put("provider", o.providerId).put("model", o.model).put("error", o.errorCategory))
         }
-        val saved = runCatching {
-            context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
-                .putString(KEY, json.toString()).commit()
-        }.getOrDefault(false)
+        val serialized = json.toString()
+        if (serialized.length > MAX_RAW_CHARS) {
+            android.util.Log.e("AIMasterEfficiency", "Nie zapisano wyniku: historia przekracza obsługiwany rozmiar.")
+            return
+        }
+        val saved = SharedPreferencesWriteHealth.commit(
+            PREFS, context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
+                .putString(KEY, serialized)
+        )
         if (!saved) android.util.Log.e("AIMasterEfficiency", "Nie udało się trwale zapisać historii efektywności.")
     }
 
@@ -58,8 +80,10 @@ object AgentEfficiencyTracker {
 
     /** A malformed row invalidates the whole journal; never return a silently partial history. */
     private fun readStrict(context: Context): List<Outcome>? = runCatching {
+        SharedPreferencesWriteHealth.withHealthyAccess(PREFS) {
         val raw = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString(KEY, null)
-            ?: return@runCatching emptyList()
+            ?: return@withHealthyAccess emptyList()
+        require(raw.length <= MAX_RAW_CHARS) { "Efficiency history exceeds its supported raw size." }
         val arr = JSONArray(raw)
         require(arr.length() <= MAX_ITEMS) { "Efficiency history exceeds its supported size." }
         (0 until arr.length()).map { i ->
@@ -81,7 +105,7 @@ object AgentEfficiencyTracker {
             val timestamp = exactLong("ts")
             val duration = exactLong("duration")
             val attemptsLong = exactLong("attempts")
-            require(timestamp >= 0L && duration >= 0L && attemptsLong in 0..Int.MAX_VALUE.toLong()) {
+            require(timestamp > 0L && duration >= 0L && attemptsLong in 0..Int.MAX_VALUE.toLong()) {
                 "Efficiency history contains negative or out-of-range counters."
             }
             val task = requiredText("task")
@@ -90,10 +114,18 @@ object AgentEfficiencyTracker {
             val provider = requiredText("provider")
             val model = requiredText("model")
             val error = requiredText("error")
-            require(task.isNotBlank() && agent.isNotBlank() && status.isNotBlank()) {
+            require(task.isNotBlank() && task.length <= MAX_TASK_CHARS &&
+                agent.isNotBlank() && agent.length <= MAX_AGENT_CHARS &&
+                status.isNotBlank() && status.length <= MAX_STATUS_CHARS &&
+                provider.length <= MAX_PROVIDER_CHARS && model.length <= MAX_MODEL_CHARS &&
+                error.length <= MAX_ERROR_CHARS &&
+                CommunicationLogSanitizer.sanitize(provider) == provider &&
+                CommunicationLogSanitizer.sanitize(model) == model &&
+                CommunicationLogSanitizer.sanitize(error) == error) {
                 "Efficiency history row is missing task, agent, or status identity."
             }
             Outcome(timestamp, task, agent, status, duration, attemptsLong.toInt(), provider, model, error)
+        }
         }
     }.getOrNull()
 
@@ -101,7 +133,11 @@ object AgentEfficiencyTracker {
 
     @Synchronized
     fun clear(context: Context): Boolean = runCatching {
-        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().remove(KEY).commit()
+        SharedPreferencesWriteHealth.withHealthyAccess(PREFS) {
+            SharedPreferencesWriteHealth.commit(
+                PREFS, context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().remove(KEY)
+            )
+        }
     }.getOrDefault(false)
 
     /**

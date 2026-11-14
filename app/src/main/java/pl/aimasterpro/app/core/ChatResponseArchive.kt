@@ -24,7 +24,12 @@ object ChatResponseArchive {
     private const val PREFS = "chat_response_archive_v1"
     private const val KEY = "responses"
     private const val MAX_ENTRIES = 25
+    private const val MAX_TASK_ID_CHARS = 512
+    private const val MAX_AGENT_ID_CHARS = 120
+    private const val MAX_PROVIDER_ID_CHARS = 200
+    private const val MAX_MODEL_CHARS = 240
     private const val MAX_RESPONSE_CHARS = 32_000
+    private const val MAX_RAW_CHARS = 1_000_000
 
     @Synchronized
     fun put(
@@ -38,8 +43,11 @@ object ChatResponseArchive {
         createdAt: Long = System.currentTimeMillis()
     ): Boolean = runCatching { SharedPreferencesWriteHealth.withHealthyAccess(PREFS) {
         if (SharedPreferencesWriteHealth.isUncertain(PREFS) ||
-            taskId.isBlank() || chatId.isBlank() || chatId.length > 200 ||
-            agentId.isBlank() || providerId.isBlank() || model.isBlank() ||
+            taskId.isBlank() || taskId.length > MAX_TASK_ID_CHARS ||
+            chatId.isBlank() || chatId.length > 200 ||
+            agentId.isBlank() || agentId.length > MAX_AGENT_ID_CHARS ||
+            providerId.isBlank() || providerId.length > MAX_PROVIDER_ID_CHARS ||
+            model.isBlank() || model.length > MAX_MODEL_CHARS ||
             response.isBlank() || response.length > MAX_RESPONSE_CHARS || createdAt < 0L
         ) return@withHealthyAccess false
 
@@ -53,13 +61,16 @@ object ChatResponseArchive {
             val row = old.getJSONObject(i)
             if (row.optString("taskId") != taskId) next.put(row)
         }
-        val trimmed = JSONArray()
-        for (i in 0 until minOf(next.length(), MAX_ENTRIES)) trimmed.put(next.getJSONObject(i))
+        // This is a write-ahead log: capacity pressure must not silently discard an
+        // unacknowledged answer. Existing task entries can still be replaced at capacity.
+        if (next.length() > MAX_ENTRIES || next.toString().length > MAX_RAW_CHARS) {
+            return@withHealthyAccess false
+        }
         runCatching {
             SharedPreferencesWriteHealth.commit(
                 PREFS,
                 context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
-                    .putString(KEY, trimmed.toString())
+                    .putString(KEY, next.toString())
             )
         }.getOrDefault(false)
     } }.getOrDefault(false)
@@ -99,6 +110,7 @@ object ChatResponseArchive {
         val entries = latest(context)
         if (entries.isEmpty()) return 0
         var restored = 0
+        val acknowledgedTaskIds = linkedSetOf<String>()
         val updated = ChatHistoryStore.updateRoot(context) { root ->
             val chats = root.optJSONObject("chats") ?: return@updateRoot false
             entries.asReversed().forEach { entry ->
@@ -112,7 +124,10 @@ object ChatResponseArchive {
                     (0 until storedIds.length()).map { storedIds.optString(it) },
                     assistantCount
                 )
-                if (entry.taskId in alignedIds) return@forEach
+                if (entry.taskId in alignedIds) {
+                    acknowledgedTaskIds += entry.taskId
+                    return@forEach
+                }
 
                 messages.put(JSONObject().put("role", "assistant").put("text", entry.response))
                 val nextIds = JSONArray()
@@ -121,6 +136,7 @@ object ChatResponseArchive {
                 chat.put("messages", messages)
                     .put("assistantTaskIds", nextIds)
                     .put("updatedAt", maxOf(chat.optLong("updatedAt"), entry.createdAt))
+                acknowledgedTaskIds += entry.taskId
                 restored++
             }
             restored > 0
@@ -128,7 +144,60 @@ object ChatResponseArchive {
         if (!updated) {
             throw IllegalStateException("Nie udało się trwale odtworzyć odpowiedzi czatu z archiwum.")
         }
+        // The archive is a write-ahead log, not a permanent duplicate of committed history.
+        // Acknowledge only after the canonical chat snapshot is durable; orphaned entries remain.
+        acknowledgedTaskIds.forEach { taskId ->
+            if (!acknowledgePersisted(context, taskId)) {
+                android.util.Log.w("AIMasterChatArchive", "Odpowiedź $taskId została zapisana w historii, ale nie udało się potwierdzić jej w archiwum.")
+            }
+        }
         return restored
+    }
+
+    /**
+     * Removes one write-ahead entry only after its assistant message and task marker are durable
+     * in ChatHistoryStore. Repeated acknowledgement is intentionally idempotent.
+     */
+    @Synchronized
+    fun acknowledgePersisted(context: Context, taskId: String): Boolean {
+        if (taskId.isBlank() || taskId.length > MAX_TASK_ID_CHARS) return false
+        return runCatching {
+            // Verify the canonical message marker before touching the write-ahead entry.
+            // Read the two stores in separate critical sections to avoid cross-store lock inversion.
+            val old = read(context) ?: return@runCatching false
+            val archived = (0 until old.length()).asSequence()
+                .map { old.getJSONObject(it) }
+                .firstOrNull { it.getString("taskId") == taskId }
+                ?: return@runCatching true
+            val history = ChatHistoryStore.readRoot(context) ?: return@runCatching false
+            val chat = history.optJSONObject("chats")?.optJSONObject(archived.getString("chatId"))
+                ?: return@runCatching false
+            val ids = chat.optJSONArray("assistantTaskIds") ?: return@runCatching false
+            if ((0 until ids.length()).none { ids.optString(it) == taskId }) {
+                return@runCatching false
+            }
+
+            SharedPreferencesWriteHealth.withHealthyAccess(PREFS) {
+                val current = read(context) ?: return@withHealthyAccess false
+                val next = JSONArray()
+                var found = false
+                for (i in 0 until current.length()) {
+                    val row = current.getJSONObject(i)
+                    if (row.getString("taskId") == taskId &&
+                        row.getString("chatId") == archived.getString("chatId")) {
+                        found = true
+                    } else {
+                        next.put(row)
+                    }
+                }
+                if (!found) return@withHealthyAccess true
+                SharedPreferencesWriteHealth.commit(
+                    PREFS,
+                    context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
+                        .putString(KEY, next.toString())
+                )
+            }
+        }.getOrDefault(false)
     }
 
     private fun encode(entry: Entry): JSONObject = JSONObject()
@@ -157,7 +226,9 @@ object ChatResponseArchive {
             context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString(KEY, null)
         } ?: return@runCatching JSONArray()
         runCatching {
+            require(raw.length <= MAX_RAW_CHARS) { "Response archive exceeds its raw size limit." }
             val source = JSONArray(raw)
+            require(source.length() <= MAX_ENTRIES) { "Response archive exceeds its capacity." }
             val seen = hashSetOf<String>()
             for (i in 0 until source.length()) {
                 val row = source.getJSONObject(i)
@@ -172,10 +243,12 @@ object ChatResponseArchive {
                 val response = row.getString("response")
                 val providerId = row.getString("providerId")
                 val model = row.getString("model")
-                require(taskId.isNotBlank() && seen.add(taskId))
-                require(chatId.isNotBlank() && chatId.length <= 200 && agentId.isNotBlank())
+                require(taskId.isNotBlank() && taskId.length <= MAX_TASK_ID_CHARS && seen.add(taskId))
+                require(chatId.isNotBlank() && chatId.length <= 200)
+                require(agentId.isNotBlank() && agentId.length <= MAX_AGENT_ID_CHARS)
                 require(response.isNotBlank() && response.length <= MAX_RESPONSE_CHARS)
-                require(providerId.isNotBlank() && model.isNotBlank())
+                require(providerId.isNotBlank() && providerId.length <= MAX_PROVIDER_ID_CHARS)
+                require(model.isNotBlank() && model.length <= MAX_MODEL_CHARS)
                 require((timestamp as Number).toLong() >= 0L)
             }
             source

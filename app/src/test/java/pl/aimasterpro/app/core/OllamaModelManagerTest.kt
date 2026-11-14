@@ -33,13 +33,17 @@ class OllamaModelManagerTest {
         }
     }
 
-    @Test fun identifiesOllamaByProfileOrNativePort() {
+    @Test fun identifiesOllamaOnlyByVerifiedLocalEndpointNotProfileNameOrPublicPort() {
         val byId = ProviderConfig("ollama", "Local", ProviderKind.OPENAI_COMPATIBLE, "http://10.0.2.2:11434/v1", "", "")
         val byPort = ProviderConfig("custom", "Local endpoint", ProviderKind.OPENAI_COMPATIBLE, "http://127.0.0.1:11434/v1", "", "")
         val cloud = ProviderConfig("groq", "Groq", ProviderKind.OPENAI_COMPATIBLE, "https://api.groq.com/openai/v1", "", "")
+        val spoofedId = ProviderConfig("ollama", "Ollama", ProviderKind.OPENAI_COMPATIBLE, "https://public.example:11434/v1", "", "")
+        val spoofedName = ProviderConfig("custom", "Ollama Cloud", ProviderKind.OPENAI_COMPATIBLE, "https://public.example/v1", "", "")
         assertTrue(OllamaModelManager.isOllamaProvider(byId))
         assertTrue(OllamaModelManager.isOllamaProvider(byPort))
         assertFalse(OllamaModelManager.isOllamaProvider(cloud))
+        assertFalse(OllamaModelManager.isOllamaProvider(spoofedId))
+        assertFalse(OllamaModelManager.isOllamaProvider(spoofedName))
     }
 
     @Test fun pullStreamsProgressAndRequiresSuccessRecord() {

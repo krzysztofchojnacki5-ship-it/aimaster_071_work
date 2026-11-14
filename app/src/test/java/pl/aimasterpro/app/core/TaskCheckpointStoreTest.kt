@@ -114,6 +114,22 @@ class TaskCheckpointStoreTest {
         assertTrue(prefs.getString("events", null)?.contains("ambiguous-write") == true)
     }
 
+    @Test fun checkpointFromOlderQueueRunCannotOverwriteNewerRun() {
+        assertTrue(TaskCheckpointStore.record(context, TaskCheckpointStore.Event(
+            taskId = "queue-task-agent-r2", agentId = "RESEARCHER", status = "RUNNING", detail = "new run",
+            timestamp = 200L, providerId = "provider-new", model = "model-new", attempts = 1, runId = 2
+        )))
+        assertTrue(TaskCheckpointStore.record(context, TaskCheckpointStore.Event(
+            taskId = "queue-task-agent-r2", agentId = "RESEARCHER", status = "FAILED", detail = "late old callback",
+            timestamp = 300L, providerId = "provider-old", model = "model-old", attempts = 1, runId = 1
+        )))
+        val latest = TaskCheckpointStore.latest(context).single()
+        assertEquals(2, latest.runId)
+        assertEquals("RUNNING", latest.status)
+        assertEquals("provider-new", latest.providerId)
+        assertEquals("new run", latest.detail)
+    }
+
     @Test fun safeCheckpointBaseUrlPreservesExplicitPortAndExcludesSensitiveUrlParts() {
         assertEquals(
             "http://127.0.0.1:11434",
@@ -780,6 +796,215 @@ class TaskCheckpointStoreTest {
         assertTrue(TaskCheckpointStore.hasRecoverableUsageMetadata(incomplete.copy(
             estimatedInputTokens = 450L, idempotencyKey = "team:legacy-request:provider-a"
         )))
+    }
+
+    @Test fun checkpointReaderRejectsOversizedRawPayloadAndExcessRowsWithoutMutation() {
+        val prefs = context.getSharedPreferences("task_checkpoints_v1", Context.MODE_PRIVATE)
+        val oversized = " ".repeat(2_000_001)
+        assertTrue(prefs.edit().putString("events", oversized).commit())
+        assertFalse(TaskCheckpointStore.isJournalReadable(context))
+        assertFalse(TaskCheckpointStore.record(context, TaskCheckpointStore.Event(
+            "new-task", "RESEARCHER", "QUEUED", "", 100L, "", "", 0
+        )))
+        assertEquals(oversized, prefs.getString("events", null))
+
+        val tooMany = org.json.JSONArray()
+        repeat(801) { index -> tooMany.put(org.json.JSONObject()
+            .put("task", "task-$index").put("agent", "RESEARCHER").put("status", "QUEUED")
+            .put("detail", "").put("ts", index.toLong()).put("provider", "").put("model", "")
+            .put("attempts", 0)) }
+        val corrupt = tooMany.toString()
+        assertTrue(prefs.edit().putString("events", corrupt).commit())
+        assertFalse(TaskCheckpointStore.isJournalReadable(context))
+        assertFalse(TaskCheckpointStore.record(context, TaskCheckpointStore.Event(
+            "after-overflow", "RESEARCHER", "QUEUED", "", 900L, "", "", 0
+        )))
+        assertEquals(corrupt, prefs.getString("events", null))
+    }
+
+    @Test fun checkpointReaderRejectsOversizedPersistedMetadataWithoutMutation() {
+        val prefs = context.getSharedPreferences("task_checkpoints_v1", Context.MODE_PRIVATE)
+        val corrupt = org.json.JSONArray().put(org.json.JSONObject()
+            .put("task", "t".repeat(513)).put("agent", "RESEARCHER").put("status", "RUNNING")
+            .put("detail", "").put("ts", 100L).put("provider", "").put("model", "").put("attempts", 0)).toString()
+        assertTrue(prefs.edit().putString("events", corrupt).commit())
+        assertFalse(TaskCheckpointStore.isJournalReadable(context))
+        assertFalse(TaskCheckpointStore.record(context, TaskCheckpointStore.Event(
+            "new-task", "RESEARCHER", "QUEUED", "", 200L, "", "", 0
+        )))
+        assertEquals(corrupt, prefs.getString("events", null))
+    }
+
+    @Test fun checkpointWriterRejectsOversizedFieldsWithoutTruncatingOrMutatingJournal() {
+        val prefs = context.getSharedPreferences("task_checkpoints_v1", Context.MODE_PRIVATE)
+        val base = TaskCheckpointStore.Event(
+            taskId = "bounded-fields", agentId = "RESEARCHER", status = "RUNNING", detail = "ok",
+            timestamp = 100L, providerId = "provider", model = "model", attempts = 1,
+            processId = "process", idempotencyKey = "request-key", baseUrl = "https://api.example"
+        )
+        assertTrue(TaskCheckpointStore.record(context, base))
+        val original = prefs.getString("events", null)
+        val invalid = listOf(
+            base.copy(agentId = "a".repeat(101)),
+            base.copy(status = "s".repeat(31)),
+            base.copy(detail = "d".repeat(501)),
+            base.copy(providerId = "p".repeat(101)),
+            base.copy(model = "m".repeat(161)),
+            base.copy(processId = "x".repeat(129)),
+            base.copy(idempotencyKey = "k".repeat(241)),
+            base.copy(baseUrl = "u".repeat(301))
+        )
+        invalid.forEach { event ->
+            assertFalse(TaskCheckpointStore.record(context, event))
+            assertEquals(original, prefs.getString("events", null))
+        }
+        assertEquals("ok", TaskCheckpointStore.latest(context).single().detail)
+    }
+
+
+    @Test fun checkpointWriterRedactsDiagnosticMetadataAndPersistsOnlyProviderOrigin() {
+        val prefs = context.getSharedPreferences("task_checkpoints_v1", Context.MODE_PRIVATE)
+        val event = TaskCheckpointStore.Event(
+            taskId = "task-redaction-001",
+            agentId = "RESEARCHER",
+            status = "REQUESTING",
+            detail = "request access_token=detail-secret",
+            timestamp = 100L,
+            providerId = "provider api_key=provider-secret",
+            model = "model password=model-secret",
+            attempts = 1,
+            processId = "process-001",
+            idempotencyKey = "team:task-redaction-001:provider",
+            baseUrl = "https://user:base-secret@api.example.com/v1?token=url-secret"
+        )
+
+        assertTrue(TaskCheckpointStore.record(context, event))
+        val saved = TaskCheckpointStore.latest(context).single()
+        assertEquals("request access_token=[REDACTED]", saved.detail)
+        assertEquals("provider api_key=[REDACTED]", saved.providerId)
+        assertEquals("model password=[REDACTED]", saved.model)
+        assertEquals("https://api.example.com", saved.baseUrl)
+        val raw = prefs.getString("events", null).orEmpty()
+        listOf("detail-secret", "provider-secret", "model-secret", "base-secret", "url-secret")
+            .forEach { assertFalse("Secret must not be persisted: $it", raw.contains(it)) }
+
+        val before = raw
+        assertFalse(TaskCheckpointStore.record(context, event.copy(
+            taskId = "task-unsafe-key-001",
+            idempotencyKey = "team:task-unsafe-key-001:secret=identity-secret"
+        )))
+        assertEquals(before, prefs.getString("events", null))
+    }
+
+    @Test fun checkpointReaderRejectsPersistedSecretsAndNonOriginUrlsWithoutOverwriting() {
+        val prefs = context.getSharedPreferences("task_checkpoints_v1", Context.MODE_PRIVATE)
+        val base = org.json.JSONObject()
+            .put("task", "task-reader-safe")
+            .put("agent", "RESEARCHER")
+            .put("status", "REQUESTING")
+            .put("detail", "request started")
+            .put("ts", 100L)
+            .put("provider", "openai")
+            .put("model", "gpt-model")
+            .put("attempts", 1)
+            .put("processId", "process-001")
+            .put("estimatedInputTokens", 10L)
+            .put("estimatedOutputTokens", 20L)
+            .put("idempotencyKey", "team:task-reader-safe:openai")
+            .put("baseUrl", "https://api.example.com")
+            .put("runId", 1)
+        val unsafeRows = listOf(
+            org.json.JSONObject(base.toString()).put("detail", "api_key=persisted-secret"),
+            org.json.JSONObject(base.toString()).put("provider", "provider secret=persisted-secret"),
+            org.json.JSONObject(base.toString()).put("model", "model password=persisted-secret"),
+            org.json.JSONObject(base.toString()).put("processId", "Bearer persisted-secret-token"),
+            org.json.JSONObject(base.toString()).put("idempotencyKey", "secret=persisted-secret"),
+            org.json.JSONObject(base.toString()).put("baseUrl", "https://user:pass@api.example.com/path?token=hidden"),
+            org.json.JSONObject(base.toString()).put("task", "task-secret=identity-secret")
+        )
+
+        unsafeRows.forEachIndexed { index, row ->
+            val raw = org.json.JSONArray().put(row).toString()
+            assertTrue(prefs.edit().putString("events", raw).commit())
+            assertFalse("Unsafe persisted row $index must be unreadable", TaskCheckpointStore.isJournalReadable(context))
+            assertFalse("Unsafe persisted row $index must block appends", TaskCheckpointStore.record(
+                context, TaskCheckpointStore.Event(
+                    "task-after-unsafe-row", "RESEARCHER", "QUEUED", "", 200L, "", "", 0
+                )
+            ))
+            assertEquals("Unsafe persisted bytes must remain untouched", raw, prefs.getString("events", null))
+        }
+    }
+
+    @Test fun checkpointWriterRejectsUnknownLifecycleStatusWithoutMutatingJournal() {
+        val prefs = context.getSharedPreferences("task_checkpoints_v1", Context.MODE_PRIVATE)
+        assertTrue(TaskCheckpointStore.record(context, TaskCheckpointStore.Event(
+            "task-valid-status", "RESEARCHER", "QUEUED", "", 100L, "", "", 0
+        )))
+        val before = prefs.getString("events", null)
+        assertFalse(TaskCheckpointStore.record(context, TaskCheckpointStore.Event(
+            "task-unknown-status", "RESEARCHER", "FUTURE_STATE", "", 200L, "", "", 0
+        )))
+        assertEquals(before, prefs.getString("events", null))
+    }
+
+    @Test fun checkpointReaderRejectsUnknownLifecycleStatusWithoutOverwritingJournal() {
+        val prefs = context.getSharedPreferences("task_checkpoints_v1", Context.MODE_PRIVATE)
+        val raw = org.json.JSONArray().put(org.json.JSONObject()
+            .put("task", "task-future-status")
+            .put("agent", "RESEARCHER")
+            .put("status", "FUTURE_STATE")
+            .put("ts", 100L)).toString()
+        assertTrue(prefs.edit().putString("events", raw).commit())
+        assertFalse(TaskCheckpointStore.isJournalReadable(context))
+        assertFalse(TaskCheckpointStore.record(context, TaskCheckpointStore.Event(
+            "task-after-future-status", "RESEARCHER", "QUEUED", "", 200L, "", "", 0
+        )))
+        assertEquals(raw, prefs.getString("events", null))
+    }
+
+    @Test fun checkpointReaderRejectsUnknownPersistedFieldsWithoutOverwritingJournal() {
+        val prefs = context.getSharedPreferences("task_checkpoints_v1", Context.MODE_PRIVATE)
+        val raw = org.json.JSONArray().put(org.json.JSONObject()
+            .put("task", "task-unknown-field")
+            .put("agent", "RESEARCHER")
+            .put("status", "QUEUED")
+            .put("ts", 100L)
+            .put("apiKey", "unexpected-secret")).toString()
+        assertTrue(prefs.edit().putString("events", raw).commit())
+        assertFalse(TaskCheckpointStore.isJournalReadable(context))
+        assertFalse(TaskCheckpointStore.record(context, TaskCheckpointStore.Event(
+            "task-after-unknown-field", "RESEARCHER", "QUEUED", "", 200L, "", "", 0
+        )))
+        assertEquals(raw, prefs.getString("events", null))
+    }
+
+    @Test fun checkpointReaderRequiresCoreFieldsAndKeepsLegacyOptionalMetadataCompatible() {
+        val prefs = context.getSharedPreferences("task_checkpoints_v1", Context.MODE_PRIVATE)
+        val legacy = org.json.JSONObject()
+            .put("task", "task-legacy-minimal")
+            .put("agent", "RESEARCHER")
+            .put("status", "QUEUED")
+            .put("ts", 100L)
+        val legacyRaw = org.json.JSONArray().put(legacy).toString()
+        assertTrue(prefs.edit().putString("events", legacyRaw).commit())
+        assertTrue(TaskCheckpointStore.isJournalReadable(context))
+        val loaded = TaskCheckpointStore.latest(context).single()
+        assertEquals("task-legacy-minimal", loaded.taskId)
+        assertEquals("", loaded.detail)
+        assertEquals("", loaded.providerId)
+        assertEquals("", loaded.model)
+
+        listOf("task", "agent", "status", "ts").forEach { missing ->
+            val malformed = org.json.JSONObject(legacy.toString()).apply { remove(missing) }
+            val raw = org.json.JSONArray().put(malformed).toString()
+            assertTrue(prefs.edit().putString("events", raw).commit())
+            assertFalse("Missing required field $missing must fail closed", TaskCheckpointStore.isJournalReadable(context))
+            assertFalse(TaskCheckpointStore.record(context, TaskCheckpointStore.Event(
+                "task-after-missing-$missing", "RESEARCHER", "QUEUED", "", 200L, "", "", 0
+            )))
+            assertEquals(raw, prefs.getString("events", null))
+        }
     }
 
 }

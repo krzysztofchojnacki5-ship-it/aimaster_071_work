@@ -46,7 +46,8 @@ object ProviderEndpointPolicy {
             } == true
             val isExplicitOllamaLan = allowInsecureLanOllama &&
                 parsed.port == 11434 &&
-                CleartextEndpointPolicy.isPrivateLanIpv4(parsed.host) &&
+                (CleartextEndpointPolicy.isPrivateLanIpv4(parsed.host) ||
+                    CleartextEndpointPolicy.isPrivateLanIpv6(parsed.host)) &&
                 parsed.path.orEmpty().trimEnd('/').let {
                     it.isEmpty() || it in setOf("/v1", "/v1/models", "/v1/chat/completions")
                 } &&

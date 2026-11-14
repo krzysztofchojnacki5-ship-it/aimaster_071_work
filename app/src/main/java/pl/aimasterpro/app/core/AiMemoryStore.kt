@@ -10,6 +10,9 @@ import java.util.Locale
  */
 object AiMemoryStore {
     private const val PREFS_NAME = "ai_master_memory_store_v1"
+    private const val MAX_MEMORIES = 100
+    private const val MAX_MEMORY_CHARS = 2_000
+    private const val MAX_MEMORY_RAW_CHARS = 250_000
     private const val DEFAULT_CONTEXT_LIMIT = 2_400
     private const val DEFAULT_CONTEXT_ITEMS = 8
     private val termRegex = Regex("[\\p{L}\\p{N}]{3,}")
@@ -19,20 +22,8 @@ object AiMemoryStore {
         "this", "that", "have", "will", "your", "into", "when", "what", "how"
     )
 
-    fun getMemories(context: Context): List<String> = runCatching {
-        if (SharedPreferencesWriteHealth.isUncertain(PREFS_NAME)) return@runCatching defaultMemories()
-        val raw = SharedPreferencesWriteHealth.withHealthyAccess(PREFS_NAME) {
-            context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).getString("memories", null)
-        } ?: return@runCatching defaultMemories()
-        val arr = JSONArray(raw)
-        val list = mutableListOf<String>()
-        for (i in 0 until arr.length()) {
-            val value = arr.get(i)
-            require(value is String) { "Memory entry must be a string." }
-            list.add(value)
-        }
-        list.ifEmpty { defaultMemories() }
-    }.getOrDefault(defaultMemories())
+    fun getMemories(context: Context): List<String> =
+        readStoredMemories(context)?.ifEmpty { defaultMemories() } ?: defaultMemories()
 
     /**
      * A missing preference is a valid first-run state. Corrupt JSON is not an empty memory
@@ -43,39 +34,83 @@ object AiMemoryStore {
         val raw = SharedPreferencesWriteHealth.withHealthyAccess(PREFS_NAME) {
             context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).getString("memories", null)
         } ?: return@runCatching defaultMemories()
+        require(raw.length <= MAX_MEMORY_RAW_CHARS) { "Memory library exceeds its raw size limit." }
         val arr = JSONArray(raw)
-        (0 until arr.length()).map { index ->
+        require(arr.length() <= MAX_MEMORIES) { "Memory library exceeds its supported capacity." }
+        val values = (0 until arr.length()).map { index ->
             val value = arr.get(index)
-            require(value is String) { "Memory entry must be a string." }
+            require(value is String && value.isNotBlank() && value.length <= MAX_MEMORY_CHARS) {
+                "Memory entry is blank or exceeds its supported size."
+            }
             value
         }
+        require(values.distinct().size == values.size) { "Memory library contains duplicate entries." }
+        values
     }.getOrNull()
 
+    /** Null means the persisted memory list is unreadable; false means the exact entry is absent. */
     @Synchronized
-    fun addMemory(context: Context, memory: String): Boolean = runCatching {
-        if (memory.isBlank() || SharedPreferencesWriteHealth.isUncertain(PREFS_NAME)) return@runCatching false
+    internal fun containsExactMemory(context: Context, exactMemory: String): Boolean? =
+        readStoredMemories(context)?.contains(exactMemory)
+
+    @Synchronized
+    internal fun addMemory(context: Context, memory: String, permit: MemoryMutationPermit, objectId: String): Boolean {
+        if (objectId.isBlank() || !MemoryMutationGate.isValid(permit, setOf(
+                MemoryGovernance.Mutation.ADD_SHARED_RULE,
+                MemoryGovernance.Mutation.APPROVE_PROPOSAL,
+                MemoryGovernance.Mutation.RECONCILE_APPROVED_PROPOSAL
+            ), objectId)) return false
+        return addMemoryRaw(context, memory)
+    }
+
+    @Synchronized
+    private fun addMemoryRaw(context: Context, memory: String): Boolean = runCatching {
+        val cleanMemory = memory.trim()
+        if (cleanMemory.isBlank() || cleanMemory.length > MAX_MEMORY_CHARS ||
+            SharedPreferencesWriteHealth.isUncertain(PREFS_NAME)) return@runCatching false
         val list = readStoredMemories(context)?.toMutableList() ?: return@runCatching false
-        if (list.contains(memory)) return@runCatching true
-        list.add(0, memory)
+        if (list.contains(cleanMemory)) return@runCatching true
+        if (list.size >= MAX_MEMORIES) return@runCatching false
+        list.add(0, cleanMemory)
         val arr = JSONArray()
-        list.take(100).forEach { arr.put(it) }
+        list.forEach { arr.put(it) }
         context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit()
             .putString("memories", arr.toString())
             .let { SharedPreferencesWriteHealth.commit(PREFS_NAME, it) }
     }.getOrDefault(false)
 
     @Synchronized
-    fun removeMemory(context: Context, exactMemory: String): Boolean = runCatching {
+    internal fun removeMemory(context: Context, exactMemory: String, permit: MemoryMutationPermit, objectId: String): Boolean {
+        if (!MemoryMutationGate.isValid(permit, setOf(
+                MemoryGovernance.Mutation.REMOVE_SHARED_RULE,
+                MemoryGovernance.Mutation.APPROVE_PROPOSAL,
+                MemoryGovernance.Mutation.REJECT_PROPOSAL,
+                MemoryGovernance.Mutation.RECONCILE_APPROVED_PROPOSAL,
+                MemoryGovernance.Mutation.RECONCILE_REVOKED_PROPOSAL
+            ), objectId)) return false
+        // Proposal rollback and startup reconciliation are idempotent: an already-absent
+        // entry is the desired state. A direct user deletion remains strict and returns false.
+        val idempotentRemoval = setOf(
+            MemoryGovernance.Mutation.APPROVE_PROPOSAL,
+            MemoryGovernance.Mutation.REJECT_PROPOSAL,
+            MemoryGovernance.Mutation.RECONCILE_APPROVED_PROPOSAL,
+            MemoryGovernance.Mutation.RECONCILE_REVOKED_PROPOSAL
+        ).any { MemoryMutationGate.isValid(permit, setOf(it), objectId) }
+        return removeMemoryRaw(context, exactMemory, missingIsSuccess = idempotentRemoval)
+    }
+
+    @Synchronized
+    private fun removeMemoryRaw(
+        context: Context, exactMemory: String, missingIsSuccess: Boolean
+    ): Boolean = runCatching {
         if (SharedPreferencesWriteHealth.isUncertain(PREFS_NAME)) return@runCatching false
         val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-        val existing = SharedPreferencesWriteHealth.withHealthyAccess(PREFS_NAME) {
-            prefs.getString("memories", null)
-        }
-        if (existing == null) return@runCatching true
-        val remaining = readStoredMemories(context)?.filterNot { it == exactMemory }
-            ?: return@runCatching false
+        val current = readStoredMemories(context) ?: return@runCatching false
+        if (exactMemory !in current) return@runCatching missingIsSuccess
+        val remaining = current.filterNot { it == exactMemory }
         val arr = JSONArray()
         remaining.forEach { arr.put(it) }
+        // Persist removals from built-in defaults even before the first preferences write.
         SharedPreferencesWriteHealth.commit(PREFS_NAME, prefs.edit().putString("memories", arr.toString()))
     }.getOrDefault(false)
 

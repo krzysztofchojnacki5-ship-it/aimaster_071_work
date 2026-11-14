@@ -83,4 +83,13 @@ class ModelHealthTrackerTest {
         assertTrue(prefs.edit().putString("events", fractional).commit())
         assertTrue(runCatching { ModelHealthTracker.load(context) }.isFailure)
     }
+    @Test fun oversizedRawModelHealthHistoryIsRejectedAndPreserved() {
+        val prefs = context.getSharedPreferences("model_health_history_v1", Context.MODE_PRIVATE)
+        val oversized = " ".repeat(512_001)
+        assertTrue(prefs.edit().putString("events", oversized).commit())
+        assertTrue(runCatching { ModelHealthTracker.load(context) }.isFailure)
+        assertTrue(runCatching { ModelHealthTracker.record(context, backup, true, "", 100) }.isFailure)
+        assertEquals(oversized, prefs.getString("events", null))
+    }
+
 }
