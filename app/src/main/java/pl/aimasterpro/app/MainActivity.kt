@@ -5388,56 +5388,86 @@ class MainActivity : Activity() {
         }
         AgentRole.values().forEach { role ->
             val assignedId = agentProviders[role.name] ?: "groq"
-            val box = card(role.label, role.purpose)
+            val assignedCfg = configs.firstOrNull { it.id == assignedId }
             val state = agentConnection[role.name] ?: "unknown"
-            val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL; setPadding(0, 8, 0, 6) }
-            val color = when (state) { "connected", "tested" -> Color.rgb(45, 210, 90); "testing" -> orange; "error" -> Color.RED; else -> muted }
-            row.addView(TextView(this).apply { text = "●"; textSize = 22f; setTextColor(color) })
-            row.addView(TextView(this).apply {
-                text = when (state) { "connected" -> "Połączenie przypisanego profilu potwierdzone"; "tested" -> "Test kandydata zakończony powodzeniem — przypisanie bez zmian"; "testing" -> "Testowanie połączenia…"; "error" -> "Błąd / brak połączenia"; else -> "Nie sprawdzono połączenia" }
-                textSize = 12f; setTextColor(muted); setPadding(8, 0, 0, 0)
-            })
-            box.addView(row)
-            val spinner = Spinner(this)
-            spinner.adapter = ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item,
-                if (configs.isEmpty()) listOf("Brak profili — skonfiguruj w MODELE") else configs.map { "${it.name} — ${it.model}" })
-            val idx = configs.indexOfFirst { it.id == assignedId }.let { if (it < 0) 0 else it }
-            if (configs.isNotEmpty()) spinner.setSelection(idx)
-            box.addView(TextView(this).apply { text = "Dostawca / model"; textSize = 12f; setTextColor(white); setPadding(0, 8, 0, 0) })
-            box.addView(spinner)
-            action("Zapisz przypisanie", box) {
-                if (configs.isEmpty()) { toast("Najpierw dodaj dostawcę w zakładce Modele."); return@action }
-                val cfg = configs[spinner.selectedItemPosition]
-                if (!persistAgentProviderAssignment(role, cfg.id)) return@action
-                agentConnection[role.name] = "unknown"
-                showShell("Agenci"); showAgents()
-                toast("${role.label}: przypisano ${cfg.name}")
+            val stateText = when (state) {
+                "connected" -> "Połączenie potwierdzone"
+                "tested" -> "Test OK"
+                "testing" -> "Testowanie..."
+                "error" -> "Błąd połączenia"
+                else -> "Nie sprawdzono"
             }
-            action("Testuj połączenie agenta", box) {
-                if (configs.isEmpty()) { toast("Brak dostawców."); return@action }
-                val cfg = configs[spinner.selectedItemPosition]
-                if (!providerReady(cfg)) {
-                    agentConnection[role.name] = "error"
-                    showShell("Agenci"); showAgents()
-                    toast("Uzupełnij adres, model i klucz API dla ${cfg.name}."); return@action
-                }
-                agentConnection[role.name] = "testing"
-                showShell("Agenci"); showAgents()
-                val testScope = client.beginRequestScope()
-                executor.execute {
-                    val result = runBudgetedModelTest(cfg, "AGENT:${role.name}", "Odpowiadaj krótko po polsku.", "Odpowiedz dokładnie: AGENT OK", testScope)
-                    runOnUiThread {
-                        agentConnection[role.name] = if (result.isSuccess) "tested" else "error"
-                        logAgent("${role.label}: test połączenia ${if (result.isSuccess) "OK" else "BŁĄD"} • ${cfg.name} / ${cfg.model}")
-                        showShell("Agenci"); showAgents()
-                        if (result.isSuccess) toast("${role.label}: kandydat odpowiada; przypisanie nie zostało zmienione")
-                        else AlertDialog.Builder(this).setTitle("Test agenta nieudany")
-                            .setMessage((result.exceptionOrNull()?.message ?: "Nieznany błąd API") + "\n\n" + (result.exceptionOrNull() as? ProviderException)?.responseBody.orEmpty())
-                            .setPositiveButton("OK", null).show()
+            val box = card(
+                role.label,
+                "${role.purpose}\nPrzypisany model: ${assignedCfg?.name ?: "nie wybrano"} • ${assignedCfg?.model ?: "brak"}\nStatus: $stateText\n\nStuknij, aby zarządzać agentem..."
+            )
+            box.isClickable = true
+            box.isFocusable = true
+            box.setOnClickListener {
+                val actions = arrayOf(
+                    "Użyj w czacie",
+                    "Zmień przypisany model",
+                    "Testuj połączenie agenta"
+                )
+                AlertDialog.Builder(this)
+                    .setTitle("Agent: ${role.label}")
+                    .setItems(actions) { _, which ->
+                        when (which) {
+                            0 -> {
+                                selectedAgent = role
+                                showShell("Czat"); showChat()
+                                toast("Wybrano agenta: ${role.label}")
+                            }
+                            1 -> {
+                                if (configs.isEmpty()) {
+                                    toast("Najpierw dodaj profile modeli w zakładce Modele.")
+                                    return@setItems
+                                }
+                                val configNames = configs.map { "${it.name} — ${it.model}" }.toTypedArray()
+                                val currentIdx = configs.indexOfFirst { it.id == assignedId }.coerceAtLeast(0)
+                                AlertDialog.Builder(this@MainActivity)
+                                    .setTitle("Wybierz model dla: ${role.label}")
+                                    .setSingleChoiceItems(configNames, currentIdx) { dialog, idx ->
+                                        val cfg = configs[idx]
+                                        if (persistAgentProviderAssignment(role, cfg.id)) {
+                                            agentConnection[role.name] = "unknown"
+                                            showShell("Agenci"); showAgents()
+                                            toast("${role.label}: przypisano ${cfg.name}")
+                                        }
+                                        dialog.dismiss()
+                                    }
+                                    .setNegativeButton("Anuluj", null)
+                                    .show()
+                            }
+                            2 -> {
+                                if (configs.isEmpty()) { toast("Brak dostawców."); return@setItems }
+                                val cfg = assignedCfg ?: configs.first()
+                                if (!providerReady(cfg)) {
+                                    agentConnection[role.name] = "error"
+                                    showShell("Agenci"); showAgents()
+                                    toast("Uzupełnij adres, model i klucz API dla ${cfg.name}.")
+                                    return@setItems
+                                }
+                                agentConnection[role.name] = "testing"
+                                showShell("Agenci"); showAgents()
+                                val testScope = client.beginRequestScope()
+                                executor.execute {
+                                    val result = runBudgetedModelTest(cfg, "AGENT:${role.name}", "Odpowiadaj krótko po polsku.", "Odpowiedz dokładnie: AGENT OK", testScope)
+                                    runOnUiThread {
+                                        agentConnection[role.name] = if (result.isSuccess) "tested" else "error"
+                                        logAgent("${role.label}: test połączenia ${if (result.isSuccess) "OK" else "BŁĄD"} • ${cfg.name} / ${cfg.model}")
+                                        showShell("Agenci"); showAgents()
+                                        if (result.isSuccess) toast("${role.label}: kandydat odpowiada; przypisanie nie zostało zmienione")
+                                        else AlertDialog.Builder(this@MainActivity).setTitle("Test agenta nieudany")
+                                            .setMessage((result.exceptionOrNull()?.message ?: "Nieznany błąd API") + "\n\n" + (result.exceptionOrNull() as? ProviderException)?.responseBody.orEmpty())
+                                            .setPositiveButton("OK", null).show()
+                                    }
+                                }
+                            }
+                        }
                     }
-                }
+                    .show()
             }
-            action("Użyj w czacie", box) { selectedAgent = role; showShell("Czat"); showChat(); toast("Wybrano agenta: ${role.label}") }
         }
         val logCard = card("Rozmowy i komunikacja między agentami", "Śledź w czasie rzeczywistym dialogi, zadania, raporty oraz błędy (np. limit tokenów, awarie API).")
         action("💬 Otwórz podgląd rozmów miedzy agentami (Live / Błędy)", logCard) { showAgentCollaborationViewer() }
