@@ -13,7 +13,7 @@ internal data class CatalogSearchRecord<T>(
 
 /**
  * Pre-normalizes searchable text and pre-sorts catalog rows once per screen snapshot.
- * Filtering then performs only substring/category checks and preserves stable priority order.
+ * Filtering performs one pass over the index and preserves stable priority order.
  */
 internal class CatalogSearchIndex<T>(records: List<CatalogSearchRecord<T>>) {
     data class Result<T>(
@@ -44,25 +44,46 @@ internal class CatalogSearchIndex<T>(records: List<CatalogSearchRecord<T>>) {
         )
     }.sortedWith(compareBy<Indexed<T>> { it.priority }.thenBy { it.originalIndex })
 
+    // The UI can request the same normalized query twice (e.g. initial render and spinner callback).
+    // Retain only the most recent result to avoid repeated scans and allocations without unbounded growth.
+    private var cachedQuery: String? = null
+    private var cachedFilter: Int? = null
+    private var cachedResult: Result<T>? = null
+
+    @Synchronized
     fun search(query: String, filter: Int): Result<T> {
         val normalizedQuery = query.trim().lowercase(Locale.ROOT)
-        val matches = orderedRecords.asSequence().filter { indexed ->
+        if (cachedQuery == normalizedQuery && cachedFilter == filter) {
+            cachedResult?.let { return it }
+        }
+
+        val matches = ArrayList<CatalogSearchRecord<T>>()
+        var freeCount = 0
+        var paidCount = 0
+        var unknownCount = 0
+
+        for (indexed in orderedRecords) {
             val record = indexed.record
-            val matchesQuery = normalizedQuery.isBlank() || indexed.normalizedText.contains(normalizedQuery)
+            if (normalizedQuery.isNotBlank() && !indexed.normalizedText.contains(normalizedQuery)) continue
+
             val matchesFilter = when (filter) {
                 1 -> record.isLocal || record.freeByPricing == true
                 2 -> record.freeByPricing == false && !record.unknownPrice
                 3 -> record.unknownPrice
                 else -> true
             }
-            matchesQuery && matchesFilter
-        }.map { it.record }.toList()
+            if (!matchesFilter) continue
 
-        return Result(
-            records = matches,
-            freeCount = matches.count { it.isLocal || it.freeByPricing == true },
-            paidCount = matches.count { it.freeByPricing == false && !it.unknownPrice },
-            unknownCount = matches.count { it.unknownPrice }
-        )
+            matches.add(record)
+            if (record.isLocal || record.freeByPricing == true) freeCount++
+            if (record.freeByPricing == false && !record.unknownPrice) paidCount++
+            if (record.unknownPrice) unknownCount++
+        }
+
+        return Result(matches, freeCount, paidCount, unknownCount).also {
+            cachedQuery = normalizedQuery
+            cachedFilter = filter
+            cachedResult = it
+        }
     }
 }
