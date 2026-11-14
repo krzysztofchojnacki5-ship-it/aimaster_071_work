@@ -54,9 +54,15 @@ class ProviderCatalogCachePolicyTest {
         val model = base.copy(id = "model-a", name = "Model A", parentProviderId = "provider-a")
         val duplicateA = base.copy(name = "Duplicate A", baseUrl = "https://other.example/v1")
         val blankEndpoint = base.copy(id = "provider-empty", baseUrl = "")
+
         assertEquals(
             mapOf("provider-a" to "https://api.example/v1"),
-            ProviderCatalogCachePolicy.currentProviderBaseUrls(listOf(base, model, duplicateA, blankEndpoint))
+            ProviderCatalogCachePolicy.currentProviderBaseUrls(listOf(base, model, blankEndpoint))
+        )
+        // Ambiguous duplicate IDs must be excluded rather than arbitrarily selecting an endpoint.
+        assertEquals(
+            emptyMap<String, String>(),
+            ProviderCatalogCachePolicy.currentProviderBaseUrls(listOf(base, duplicateA))
         )
     }
 
@@ -70,5 +76,4 @@ class ProviderCatalogCachePolicyTest {
             ProviderCatalogCachePolicy.currentProviderBaseUrls(listOf(unreadable))
         )
     }
-
 }
