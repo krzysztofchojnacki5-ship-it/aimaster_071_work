@@ -4431,7 +4431,7 @@ class MainActivity : Activity() {
                 row.addView(buttons)
                 modelsContainer.addView(row)
             }
-            if (entries.size > 80) modelsContainer.addView(TextView(this).apply { text = "Pokazano pierwsze 80 wyników. Użyj wyszukiwarki lub filtra, aby zawęzić listę."; setTextColor(muted); textSize = 11f })
+            if (searchResult.records.size > 80) modelsContainer.addView(TextView(this).apply { text = "Pokazano pierwsze 80 wyników. Użyj wyszukiwarki lub filtra, aby zawęzić listę."; setTextColor(muted); textSize = 11f })
         }
         renderCatalog("", 0)
         search.addTextChangedListener(object : TextWatcher {
