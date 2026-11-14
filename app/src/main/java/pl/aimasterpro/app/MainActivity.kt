@@ -4335,18 +4335,16 @@ class MainActivity : Activity() {
                 })
                 return
             }
-            val freeCount = entries.count { it.info.freeByPricing == true || pl.aimasterpro.app.core.FreeModelsCatalog.isLocalOllamaEndpoint(it.baseUrl) }
-            val paidCount = entries.count { it.info.freeByPricing == false && !hasUnknownPrice(it) }
-            val unknownCount = entries.count { hasUnknownPrice(it) }
             modelsContainer.addView(TextView(this).apply {
                 val lastSync = runCatching { modelCatalogPrefs.getLong("last_sync", 0L) }.getOrDefault(0L)
-                text = "Wyniki: ${entries.size} • darmowe/lokalne: $freeCount • płatne: $paidCount • nieznana cena: $unknownCount\nOstatnia synchronizacja: ${lastSync.takeIf { it > 0L }?.let { java.text.SimpleDateFormat("dd.MM.yyyy HH:mm", java.util.Locale.getDefault()).format(java.util.Date(it)) } ?: "brak"}"
+                text = "Wyniki: ${entries.size} • darmowe/lokalne: ${searchResult.freeCount} • płatne: ${searchResult.paidCount} • nieznana cena: ${searchResult.unknownCount}\nOstatnia synchronizacja: ${lastSync.takeIf { it > 0L }?.let { java.text.SimpleDateFormat("dd.MM.yyyy HH:mm", java.util.Locale.getDefault()).format(java.util.Date(it)) } ?: "brak"}"
                 setTextColor(cyan); textSize = 11f; setPadding(0, 0, 0, dp(8))
             })
-            entries.take(80).forEach { entry ->
+            searchResult.records.take(80).forEach { indexedEntry ->
+                val entry = indexedEntry.value
                 val info = entry.info
-                val isLocal = pl.aimasterpro.app.core.FreeModelsCatalog.isLocalOllamaEndpoint(entry.baseUrl)
-                val unknownPrice = !isLocal && hasUnknownPrice(entry)
+                val isLocal = indexedEntry.isLocal
+                val unknownPrice = indexedEntry.unknownPrice
                 val approvedUnknownPrice = unknownPrice && pl.aimasterpro.app.core.UnknownPriceApprovalStore.isApproved(
                     this, entry.providerId, entry.baseUrl, info.id
                 )
