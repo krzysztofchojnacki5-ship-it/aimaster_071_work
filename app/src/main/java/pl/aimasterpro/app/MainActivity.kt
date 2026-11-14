@@ -93,6 +93,8 @@ class MainActivity : Activity() {
     /** Stable request IDs aligned with assistant messages; legacy chats may have no IDs. */
     private val assistantTaskIds = mutableListOf<String>()
     private val modelCatalogPrefs by lazy { getSharedPreferences("model_catalog_v1", Context.MODE_PRIVATE) }
+    /** Reuses parsed model-catalog data while the persisted JSON remains unchanged. */
+    private val modelCatalogSnapshotCache = pl.aimasterpro.app.core.RawSnapshotCache<List<CatalogEntry>>()
     private val agentActivity = mutableListOf<String>()
     /** Live communication timeline; callbacks from parallel agent workers are serialized before UI updates. */
     private var collaborationListLayout: LinearLayout? = null
@@ -4672,6 +4674,22 @@ class MainActivity : Activity() {
                 config.optString("id") to config.optString("baseUrl")
             }
         }.getOrElse { return emptyList() }
+
+        // Parse the persisted JSON once per distinct value. Provider identity validation
+        // remains per call, so imports or endpoint changes cannot reuse stale visibility.
+        val parsedEntries = modelCatalogSnapshotCache.get(raw) { parseModelCatalogSnapshot(raw) }
+        return parsedEntries.asSequence()
+            .filter { entry ->
+                pl.aimasterpro.app.core.ProviderCatalogCachePolicy.isEntryCurrent(
+                    entry.providerId, entry.baseUrl, validatedProviderBaseUrls
+                )
+            }
+            .distinctBy { "${it.providerId}:${it.info.id}" }
+            .sortedWith(compareBy({ it.providerName.lowercase() }, { it.info.id.lowercase() }))
+            .toList()
+    }
+
+    private fun parseModelCatalogSnapshot(raw: String): List<CatalogEntry> {
         val arr = runCatching { JSONArray(raw) }.getOrDefault(JSONArray())
         val out = mutableListOf<CatalogEntry>()
         for (i in 0 until arr.length()) {
@@ -4690,15 +4708,7 @@ class MainActivity : Activity() {
                 prompt, completion, free, o.optString("description"), cachedPrompt, cachedPromptWrite, cachedPromptWrite1h, internalReasoning
             )))
         }
-        return out.asSequence()
-            .filter { entry ->
-                pl.aimasterpro.app.core.ProviderCatalogCachePolicy.isEntryCurrent(
-                    entry.providerId, entry.baseUrl, validatedProviderBaseUrls
-                )
-            }
-            .distinctBy { "${it.providerId}:${it.info.id}" }
-            .sortedWith(compareBy({ it.providerName.lowercase() }, { it.info.id.lowercase() }))
-            .toList()
+        return out.toList()
     }
 
     private fun saveModelCatalogForProvider(provider: ProviderConfig, models: List<ProviderModelInfo>) {
