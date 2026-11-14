@@ -4298,10 +4298,11 @@ class MainActivity : Activity() {
         val currentProviderBaseUrls = pl.aimasterpro.app.core.ProviderCatalogCachePolicy.currentProviderBaseUrls(storedProfiles)
         val catalogSnapshot = readModelCatalogEntries(currentProviderBaseUrls)
 
+        val catalogEntriesByIdentity = catalogSnapshot.associateBy {
+            Triple(it.providerId, it.baseUrl, it.info.id)
+        }
         val priceStatusCache = pl.aimasterpro.app.core.CatalogPriceStatusCache<Triple<String, String, String>, Boolean> { identity ->
-            catalogSnapshot.firstOrNull {
-                it.providerId == identity.first && it.baseUrl == identity.second && it.info.id == identity.third
-            }?.let { isUnknownPriceCatalogEntry(it) } ?: false
+            catalogEntriesByIdentity[identity]?.let { isUnknownPriceCatalogEntry(it) } ?: false
         }
         fun hasUnknownPrice(entry: CatalogEntry): Boolean = priceStatusCache.get(
             Triple(entry.providerId, entry.baseUrl, entry.info.id)
