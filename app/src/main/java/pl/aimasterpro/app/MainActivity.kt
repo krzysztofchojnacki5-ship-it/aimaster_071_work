@@ -4310,29 +4310,24 @@ class MainActivity : Activity() {
             Triple(entry.providerId, entry.baseUrl, entry.info.id)
         )
 
+        // Build normalized search text and classification once for this immutable screen snapshot.
+        val catalogSearchIndex = pl.aimasterpro.app.core.CatalogSearchIndex(
+            catalogSnapshot.map { entry ->
+                val local = pl.aimasterpro.app.core.FreeModelsCatalog.isLocalOllamaEndpoint(entry.baseUrl)
+                pl.aimasterpro.app.core.CatalogSearchRecord(
+                    value = entry,
+                    searchText = "${entry.providerName} ${entry.info.name} ${entry.info.id}",
+                    isLocal = local,
+                    freeByPricing = entry.info.freeByPricing,
+                    unknownPrice = !local && hasUnknownPrice(entry)
+                )
+            }
+        )
+
         fun renderCatalog(query: String, filter: Int) {
             modelsContainer.removeAllViews()
-            val normalizedQuery = query.trim().lowercase()
-            val entries = catalogSnapshot.filter { entry ->
-                val hay = "${entry.providerName} ${entry.info.name} ${entry.info.id}".lowercase()
-                val matchesQuery = normalizedQuery.isBlank() || hay.contains(normalizedQuery)
-                val local = pl.aimasterpro.app.core.FreeModelsCatalog.isLocalOllamaEndpoint(entry.baseUrl)
-                val unknownPrice = !local && hasUnknownPrice(entry)
-                val matchesFilter = when (filter) {
-                    1 -> local || entry.info.freeByPricing == true
-                    2 -> entry.info.freeByPricing == false && !unknownPrice
-                    3 -> unknownPrice
-                    else -> true
-                }
-                matchesQuery && matchesFilter
-            }.sortedBy { entry ->
-                val local = pl.aimasterpro.app.core.FreeModelsCatalog.isLocalOllamaEndpoint(entry.baseUrl)
-                when {
-                    local || entry.info.freeByPricing == true -> 0
-                    hasUnknownPrice(entry) -> 1
-                    else -> 2
-                }
-            }
+            val searchResult = catalogSearchIndex.search(query, filter)
+            val entries = searchResult.records.map { it.value }
             if (entries.isEmpty()) {
                 modelsContainer.addView(TextView(this).apply {
                     text = "Katalog jest pusty.\n\n1. Dodaj klucz API w profilu dostawcy.\n2. Kliknij ODŚWIEŻ WSZYSTKICH DOSTAWCÓW.\n3. Wybierz model i utwórz dla niego profil.\n\nLista nie korzysta ze starych, wpisanych na stałe nazw modeli."
