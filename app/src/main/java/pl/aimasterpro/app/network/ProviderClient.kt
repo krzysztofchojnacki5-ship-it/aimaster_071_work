@@ -28,6 +28,52 @@ class ProviderException(
     val requestMayHaveBeenProcessed: Boolean = false
 ) : Exception(message)
 
+internal object ProviderHttpAuth {
+    fun normalizeApiKey(raw: String): String {
+        var value = raw.trim()
+        while (value.startsWith("Bearer ", ignoreCase = true)) value = value.substringAfter(' ').trim()
+        return value
+    }
+
+    fun authorizationHeaderValue(headerName: String, rawApiKey: String): String? {
+        val key = normalizeApiKey(rawApiKey)
+        if (key.isBlank()) return null
+        return if (headerName.equals("Authorization", ignoreCase = true)) "Bearer $key" else key
+    }
+}
+
+internal object ProviderHttpDiagnostics {
+    fun redactErrorBody(rawBody: String, rawApiKey: String): String {
+        var safe = rawBody
+        val key = ProviderHttpAuth.normalizeApiKey(rawApiKey)
+        if (key.isNotBlank()) {
+            safe = safe.replace(key, "[REDACTED]")
+            val encodedKey = java.net.URLEncoder.encode(key, "UTF-8")
+            if (encodedKey != key) safe = safe.replace(encodedKey, "[REDACTED]")
+        }
+        var searchFrom = 0
+        while (true) {
+            val start = safe.indexOf("Bearer ", searchFrom, ignoreCase = true)
+            if (start < 0) break
+            val tokenStart = start + 7
+            val tokenEndCandidate = safe.indexOfAny(charArrayOf(' ', '"', '\'', '<', '>'), tokenStart)
+            val tokenEnd = if (tokenEndCandidate < 0) safe.length else tokenEndCandidate
+            if (tokenEnd > tokenStart) {
+                safe = safe.replaceRange(tokenStart, tokenEnd, "[REDACTED]")
+                searchFrom = tokenStart + 10
+            } else searchFrom = tokenEnd
+        }
+        return safe.take(2500)
+    }
+
+    fun httpFailureHint(code: Int, category: String): String = when (code) {
+        400 -> "HTTP 400: dostawca odrzucił żądanie. Sprawdź ID modelu, endpoint i format payloadu; wymagane pola zależą od dostawcy."
+        401 -> "HTTP 401: dostawca odrzucił autoryzację. Sprawdź klucz API, jego uprawnienia i wymagany typ nagłówka."
+        403 -> "HTTP 403: klucz został rozpoznany, ale dostawca odmawia dostępu. Sprawdź uprawnienia i dostęp do modelu."
+        404 -> "HTTP 404: nie znaleziono endpointu lub modelu. Sprawdź Base URL i identyfikator modelu."
+        else -> "Dostawca zwrócił HTTP $code ($category)."
+    }
+}
 /** Synchronous transport with strict error classification, retry, and token usage extraction. */
 data class ProviderModelInfo(
     val id: String,
@@ -95,50 +141,6 @@ class ProviderClient(
     private val allowInsecureLanOllamaLocal = ThreadLocal<Boolean>()
     private val activeConnections = ConcurrentHashMap<HttpURLConnection, ActiveRequest>()
     private val unscopedEpoch = Long.MIN_VALUE
-
-    /** Accepts a raw provider key or a key pasted with one or more Bearer prefixes. */
-    private fun normalizedApiKey(raw: String): String {
-        var value = raw.trim()
-        while (value.startsWith("Bearer ", ignoreCase = true)) value = value.substringAfter(' ').trim()
-        return value
-    }
-
-    private fun authorizationValue(headerName: String, rawApiKey: String): String? {
-        val key = normalizedApiKey(rawApiKey)
-        if (key.isBlank()) return null
-        return if (headerName.equals("Authorization", ignoreCase = true)) "Bearer $key" else key
-    }
-
-    private fun redactProviderErrorBody(rawBody: String, rawApiKey: String): String {
-        var safe = rawBody
-        val key = normalizedApiKey(rawApiKey)
-        if (key.isNotBlank()) {
-            safe = safe.replace(key, "[REDACTED]")
-            val encodedKey = java.net.URLEncoder.encode(key, "UTF-8")
-            if (encodedKey != key) safe = safe.replace(encodedKey, "[REDACTED]")
-        }
-        var searchFrom = 0
-        while (true) {
-            val start = safe.indexOf("Bearer ", searchFrom, ignoreCase = true)
-            if (start < 0) break
-            val tokenStart = start + 7
-            val tokenEndCandidate = safe.indexOfAny(charArrayOf(' ', '"', '\'', '<', '>'), tokenStart)
-            val tokenEnd = if (tokenEndCandidate < 0) safe.length else tokenEndCandidate
-            if (tokenEnd > tokenStart) {
-                safe = safe.replaceRange(tokenStart, tokenEnd, "[REDACTED]")
-                searchFrom = tokenStart + 10
-            } else searchFrom = tokenEnd
-        }
-        return safe.take(2500)
-    }
-
-    private fun httpFailureHint(code: Int, category: String): String = when (code) {
-        400 -> "HTTP 400: dostawca odrzucił żądanie. Sprawdź ID modelu, endpoint i format payloadu; wymagane pola zależą od dostawcy."
-        401 -> "HTTP 401: dostawca odrzucił autoryzację. Sprawdź klucz API, jego uprawnienia i wymagany typ nagłówka."
-        403 -> "HTTP 403: klucz został rozpoznany, ale dostawca odmawia dostępu. Sprawdź uprawnienia i dostęp do modelu."
-        404 -> "HTTP 404: nie znaleziono endpointu lub modelu. Sprawdź Base URL i identyfikator modelu."
-        else -> "Dostawca zwrócił HTTP $code ($category)."
-    }
 
     /**
      * Creates an independent top-level operation scope.
@@ -216,7 +218,7 @@ class ProviderClient(
             readTimeout = readTimeoutMs.coerceAtLeast(1)
             setRequestProperty("Accept", "application/json")
             setRequestProperty("Connection", "close")
-            authorizationValue(authHeader, apiKey)?.let { setRequestProperty(authHeader, it) }
+            ProviderHttpAuth.authorizationHeaderValue(authHeader, apiKey)?.let { setRequestProperty(authHeader, it) }
             extraHeaders.forEach { (name, value) -> setRequestProperty(name, value) }
             if (body != null) { doOutput = true; setRequestProperty("Content-Type", "application/json; charset=utf-8") }
         }
@@ -253,8 +255,8 @@ class ProviderClient(
                     else -> "HTTP_ERROR"
                 }
                 val ambiguousServerOutcome = method.equals("POST", true) && (code == 408 || code in 500..599)
-                val safeBody = redactProviderErrorBody(text, apiKey)
-                val diagnostic = httpFailureHint(code, category)
+                val safeBody = ProviderHttpDiagnostics.redactErrorBody(text, apiKey)
+                val diagnostic = ProviderHttpDiagnostics.httpFailureHint(code, category)
                 throw ProviderException(
                     code, "$diagnostic ${safeBody.take(200)}".trim(),
                     safeBody, category = category, phase = phase,
@@ -570,7 +572,7 @@ class ProviderClient(
                 ChatResponse(text, TokenUsageResult(finalInput, finalOutput, finalTotal, if (realUsage) reasoning!! else 0L, finalCached, status, finalCacheWrite, finalCacheWrite1h, realUsage && reasoningKnown), providerId = config.id, model = responseModel(result, config.model))
             } else {
                 // Native Gemini REST API
-                val normalizedKey = normalizedApiKey(config.apiKey)
+                val normalizedKey = ProviderHttpAuth.normalizeApiKey(config.apiKey)
                 val keyQuery = if (normalizedKey.isNotBlank()) {
                     "?key=${java.net.URLEncoder.encode(normalizedKey, "UTF-8")}"
                 } else ""
