@@ -16,11 +16,13 @@ internal class AgentConnectionTestGate {
         val generation: Long
     )
 
+    private val generations = mutableMapOf<String, Long>()
     private val active = mutableMapOf<String, ActiveRequest>()
 
     @Synchronized
     fun begin(roleId: String, providerId: String): Request {
-        val generation = (active[roleId]?.generation ?: 0L) + 1L
+        val generation = (generations[roleId] ?: 0L) + 1L
+        generations[roleId] = generation
         active[roleId] = ActiveRequest(providerId, generation)
         return Request(roleId, providerId, generation)
     }
@@ -42,11 +44,15 @@ internal class AgentConnectionTestGate {
 
     @Synchronized
     fun invalidate(roleId: String) {
+        generations[roleId] = (generations[roleId] ?: 0L) + 1L
         active.remove(roleId)
     }
 
     @Synchronized
     fun invalidateAll() {
+        (generations.keys + active.keys).forEach { roleId ->
+            generations[roleId] = (generations[roleId] ?: 0L) + 1L
+        }
         active.clear()
     }
 }
