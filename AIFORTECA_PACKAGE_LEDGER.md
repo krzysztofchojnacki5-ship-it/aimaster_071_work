@@ -75,3 +75,18 @@ Aktualizacja: 2026-11-15
 - Aktualny HEAD: `dc4f40238ac3da1fa129977c74217ae3272d2fdb`.
 - Status: kod pakietu 3 zapisany; pełne testy CI i build Android oczekują na potwierdzenie. Nie oznaczać pakietu jako zaliczonego przed zielonym CI.
 - APK: brak nowego, potwierdzonego artefaktu. Nie blokuje dalszych prac, ale nie jest uznawane za zbudowane.
+
+
+## Potwierdzenie pakietu 3 — 2026-11-15
+- HEAD kodu i testów: `a2325600d060ab1deec865c63b98c027bdf126e4`.
+- `AiFORTeca Unit Tests`, run `43712612728`: SUCCESS; job `unit-tests`, kroki testów i uploadu raportów zakończone powodzeniem.
+- Artefakt raportów: `aiforteca-unit-test-reports`, ID `14161437051`, 341384 bajty, SHA-256 `893a53d18084720f3a75f07f5f9b7ebee610639627104dfb3628ebc55c169dfa`.
+- `Gradle Wrapper Validation`, run `43712612796`: SUCCESS.
+- Pakiet 3 zaliczony w zakresie testów jednostkowych i walidacji wrappera. Nie potwierdzono `assembleDebug`, `assembleRelease`, metadanych APK ani testu na urządzeniu.
+- PR #3 pozostaje OPEN i mergeable; bez merge.
+
+## Pakiet 4 — planowany zakres
+- Start dopiero po zielonym CI pakietu 3 (spełniono).
+- Priorytet: kontrolowane mutacje pamięci i konfiguracji agentów — zakres uprawnień, wymagane zatwierdzenie operacji wrażliwych, historia zmian i bezpieczne zachowanie przy błędach odczytu/zapisu.
+- Przed zmianami kodu wymagany audyt istniejących store'ów i testów, aby nie dublować mechanizmów już obecnych.
+- Limit: cztery poprawki kodu, następnie pełne CI; bez oznaczania pakietu jako zaliczonego przed potwierdzeniem.
