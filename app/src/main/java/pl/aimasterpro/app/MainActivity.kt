@@ -6511,6 +6511,45 @@ class MainActivity : Activity() {
         }.apply { name = "PatchPeerReview" }.start()
     }
 
+    private fun addMasterShortcutStrip(parent: LinearLayout) {
+        val shortcuts = listOf(
+            "♟ Zespół" to "Agenci",
+            "☷ Zadania" to "Zadania",
+            "⇄ Komunikacja" to "Rozmowy",
+            "◇ Modele" to "Modele",
+            "⌁ Diagnostyka" to "Diagnostyka",
+            "✉ Czat MASTER" to "Czat"
+        )
+        val horizontal = HorizontalScrollView(this).apply {
+            isHorizontalScrollBarEnabled = false
+            clipToPadding = false
+            setPadding(0, dp(4), 0, dp(4))
+        }
+        val strip = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+        }
+        shortcuts.forEach { (label, destination) ->
+            val chip = TextView(this).apply {
+                text = label
+                textSize = 12f
+                typeface = Typeface.DEFAULT_BOLD
+                setTextColor(white)
+                gravity = Gravity.CENTER
+                minimumHeight = dp(44)
+                setPadding(dp(14), dp(8), dp(14), dp(8))
+                background = ripple(panel, 22)
+                contentDescription = "Otwórz dział $label"
+                setOnClickListener { navigate(destination) }
+            }
+            strip.addView(chip, LinearLayout.LayoutParams(-2, -2).apply {
+                rightMargin = dp(8)
+            })
+        }
+        horizontal.addView(strip)
+        parent.addView(horizontal, LinearLayout.LayoutParams(-1, -2))
+    }
+
     private fun showCommandCenter() {
         val col = content
         col.setPadding(dp(16), dp(14), dp(16), dp(24))
@@ -6536,12 +6575,8 @@ class MainActivity : Activity() {
 
         card("AiFORTeca 0.2 • CENTRUM MASTER", "Główne centrum sterowania zespołem AI. Wybierz dział: agenci, zadania, pamięć, komunikacja, dostawcy lub diagnostyka. Dane operacyjne pozostają lokalne; odczyt panelu nie uruchamia zapytań API.");
         val departmentsCard = card("Działy AiFORTeci", "Każdy obszar ma własny ekran. MASTER pozostaje koordynatorem, a istniejące mechanizmy i dane są zachowane.")
-        action("♟  ZESPÓŁ AGENTÓW", departmentsCard) { navigate("Agenci") }
-        action("☷  ZADANIA I KOLEJKA MASTER-A", departmentsCard) { navigate("Zadania") }
+        addMasterShortcutStrip(departmentsCard)
         action("🧠  PAMIĘĆ SYSTEMU", departmentsCard) { navigate("Pamięć") }
-        action("⇄  KOMUNIKACJA AGENTÓW", departmentsCard) { navigate("Rozmowy") }
-        action("◇  DOSTAWCY I MODELE", departmentsCard) { navigate("Modele") }
-        action("✉  OTWÓRZ CZAT MASTER-A", departmentsCard) { navigate("Czat") }
         card("Stan wykonania", "Status: ${if (isThinking) "PRACA W TOKU" else "GOTOWY"}\n${if (isThinking) thinkingLabel else "Brak aktywnego zadania."}\nAgenci z historią: ${agentStats.size} • katalog agentów: ${pl.aimasterpro.app.agents.AgentCatalog.all.size}\nZdarzenia dziennika: ${events.size} • ostatnie 5 awarii/blokad: ${recentFailures.size}\nCheckpointy zadań: ${taskStates.size} • przerwane/nieudane: ${interruptedTasks.size}")
         card("Budżet API", "Dzisiaj: ${budget.recordedTodayTokens} zużytych + ${budget.activeReservedTokens} zarezerwowanych / ${budget.dailyLimitTokens} tokenów\nPozostało: ${budget.remainingTokens}\nKoszt znany 30 dni: ${"%.4f".format(java.util.Locale.US, budget.recorded30DayCostPln)} zł / ${"%.2f".format(java.util.Locale.US, budget.monthlyCostLimitPln)} zł\nRekordy z nieznanym kosztem: ${budget.unknownCostRecords} (nie są traktowane jako 0 zł)\nRezerwa kosztów: ${"%.4f".format(java.util.Locale.US, budget.activeReservedCostPln)} zł")
         card("Jakość i pamięć", "Oceny: ${quality.total} • pozytywne: ${quality.positive} • negatywne: ${quality.negative}\nAgenci ocenieni przez użytkownika: ${quality.ratedAgents}\nZatwierdzone wnioski jakościowe: ${quality.approved}\nPamięć operacyjna per agent: ${memories.size}/300 wpisów")
