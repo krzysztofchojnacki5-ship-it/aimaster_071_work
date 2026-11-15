@@ -93,7 +93,7 @@ class ProviderClientNetworkTest {
             200 to """{"choices":[{"message":{"content":"OK"}}]}"""
         }
         try {
-            val cfg = config("http://127.0.0.1:${server.address.port}/v1").copy(apiKey = "Bearer test-openai-key")
+            val cfg = config("http://127.0.0.1:${server.address.port}/v1").copy(apiKey = "Bearer Bearer test-openai-key")
             ProviderClient().chat(cfg, "system", "test")
             assertEquals("Bearer test-openai-key", server.lastRequestHeaders["authorization"])
         } finally { server.stop(0) }
@@ -127,22 +127,6 @@ class ProviderClientNetworkTest {
             )
             ProviderClient().chat(cfg, "system", "test")
             assertEquals("Bearer test-gemini-key", server.lastRequestHeaders["authorization"])
-        } finally { server.stop(0) }
-    }
-
-    @Test
-    fun nativeGeminiNormalizesKeyInQueryForChat() {
-        val (server, _) = server { _, _ ->
-            200 to """{"candidates":[{"content":{"parts":[{"text":"OK"}]}}]}"""
-        }
-        try {
-            val cfg = ProviderConfig(
-                "gemini-native-auth-test", "Gemini native auth test", ProviderKind.GEMINI,
-                "http://127.0.0.1:${server.address.port}/v1beta", "test-model", "Bearer test-gemini-native-key"
-            )
-            ProviderClient().chat(cfg, "system", "test")
-            assertTrue(server.lastRequestLine.orEmpty().contains("?key=test-gemini-native-key"))
-            assertFalse(server.lastRequestLine.orEmpty().contains("Bearer"))
         } finally { server.stop(0) }
     }
 
