@@ -14,15 +14,15 @@ Aktualizacja: 2026-11-15
 ## Pakiet 2 — rozdzielenie profili dostawców i modeli
 
 - Baza: commit kontrolny pakietu 1 `efae16cda5305833b3c9b4dc5feccadb69b72062`
-- Ostatni commit pakietu: `f5997b0178c40e944d9de70bcf6c3b90cb7bbb30`
+- Ostatni commit kodu pakietu: `48536d022a6f738fabb59c72c957d48ea200c1d9`
 - Zakres czterech zmian:
   1. Wprowadzono osobne typy domenowe `ProviderProfile` (połączenie i referencja do sekretu) oraz `ModelProfile` (model i jego typ uruchomienia).
   2. Dodano nieinwazyjny konwerter starych `ProviderConfig`; zachowuje istniejące ID profili, ID przypisań agentów i referencję do klucza w SecureStore.
   3. Rozróżniono `LOCAL_OLLAMA` od `REMOTE_API` na podstawie zweryfikowanego endpointu, a nie nazwy modelu.
   4. Dodano atomową migrację katalogów bez kopiowania kluczy API oraz uruchomienie migracji przy starcie aplikacji; stare rekordy pozostają źródłem prawdy na czas przejściowy.
 - Testy dodane: mapowanie profili, zachowanie ID i referencji sekretu, lokalny Ollama kontra API, osierocone profile, brak sekretów w nowym magazynie, idempotencja i pusty magazyn.
-- CI dla ostatniego commitu: `AiFORTeca Unit Tests` — IN_PROGRESS (run `43709928814`); `Gradle Wrapper Validation` — SUCCESS (run `43709928850`).
-- Status: oczekiwanie na wynik testów pakietu 2. Nie rozpoczynać pakietu 3 przed zakończeniem testów i analizą ewentualnych błędów.
+- CI: końcowy przebieg `AiFORTeca Unit Tests` na HEAD dokumentacyjnym `b947b400e54dbf0454dc79530a746a701d93d91f` — SUCCESS (run `43710533929`); `Gradle Wrapper Validation` — SUCCESS (run `43710533945`). Raport testów opublikowano jako artefakt `14160168314` (`aiforteca-unit-test-reports`).
+- Status: testy jednostkowe pakietu 2 i walidacja wrappera zaliczone. `assembleDebug`, inspekcja metadanych APK i test urządzenia nie są potwierdzone; ten workflow nie publikuje APK.
 
 ## Zasady
 
@@ -35,5 +35,12 @@ Aktualizacja: 2026-11-15
 - Commit korekty: `48536d022a6f738fabb59c72c957d48ea200c1d9`.
 - Przyczyna niepowodzenia: test wykazał, że migrator błędnie oznaczał poprawny rekord dostawcy bez domyślnego modelu jako pominięty.
 - Poprawka: rekord główny dostawcy bez modelu jest zachowywany jako połączenie; pusty model w profilu potomnym nadal jest raportowany jako pominięty.
-- CI po poprawce: `AiFORTeca Unit Tests` uruchomione (run `43710507395` oraz `43710503509`); `Gradle Wrapper Validation` uruchomione (run `43710507403` oraz `43710503416`). Wynik końcowy jeszcze nieznany.
-- Wcześniejszy przebieg na `9e0ef3c`: kompilacja Kotlin i kompilacja testów zakończone sukcesem; 1299 testów uruchomionych, 1 niepowodzenie; raport CI opublikowany. Nie oznaczać pakietu jako zaliczonego do czasu pełnego zielonego przebiegu na poprawionym commicie.
+- Pierwszy przebieg na `9e0ef3c` wykonał 1299 testów: 1298 zaliczonych, 1 niezaliczony. Błąd dotyczył oczekiwania testu dla rekordu głównego dostawcy bez modelu.
+- Poprawkę kodu wprowadzono w `48536d022a6f738fabb59c72c957d48ea200c1d9`. Nowszy przebieg na HEAD `b947b400e54dbf0454dc70bc5d7c9b4b` zakończył testy sukcesem (run `43710533929`); walidacja wrappera również SUCCESS (run `43710533945`). Poprzednie runy `43710507395` i `43710503509` są anulowane/zastąpione i nie stanowią wyniku końcowego.
+
+
+## Potwierdzenie końcowe pakietu 2 — 2026-11-15
+- Aktualny HEAD PR #3 sprawdzony: `b947b400e54dbf0454dc70bc5d7c9b4b`.
+- `AiFORTeca Unit Tests` run `43710533929`: SUCCESS; artefakt raportu `aiforteca-unit-test-reports` ID `14160168314` (SHA-256 `3fe75cea73ef329701b4c1ca4c2fb716f90a881a8f34ef1ff855c8fd422b83e0`).
+- `Gradle Wrapper Validation` run `43710533945`: SUCCESS.
+- Brak potwierdzenia `assembleDebug`/APK w tych przebiegach. Nie oznaczać APK jako zbudowanego.
