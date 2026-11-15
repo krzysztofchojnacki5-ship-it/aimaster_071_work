@@ -25,6 +25,19 @@ class FreeModelsCatalogTest {
     }
 
     @Test
+    fun onlyOfficialGeminiFreeTierModelIsAllowedOnOfficialEndpoint() {
+        val endpoint = "https://generativelanguage.googleapis.com/v1beta"
+        assertTrue(FreeModelsCatalog.isFreeModel("gemini", "gemini-3.8-flash", endpoint))
+        assertEquals(
+            FreeStatus.FREE_TIER,
+            FreeModelsCatalog.classifyDiscoveredModel("gemini", "gemini-3.8-flash", "Google Gemini", "gemini", endpoint).freeStatus
+        )
+        assertFalse(FreeModelsCatalog.isFreeModel("gemini", "gemini-4-argon", endpoint))
+        assertFalse(FreeModelsCatalog.isFreeModel("gemini", "gemini-3.8-flash", "https://google.example/v1beta"))
+        assertFalse(FreeModelsCatalog.isFreeModel("gemini", "gemini-3.8-flash", "http://generativelanguage.googleapis.com/v1beta"))
+    }
+
+    @Test
     fun onlyExplicitOpenRouterFreeIdsAreAllowed() {
         assertTrue(FreeModelsCatalog.isFreeModel("openrouter", "openrouter/free", "https://openrouter.ai/api/v1"))
         assertTrue(FreeModelsCatalog.isFreeModel("openrouter", "qwen/model:free", "https://openrouter.ai/api/v1"))
