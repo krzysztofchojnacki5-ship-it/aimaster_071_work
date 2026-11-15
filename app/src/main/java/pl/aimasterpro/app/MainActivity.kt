@@ -420,7 +420,16 @@ class MainActivity : Activity() {
             scroll.isFillViewport = true
             content.setPadding(dp(16), dp(14), dp(16), dp(24))
             scroll.addView(content)
-            main.addView(scroll, LinearLayout.LayoutParams(-1, 0, 1f))
+            if (resources.configuration.screenWidthDp >= 900) {
+                val workspaceFrame = FrameLayout(this)
+                val workspaceWidth = dp(960)
+                workspaceFrame.addView(scroll, FrameLayout.LayoutParams(
+                    workspaceWidth, -1, Gravity.TOP or Gravity.CENTER_HORIZONTAL
+                ))
+                main.addView(workspaceFrame, LinearLayout.LayoutParams(-1, 0, 1f))
+            } else {
+                main.addView(scroll, LinearLayout.LayoutParams(-1, 0, 1f))
+            }
         }
 
         val st = TextView(this)
