@@ -666,8 +666,9 @@ class ProviderClient(
                             ProviderModelInfo(id, o.optString("name", id), o.optLong("context_length", -1L).takeIf { it > 0 })
                         }.sortedBy { it.id }
                     } else {
-                        val keyQuery = if (config.apiKey.isNotBlank()) {
-                            "?key=${java.net.URLEncoder.encode(config.apiKey, "UTF-8")}"
+                        val normalizedKey = normalizedApiKey(config.apiKey)
+                        val keyQuery = if (normalizedKey.isNotBlank()) {
+                            "?key=${java.net.URLEncoder.encode(normalizedKey, "UTF-8")}"
                         } else ""
                         val json = requestWithRetry("$root/models$keyQuery", "GET", "")
                         val arr = json.optJSONArray("models") ?: JSONArray()
