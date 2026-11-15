@@ -238,6 +238,17 @@ class MainActivity : Activity() {
         )
         seedDefaultProviders()
         migrateLegacyOllamaEmulatorEndpoint()
+        if (!store.isStorageUncertain() && !pl.aimasterpro.app.core.ProviderModelProfileStore.isMigrated(this)) {
+            val legacyProviderConfigs = store.allConfigs().mapNotNull { saved ->
+                val id = saved.optString("id")
+                if (id.isBlank()) null else loadProvider(id)
+            }
+            val migrated = pl.aimasterpro.app.core.ProviderModelProfileStore.migrateLegacyConfigs(this, legacyProviderConfigs)
+            if (!migrated) android.util.Log.w(
+                "AiFORTecaMigration",
+                "Nie zakończono migracji rozdzielonego katalogu dostawców i modeli. Stare konfiguracje oraz przypisania pozostają źródłem prawdy."
+            )
+        }
         selectedProviderId = runCatching { chatPrefs.getString("selected_provider", "gemini") }.getOrNull() ?: ""
         restoreMessages()
         client = ProviderClient()
