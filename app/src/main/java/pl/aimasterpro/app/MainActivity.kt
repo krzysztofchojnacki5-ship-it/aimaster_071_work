@@ -4182,14 +4182,9 @@ class MainActivity : Activity() {
     /** Adds ready-to-configure provider profiles once; API keys are intentionally blank. */
     private fun seedDefaultProviders() {
         val existingIds = store.allConfigs().map { it.optString("id") }.toSet()
-        val defaults = listOf(
-            ProviderConfig("gemini", "Google Gemini API", ProviderKind.GEMINI, "https://generativelanguage.googleapis.com/v1beta", "", "", true),
-            ProviderConfig("groq", "Groq API", ProviderKind.OPENAI_COMPATIBLE, "https://api.groq.com/openai/v1", "", "", true),
-            ProviderConfig("openrouter", "OpenRouter API", ProviderKind.OPENAI_COMPATIBLE, "https://openrouter.ai/api/v1", "", "", true),
-            ProviderConfig("anthropic", "Anthropic API", ProviderKind.ANTHROPIC, "https://api.anthropic.com/v1", "", "", true),
-            ProviderConfig("openai", "OpenAI API", ProviderKind.OPENAI_COMPATIBLE, "https://api.openai.com/v1", "", "", true),
-            ProviderConfig("mistral", "Mistral AI", ProviderKind.OPENAI_COMPATIBLE, "https://api.mistral.ai/v1", "", "", true),
-            ProviderConfig("ollama", "Ollama • modele lokalne", ProviderKind.OPENAI_COMPATIBLE, "http://10.0.2.2:11434/v1", "", "", false),
+        val defaults = pl.aimasterpro.app.core.ProviderPresetCatalog.all.map { it.toProviderConfig() } + listOf(
+            // Keep the local Ollama entry disabled until the user supplies a reachable device address.
+            ProviderConfig("ollama", "Ollama • modele lokalne", ProviderKind.OPENAI_COMPATIBLE, "", "", "", false),
             ProviderConfig("custom", "Własny endpoint (OpenAI-compatible)", ProviderKind.OPENAI_COMPATIBLE, "", "", "", false)
         )
         defaults.filter { it.id !in existingIds }.forEach { saveProvider(it) }
