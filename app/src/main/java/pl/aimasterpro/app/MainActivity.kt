@@ -532,6 +532,9 @@ class MainActivity : Activity() {
             val tab = LinearLayout(this).apply {
                 orientation = LinearLayout.VERTICAL
                 gravity = Gravity.CENTER
+                minimumHeight = dp(48)
+                isSelected = isActive
+                contentDescription = label + if (isActive) ", wybrana zakładka" else ", otwórz dział"
                 background = ripple(if (isActive) panel else Color.TRANSPARENT, 12)
                 setOnClickListener { navigate(destination) }
             }
@@ -548,6 +551,13 @@ class MainActivity : Activity() {
             row.addView(tab)
         }
         hs.addView(row)
+        val activeIndex = departments.indexOfFirst { it.third == active }
+        if (activeIndex >= 0) {
+            hs.post {
+                val selectedTab = row.getChildAt(activeIndex)
+                hs.smoothScrollTo(maxOf(0, selectedTab.left - dp(12)), 0)
+            }
+        }
         val wrap = LinearLayout(this)
         wrap.orientation = LinearLayout.VERTICAL
         wrap.addView(hs)
