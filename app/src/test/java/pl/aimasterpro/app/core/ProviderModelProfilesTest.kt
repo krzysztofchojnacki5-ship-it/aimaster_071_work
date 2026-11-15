@@ -78,7 +78,7 @@ class ProviderModelProfilesTest {
         assertTrue(ProviderModelProfileStore.isMigrated(context))
         assertFalse(ProviderModelProfileStore.readProviderJson(context).contains("top-secret"))
         assertFalse(ProviderModelProfileStore.readModelJson(context).contains("top-secret"))
-        assertFalse(ProviderModelProfileStore.migrateLegacyConfigs(context, emptyList()))
+        assertTrue(ProviderModelProfileStore.migrateLegacyConfigs(context, emptyList()))
         assertEquals(1, org.json.JSONArray(ProviderModelProfileStore.readProviderJson(context)).length())
         assertEquals(1, org.json.JSONArray(ProviderModelProfileStore.readModelJson(context)).length())
     }
