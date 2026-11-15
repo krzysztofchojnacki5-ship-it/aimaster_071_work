@@ -57,3 +57,21 @@ Aktualizacja: 2026-11-15
 ## Następny zakres — pakiet 3 (jeszcze nierozpoczęty)
 - Kierunek: ergonomia mobilnego centrum MASTER / układ obszaru roboczego; najpierw audyt aktualnego układu i istniejących komponentów, bez dublowania już wdrożonych funkcji kolejki i komunikacji.
 - Limit: dokładnie cztery poprawki kodu, następnie pełne testy CI. Nie oznaczać pakietu jako ukończonego przed potwierdzeniem wyników.
+
+## Potwierdzenie kontrolnego CI przed pakietem 3 — 2026-11-15
+- Commit kontrolny: `4178cce4c656a8e38a445410edbace6a0434d845`.
+- `AiFORTeca Unit Tests`, run `43712092815`: SUCCESS; job `unit-tests`, kroki testów i uploadu raportów zakończone powodzeniem.
+- `Gradle Wrapper Validation`, run `43712092869`: SUCCESS.
+- Pakiet 2 pozostaje zaliczony; powtórny przebieg sprawdził także aktualizację rejestru. APK nie było częścią tego przebiegu.
+
+## Pakiet 3 — centrum MASTER / mobilny workspace
+- Baza: `4178cce4c656a8e38a445410edbace6a0434d845`.
+- Zmiany kodu (4 zakresy):
+  1. Nawigacja działów: zaznaczenie aktywnej zakładki, opis dostępności i automatyczne przewinięcie paska do wybranego działu.
+  2. Centrum MASTER: kompaktowy, poziomy pasek skrótów do zespołu, zadań, komunikacji, modeli, diagnostyki i czatu zamiast długiej kolumny przycisków.
+  3. Konsola MASTER: widok pięciu ostatnich zdarzeń operacyjnych z przejściem do pełnej diagnostyki; bez treści promptów i kluczy API.
+  4. Duże ekrany: ograniczenie szerokości workspace do maksymalnie 960 dp i wyśrodkowanie; szerokość jest dodatkowo ograniczona do dostępnego obszaru, aby uniknąć poziomego obcięcia.
+- Commity zmian UI: `354eb69b2d25a5dbf3152749be070c91660607c4`, `9ca5c3ffcc4e1a3037dcc8b9a8d6e5f85fff1800`, `fb7d84eb43347c255f6f9471ea3fbb580b470d4a`, `71715ff141475af6c721c501e59aa93688dccfa3`; korekta ograniczenia szerokości: `dc4f40238ac3da1fa129977c74217ae3272d2fdb`.
+- Aktualny HEAD: `dc4f40238ac3da1fa129977c74217ae3272d2fdb`.
+- Status: kod pakietu 3 zapisany; pełne testy CI i build Android oczekują na potwierdzenie. Nie oznaczać pakietu jako zaliczonego przed zielonym CI.
+- APK: brak nowego, potwierdzonego artefaktu. Nie blokuje dalszych prac, ale nie jest uznawane za zbudowane.
