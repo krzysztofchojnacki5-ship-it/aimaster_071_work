@@ -4407,7 +4407,17 @@ class MainActivity : Activity() {
             }
             box.addView(TextView(this).apply { text = p.name; textSize = 15f; typeface = Typeface.DEFAULT_BOLD; setTextColor(white) })
             val usageLabel = usageRead.totalTokens?.let { "$it tokenów zarejestrowanych" } ?: "licznik tokenów niedostępny"
-            box.addView(TextView(this).apply { text = "${p.baseUrl}\nModel bazowy: ${p.model.ifBlank { "nie wybrano — utwórz profil z katalogu" }}\n$statusText • $usageLabel"; textSize = 11f; setTextColor(muted); setPadding(0, dp(3), 0, dp(2)) })
+            val preset = pl.aimasterpro.app.core.ProviderPresetCatalog.find(p.id)
+            val presetDetails = preset?.let {
+                "Model startowy: ${it.modelLabel}" +
+                    (it.suggestedModelId.takeIf(String::isNotBlank)?.let { id -> " ($id)" } ?: "") +
+                    "\n${it.accessNote}"
+            }.orEmpty()
+            box.addView(TextView(this).apply {
+                text = "${p.baseUrl}\nModel bazowy: ${p.model.ifBlank { "nie wybrano" }}\n$statusText • $usageLabel" +
+                    if (presetDetails.isNotBlank()) "\n$presetDetails" else ""
+                textSize = 11f; setTextColor(muted); setPadding(0, dp(3), 0, dp(2))
+            })
             box.addView(TextView(this).apply {
                 text = "Stuknij, aby otworzyć menu zarządzania dostawcą..."
                 setTextColor(cyan)
@@ -4421,6 +4431,7 @@ class MainActivity : Activity() {
                     "Edytuj dostawcę / klucz",
                     "Resetuj licznik tokenów"
                 )
+                if (preset != null) actions.add(0, "Otwórz oficjalną stronę klucza API")
                 if (pl.aimasterpro.app.core.OllamaModelManager.isOllamaProvider(p)) {
                     actions.add(0, "Pobierz model lokalny (Ollama)")
                 }
@@ -4429,6 +4440,17 @@ class MainActivity : Activity() {
                     .setItems(actions.toTypedArray()) { _, which ->
                         val actionName = actions[which]
                         when {
+                            actionName.contains("oficjalną stronę klucza API") -> {
+                                val keyUrl = preset?.apiKeyUrl ?: return@setItems
+                                runCatching {
+                                    startActivity(android.content.Intent(
+                                        android.content.Intent.ACTION_VIEW,
+                                        android.net.Uri.parse(keyUrl)
+                                    ))
+                                }.onFailure {
+                                    toast("Nie udało się otworzyć strony dostawcy.")
+                                }
+                            }
                             actionName.contains("Pobierz model lokalny") -> showOllamaModelPullDialog(p)
                             actionName.contains("Pobierz / odśwież") -> discover(p)
                             actionName.contains("Testuj aktualny") -> {
