@@ -97,6 +97,8 @@ class MainActivity : Activity() {
     private val modelCatalogSnapshotCache = pl.aimasterpro.app.core.RawSnapshotCache<List<CatalogEntry>>()
     /** Debounces catalog text input and prevents an older delayed query from replacing a newer filter. */
     private val catalogSearchRequestGate = pl.aimasterpro.app.core.CatalogSearchRequestGate()
+    /** Rejects late connection-test callbacks after an agent profile assignment changes. */
+    private val agentConnectionTestGate = pl.aimasterpro.app.core.AgentConnectionTestGate()
     private var pendingCatalogSearch: Runnable? = null
     private var pendingCatalogSearchOwner: View? = null
     private val agentActivity = mutableListOf<String>()
@@ -567,7 +569,9 @@ class MainActivity : Activity() {
             toast("Nie udało się trwale zapisać przypisania. Zachowano poprzedni wybór.")
             return false
         }
+        agentConnectionTestGate.invalidate(role.name)
         agentProviders[role.name] = providerId
+        agentConnection[role.name] = "unknown"
         if (role == AgentRole.MASTER) selectedProviderId = providerId
         return true
     }
@@ -5467,6 +5471,10 @@ class MainActivity : Activity() {
                                     .show()
                             }
                             2 -> {
+                                if (agentConnection[role.name] == "testing") {
+                                    toast("${role.label}: test połączenia już trwa.")
+                                    return@setItems
+                                }
                                 if (configs.isEmpty()) { toast("Brak dostawców."); return@setItems }
                                 val cfg = assignedCfg ?: configs.first()
                                 if (!providerReady(cfg)) {
@@ -5475,19 +5483,24 @@ class MainActivity : Activity() {
                                     toast("Uzupełnij adres, model i klucz API dla ${cfg.name}.")
                                     return@setItems
                                 }
+                                val testRequest = agentConnectionTestGate.begin(role.name, cfg.id)
                                 agentConnection[role.name] = "testing"
                                 showShell("Agenci"); showAgents()
                                 val testScope = client.beginRequestScope()
                                 executor.execute {
                                     val result = runBudgetedModelTest(cfg, "AGENT:${role.name}", "Odpowiadaj krótko po polsku.", "Odpowiedz dokładnie: AGENT OK", testScope)
                                     runOnUiThread {
+                                        if (!agentConnectionTestGate.complete(testRequest)) return@runOnUiThread
                                         agentConnection[role.name] = if (result.isSuccess) "tested" else "error"
                                         logAgent("${role.label}: test połączenia ${if (result.isSuccess) "OK" else "BŁĄD"} • ${cfg.name} / ${cfg.model}")
-                                        showShell("Agenci"); showAgents()
-                                        if (result.isSuccess) toast("${role.label}: kandydat odpowiada; przypisanie nie zostało zmienione")
-                                        else AlertDialog.Builder(this@MainActivity).setTitle("Test agenta nieudany")
-                                            .setMessage((result.exceptionOrNull()?.message ?: "Nieznany błąd API") + "\n\n" + (result.exceptionOrNull() as? ProviderException)?.responseBody.orEmpty())
-                                            .setPositiveButton("OK", null).show()
+                                        val shouldRefreshAgentScreen = screen == "Agenci"
+                                        if (shouldRefreshAgentScreen) {
+                                            showShell("Agenci"); showAgents()
+                                            if (result.isSuccess) toast("${role.label}: kandydat odpowiada; przypisanie nie zostało zmienione")
+                                            else AlertDialog.Builder(this@MainActivity).setTitle("Test agenta nieudany")
+                                                .setMessage((result.exceptionOrNull()?.message ?: "Nieznany błąd API") + "\n\n" + (result.exceptionOrNull() as? ProviderException)?.responseBody.orEmpty())
+                                                .setPositiveButton("OK", null).show()
+                                        }
                                     }
                                 }
                             }
