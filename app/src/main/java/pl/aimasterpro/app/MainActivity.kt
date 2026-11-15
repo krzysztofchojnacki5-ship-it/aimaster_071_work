@@ -6578,6 +6578,15 @@ class MainActivity : Activity() {
         addMasterShortcutStrip(departmentsCard)
         action("🧠  PAMIĘĆ SYSTEMU", departmentsCard) { navigate("Pamięć") }
         card("Stan wykonania", "Status: ${if (isThinking) "PRACA W TOKU" else "GOTOWY"}\n${if (isThinking) thinkingLabel else "Brak aktywnego zadania."}\nAgenci z historią: ${agentStats.size} • katalog agentów: ${pl.aimasterpro.app.agents.AgentCatalog.all.size}\nZdarzenia dziennika: ${events.size} • ostatnie 5 awarii/blokad: ${recentFailures.size}\nCheckpointy zadań: ${taskStates.size} • przerwane/nieudane: ${interruptedTasks.size}")
+        val consoleLines = events.takeLast(5).asReversed().map { event ->
+            "${event.agentId.ifBlank { "MASTER" }} • ${event.status} • ${event.category.ifBlank { "zdarzenie" }}\n${event.providerId}/${event.model} • zadanie: ${event.taskId.ifBlank { "—" }}"
+        }
+        card("KONSOLA ZDARZEŃ • OSTATNIE 5", if (consoleLines.isEmpty()) {
+            "Brak zapisanych zdarzeń operacyjnych."
+        } else {
+            consoleLines.joinToString("\n\n")
+        })
+        action("OTWÓRZ PEŁNĄ DIAGNOSTYKĘ", onClick = { navigate("Diagnostyka") })
         card("Budżet API", "Dzisiaj: ${budget.recordedTodayTokens} zużytych + ${budget.activeReservedTokens} zarezerwowanych / ${budget.dailyLimitTokens} tokenów\nPozostało: ${budget.remainingTokens}\nKoszt znany 30 dni: ${"%.4f".format(java.util.Locale.US, budget.recorded30DayCostPln)} zł / ${"%.2f".format(java.util.Locale.US, budget.monthlyCostLimitPln)} zł\nRekordy z nieznanym kosztem: ${budget.unknownCostRecords} (nie są traktowane jako 0 zł)\nRezerwa kosztów: ${"%.4f".format(java.util.Locale.US, budget.activeReservedCostPln)} zł")
         card("Jakość i pamięć", "Oceny: ${quality.total} • pozytywne: ${quality.positive} • negatywne: ${quality.negative}\nAgenci ocenieni przez użytkownika: ${quality.ratedAgents}\nZatwierdzone wnioski jakościowe: ${quality.approved}\nPamięć operacyjna per agent: ${memories.size}/300 wpisów")
         card("Dostawcy i limity", if (cooldowns.isEmpty()) "Brak aktywnych trwałych cooldownów po HTTP 429." else cooldowns.joinToString("\n") { state ->
