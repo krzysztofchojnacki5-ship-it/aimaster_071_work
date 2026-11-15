@@ -121,6 +121,9 @@ object FreeModelsCatalog {
         "qwen/qwen3.8-27b"
     )
 
+    /** Google lists Gemini 3.8 Flash on the Gemini API Free tier. */
+    private val geminiFreeTierModels = setOf("gemini-3.8-flash")
+
     private fun isLocalIpv6Address(host: String): Boolean {
         // A colon is required before parsing, so InetAddress never performs a DNS lookup.
         // Reject scoped literals here: endpoint identity must not depend on a machine-local
@@ -161,11 +164,15 @@ object FreeModelsCatalog {
     private fun isOfficialGroqEndpoint(baseUrl: String): Boolean =
         isOfficialHttpsEndpoint(baseUrl, "api.groq.com", "/openai/v1")
 
+    private fun isOfficialGeminiEndpoint(baseUrl: String): Boolean =
+        isOfficialHttpsEndpoint(baseUrl, "generativelanguage.googleapis.com", "/v1beta")
+
     fun isFreeModel(providerId: String, modelId: String, baseUrl: String = ""): Boolean {
         val model = modelId.lowercase(Locale.ROOT)
         if (isLocalOllamaEndpoint(baseUrl)) return true
         if (isOfficialOpenRouterEndpoint(baseUrl)) return model == "openrouter/free" || model.endsWith(":free")
         if (isOfficialGroqEndpoint(baseUrl)) return model in groqFreePlanModels
+        if (isOfficialGeminiEndpoint(baseUrl)) return model in geminiFreeTierModels
         return false
     }
 
@@ -181,9 +188,10 @@ object FreeModelsCatalog {
         val openRouterFree = isOfficialOpenRouterEndpoint(endpointBaseUrl) &&
             (mid == "openrouter/free" || mid.endsWith(":free"))
         val groqFreeTier = isOfficialGroqEndpoint(endpointBaseUrl) && mid in groqFreePlanModels
+        val geminiFreeTier = isOfficialGeminiEndpoint(endpointBaseUrl) && mid in geminiFreeTierModels
         val status = when {
             local -> FreeStatus.FREE
-            openRouterFree || groqFreeTier -> FreeStatus.FREE_TIER
+            openRouterFree || groqFreeTier || geminiFreeTier -> FreeStatus.FREE_TIER
             else -> FreeStatus.UNKNOWN
         }
         val displayName = modelId.removeSuffix(":free").replace('-', ' ').replace('_', ' ')
@@ -197,14 +205,22 @@ object FreeModelsCatalog {
             isOnline = false,
             rateLimitInfo = when (status) {
                 FreeStatus.FREE -> "Lokalnie — bez opłat za API; dostępność zależy od lokalnego serwera"
-                FreeStatus.FREE_TIER -> if (groqFreeTier) "Groq Free Plan — obowiązują limity per model i organizację" else "Model oznaczony jako darmowy przez OpenRouter; limity konta mogą obowiązywać"
+                FreeStatus.FREE_TIER -> when {
+                    groqFreeTier -> "Groq Free Plan — obowiązują limity per model i organizację"
+                    geminiFreeTier -> "Google Gemini API Free tier — obowiązują limity konta i modelu"
+                    else -> "Model oznaczony jako darmowy przez OpenRouter; limity konta mogą obowiązywać"
+                }
                 else -> "Nie potwierdzono ceny ani darmowego limitu — zablokowany do wyboru"
             },
             verificationDate = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault()).format(Date()),
             providerConfigId = providerConfigId,
             verificationSource = when (status) {
                 FreeStatus.FREE -> "Lokalny endpoint Ollama"
-                FreeStatus.FREE_TIER -> if (groqFreeTier) "Oficjalna tabela limitów Groq Free Plan: https://console.groq.com/docs/rate-limits" else "Jawny znacznik :free / openrouter/free"
+                FreeStatus.FREE_TIER -> when {
+                    groqFreeTier -> "Oficjalna tabela limitów Groq Free Plan: https://console.groq.com/docs/rate-limits"
+                    geminiFreeTier -> "Oficjalny cennik Gemini API: https://ai.google.dev/gemini-api/docs/pricing"
+                    else -> "Jawny znacznik :free / openrouter/free"
+                }
                 else -> "Brak wiarygodnego źródła cenowego w odpowiedzi API"
             },
             endpointBaseUrl = endpointBaseUrl
