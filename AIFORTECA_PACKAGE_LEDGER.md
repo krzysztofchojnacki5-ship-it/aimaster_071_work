@@ -29,3 +29,11 @@ Aktualizacja: 2026-11-15
 - Cztery zmiany kodu na pakiet, następnie pełne testy CI.
 - APK nie jest warunkiem kontynuacji prac, jeśli użytkownik wyraźnie polecił nie czekać; status buildu i APK nadal raportować osobno i wyłącznie na podstawie artefaktów.
 - Nie oznaczać testów, buildu ani APK jako zaliczonych bez potwierdzenia z CI / artefaktów.
+
+### Korekta po pierwszym przebiegu CI pakietu 2
+
+- Commit korekty: `48536d022a6f738fabb59c72c957d48ea200c1d9`.
+- Przyczyna niepowodzenia: test wykazał, że migrator błędnie oznaczał poprawny rekord dostawcy bez domyślnego modelu jako pominięty.
+- Poprawka: rekord główny dostawcy bez modelu jest zachowywany jako połączenie; pusty model w profilu potomnym nadal jest raportowany jako pominięty.
+- CI po poprawce: `AiFORTeca Unit Tests` uruchomione (run `43710507395` oraz `43710503509`); `Gradle Wrapper Validation` uruchomione (run `43710507403` oraz `43710503416`). Wynik końcowy jeszcze nieznany.
+- Wcześniejszy przebieg na `9e0ef3c`: kompilacja Kotlin i kompilacja testów zakończone sukcesem; 1299 testów uruchomionych, 1 niepowodzenie; raport CI opublikowany. Nie oznaczać pakietu jako zaliczonego do czasu pełnego zielonego przebiegu na poprawionym commicie.
