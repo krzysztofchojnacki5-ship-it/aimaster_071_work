@@ -95,6 +95,10 @@ class MainActivity : Activity() {
     private val modelCatalogPrefs by lazy { getSharedPreferences("model_catalog_v1", Context.MODE_PRIVATE) }
     /** Reuses parsed model-catalog data while the persisted JSON remains unchanged. */
     private val modelCatalogSnapshotCache = pl.aimasterpro.app.core.RawSnapshotCache<List<CatalogEntry>>()
+    /** Debounces catalog text input and prevents an older delayed query from replacing a newer filter. */
+    private val catalogSearchRequestGate = pl.aimasterpro.app.core.CatalogSearchRequestGate()
+    private var pendingCatalogSearch: Runnable? = null
+    private var pendingCatalogSearchOwner: View? = null
     private val agentActivity = mutableListOf<String>()
     /** Live communication timeline; callbacks from parallel agent workers are serialized before UI updates. */
     private var collaborationListLayout: LinearLayout? = null
@@ -353,7 +357,15 @@ class MainActivity : Activity() {
     //  Szkielet ekranu: górny pasek + zakładki + treść + panel boczny
     // =====================================================================
 
+    private fun cancelPendingCatalogSearch() {
+        pendingCatalogSearch?.let { pendingCatalogSearchOwner?.removeCallbacks(it) }
+        pendingCatalogSearch = null
+        pendingCatalogSearchOwner = null
+        catalogSearchRequestGate.invalidate()
+    }
+
     private fun showShell(title: String) {
+        cancelPendingCatalogSearch()
         if (title != "Rozmowy") {
             collaborationListLayout = null
             collaborationScrollView = null
@@ -4479,6 +4491,7 @@ class MainActivity : Activity() {
         )
 
         fun renderCatalog(query: String, filter: Int) {
+            cancelPendingCatalogSearch()
             modelsContainer.removeAllViews()
             val searchResult = catalogSearchIndex.search(query, filter)
             if (searchResult.records.isEmpty()) {
@@ -4597,7 +4610,21 @@ class MainActivity : Activity() {
         search.addTextChangedListener(object : TextWatcher {
             override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
             override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
-            override fun afterTextChanged(s: Editable?) { renderCatalog(s?.toString().orEmpty(), filterSpinner.selectedItemPosition) }
+            override fun afterTextChanged(s: Editable?) {
+                val request = catalogSearchRequestGate.begin(s?.toString().orEmpty(), filterSpinner.selectedItemPosition)
+                pendingCatalogSearch?.let { pendingCatalogSearchOwner?.removeCallbacks(it) }
+                pendingCatalogSearch = null
+                pendingCatalogSearchOwner = null
+                val task = Runnable {
+                    if (!catalogSearchRequestGate.isCurrent(request)) return@Runnable
+                    pendingCatalogSearch = null
+                    pendingCatalogSearchOwner = null
+                    renderCatalog(request.query, request.filter)
+                }
+                pendingCatalogSearch = task
+                pendingCatalogSearchOwner = modelsContainer
+                modelsContainer.postDelayed(task, 180L)
+            }
         })
         filterSpinner.onItemSelectedListener = object : android.widget.AdapterView.OnItemSelectedListener {
             override fun onNothingSelected(parent: android.widget.AdapterView<*>?) {}
@@ -8745,6 +8772,7 @@ class MainActivity : Activity() {
     private fun toast(text: String) = Toast.makeText(this, text, Toast.LENGTH_LONG).show()
 
     override fun onDestroy() {
+        cancelPendingCatalogSearch()
         pulse?.cancel()
         interruptActiveQueuedTask("Activity została zamknięta lub odtworzona.")
         // Persist this Activity's active chat task (MASTER or specialist); startup recovery remains a second layer.
