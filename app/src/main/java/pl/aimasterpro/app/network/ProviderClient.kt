@@ -109,6 +109,37 @@ class ProviderClient(
         return if (headerName.equals("Authorization", ignoreCase = true)) "Bearer $key" else key
     }
 
+    private fun redactProviderErrorBody(rawBody: String, rawApiKey: String): String {
+        var safe = rawBody
+        val key = normalizedApiKey(rawApiKey)
+        if (key.isNotBlank()) {
+            safe = safe.replace(key, "[REDACTED]")
+            val encodedKey = java.net.URLEncoder.encode(key, "UTF-8")
+            if (encodedKey != key) safe = safe.replace(encodedKey, "[REDACTED]")
+        }
+        var searchFrom = 0
+        while (true) {
+            val start = safe.indexOf("Bearer ", searchFrom, ignoreCase = true)
+            if (start < 0) break
+            val tokenStart = start + 7
+            val tokenEndCandidate = safe.indexOfAny(charArrayOf(' ', '"', '\'', '<', '>'), tokenStart)
+            val tokenEnd = if (tokenEndCandidate < 0) safe.length else tokenEndCandidate
+            if (tokenEnd > tokenStart) {
+                safe = safe.replaceRange(tokenStart, tokenEnd, "[REDACTED]")
+                searchFrom = tokenStart + 10
+            } else searchFrom = tokenEnd
+        }
+        return safe.take(2500)
+    }
+
+    private fun httpFailureHint(code: Int, category: String): String = when (code) {
+        400 -> "HTTP 400: dostawca odrzucił żądanie. Sprawdź ID modelu, endpoint i format payloadu; wymagane pola zależą od dostawcy."
+        401 -> "HTTP 401: dostawca odrzucił autoryzację. Sprawdź klucz API, jego uprawnienia i wymagany typ nagłówka."
+        403 -> "HTTP 403: klucz został rozpoznany, ale dostawca odmawia dostępu. Sprawdź uprawnienia i dostęp do modelu."
+        404 -> "HTTP 404: nie znaleziono endpointu lub modelu. Sprawdź Base URL i identyfikator modelu."
+        else -> "Dostawca zwrócił HTTP $code ($category)."
+    }
+
     /**
      * Creates an independent top-level operation scope.
      * Starting a model test, audit, or another chat must not cancel unrelated active work.
@@ -222,9 +253,11 @@ class ProviderClient(
                     else -> "HTTP_ERROR"
                 }
                 val ambiguousServerOutcome = method.equals("POST", true) && (code == 408 || code in 500..599)
+                val safeBody = redactProviderErrorBody(text, apiKey)
+                val diagnostic = httpFailureHint(code, category)
                 throw ProviderException(
-                    code, "Dostawca zwrócił HTTP $code (${category}): ${text.take(200)}",
-                    text.take(2500), category = category, phase = phase,
+                    code, "$diagnostic ${safeBody.take(200)}".trim(),
+                    safeBody, category = category, phase = phase,
                     requestMayHaveBeenProcessed = ambiguousServerOutcome
                 )
             }
