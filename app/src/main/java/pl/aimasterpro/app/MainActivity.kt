@@ -239,15 +239,24 @@ class MainActivity : Activity() {
         seedDefaultProviders()
         migrateLegacyOllamaEmulatorEndpoint()
         if (!store.isStorageUncertain() && !pl.aimasterpro.app.core.ProviderModelProfileStore.isMigrated(this)) {
-            val legacyProviderConfigs = store.allConfigs().mapNotNull { saved ->
+            val savedConfigs = store.allConfigs()
+            val expectedConfigCount = savedConfigs.count { it.optString("id").isNotBlank() }
+            val legacyProviderConfigs = savedConfigs.mapNotNull { saved ->
                 val id = saved.optString("id")
                 if (id.isBlank()) null else loadProvider(id)
             }
-            val migrated = pl.aimasterpro.app.core.ProviderModelProfileStore.migrateLegacyConfigs(this, legacyProviderConfigs)
-            if (!migrated) android.util.Log.w(
-                "AiFORTecaMigration",
-                "Nie zakończono migracji rozdzielonego katalogu dostawców i modeli. Stare konfiguracje oraz przypisania pozostają źródłem prawdy."
-            )
+            if (legacyProviderConfigs.size != expectedConfigCount) {
+                android.util.Log.e(
+                    "AiFORTecaMigration",
+                    "Migracja katalogu modeli wstrzymana: nie udało się bezpiecznie odczytać wszystkich profili. Nie zapisano częściowego katalogu."
+                )
+            } else {
+                val migrated = pl.aimasterpro.app.core.ProviderModelProfileStore.migrateLegacyConfigs(this, legacyProviderConfigs)
+                if (!migrated) android.util.Log.w(
+                    "AiFORTecaMigration",
+                    "Nie zakończono migracji rozdzielonego katalogu dostawców i modeli. Stare konfiguracje oraz przypisania pozostają źródłem prawdy."
+                )
+            }
         }
         selectedProviderId = runCatching { chatPrefs.getString("selected_provider", "gemini") }.getOrNull() ?: ""
         restoreMessages()
