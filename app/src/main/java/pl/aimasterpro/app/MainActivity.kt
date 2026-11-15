@@ -422,7 +422,7 @@ class MainActivity : Activity() {
             scroll.addView(content)
             if (resources.configuration.screenWidthDp >= 900) {
                 val workspaceFrame = FrameLayout(this)
-                val workspaceWidth = dp(960)
+                val workspaceWidth = minOf(dp(960), dp(resources.configuration.screenWidthDp - 32))
                 workspaceFrame.addView(scroll, FrameLayout.LayoutParams(
                     workspaceWidth, -1, Gravity.TOP or Gravity.CENTER_HORIZONTAL
                 ))
