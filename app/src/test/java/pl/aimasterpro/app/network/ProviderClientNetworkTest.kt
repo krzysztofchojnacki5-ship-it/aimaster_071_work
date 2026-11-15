@@ -86,6 +86,100 @@ class ProviderClientNetworkTest {
         } finally { server.stop(0) }
     }
 
+
+    @Test
+    fun openAiCompatibleAuthorizationNormalizesBearerPrefix() {
+        val (server, _) = server { _, _ ->
+            200 to """{"choices":[{"message":{"content":"OK"}}]}"""
+        }
+        try {
+            val cfg = config("http://127.0.0.1:\${server.address.port}/v1").copy(apiKey = "Bearer test-openai-key")
+            ProviderClient().chat(cfg, "system", "test")
+            assertEquals("Bearer test-openai-key", server.lastRequestHeaders["authorization"])
+        } finally { server.stop(0) }
+    }
+
+    @Test
+    fun anthropicUsesRawXApiKeyWithoutBearerPrefix() {
+        val (server, _) = server { _, _ ->
+            200 to """{"content":[{"type":"text","text":"OK"}]}"""
+        }
+        try {
+            val cfg = ProviderConfig(
+                "anthropic-auth-test", "Anthropic auth test", ProviderKind.ANTHROPIC,
+                "http://127.0.0.1:\${server.address.port}/v1", "test-model", "Bearer test-anthropic-key"
+            )
+            ProviderClient().chat(cfg, "system", "test")
+            assertEquals("test-anthropic-key", server.lastRequestHeaders["x-api-key"])
+            assertEquals("2023-06-01", server.lastRequestHeaders["anthropic-version"])
+        } finally { server.stop(0) }
+    }
+
+    @Test
+    fun geminiOpenAiCompatibleUsesBearerAuthorization() {
+        val (server, _) = server { _, _ ->
+            200 to """{"choices":[{"message":{"content":"OK"}}]}"""
+        }
+        try {
+            val cfg = ProviderConfig(
+                "gemini-openai-auth-test", "Gemini compatible auth test", ProviderKind.GEMINI,
+                "http://127.0.0.1:\${server.address.port}/v1beta/openai", "test-model", "test-gemini-key"
+            )
+            ProviderClient().chat(cfg, "system", "test")
+            assertEquals("Bearer test-gemini-key", server.lastRequestHeaders["authorization"])
+        } finally { server.stop(0) }
+    }
+
+    @Test
+    fun nativeGeminiNormalizesKeyInQueryForChat() {
+        val (server, _) = server { _, _ ->
+            200 to """{"candidates":[{"content":{"parts":[{"text":"OK"}]}}]}"""
+        }
+        try {
+            val cfg = ProviderConfig(
+                "gemini-native-auth-test", "Gemini native auth test", ProviderKind.GEMINI,
+                "http://127.0.0.1:\${server.address.port}/v1beta", "test-model", "Bearer test-gemini-native-key"
+            )
+            ProviderClient().chat(cfg, "system", "test")
+            assertTrue(server.lastRequestLine.orEmpty().contains("?key=test-gemini-native-key"))
+            assertFalse(server.lastRequestLine.orEmpty().contains("Bearer"))
+        } finally { server.stop(0) }
+    }
+
+    @Test
+    fun http401And400IncludeActionableHintsAndRedactApiKey() {
+        val secret = "secret-provider-key"
+        val (unauthorized, unauthorizedCount) = server { _, _ -> 401 to """{"error":"invalid key $secret"}""" }
+        try {
+            val cfg = config("http://127.0.0.1:\${unauthorized.address.port}/v1").copy(apiKey = secret)
+            try {
+                ProviderClient().chat(cfg, "system", "test")
+                throw AssertionError("Expected HTTP 401")
+            } catch (e: ProviderException) {
+                assertEquals("AUTH_UNAUTHORIZED", e.category)
+                assertTrue(e.message.orEmpty().contains("Sprawdź klucz API"))
+                assertFalse(e.message.orEmpty().contains(secret))
+                assertFalse(e.responseBody.contains(secret))
+                assertTrue(e.responseBody.contains("[REDACTED]"))
+            }
+            assertEquals(1, unauthorizedCount.get())
+        } finally { unauthorized.stop(0) }
+
+        val (badRequest, badRequestCount) = server { _, _ -> 400 to """{"error":"unknown model"}""" }
+        try {
+            val cfg = config("http://127.0.0.1:\${badRequest.address.port}/v1").copy(apiKey = secret)
+            try {
+                ProviderClient().chat(cfg, "system", "test")
+                throw AssertionError("Expected HTTP 400")
+            } catch (e: ProviderException) {
+                assertEquals("BAD_REQUEST", e.category)
+                assertTrue(e.message.orEmpty().contains("Sprawdź ID modelu"))
+                assertTrue(e.responseBody.contains("unknown model"))
+            }
+            assertEquals(1, badRequestCount.get())
+        } finally { badRequest.stop(0) }
+    }
+
     @Test
     fun rejectsCleartextLanEndpointsAndApiKeysBeforeOpeningConnection() {
         val lan = config("http://192.168.1.50:11434/v1")
