@@ -44,3 +44,16 @@ Aktualizacja: 2026-11-15
 - `AiFORTeca Unit Tests` run `43710533929`: SUCCESS; artefakt raportu `aiforteca-unit-test-reports` ID `14160168314` (SHA-256 `3fe75cea73ef329701b4c1ca4c2fb716f90a881a8f34ef1ff855c8fd422b83e0`).
 - `Gradle Wrapper Validation` run `43710533945`: SUCCESS.
 - Brak potwierdzenia `assembleDebug`/APK w tych przebiegach. Nie oznaczać APK jako zbudowanego.
+
+
+## Potwierdzenie CI na aktualnym HEAD — 2026-11-15, 13:xx UTC
+- HEAD PR #3: `ff2a00a934eb5e3f7edeb369b1e96a1cf9ce9906`.
+- `AiFORTeca Unit Tests`, run `43711354234`: SUCCESS; job `unit-tests`, krok `Run unit tests` zakończony powodzeniem, raporty przesłane.
+- Artefakt raportów: `aiforteca-unit-test-reports`, ID `14161095145`, 341423 bajty.
+- `Gradle Wrapper Validation`, run `43711354221`: SUCCESS.
+- Ten przebieg potwierdza testy jednostkowe i walidację wrappera dla całego HEAD. Nie potwierdza `assembleDebug`, `assembleRelease`, metadanych APK ani testu na urządzeniu.
+- PR #3 nadal OPEN/DRAFT i mergeable. Nie wykonano merge.
+
+## Następny zakres — pakiet 3 (jeszcze nierozpoczęty)
+- Kierunek: ergonomia mobilnego centrum MASTER / układ obszaru roboczego; najpierw audyt aktualnego układu i istniejących komponentów, bez dublowania już wdrożonych funkcji kolejki i komunikacji.
+- Limit: dokładnie cztery poprawki kodu, następnie pełne testy CI. Nie oznaczać pakietu jako ukończonego przed potwierdzeniem wyników.
