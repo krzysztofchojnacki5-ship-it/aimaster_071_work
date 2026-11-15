@@ -20,10 +20,6 @@ class TestHttpServer(
     @Volatile private var isRunning = true
     @Volatile var lastRequestBody: String? = null
         private set
-    @Volatile var lastRequestLine: String? = null
-        private set
-    @Volatile var lastRequestHeaders: Map<String, String> = emptyMap()
-        private set
     @Volatile var lastFailure: String? = null
         private set
     @Volatile var lastResponseStatus: Int? = null
@@ -60,13 +56,6 @@ class TestHttpServer(
                     headers.add(line)
                 }
                 if (headers.isEmpty()) return
-                lastRequestLine = headers.firstOrNull()
-                lastRequestHeaders = headers.drop(1).mapNotNull { header ->
-                    val separator = header.indexOf(':')
-                    if (separator <= 0) null else {
-                        header.substring(0, separator).trim().lowercase() to header.substring(separator + 1).trim()
-                    }
-                }.toMap()
 
                 val contentLength = headers.firstNotNullOfOrNull { header ->
                     if (header.startsWith("Content-Length:", ignoreCase = true)) {
