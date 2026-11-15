@@ -96,6 +96,19 @@ class ProviderClient(
     private val activeConnections = ConcurrentHashMap<HttpURLConnection, ActiveRequest>()
     private val unscopedEpoch = Long.MIN_VALUE
 
+    /** Accepts a raw provider key or a key pasted with one or more Bearer prefixes. */
+    private fun normalizedApiKey(raw: String): String {
+        var value = raw.trim()
+        while (value.startsWith("Bearer ", ignoreCase = true)) value = value.substringAfter(' ').trim()
+        return value
+    }
+
+    private fun authorizationValue(headerName: String, rawApiKey: String): String? {
+        val key = normalizedApiKey(rawApiKey)
+        if (key.isBlank()) return null
+        return if (headerName.equals("Authorization", ignoreCase = true)) "Bearer $key" else key
+    }
+
     /**
      * Creates an independent top-level operation scope.
      * Starting a model test, audit, or another chat must not cancel unrelated active work.
@@ -172,7 +185,7 @@ class ProviderClient(
             readTimeout = readTimeoutMs.coerceAtLeast(1)
             setRequestProperty("Accept", "application/json")
             setRequestProperty("Connection", "close")
-            if (apiKey.isNotBlank()) setRequestProperty(authHeader, if (authHeader == "Authorization") "Bearer $apiKey" else apiKey)
+            authorizationValue(authHeader, apiKey)?.let { setRequestProperty(authHeader, it) }
             extraHeaders.forEach { (name, value) -> setRequestProperty(name, value) }
             if (body != null) { doOutput = true; setRequestProperty("Content-Type", "application/json; charset=utf-8") }
         }
@@ -524,8 +537,9 @@ class ProviderClient(
                 ChatResponse(text, TokenUsageResult(finalInput, finalOutput, finalTotal, if (realUsage) reasoning!! else 0L, finalCached, status, finalCacheWrite, finalCacheWrite1h, realUsage && reasoningKnown), providerId = config.id, model = responseModel(result, config.model))
             } else {
                 // Native Gemini REST API
-                val keyQuery = if (config.apiKey.isNotBlank()) {
-                    "?key=${java.net.URLEncoder.encode(config.apiKey, "UTF-8")}"
+                val normalizedKey = normalizedApiKey(config.apiKey)
+                val keyQuery = if (normalizedKey.isNotBlank()) {
+                    "?key=${java.net.URLEncoder.encode(normalizedKey, "UTF-8")}"
                 } else ""
                 val endpoint = "$root/models/${config.model}:generateContent$keyQuery"
                 val parts = JSONArray().put(JSONObject().put("text", "$systemPrompt\n\nUżytkownik: $userText"))
