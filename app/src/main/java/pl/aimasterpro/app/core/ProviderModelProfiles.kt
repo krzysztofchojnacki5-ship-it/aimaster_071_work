@@ -61,8 +61,11 @@ object LegacyProviderModelMigration {
         val models = mutableListOf<ModelProfile>()
         val skipped = mutableListOf<String>()
         configs.forEach { config ->
-            if (config.id.isBlank() || config.model.isBlank()) {
-                if (config.id.isNotBlank()) skipped += config.id
+            if (config.id.isBlank()) return@forEach
+            // Root records may intentionally define a provider connection without selecting
+            // a default model yet; preserve the provider and do not classify it as malformed.
+            if (config.model.isBlank()) {
+                if (config.parentProviderId.isNotBlank()) skipped += config.id
                 return@forEach
             }
             val providerId = if (config.parentProviderId.isBlank()) config.id else config.parentProviderId
