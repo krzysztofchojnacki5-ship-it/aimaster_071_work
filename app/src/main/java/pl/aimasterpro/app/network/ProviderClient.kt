@@ -701,7 +701,7 @@ class ProviderClient(
                             ProviderModelInfo(id, o.optString("name", id), o.optLong("context_length", -1L).takeIf { it > 0 })
                         }.sortedBy { it.id }
                     } else {
-                        val normalizedKey = normalizedApiKey(config.apiKey)
+                        val normalizedKey = ProviderHttpAuth.normalizeApiKey(config.apiKey)
                         val keyQuery = if (normalizedKey.isNotBlank()) {
                             "?key=${java.net.URLEncoder.encode(normalizedKey, "UTF-8")}"
                         } else ""
