@@ -93,7 +93,7 @@ class ProviderClientNetworkTest {
             200 to """{"choices":[{"message":{"content":"OK"}}]}"""
         }
         try {
-            val cfg = config("http://127.0.0.1:\${server.address.port}/v1").copy(apiKey = "Bearer test-openai-key")
+            val cfg = config("http://127.0.0.1:${server.address.port}/v1").copy(apiKey = "Bearer test-openai-key")
             ProviderClient().chat(cfg, "system", "test")
             assertEquals("Bearer test-openai-key", server.lastRequestHeaders["authorization"])
         } finally { server.stop(0) }
@@ -107,7 +107,7 @@ class ProviderClientNetworkTest {
         try {
             val cfg = ProviderConfig(
                 "anthropic-auth-test", "Anthropic auth test", ProviderKind.ANTHROPIC,
-                "http://127.0.0.1:\${server.address.port}/v1", "test-model", "Bearer test-anthropic-key"
+                "http://127.0.0.1:${server.address.port}/v1", "test-model", "Bearer test-anthropic-key"
             )
             ProviderClient().chat(cfg, "system", "test")
             assertEquals("test-anthropic-key", server.lastRequestHeaders["x-api-key"])
@@ -123,7 +123,7 @@ class ProviderClientNetworkTest {
         try {
             val cfg = ProviderConfig(
                 "gemini-openai-auth-test", "Gemini compatible auth test", ProviderKind.GEMINI,
-                "http://127.0.0.1:\${server.address.port}/v1beta/openai", "test-model", "test-gemini-key"
+                "http://127.0.0.1:${server.address.port}/v1beta/openai", "test-model", "test-gemini-key"
             )
             ProviderClient().chat(cfg, "system", "test")
             assertEquals("Bearer test-gemini-key", server.lastRequestHeaders["authorization"])
@@ -138,7 +138,7 @@ class ProviderClientNetworkTest {
         try {
             val cfg = ProviderConfig(
                 "gemini-native-auth-test", "Gemini native auth test", ProviderKind.GEMINI,
-                "http://127.0.0.1:\${server.address.port}/v1beta", "test-model", "Bearer test-gemini-native-key"
+                "http://127.0.0.1:${server.address.port}/v1beta", "test-model", "Bearer test-gemini-native-key"
             )
             ProviderClient().chat(cfg, "system", "test")
             assertTrue(server.lastRequestLine.orEmpty().contains("?key=test-gemini-native-key"))
@@ -151,7 +151,7 @@ class ProviderClientNetworkTest {
         val secret = "secret-provider-key"
         val (unauthorized, unauthorizedCount) = server { _, _ -> 401 to """{"error":"invalid key $secret"}""" }
         try {
-            val cfg = config("http://127.0.0.1:\${unauthorized.address.port}/v1").copy(apiKey = secret)
+            val cfg = config("http://127.0.0.1:${unauthorized.address.port}/v1").copy(apiKey = secret)
             try {
                 ProviderClient().chat(cfg, "system", "test")
                 throw AssertionError("Expected HTTP 401")
@@ -167,7 +167,7 @@ class ProviderClientNetworkTest {
 
         val (badRequest, badRequestCount) = server { _, _ -> 400 to """{"error":"unknown model"}""" }
         try {
-            val cfg = config("http://127.0.0.1:\${badRequest.address.port}/v1").copy(apiKey = secret)
+            val cfg = config("http://127.0.0.1:${badRequest.address.port}/v1").copy(apiKey = secret)
             try {
                 ProviderClient().chat(cfg, "system", "test")
                 throw AssertionError("Expected HTTP 400")
