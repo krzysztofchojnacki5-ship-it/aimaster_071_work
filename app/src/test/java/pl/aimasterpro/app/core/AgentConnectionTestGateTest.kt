@@ -47,6 +47,20 @@ class AgentConnectionTestGateTest {
     }
 
     @Test
+    fun lateCallbackFromCompletedRequestCannotCompleteNewSameProviderTest() {
+        val gate = AgentConnectionTestGate()
+        val first = gate.begin("RESEARCHER", "provider-a")
+
+        assertTrue(gate.complete(first))
+
+        val second = gate.begin("RESEARCHER", "provider-a")
+
+        assertFalse(gate.isCurrent(first))
+        assertFalse(gate.complete(first))
+        assertTrue(gate.isCurrent(second))
+    }
+
+    @Test
     fun invalidateAllRejectsEveryPendingAgentTest() {
         val gate = AgentConnectionTestGate()
         val researcher = gate.begin("RESEARCHER", "provider-a")
