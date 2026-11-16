@@ -21,6 +21,28 @@ class AgentManagerStoreTest {
         context = RuntimeEnvironment.getApplication()
         context.getSharedPreferences("aiforteca_agent_manager_v1", Context.MODE_PRIVATE).edit().clear().commit()
         AgentManagerStore.resetStorageHealthForTests()
+        context.getSharedPreferences("ai_memory_audit_log_v1", Context.MODE_PRIVATE).edit().clear().commit()
+        SharedPreferencesWriteHealth.resetForTests("ai_memory_audit_log_v1")
+    }
+
+    private fun approvalRef() = "test-confirmation:${java.util.UUID.randomUUID()}"
+
+    private fun mutateSetEnabled(id: String, enabled: Boolean): Boolean {
+        val mutation = if (enabled) MemoryGovernance.Mutation.SET_AGENT_ENABLED else MemoryGovernance.Mutation.SET_AGENT_DISABLED
+        val request = MemoryGovernance.Request(MemoryGovernance.Actor.USER, mutation, id, "Test user action", approvalRef())
+        return MemoryMutationGate.execute(context, request) { permit -> AgentManagerStore.setEnabled(context, id, enabled, permit) }
+    }
+    private fun mutateAdd(agent: AgentSpec): Boolean {
+        val request = MemoryGovernance.Request(MemoryGovernance.Actor.USER, MemoryGovernance.Mutation.ADD_CUSTOM_AGENT, agent.id, "Test add", approvalRef())
+        return MemoryMutationGate.execute(context, request) { permit -> AgentManagerStore.addCustomAgent(context, agent, permit) }
+    }
+    private fun mutateUpdate(agent: AgentSpec): Boolean {
+        val request = MemoryGovernance.Request(MemoryGovernance.Actor.USER, MemoryGovernance.Mutation.UPDATE_CUSTOM_AGENT, agent.id, "Test update", approvalRef())
+        return MemoryMutationGate.execute(context, request) { permit -> AgentManagerStore.updateCustomAgent(context, agent, permit) }
+    }
+    private fun mutateRemove(id: String): Boolean {
+        val request = MemoryGovernance.Request(MemoryGovernance.Actor.USER, MemoryGovernance.Mutation.REMOVE_CUSTOM_AGENT, id, "Test remove", approvalRef())
+        return MemoryMutationGate.execute(context, request) { permit -> AgentManagerStore.removeCustomAgent(context, id, permit) }
     }
 
     private fun custom(id: String = "custom-log-auditor", name: String = "Log Auditor") = AgentSpec(
@@ -41,16 +63,16 @@ class AgentManagerStoreTest {
 
     @Test fun disablingAndReenablingAgentPersists() {
         val id = "critical-reviewer"
-        assertTrue(AgentManagerStore.setEnabled(context, id, false))
+        assertTrue(mutateSetEnabled(id, false))
         assertFalse(AgentManagerStore.isEnabled(context, id))
         assertFalse(AgentManagerStore.enabledCatalog(context).any { it.id == id })
-        assertTrue(AgentManagerStore.setEnabled(context, id, true))
+        assertTrue(mutateSetEnabled(id, true))
         assertTrue(AgentManagerStore.isEnabled(context, id))
     }
 
     @Test fun customAgentCanBeAddedRoutedAndRemoved() {
         val agent = custom()
-        assertTrue(AgentManagerStore.addCustomAgent(context, agent))
+        assertTrue(mutateAdd(agent))
         assertTrue(AgentManagerStore.enabledCatalog(context).any { it.id == agent.id })
         val routedPrompt = AgentManagerStore.enabledCatalog(context).first { it.id == agent.id }.systemPrompt
         assertTrue(routedPrompt.contains(agent.systemPromptOverride))
@@ -62,8 +84,8 @@ class AgentManagerStoreTest {
 
     @Test fun customAgentCanBeEditedWithoutChangingItsIdentityOrDisabledState() {
         val original = custom()
-        assertTrue(AgentManagerStore.addCustomAgent(context, original))
-        assertTrue(AgentManagerStore.setEnabled(context, original.id, false))
+        assertTrue(mutateAdd(original))
+        assertTrue(mutateSetEnabled(original.id, false))
 
         val updated = original.copy(
             name = "Audytor logów i bezpieczeństwa",
@@ -71,7 +93,7 @@ class AgentManagerStoreTest {
             keywords = listOf("logi", "bezpieczeństwo", "wycieki"),
             systemPromptOverride = "Sprawdzasz logi i nigdy nie ujawniasz sekretów."
         )
-        assertTrue(AgentManagerStore.updateCustomAgent(context, updated))
+        assertTrue(mutateUpdate(updated))
         val snapshot = AgentManagerStore.snapshot(context)
         assertEquals(updated, snapshot.customAgents.single())
         assertTrue("Editing must preserve the disabled state", original.id in snapshot.disabledIds)
@@ -79,26 +101,26 @@ class AgentManagerStoreTest {
     }
 
     @Test fun builtInAndMissingAgentsCannotBeUpdatedAsCustomProfiles() {
-        assertFalse(AgentManagerStore.updateCustomAgent(context, custom(id = "critical-reviewer")))
-        assertFalse(AgentManagerStore.updateCustomAgent(context, custom(id = "custom-not-saved")))
+        assertFalse(mutateUpdate(custom(id = "critical-reviewer")))
+        assertFalse(mutateUpdate(custom(id = "custom-not-saved")))
     }
 
     @Test fun removedCustomAgentIdIsRememberedAndCannotBeReimported() {
         val removed = custom(id = "custom-removed-auditor")
-        assertTrue(AgentManagerStore.addCustomAgent(context, removed))
-        assertTrue(AgentManagerStore.removeCustomAgent(context, removed.id))
+        assertTrue(mutateAdd(removed))
+        assertTrue(mutateRemove(removed.id))
         val snapshot = AgentManagerStore.snapshot(context)
         assertTrue(removed.id in snapshot.removedCustomIds)
-        assertFalse(AgentManagerStore.addCustomAgent(context, removed))
-        assertTrue(AgentManagerStore.addCustomAgent(context, custom(id = "custom-new-auditor")))
+        assertFalse(mutateAdd(removed))
+        assertTrue(mutateAdd(custom(id = "custom-new-auditor")))
     }
 
     @Test fun invalidOrDuplicateCustomAgentIsRejected() {
-        assertFalse(AgentManagerStore.addCustomAgent(context, custom(id = "bad id")))
-        assertFalse(AgentManagerStore.addCustomAgent(context, custom(id = "custom-gsk_12345678901234567890")))
-        assertFalse(AgentManagerStore.addCustomAgent(context, custom(id = "custom-safe-name", name = "Agent api_key=secret")))
-        assertTrue(AgentManagerStore.addCustomAgent(context, custom()))
-        assertFalse(AgentManagerStore.addCustomAgent(context, custom()))
+        assertFalse(mutateAdd(custom(id = "bad id")))
+        assertFalse(mutateAdd(custom(id = "custom-gsk_12345678901234567890")))
+        assertFalse(mutateAdd(custom(id = "custom-safe-name", name = "Agent api_key=secret")))
+        assertTrue(mutateAdd(custom()))
+        assertFalse(mutateAdd(custom()))
     }
 
     @Test fun concurrentCustomAgentAddsDoNotLoseCatalogUpdates() {
@@ -112,7 +134,7 @@ class AgentManagerStoreTest {
                     startGate.await()
                     repeat(12) { index ->
                         val id = "custom-parallel-$worker-${index.toString().padStart(2, '0')}"
-                        if (!AgentManagerStore.addCustomAgent(context, custom(id))) failures.add(id)
+                        if (!mutateAdd(custom(id))) failures.add(id)
                     }
                 } catch (error: Throwable) {
                     failures.add("worker-$worker:${error.javaClass.simpleName}")
@@ -149,7 +171,7 @@ class AgentManagerStoreTest {
         val state = AgentManagerStore.snapshot(context)
         assertEquals(AgentManagerStore.ReadStatus.CORRUPT, state.status)
         assertTrue(AgentManagerStore.enabledCatalog(context).isEmpty())
-        assertFalse(AgentManagerStore.setEnabled(context, "critical-reviewer", true))
+        assertFalse(mutateSetEnabled("critical-reviewer", true))
         assertEquals(corrupt, prefs.getString("state", null))
     }
 
@@ -172,7 +194,7 @@ class AgentManagerStoreTest {
         val state = AgentManagerStore.snapshot(context)
         assertEquals(AgentManagerStore.ReadStatus.CORRUPT, state.status)
         assertTrue(AgentManagerStore.enabledCatalog(context).isEmpty())
-        assertFalse(AgentManagerStore.setEnabled(context, "critical-reviewer", true))
+        assertFalse(mutateSetEnabled("critical-reviewer", true))
         assertEquals("{broken", prefs.getString("state", null))
     }
 }
