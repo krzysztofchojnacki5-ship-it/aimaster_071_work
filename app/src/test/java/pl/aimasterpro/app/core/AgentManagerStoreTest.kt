@@ -78,7 +78,7 @@ class AgentManagerStoreTest {
         assertTrue(routedPrompt.contains(agent.systemPromptOverride))
         assertTrue(routedPrompt.contains("Nie zmyślaj odczytanych plików"))
         assertTrue(routedPrompt.contains("Nie ujawniaj kluczy API"))
-        assertTrue(AgentManagerStore.removeCustomAgent(context, agent.id))
+        assertTrue(mutateRemove(agent.id))
         assertFalse(AgentManagerStore.enabledCatalog(context).any { it.id == agent.id })
     }
 
@@ -151,6 +151,34 @@ class AgentManagerStoreTest {
         assertTrue("Concurrent catalog updates did not finish", finished.await(10, TimeUnit.SECONDS))
         assertTrue("Catalog updates failed: $failures", failures.isEmpty())
         assertEquals(24, AgentManagerStore.snapshot(context).customAgents.size)
+    }
+
+    @Test fun agentCannotMutateCatalogEvenWhenItSuppliesAnApprovalReference() {
+        val agent = custom(id = "custom-agent-denied")
+        var mutationInvoked = false
+        val request = MemoryGovernance.Request(
+            MemoryGovernance.Actor.AGENT,
+            MemoryGovernance.Mutation.ADD_CUSTOM_AGENT,
+            agent.id,
+            "Agent attempted catalog mutation",
+            "agent-forged-approval"
+        )
+        val result = MemoryMutationGate.execute(context, request) { permit ->
+            mutationInvoked = true
+            AgentManagerStore.addCustomAgent(context, agent, permit)
+        }
+        assertFalse(result)
+        assertFalse(mutationInvoked)
+        assertFalse(AgentManagerStore.snapshot(context).customAgents.any { it.id == agent.id })
+    }
+
+    @Test fun successfulCatalogMutationIsRecordedAsIntentAndCommitted() {
+        val agent = custom(id = "custom-audited-agent")
+        assertTrue(mutateAdd(agent))
+        val records = MemoryAuditLog.readVerified(context)!!
+            .filter { it.objectId == agent.id && it.mutation == MemoryGovernance.Mutation.ADD_CUSTOM_AGENT.name }
+        assertEquals(listOf(MemoryAuditLog.Phase.INTENT, MemoryAuditLog.Phase.COMMITTED), records.map { it.phase })
+        assertEquals("SUCCESS", records.last().outcome)
     }
 
     @Test fun preferenceAccessFailureIsUnavailableNotCorrupt() {
