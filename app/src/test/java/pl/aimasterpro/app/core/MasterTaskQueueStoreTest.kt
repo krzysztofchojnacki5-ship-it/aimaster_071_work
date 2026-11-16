@@ -316,7 +316,7 @@ class MasterTaskQueueStoreTest {
             keywords = listOf("trace"),
             systemPromptOverride = "Keep secrets private."
         )
-        assertTrue(AgentManagerStore.addCustomAgent(context, custom))
+        assertTrue(mutateAgentAddCustomAgent(custom))
         assertTrue(MasterTaskQueueStore.enqueue(context, taskId, "Canonical trace", "Normalize endpoint identities.", now = 60L))
         assertTrue(MasterTaskQueueStore.assign(context, taskId,
             listOf("critical-reviewer", custom.id), now = 61L))
