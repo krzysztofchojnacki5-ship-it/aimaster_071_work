@@ -5645,7 +5645,16 @@ class MainActivity : Activity() {
                 var restoringToggle = false
                 toggle.setOnCheckedChangeListener { button, checked ->
                     if (restoringToggle) return@setOnCheckedChangeListener
-                    val saved = pl.aimasterpro.app.core.AgentManagerStore.setEnabled(this, agent.id, checked)
+                    val mutation = if (checked) pl.aimasterpro.app.core.MemoryGovernance.Mutation.SET_AGENT_ENABLED
+                        else pl.aimasterpro.app.core.MemoryGovernance.Mutation.SET_AGENT_DISABLED
+                    val request = pl.aimasterpro.app.core.MemoryGovernance.Request(
+                        actor = pl.aimasterpro.app.core.MemoryGovernance.Actor.USER, mutation = mutation,
+                        objectId = agent.id, reason = "Użytkownik zmienił status agenta w menadżerze agentów.",
+                        approvalRef = "ui-confirmation:${java.util.UUID.randomUUID()}"
+                    )
+                    val saved = pl.aimasterpro.app.core.MemoryMutationGate.execute(this, request) { permit ->
+                        pl.aimasterpro.app.core.AgentManagerStore.setEnabled(this, agent.id, checked, permit)
+                    }
                     if (!saved) {
                         restoringToggle = true
                         button.isChecked = !checked
@@ -5678,7 +5687,16 @@ class MainActivity : Activity() {
                                     "Profil ${agent.name} zostanie usunięty, a jego identyfikator zapamiętany, aby ten sam profil nie został przypadkowo przywrócony. Przypisanie modelu do roli ${pl.aimasterpro.app.agents.AgentProviderRouting.roleFor(agent).label} pozostanie bez zmian, ponieważ jest wspólne dla wszystkich agentów tej roli."
                                 )
                                 .setPositiveButton("Usuń") { _, _ ->
-                                    if (pl.aimasterpro.app.core.AgentManagerStore.removeCustomAgent(this@MainActivity, agent.id)) {
+                                    val request = pl.aimasterpro.app.core.MemoryGovernance.Request(
+                                        actor = pl.aimasterpro.app.core.MemoryGovernance.Actor.USER,
+                                        mutation = pl.aimasterpro.app.core.MemoryGovernance.Mutation.REMOVE_CUSTOM_AGENT,
+                                        objectId = agent.id, reason = "Użytkownik potwierdził usunięcie własnego profilu agenta.",
+                                        approvalRef = "ui-confirmation:${java.util.UUID.randomUUID()}"
+                                    )
+                                    val removed = pl.aimasterpro.app.core.MemoryMutationGate.execute(this@MainActivity, request) { permit ->
+                                        pl.aimasterpro.app.core.AgentManagerStore.removeCustomAgent(this@MainActivity, agent.id, permit)
+                                    }
+                                    if (removed) {
                                         logAgent("Menadżer agentów: usunięto profil ${agent.id}")
                                         showAgentCatalogManager()
                                     } else toast("Nie udało się usunąć profilu agenta.")
@@ -5771,10 +5789,18 @@ class MainActivity : Activity() {
                     keywords = agentKeywords,
                     systemPromptOverride = customPrompt
                 )
-                val saved = if (existing == null) {
-                    pl.aimasterpro.app.core.AgentManagerStore.addCustomAgent(this, agent)
-                } else {
-                    pl.aimasterpro.app.core.AgentManagerStore.updateCustomAgent(this, agent)
+                val mutation = if (existing == null) pl.aimasterpro.app.core.MemoryGovernance.Mutation.ADD_CUSTOM_AGENT
+                    else pl.aimasterpro.app.core.MemoryGovernance.Mutation.UPDATE_CUSTOM_AGENT
+                val request = pl.aimasterpro.app.core.MemoryGovernance.Request(
+                    actor = pl.aimasterpro.app.core.MemoryGovernance.Actor.USER, mutation = mutation,
+                    objectId = agent.id,
+                    reason = if (existing == null) "Użytkownik zatwierdził dodanie własnego profilu agenta."
+                        else "Użytkownik zatwierdził aktualizację własnego profilu agenta.",
+                    approvalRef = "ui-confirmation:${java.util.UUID.randomUUID()}"
+                )
+                val saved = pl.aimasterpro.app.core.MemoryMutationGate.execute(this, request) { permit ->
+                    if (existing == null) pl.aimasterpro.app.core.AgentManagerStore.addCustomAgent(this, agent, permit)
+                    else pl.aimasterpro.app.core.AgentManagerStore.updateCustomAgent(this, agent, permit)
                 }
                 if (!saved) {
                     toast(if (existing == null) "Nie udało się dodać profilu. Sprawdź limit 24 profili i stan magazynu."
