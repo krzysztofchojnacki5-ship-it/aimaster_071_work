@@ -23,6 +23,32 @@ class MasterTaskQueueStoreTest {
             .edit().clear().commit()
         SharedPreferencesWriteHealth.resetForTests("aiforteca_master_task_queue_v1")
         AgentManagerStore.resetStorageHealthForTests()
+        context.getSharedPreferences("ai_memory_audit_log_v1", Context.MODE_PRIVATE)
+            .edit().clear().commit()
+        SharedPreferencesWriteHealth.resetForTests("ai_memory_audit_log_v1")
+    }
+
+    private fun approvalRef() = "queue-test-confirmation:${java.util.UUID.randomUUID()}"
+
+    private fun mutateAgentSetEnabled(id: String, enabled: Boolean): Boolean {
+        val mutation = if (enabled) MemoryGovernance.Mutation.SET_AGENT_ENABLED
+            else MemoryGovernance.Mutation.SET_AGENT_DISABLED
+        val request = MemoryGovernance.Request(
+            MemoryGovernance.Actor.USER, mutation, id, "Test queue setup", approvalRef()
+        )
+        return MemoryMutationGate.execute(context, request) { permit ->
+            AgentManagerStore.setEnabled(context, id, enabled, permit)
+        }
+    }
+
+    private fun mutateAgentAddCustomAgent(agent: pl.aimasterpro.app.agents.AgentSpec): Boolean {
+        val request = MemoryGovernance.Request(
+            MemoryGovernance.Actor.USER, MemoryGovernance.Mutation.ADD_CUSTOM_AGENT,
+            agent.id, "Test queue setup", approvalRef()
+        )
+        return MemoryMutationGate.execute(context, request) { permit ->
+            AgentManagerStore.addCustomAgent(context, agent, permit)
+        }
     }
 
     @Test fun enqueueAssignAndAgentCompletionArePersistedWithAuditTrail() {
@@ -140,7 +166,7 @@ class MasterTaskQueueStoreTest {
     }
 
     @Test fun disabledAgentCannotBeAssigned() {
-        assertTrue(AgentManagerStore.setEnabled(context, "critical-reviewer", false))
+        assertTrue(mutateAgentSetEnabled("critical-reviewer", false))
         assertTrue(MasterTaskQueueStore.enqueue(context, "task-003", "Test", "Cel.", now = 30L))
         assertFalse(MasterTaskQueueStore.assign(context, "task-003", listOf("critical-reviewer"), now = 31L))
         assertEquals(MasterTaskQueueStore.Status.QUEUED, MasterTaskQueueStore.snapshot(context).tasks.single().status)
@@ -155,7 +181,7 @@ class MasterTaskQueueStoreTest {
             keywords = listOf("kolejka", "audyt"),
             systemPromptOverride = "Nie ujawniaj sekretów."
         )
-        assertTrue(AgentManagerStore.addCustomAgent(context, custom))
+        assertTrue(mutateAgentAddCustomAgent(custom))
         assertTrue(MasterTaskQueueStore.enqueue(context, "task-custom-001", "Zadanie własnego agenta", "Sprawdź kolejkę.", now = 35L))
         assertTrue(MasterTaskQueueStore.assign(context, "task-custom-001", listOf(custom.id), now = 36L))
         assertEquals(listOf(custom.id), MasterTaskQueueStore.snapshot(context).tasks.single().assignedAgentIds)
@@ -166,7 +192,7 @@ class MasterTaskQueueStoreTest {
         assertEquals(MasterTaskQueueStore.Status.COMPLETED,
             MasterTaskQueueStore.snapshot(context).tasks.first { it.id == "task-custom-001" }.status)
 
-        assertTrue(AgentManagerStore.setEnabled(context, custom.id, false))
+        assertTrue(mutateAgentSetEnabled(custom.id, false))
         assertTrue(MasterTaskQueueStore.enqueue(context, "task-custom-002", "Zadanie wyłączonego agenta", "Nie uruchamiaj.", now = 37L))
         assertFalse(MasterTaskQueueStore.assign(context, "task-custom-002", listOf(custom.id), now = 38L))
         assertEquals(MasterTaskQueueStore.Status.QUEUED, MasterTaskQueueStore.snapshot(context).tasks.last().status)
