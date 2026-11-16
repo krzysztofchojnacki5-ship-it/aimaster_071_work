@@ -117,8 +117,9 @@ object AgentManagerStore {
     }
 
     @Synchronized
-    fun setEnabled(context: Context, agentId: String, enabled: Boolean): Boolean {
-        if (!agentId.matches(ID_PATTERN)) return false
+    internal fun setEnabled(context: Context, agentId: String, enabled: Boolean, permit: MemoryMutationPermit): Boolean {
+        val mutation = if (enabled) MemoryGovernance.Mutation.SET_AGENT_ENABLED else MemoryGovernance.Mutation.SET_AGENT_DISABLED
+        if (!MemoryMutationGate.isValid(permit, setOf(mutation), agentId) || !agentId.matches(ID_PATTERN)) return false
         val state = snapshot(context)
         if (state.status != ReadStatus.AVAILABLE) return false
         if (AgentCatalog.find(agentId) == null && state.customAgents.none { it.id == agentId }) return false
@@ -128,17 +129,18 @@ object AgentManagerStore {
     }
 
     @Synchronized
-    fun addCustomAgent(context: Context, agent: AgentSpec): Boolean {
+    internal fun addCustomAgent(context: Context, agent: AgentSpec, permit: MemoryMutationPermit): Boolean {
+        if (!MemoryMutationGate.isValid(permit, setOf(MemoryGovernance.Mutation.ADD_CUSTOM_AGENT), agent.id)) return false
         if (!validCustom(agent)) return false
         val state = snapshot(context)
         if (state.status != ReadStatus.AVAILABLE || state.customAgents.size >= MAX_CUSTOM) return false
-        if (AgentCatalog.find(agent.id) != null || agent.id in state.removedCustomIds ||
-            state.customAgents.any { it.id == agent.id }) return false
+        if (AgentCatalog.find(agent.id) != null || agent.id in state.removedCustomIds || state.customAgents.any { it.id == agent.id }) return false
         return write(context, state.disabledIds, state.customAgents + agent, state.removedCustomIds)
     }
 
     @Synchronized
-    fun updateCustomAgent(context: Context, agent: AgentSpec): Boolean {
+    internal fun updateCustomAgent(context: Context, agent: AgentSpec, permit: MemoryMutationPermit): Boolean {
+        if (!MemoryMutationGate.isValid(permit, setOf(MemoryGovernance.Mutation.UPDATE_CUSTOM_AGENT), agent.id)) return false
         if (!validCustom(agent) || AgentCatalog.find(agent.id) != null) return false
         val state = snapshot(context)
         if (state.status != ReadStatus.AVAILABLE || state.customAgents.none { it.id == agent.id }) return false
@@ -148,15 +150,14 @@ object AgentManagerStore {
     }
 
     @Synchronized
-    fun removeCustomAgent(context: Context, agentId: String): Boolean {
+    internal fun removeCustomAgent(context: Context, agentId: String, permit: MemoryMutationPermit): Boolean {
+        if (!MemoryMutationGate.isValid(permit, setOf(MemoryGovernance.Mutation.REMOVE_CUSTOM_AGENT), agentId) ||
+            !agentId.matches(ID_PATTERN)) return false
         val state = snapshot(context)
         if (state.status != ReadStatus.AVAILABLE || state.customAgents.none { it.id == agentId }) return false
         if (state.removedCustomIds.size >= MAX_REMOVED) return false
-        return write(
-            context, state.disabledIds - agentId,
-            state.customAgents.filterNot { it.id == agentId },
-            state.removedCustomIds + agentId
-        )
+        return write(context, state.disabledIds - agentId,
+            state.customAgents.filterNot { it.id == agentId }, state.removedCustomIds + agentId)
     }
 
     private fun validCustom(agent: AgentSpec): Boolean =
