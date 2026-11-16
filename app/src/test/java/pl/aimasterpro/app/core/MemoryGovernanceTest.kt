@@ -41,7 +41,12 @@ class MemoryGovernanceTest {
             MemoryGovernance.Mutation.ADD_AGENT_LESSON,
             MemoryGovernance.Mutation.REMOVE_AGENT_LESSON,
             MemoryGovernance.Mutation.APPROVE_PROPOSAL,
-            MemoryGovernance.Mutation.REJECT_PROPOSAL
+            MemoryGovernance.Mutation.REJECT_PROPOSAL,
+            MemoryGovernance.Mutation.SET_AGENT_ENABLED,
+            MemoryGovernance.Mutation.SET_AGENT_DISABLED,
+            MemoryGovernance.Mutation.ADD_CUSTOM_AGENT,
+            MemoryGovernance.Mutation.UPDATE_CUSTOM_AGENT,
+            MemoryGovernance.Mutation.REMOVE_CUSTOM_AGENT
         )
         userMutations.forEach { mutation ->
             assertTrue(MemoryGovernance.authorize(
