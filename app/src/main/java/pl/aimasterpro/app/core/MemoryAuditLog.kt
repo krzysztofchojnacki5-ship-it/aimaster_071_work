@@ -211,7 +211,12 @@ object MemoryAuditLog {
                     MemoryGovernance.Mutation.ADD_AGENT_LESSON.name,
                     MemoryGovernance.Mutation.REMOVE_AGENT_LESSON.name,
                     MemoryGovernance.Mutation.APPROVE_PROPOSAL.name,
-                    MemoryGovernance.Mutation.REJECT_PROPOSAL.name
+                    MemoryGovernance.Mutation.REJECT_PROPOSAL.name,
+                    MemoryGovernance.Mutation.SET_AGENT_ENABLED.name,
+                    MemoryGovernance.Mutation.SET_AGENT_DISABLED.name,
+                    MemoryGovernance.Mutation.ADD_CUSTOM_AGENT.name,
+                    MemoryGovernance.Mutation.UPDATE_CUSTOM_AGENT.name,
+                    MemoryGovernance.Mutation.REMOVE_CUSTOM_AGENT.name
                 ) && event.approvalRef.isNotBlank()
 
             MemoryGovernance.Actor.SYSTEM_RECOVERY.name ->
