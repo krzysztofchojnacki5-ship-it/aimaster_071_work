@@ -23,7 +23,12 @@ object MemoryGovernance {
         APPROVE_PROPOSAL,
         REJECT_PROPOSAL,
         RECONCILE_APPROVED_PROPOSAL,
-        RECONCILE_REVOKED_PROPOSAL
+        RECONCILE_REVOKED_PROPOSAL,
+        SET_AGENT_ENABLED,
+        SET_AGENT_DISABLED,
+        ADD_CUSTOM_AGENT,
+        UPDATE_CUSTOM_AGENT,
+        REMOVE_CUSTOM_AGENT
     }
 
     data class Request(
@@ -46,7 +51,12 @@ object MemoryGovernance {
         Mutation.ADD_AGENT_LESSON,
         Mutation.REMOVE_AGENT_LESSON,
         Mutation.APPROVE_PROPOSAL,
-        Mutation.REJECT_PROPOSAL
+        Mutation.REJECT_PROPOSAL,
+        Mutation.SET_AGENT_ENABLED,
+        Mutation.SET_AGENT_DISABLED,
+        Mutation.ADD_CUSTOM_AGENT,
+        Mutation.UPDATE_CUSTOM_AGENT,
+        Mutation.REMOVE_CUSTOM_AGENT
     )
 
     private val recoveryMutations = setOf(
