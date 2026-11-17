@@ -67,6 +67,60 @@ class QualityLearningStoreTest {
         assertEquals(1, QualityLearningStore.summary(context).total)
     }
 
+    @Test fun feedbackCommentsAndLabelsAreRedactedBeforePersistenceAndAnalysis() {
+        val secret = "sk-1234567890abcdef"
+        QualityLearningStore.rate(
+            context, "task-safe", "TASK", 1, "Wynik dobry api_key=$secret",
+            agentId = "coder", providerId = "api_key=$secret", model = "model-safe"
+        )
+        val raw = context.getSharedPreferences("ai_quality_learning_v1", Context.MODE_PRIVATE)
+            .getString("feedback", null).orEmpty()
+        assertFalse(raw.contains(secret))
+        assertTrue(raw.contains("[REDACTED]"))
+        assertFalse(QualityLearningStore.analysisContext(context).contains(secret))
+    }
+
+    @Test fun proposalContentIsRedactedAndSecretBearingProvenanceIsRejected() {
+        val secret = "sk-1234567890abcdef"
+        val proposal = QualityLearningStore.addProposal(
+            context, "Wniosek jakościowy api_key=$secret do bezpiecznego przechowania.",
+            2, "pewność api_key=$secret", listOf("task-safe"), listOf("coder"), listOf("provider/model-safe")
+        )
+        val raw = context.getSharedPreferences("ai_quality_learning_v1", Context.MODE_PRIVATE)
+            .getString("proposals", null).orEmpty()
+        assertFalse(raw.contains(secret))
+        assertTrue(raw.contains("[REDACTED]"))
+        assertTrue(proposal.text.contains("[REDACTED]"))
+        try {
+            QualityLearningStore.addProposal(
+                context, "Niedozwolone źródło", 1, "wstępna",
+                listOf("task-api_key=$secret"), listOf("coder"), emptyList()
+            )
+            fail("Secret-bearing provenance must be rejected")
+        } catch (_: IllegalArgumentException) { }
+        assertEquals(raw, context.getSharedPreferences("ai_quality_learning_v1", Context.MODE_PRIVATE)
+            .getString("proposals", null))
+    }
+
+    @Test fun legacySecretBearingProposalJournalFailsClosedWithoutRewrite() {
+        val secret = "sk-1234567890abcdef"
+        val raw = org.json.JSONArray().put(org.json.JSONObject()
+            .put("id", "proposal-legacy").put("text", "Legacy api_key=$secret")
+            .put("status", "PROPOSAL").put("created", 1L).put("updated", 1L)
+            .put("evidence", 1).put("confidence", "wstępna")
+            .put("tasks", org.json.JSONArray().put("task-legacy"))
+            .put("agents", org.json.JSONArray().put("coder"))
+            .put("models", org.json.JSONArray().put("provider/model"))).toString()
+        val prefs = context.getSharedPreferences("ai_quality_learning_v1", Context.MODE_PRIVATE)
+        assertTrue(prefs.edit().putString("proposals", raw).commit())
+        assertTrue(QualityLearningStore.proposals(context).isEmpty())
+        try {
+            QualityLearningStore.addProposal(context, "Nowa propozycja", 1, "wstępna", emptyList(), emptyList(), emptyList())
+            fail("Legacy secret-bearing journal must block writes")
+        } catch (_: IllegalStateException) { }
+        assertEquals(raw, prefs.getString("proposals", null))
+    }
+
     @Test fun masterProposalCreationIsAuditedButCannotApproveItsOwnProposal() {
         val proposal = QualityLearningStore.addProposal(
             context, "Propozycja MASTER z audytem", 3, "wstępna",
