@@ -176,8 +176,9 @@ object MasterTaskQueueStore {
         // Starting a queued team is conditional on the exact assignment snapshot MASTER planned.
         // This closes the gap between reading ASSIGNED and committing RUNNING after budget/config work.
         if (actor in setOf("MASTER", "USER") && target == Status.RUNNING &&
-            ((expectedCurrentRunId != null && current.runId != expectedCurrentRunId) ||
-             (expectedAssignedAgentIds != null && current.assignedAgentIds != expectedAssignedAgentIds))) {
+            (expectedCurrentRunId == null || expectedAssignedAgentIds == null ||
+                current.runId != expectedCurrentRunId ||
+                current.assignedAgentIds != expectedAssignedAgentIds)) {
             return@mutate null
         }
         val agentId = actor.removePrefix("agent:")

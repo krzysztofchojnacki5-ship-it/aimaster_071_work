@@ -28,6 +28,15 @@ class MasterTaskQueueStoreTest {
         SharedPreferencesWriteHealth.resetForTests("ai_memory_audit_log_v1")
     }
 
+    private fun startTaskWithCurrentSnapshot(taskId: String, detail: String, now: Long): Boolean {
+        val task = MasterTaskQueueStore.snapshot(context).tasks.firstOrNull { it.id == taskId } ?: return false
+        return MasterTaskQueueStore.transition(
+            context, taskId, "MASTER", MasterTaskQueueStore.Status.RUNNING, detail, now,
+            expectedCurrentRunId = task.runId,
+            expectedAssignedAgentIds = task.assignedAgentIds
+        )
+    }
+
     private fun approvalRef() = "queue-test-confirmation:${java.util.UUID.randomUUID()}"
 
     private fun mutateAgentSetEnabled(id: String, enabled: Boolean): Boolean {
@@ -54,8 +63,7 @@ class MasterTaskQueueStoreTest {
     @Test fun enqueueAssignAndAgentCompletionArePersistedWithAuditTrail() {
         assertTrue(MasterTaskQueueStore.enqueue(context, "task-001", "Audyt", "Sprawdź architekturę.", now = 10L))
         assertTrue(MasterTaskQueueStore.assign(context, "task-001", listOf("critical-reviewer"), now = 11L))
-        assertTrue(MasterTaskQueueStore.transition(context, "task-001", "MASTER",
-            MasterTaskQueueStore.Status.RUNNING, "Agent rozpoczął analizę.", 12L))
+        assertTrue(startTaskWithCurrentSnapshot("task-001", "Agent rozpoczął analizę.", 12L))
         assertTrue(MasterTaskQueueStore.transition(context, "task-001", "agent:critical-reviewer",
             MasterTaskQueueStore.Status.COMPLETED, "Raport gotowy.", 13L, expectedRunId = 1))
 
@@ -70,8 +78,7 @@ class MasterTaskQueueStoreTest {
     @Test fun delayedLifecycleCallbackCannotMoveTaskOrAuditTimelineBackwards() {
         assertTrue(MasterTaskQueueStore.enqueue(context, "task-clock-001", "Zegar", "Test czasu.", now = 100L))
         assertTrue(MasterTaskQueueStore.assign(context, "task-clock-001", listOf("critical-reviewer"), now = 110L))
-        assertTrue(MasterTaskQueueStore.transition(context, "task-clock-001", "MASTER",
-            MasterTaskQueueStore.Status.RUNNING, "Start.", 120L))
+        assertTrue(startTaskWithCurrentSnapshot("task-clock-001", "Start.", 120L))
 
         // Simulate a delayed callback carrying a timestamp from before the device clock correction.
         assertTrue(MasterTaskQueueStore.transition(context, "task-clock-001", "agent:critical-reviewer",
@@ -87,15 +94,13 @@ class MasterTaskQueueStoreTest {
         val taskId = "task-single-agent-retry-fence"
         assertTrue(MasterTaskQueueStore.enqueue(context, taskId, "Retry fence", "Reject stale terminal callbacks.", now = 10L))
         assertTrue(MasterTaskQueueStore.assign(context, taskId, listOf("critical-reviewer"), now = 11L))
-        assertTrue(MasterTaskQueueStore.transition(context, taskId, "MASTER",
-            MasterTaskQueueStore.Status.RUNNING, "First run.", 12L))
+        assertTrue(startTaskWithCurrentSnapshot(taskId, "First run.", 12L))
         assertTrue(MasterTaskQueueStore.transition(context, taskId, "MASTER",
             MasterTaskQueueStore.Status.BLOCKED, "First run interrupted.", 13L))
         assertTrue(MasterTaskQueueStore.transition(context, taskId, "MASTER",
             MasterTaskQueueStore.Status.QUEUED, "Retry approved.", 14L))
         assertTrue(MasterTaskQueueStore.assign(context, taskId, listOf("critical-reviewer"), now = 15L))
-        assertTrue(MasterTaskQueueStore.transition(context, taskId, "MASTER",
-            MasterTaskQueueStore.Status.RUNNING, "Second run.", 16L))
+        assertTrue(startTaskWithCurrentSnapshot(taskId, "Second run.", 16L))
 
         assertFalse(MasterTaskQueueStore.transition(context, taskId, "agent:critical-reviewer",
             MasterTaskQueueStore.Status.COMPLETED, "Late result from first run.", 17L, expectedRunId = 1))
@@ -103,6 +108,21 @@ class MasterTaskQueueStoreTest {
         assertTrue(MasterTaskQueueStore.transition(context, taskId, "agent:critical-reviewer",
             MasterTaskQueueStore.Status.COMPLETED, "Result from current run.", 18L, expectedRunId = 2))
         assertEquals(MasterTaskQueueStore.Status.COMPLETED, MasterTaskQueueStore.snapshot(context).tasks.single().status)
+    }
+
+    @Test fun coordinatorCannotStartWithoutExactAssignmentSnapshot() {
+        val taskId = "task-start-requires-snapshot"
+        assertTrue(MasterTaskQueueStore.enqueue(context, taskId, "Snapshot", "Require exact start fence.", now = 1L))
+        assertTrue(MasterTaskQueueStore.assign(context, taskId, listOf("critical-reviewer"), now = 2L))
+
+        assertFalse(MasterTaskQueueStore.transition(
+            context, taskId, "MASTER", MasterTaskQueueStore.Status.RUNNING,
+            "Start without the planned snapshot.", 3L
+        ))
+        val snapshot = MasterTaskQueueStore.snapshot(context)
+        assertEquals(MasterTaskQueueStore.Status.ASSIGNED, snapshot.tasks.single().status)
+        assertEquals(0, snapshot.tasks.single().runId)
+        assertEquals(2, snapshot.events.size)
     }
 
     @Test fun staleQueueStartCannotRunAfterAssignmentOrRunEpochChanges() {
@@ -138,8 +158,7 @@ class MasterTaskQueueStoreTest {
         val agents = listOf("critical-reviewer", "unit-test-engineer")
         assertTrue(MasterTaskQueueStore.enqueue(context, taskId, "Run identity", "Reject callbacks without an execution epoch.", now = 8L))
         assertTrue(MasterTaskQueueStore.assign(context, taskId, agents, now = 9L))
-        assertTrue(MasterTaskQueueStore.transition(context, taskId, "MASTER",
-            MasterTaskQueueStore.Status.RUNNING, "Run started.", 10L))
+        assertTrue(startTaskWithCurrentSnapshot(taskId, "Run started.", 10L))
 
         assertFalse(MasterTaskQueueStore.recordAgentResult(context, taskId, agents[0],
             MasterTaskQueueStore.Status.COMPLETED, "Missing run identity.", 11L))
@@ -161,8 +180,7 @@ class MasterTaskQueueStoreTest {
         val taskId = "task-active-fence"
         assertTrue(MasterTaskQueueStore.enqueue(context, taskId, "Fence", "Odrzuć spóźnione callbacki.", now = 20L))
         assertTrue(MasterTaskQueueStore.assign(context, taskId, listOf("critical-reviewer"), now = 21L))
-        assertTrue(MasterTaskQueueStore.transition(context, taskId, "MASTER",
-            MasterTaskQueueStore.Status.RUNNING, "Start.", 22L))
+        assertTrue(startTaskWithCurrentSnapshot(taskId, "Start.", 22L))
         val runId = MasterTaskQueueStore.snapshot(context).tasks.single().runId
         var sideEffects = 0
 
@@ -187,8 +205,7 @@ class MasterTaskQueueStoreTest {
         val taskId = "task-active-lock"
         assertTrue(MasterTaskQueueStore.enqueue(context, taskId, "Blokada", "Sprawdź atomowość anulowania.", now = 30L))
         assertTrue(MasterTaskQueueStore.assign(context, taskId, listOf("critical-reviewer"), now = 31L))
-        assertTrue(MasterTaskQueueStore.transition(context, taskId, "MASTER",
-            MasterTaskQueueStore.Status.RUNNING, "Start.", 32L))
+        assertTrue(startTaskWithCurrentSnapshot(taskId, "Start.", 32L))
 
         val sideEffectEntered = CountDownLatch(1)
         val releaseSideEffect = CountDownLatch(1)
@@ -229,8 +246,7 @@ class MasterTaskQueueStoreTest {
     @Test fun agentCannotCompleteAnotherAgentsTaskOrPauseTask() {
         assertTrue(MasterTaskQueueStore.enqueue(context, "task-002", "Test", "Cel.", now = 20L))
         assertTrue(MasterTaskQueueStore.assign(context, "task-002", listOf("critical-reviewer"), now = 21L))
-        assertTrue(MasterTaskQueueStore.transition(context, "task-002", "MASTER",
-            MasterTaskQueueStore.Status.RUNNING, "Start.", 22L))
+        assertTrue(startTaskWithCurrentSnapshot("task-002", "Start.", 22L))
         assertFalse(MasterTaskQueueStore.transition(context, "task-002", "agent:unit-test-engineer",
             MasterTaskQueueStore.Status.COMPLETED, "Nieuprawniony agent.", 23L))
         assertFalse(MasterTaskQueueStore.transition(context, "task-002", "agent:critical-reviewer",
@@ -259,8 +275,7 @@ class MasterTaskQueueStoreTest {
         assertTrue(MasterTaskQueueStore.enqueue(context, "task-custom-001", "Zadanie własnego agenta", "Sprawdź kolejkę.", now = 35L))
         assertTrue(MasterTaskQueueStore.assign(context, "task-custom-001", listOf(custom.id), now = 36L))
         assertEquals(listOf(custom.id), MasterTaskQueueStore.snapshot(context).tasks.single().assignedAgentIds)
-        assertTrue(MasterTaskQueueStore.transition(context, "task-custom-001", "MASTER",
-            MasterTaskQueueStore.Status.RUNNING, "Start własnego agenta.", 37L))
+        assertTrue(startTaskWithCurrentSnapshot("task-custom-001", "Start własnego agenta.", 37L))
         assertTrue(MasterTaskQueueStore.recordAgentResult(context, "task-custom-001", custom.id,
             MasterTaskQueueStore.Status.COMPLETED, "Raport własnego agenta.", 38L, expectedRunId = 1))
         assertEquals(MasterTaskQueueStore.Status.COMPLETED,
@@ -277,8 +292,7 @@ class MasterTaskQueueStoreTest {
         assertFalse(MasterTaskQueueStore.enqueue(context, "task-005", "Drugie", "Cel.",
             dependencies = listOf("task-004"), now = 41L))
         assertTrue(MasterTaskQueueStore.assign(context, "task-004", listOf("critical-reviewer"), now = 42L))
-        assertTrue(MasterTaskQueueStore.transition(context, "task-004", "MASTER",
-            MasterTaskQueueStore.Status.RUNNING, "Start.", 43L))
+        assertTrue(startTaskWithCurrentSnapshot("task-004", "Start.", 43L))
         assertTrue(MasterTaskQueueStore.transition(context, "task-004", "agent:critical-reviewer",
             MasterTaskQueueStore.Status.COMPLETED, "Gotowe.", 44L, expectedRunId = 1))
         assertTrue(MasterTaskQueueStore.enqueue(context, "task-005", "Drugie", "Cel.",
@@ -289,8 +303,7 @@ class MasterTaskQueueStoreTest {
         assertTrue(MasterTaskQueueStore.enqueue(context, "task-008", "Zespół", "Wspólny cel.", now = 60L))
         assertTrue(MasterTaskQueueStore.assign(context, "task-008",
             listOf("critical-reviewer", "unit-test-engineer"), now = 61L))
-        assertTrue(MasterTaskQueueStore.transition(context, "task-008", "MASTER",
-            MasterTaskQueueStore.Status.RUNNING, "TeamRunEngine start.", 62L))
+        assertTrue(startTaskWithCurrentSnapshot("task-008", "TeamRunEngine start.", 62L))
         assertTrue(MasterTaskQueueStore.recordAgentMessage(context, "task-008",
             "critical-reviewer", "MASTER", "REPORT", "Analiza zakończona.", 62L, expectedRunId = 1))
 
@@ -316,8 +329,7 @@ class MasterTaskQueueStoreTest {
         assertTrue(MasterTaskQueueStore.enqueue(context, "task-009", "Zespół", "Wspólny cel.", now = 70L))
         assertTrue(MasterTaskQueueStore.assign(context, "task-009",
             listOf("critical-reviewer", "unit-test-engineer"), now = 71L))
-        assertTrue(MasterTaskQueueStore.transition(context, "task-009", "MASTER",
-            MasterTaskQueueStore.Status.RUNNING, "TeamRunEngine start.", 72L))
+        assertTrue(startTaskWithCurrentSnapshot("task-009", "TeamRunEngine start.", 72L))
         assertTrue(MasterTaskQueueStore.recordAgentResult(context, "task-009", "critical-reviewer",
             MasterTaskQueueStore.Status.FAILED, "Błąd providera.", 73L, expectedRunId = 1))
         assertEquals(MasterTaskQueueStore.Status.RUNNING,
@@ -333,8 +345,7 @@ class MasterTaskQueueStoreTest {
         val agent = "critical-reviewer"
         assertTrue(MasterTaskQueueStore.enqueue(context, taskId, "Agent clock", "Keep callback timestamps ordered.", now = 200L))
         assertTrue(MasterTaskQueueStore.assign(context, taskId, listOf(agent), now = 201L))
-        assertTrue(MasterTaskQueueStore.transition(context, taskId, "MASTER",
-            MasterTaskQueueStore.Status.RUNNING, "Start.", 202L))
+        assertTrue(startTaskWithCurrentSnapshot(taskId, "Start.", 202L))
 
         assertTrue(MasterTaskQueueStore.recordAgentProgress(
             context, taskId, agent, "REQUESTING", "First progress.", now = 205L, expectedRunId = 1
@@ -361,8 +372,7 @@ class MasterTaskQueueStoreTest {
     @Test fun assignedAgentProgressUpdatesCurrentStepAndAuditWithoutClosingTask() {
         assertTrue(MasterTaskQueueStore.enqueue(context, "task-011", "Postęp", "Sprawdź status.", now = 100L))
         assertTrue(MasterTaskQueueStore.assign(context, "task-011", listOf("critical-reviewer"), now = 101L))
-        assertTrue(MasterTaskQueueStore.transition(context, "task-011", "MASTER",
-            MasterTaskQueueStore.Status.RUNNING, "Start.", 102L))
+        assertTrue(startTaskWithCurrentSnapshot("task-011", "Start.", 102L))
         assertTrue(MasterTaskQueueStore.recordAgentProgress(context, "task-011", "critical-reviewer",
             "REQUESTING", "Wysyłam zapytanie.", "provider-free", "model-free", 1, 103L, expectedRunId = 1))
         val state = MasterTaskQueueStore.snapshot(context)
@@ -378,8 +388,7 @@ class MasterTaskQueueStoreTest {
     @Test fun communicationEventsPersistRecipientAndProviderModelMetadata() {
         assertTrue(MasterTaskQueueStore.enqueue(context, "task-comms", "Komunikacja", "Test metadanych.", now = 70L))
         assertTrue(MasterTaskQueueStore.assign(context, "task-comms", listOf("critical-reviewer"), now = 71L))
-        assertTrue(MasterTaskQueueStore.transition(context, "task-comms", "MASTER",
-            MasterTaskQueueStore.Status.RUNNING, "Start.", 72L))
+        assertTrue(startTaskWithCurrentSnapshot("task-comms", "Start.", 72L))
         assertTrue(MasterTaskQueueStore.recordAgentMessage(
             context, "task-comms", "Critical Reviewer", "MASTER", "REPORT",
             "Raport testowy bez sekretów.", now = 73L,
@@ -424,8 +433,7 @@ class MasterTaskQueueStoreTest {
         assertTrue(MasterTaskQueueStore.enqueue(context, taskId, "Canonical trace", "Normalize endpoint identities.", now = 60L))
         assertTrue(MasterTaskQueueStore.assign(context, taskId,
             listOf("critical-reviewer", custom.id), now = 61L))
-        assertTrue(MasterTaskQueueStore.transition(context, taskId, "MASTER",
-            MasterTaskQueueStore.Status.RUNNING, "Start.", 62L))
+        assertTrue(startTaskWithCurrentSnapshot(taskId, "Start.", 62L))
         val runId = MasterTaskQueueStore.snapshot(context).tasks.single().runId
 
         // Five accepted input forms must round-trip through strict persisted provenance checks.
@@ -469,8 +477,7 @@ class MasterTaskQueueStoreTest {
         val taskId = "task-trace-prefix-case"
         assertTrue(MasterTaskQueueStore.enqueue(context, taskId, "Prefix case", "Resolve endpoint aliases.", now = 80L))
         assertTrue(MasterTaskQueueStore.assign(context, taskId, listOf("critical-reviewer"), now = 81L))
-        assertTrue(MasterTaskQueueStore.transition(context, taskId, "MASTER",
-            MasterTaskQueueStore.Status.RUNNING, "Start.", 82L))
+        assertTrue(startTaskWithCurrentSnapshot(taskId, "Start.", 82L))
         val runId = MasterTaskQueueStore.snapshot(context).tasks.single().runId
 
         assertTrue(MasterTaskQueueStore.recordAgentTrace(
@@ -488,8 +495,7 @@ class MasterTaskQueueStoreTest {
         val taskId = "task-provider-endpoint-guard"
         assertTrue(MasterTaskQueueStore.enqueue(context, taskId, "Provider guard", "Validate provider endpoint IDs.", now = 90L))
         assertTrue(MasterTaskQueueStore.assign(context, taskId, listOf("critical-reviewer"), now = 91L))
-        assertTrue(MasterTaskQueueStore.transition(context, taskId, "MASTER",
-            MasterTaskQueueStore.Status.RUNNING, "Start.", 92L))
+        assertTrue(startTaskWithCurrentSnapshot(taskId, "Start.", 92L))
         val runId = MasterTaskQueueStore.snapshot(context).tasks.single().runId
         val before = MasterTaskQueueStore.snapshot(context).events.size
 
@@ -507,8 +513,7 @@ class MasterTaskQueueStoreTest {
         val taskId = "task-agent-activity-clock"
         assertTrue(MasterTaskQueueStore.enqueue(context, taskId, "Activity clock", "Track latest agent activity.", now = 100L))
         assertTrue(MasterTaskQueueStore.assign(context, taskId, listOf("critical-reviewer"), now = 101L))
-        assertTrue(MasterTaskQueueStore.transition(context, taskId, "MASTER",
-            MasterTaskQueueStore.Status.RUNNING, "Start.", 102L))
+        assertTrue(startTaskWithCurrentSnapshot(taskId, "Start.", 102L))
 
         assertTrue(MasterTaskQueueStore.recordAgentMessage(
             context, taskId, "critical-reviewer", "MASTER", "REPORT",
@@ -539,8 +544,7 @@ class MasterTaskQueueStoreTest {
         val taskId = "task-provider-metadata-redaction"
         assertTrue(MasterTaskQueueStore.enqueue(context, taskId, "Metadata redaction", "Protect provider metadata.", now = 100L))
         assertTrue(MasterTaskQueueStore.assign(context, taskId, listOf("critical-reviewer"), now = 101L))
-        assertTrue(MasterTaskQueueStore.transition(context, taskId, "MASTER",
-            MasterTaskQueueStore.Status.RUNNING, "Start.", 102L))
+        assertTrue(startTaskWithCurrentSnapshot(taskId, "Start.", 102L))
         val secret = "sk_live_metadata_secret_123456789"
 
         assertTrue(MasterTaskQueueStore.recordAgentMessage(
@@ -626,8 +630,7 @@ class MasterTaskQueueStoreTest {
         val taskId = "task-technical-trace"
         assertTrue(MasterTaskQueueStore.enqueue(context, taskId, "Ślady techniczne", "Rozdziel komunikaty i logi.", now = 71L))
         assertTrue(MasterTaskQueueStore.assign(context, taskId, listOf("critical-reviewer"), now = 72L))
-        assertTrue(MasterTaskQueueStore.transition(context, taskId, "MASTER",
-            MasterTaskQueueStore.Status.RUNNING, "Start.", 73L))
+        assertTrue(startTaskWithCurrentSnapshot(taskId, "Start.", 73L))
         val runId = MasterTaskQueueStore.snapshot(context).tasks.single().runId
 
         assertTrue(MasterTaskQueueStore.recordAgentTrace(
@@ -665,8 +668,7 @@ class MasterTaskQueueStoreTest {
         assertTrue(MasterTaskQueueStore.enqueue(context, taskId, "Audyt przekazania", "Zapisz cykl przekazania raportu.", now = 91L))
         assertTrue(MasterTaskQueueStore.assign(context, taskId,
             listOf("critical-reviewer", "unit-test-engineer"), now = 92L))
-        assertTrue(MasterTaskQueueStore.transition(context, taskId, "MASTER",
-            MasterTaskQueueStore.Status.RUNNING, "Start.", 93L))
+        assertTrue(startTaskWithCurrentSnapshot(taskId, "Start.", 93L))
         val runId = MasterTaskQueueStore.snapshot(context).tasks.single().runId
 
         assertTrue(MasterTaskQueueStore.recordAgentTrace(
@@ -703,8 +705,7 @@ class MasterTaskQueueStoreTest {
         assertTrue(MasterTaskQueueStore.enqueue(context, "task-comms-auth", "Autoryzacja komunikacji", "Test granic zespołu.", now = 74L))
         assertTrue(MasterTaskQueueStore.assign(context, "task-comms-auth",
             listOf("critical-reviewer", "unit-test-engineer"), now = 75L))
-        assertTrue(MasterTaskQueueStore.transition(context, "task-comms-auth", "MASTER",
-            MasterTaskQueueStore.Status.RUNNING, "Start.", 76L))
+        assertTrue(startTaskWithCurrentSnapshot("task-comms-auth", "Start.", 76L))
 
         assertFalse(MasterTaskQueueStore.recordAgentMessage(
             context, "task-comms-auth", "debugger", "MASTER", "REPORT",
@@ -731,8 +732,7 @@ class MasterTaskQueueStoreTest {
     @Test fun interruptedRunningTasksRecoverAsBlockedWithoutAutomaticReplay() {
         assertTrue(MasterTaskQueueStore.enqueue(context, "task-010", "Przerwane", "Sprawdź wynik.", now = 80L))
         assertTrue(MasterTaskQueueStore.assign(context, "task-010", listOf("critical-reviewer"), now = 81L))
-        assertTrue(MasterTaskQueueStore.transition(context, "task-010", "MASTER",
-            MasterTaskQueueStore.Status.RUNNING, "Żądanie mogło zostać wysłane.", 82L))
+        assertTrue(startTaskWithCurrentSnapshot("task-010", "Żądanie mogło zostać wysłane.", 82L))
 
         // Simulate a wall-clock correction: recovery time must not predate the RUNNING update.
         assertEquals(1, MasterTaskQueueStore.recoverInterruptedRuns(context, now = 81L))
@@ -749,8 +749,7 @@ class MasterTaskQueueStoreTest {
     @Test fun eventJournalRollsOverAtItsBoundWithoutFreezingQueueWrites() {
         assertTrue(MasterTaskQueueStore.enqueue(context, "task-012", "Długi przebieg", "Test limitu historii.", now = 200L))
         assertTrue(MasterTaskQueueStore.assign(context, "task-012", listOf("critical-reviewer"), now = 201L))
-        assertTrue(MasterTaskQueueStore.transition(context, "task-012", "MASTER",
-            MasterTaskQueueStore.Status.RUNNING, "Start.", 202L))
+        assertTrue(startTaskWithCurrentSnapshot("task-012", "Start.", 202L))
         repeat(810) { index ->
             assertTrue(MasterTaskQueueStore.recordAgentProgress(context, "task-012", "critical-reviewer",
                 "RUNNING", "Krok $index", attempts = 1, now = 203L + index, expectedRunId = 1))
@@ -765,8 +764,7 @@ class MasterTaskQueueStoreTest {
         assertTrue(MasterTaskQueueStore.enqueue(context, "task-retry-001", "Ponowienie", "Sprawdź retry.", now = 300L))
         val agents = listOf("critical-reviewer", "unit-test-engineer")
         assertTrue(MasterTaskQueueStore.assign(context, "task-retry-001", agents, now = 301L))
-        assertTrue(MasterTaskQueueStore.transition(context, "task-retry-001", "MASTER",
-            MasterTaskQueueStore.Status.RUNNING, "Pierwszy przebieg.", 302L))
+        assertTrue(startTaskWithCurrentSnapshot("task-retry-001", "Pierwszy przebieg.", 302L))
         assertTrue(MasterTaskQueueStore.recordAgentResult(context, "task-retry-001", agents[0],
             MasterTaskQueueStore.Status.COMPLETED, "Pierwszy raport.", 303L, expectedRunId = 1))
         assertTrue(MasterTaskQueueStore.recordAgentResult(context, "task-retry-001", agents[1],
@@ -776,8 +774,7 @@ class MasterTaskQueueStoreTest {
         assertTrue(MasterTaskQueueStore.transition(context, "task-retry-001", "MASTER",
             MasterTaskQueueStore.Status.QUEUED, "Zatwierdzono ponowienie.", 305L))
         assertTrue(MasterTaskQueueStore.assign(context, "task-retry-001", agents, now = 306L))
-        assertTrue(MasterTaskQueueStore.transition(context, "task-retry-001", "MASTER",
-            MasterTaskQueueStore.Status.RUNNING, "Drugi przebieg.", 307L))
+        assertTrue(startTaskWithCurrentSnapshot("task-retry-001", "Drugi przebieg.", 307L))
         assertTrue(MasterTaskQueueStore.recordAgentResult(context, "task-retry-001", agents[0],
             MasterTaskQueueStore.Status.COMPLETED, "Nowy raport pierwszego agenta.", 308L, expectedRunId = 2))
         assertEquals(MasterTaskQueueStore.Status.RUNNING, MasterTaskQueueStore.snapshot(context).tasks.single().status)
@@ -797,12 +794,12 @@ class MasterTaskQueueStoreTest {
         val agent = "critical-reviewer"
         assertTrue(MasterTaskQueueStore.enqueue(context, taskId, "Retry epoch", "Reject stale callbacks.", now = 310L))
         assertTrue(MasterTaskQueueStore.assign(context, taskId, listOf(agent), now = 311L))
-        assertTrue(MasterTaskQueueStore.transition(context, taskId, "MASTER", MasterTaskQueueStore.Status.RUNNING, "Run 1", 312L))
+        assertTrue(startTaskWithCurrentSnapshot(taskId, "Run 1", 312L))
         val firstRun = MasterTaskQueueStore.snapshot(context).tasks.single().runId
         assertTrue(MasterTaskQueueStore.transition(context, taskId, "MASTER", MasterTaskQueueStore.Status.BLOCKED, "Block run 1", 313L))
         assertTrue(MasterTaskQueueStore.transition(context, taskId, "MASTER", MasterTaskQueueStore.Status.QUEUED, "Retry", 314L))
         assertTrue(MasterTaskQueueStore.assign(context, taskId, listOf(agent), now = 315L))
-        assertTrue(MasterTaskQueueStore.transition(context, taskId, "MASTER", MasterTaskQueueStore.Status.RUNNING, "Run 2", 316L))
+        assertTrue(startTaskWithCurrentSnapshot(taskId, "Run 2", 316L))
         val secondRun = MasterTaskQueueStore.snapshot(context).tasks.single().runId
         assertTrue(secondRun > firstRun)
         assertFalse(MasterTaskQueueStore.recordAgentProgress(context, taskId, agent, "RUNNING", "late progress", expectedRunId = firstRun))
@@ -818,8 +815,7 @@ class MasterTaskQueueStoreTest {
     @Test fun lateAgentResultAfterUserCancellationIsRejected() {
         assertTrue(MasterTaskQueueStore.enqueue(context, "task-cancel-race", "Anulowanie", "Test spóźnionego wyniku.", now = 320L))
         assertTrue(MasterTaskQueueStore.assign(context, "task-cancel-race", listOf("critical-reviewer"), now = 321L))
-        assertTrue(MasterTaskQueueStore.transition(context, "task-cancel-race", "MASTER",
-            MasterTaskQueueStore.Status.RUNNING, "Start.", 322L))
+        assertTrue(startTaskWithCurrentSnapshot("task-cancel-race", "Start.", 322L))
         assertTrue(MasterTaskQueueStore.transition(context, "task-cancel-race", "USER",
             MasterTaskQueueStore.Status.CANCELLED, "Użytkownik anulował zadanie.", 323L))
         assertFalse(MasterTaskQueueStore.recordAgentResult(context, "task-cancel-race", "critical-reviewer",
@@ -835,8 +831,7 @@ class MasterTaskQueueStoreTest {
         val taskId = "task-cancel-lock"
         assertTrue(MasterTaskQueueStore.enqueue(context, taskId, "Wyścig", "Atomowość anulowania.", now = 340L))
         assertTrue(MasterTaskQueueStore.assign(context, taskId, listOf("critical-reviewer"), now = 341L))
-        assertTrue(MasterTaskQueueStore.transition(context, taskId, "MASTER",
-            MasterTaskQueueStore.Status.RUNNING, "Start.", 342L))
+        assertTrue(startTaskWithCurrentSnapshot(taskId, "Start.", 342L))
         val runId = MasterTaskQueueStore.snapshot(context).tasks.single().runId
         val entered = CountDownLatch(1)
         val release = CountDownLatch(1)
@@ -879,8 +874,7 @@ class MasterTaskQueueStoreTest {
         val agent = "critical-reviewer"
         assertTrue(MasterTaskQueueStore.enqueue(context, taskId, "Anulowanie", "Odrzuć wszystkie spóźnione callbacki.", now = 330L))
         assertTrue(MasterTaskQueueStore.assign(context, taskId, listOf(agent), now = 331L))
-        assertTrue(MasterTaskQueueStore.transition(context, taskId, "MASTER",
-            MasterTaskQueueStore.Status.RUNNING, "Start.", 332L))
+        assertTrue(startTaskWithCurrentSnapshot(taskId, "Start.", 332L))
         val runId = MasterTaskQueueStore.snapshot(context).tasks.single().runId
         assertTrue(MasterTaskQueueStore.transition(context, taskId, "USER",
             MasterTaskQueueStore.Status.CANCELLED, "Użytkownik anulował zadanie.", 333L))
@@ -905,8 +899,7 @@ class MasterTaskQueueStoreTest {
         val agents = listOf("critical-reviewer", "unit-test-engineer")
         assertTrue(MasterTaskQueueStore.enqueue(context, "task-result-retention", "Trwałe wyniki", "Test rotacji dziennika.", now = 340L))
         assertTrue(MasterTaskQueueStore.assign(context, "task-result-retention", agents, now = 341L))
-        assertTrue(MasterTaskQueueStore.transition(context, "task-result-retention", "MASTER",
-            MasterTaskQueueStore.Status.RUNNING, "Start.", 342L))
+        assertTrue(startTaskWithCurrentSnapshot("task-result-retention", "Start.", 342L))
         assertTrue(MasterTaskQueueStore.recordAgentResult(context, "task-result-retention", agents[0],
             MasterTaskQueueStore.Status.COMPLETED, "Pierwszy raport.", 343L, expectedRunId = 1))
         repeat(810) { index ->
@@ -1220,8 +1213,7 @@ class MasterTaskQueueStoreTest {
         assertTrue(MasterTaskQueueStore.enqueue(context, taskId, "Zespół", "Wymagaj wyników wszystkich agentów.", now = 10L))
         assertTrue(MasterTaskQueueStore.assign(context, taskId,
             listOf("critical-reviewer", "unit-test-engineer"), now = 11L))
-        assertTrue(MasterTaskQueueStore.transition(context, taskId, "MASTER",
-            MasterTaskQueueStore.Status.RUNNING, "Start.", 12L))
+        assertTrue(startTaskWithCurrentSnapshot(taskId, "Start.", 12L))
 
         assertFalse(MasterTaskQueueStore.transition(context, taskId, "agent:critical-reviewer",
             MasterTaskQueueStore.Status.COMPLETED, "Jeden agent nie może zamknąć całego zespołu.", 13L))
@@ -1234,8 +1226,7 @@ class MasterTaskQueueStoreTest {
         val taskId = "task-transition-redaction"
         assertTrue(MasterTaskQueueStore.enqueue(context, taskId, "Redakcja", "Oczyść opis przejścia.", now = 20L))
         assertTrue(MasterTaskQueueStore.assign(context, taskId, listOf("critical-reviewer"), now = 21L))
-        assertTrue(MasterTaskQueueStore.transition(context, taskId, "MASTER",
-            MasterTaskQueueStore.Status.RUNNING, "Start.", 22L))
+        assertTrue(startTaskWithCurrentSnapshot(taskId, "Start.", 22L))
         val secret = "sk_live_transition_secret_123456789"
 
         assertTrue(MasterTaskQueueStore.transition(context, taskId, "USER",
@@ -1250,8 +1241,7 @@ class MasterTaskQueueStoreTest {
         val taskId = "task-progress-state-guard"
         assertTrue(MasterTaskQueueStore.enqueue(context, taskId, "Postęp", "Waliduj stan.", now = 30L))
         assertTrue(MasterTaskQueueStore.assign(context, taskId, listOf("critical-reviewer"), now = 31L))
-        assertTrue(MasterTaskQueueStore.transition(context, taskId, "MASTER",
-            MasterTaskQueueStore.Status.RUNNING, "Start.", 32L))
+        assertTrue(startTaskWithCurrentSnapshot(taskId, "Start.", 32L))
         val before = MasterTaskQueueStore.snapshot(context).events.size
 
         assertFalse(MasterTaskQueueStore.recordAgentProgress(
@@ -1268,8 +1258,7 @@ class MasterTaskQueueStoreTest {
         val taskId = "task-message-status-guard"
         assertTrue(MasterTaskQueueStore.enqueue(context, taskId, "Komunikat", "Waliduj status.", now = 40L))
         assertTrue(MasterTaskQueueStore.assign(context, taskId, listOf("critical-reviewer"), now = 41L))
-        assertTrue(MasterTaskQueueStore.transition(context, taskId, "MASTER",
-            MasterTaskQueueStore.Status.RUNNING, "Start.", 42L))
+        assertTrue(startTaskWithCurrentSnapshot(taskId, "Start.", 42L))
         val before = MasterTaskQueueStore.snapshot(context).events.size
 
         assertFalse(MasterTaskQueueStore.recordAgentMessage(
@@ -1283,8 +1272,7 @@ class MasterTaskQueueStoreTest {
         val taskId = "task-trace-metadata-guard"
         assertTrue(MasterTaskQueueStore.enqueue(context, taskId, "Ślad", "Waliduj metadane śladu.", now = 50L))
         assertTrue(MasterTaskQueueStore.assign(context, taskId, listOf("critical-reviewer"), now = 51L))
-        assertTrue(MasterTaskQueueStore.transition(context, taskId, "MASTER",
-            MasterTaskQueueStore.Status.RUNNING, "Start.", 52L))
+        assertTrue(startTaskWithCurrentSnapshot(taskId, "Start.", 52L))
         val before = MasterTaskQueueStore.snapshot(context).events.size
 
         assertFalse(MasterTaskQueueStore.recordAgentTrace(
@@ -1304,8 +1292,7 @@ class MasterTaskQueueStoreTest {
         assertTrue(MasterTaskQueueStore.enqueue(context, taskId, "Canonical", "Normalize message endpoints.", now = 1_300L))
         assertTrue(MasterTaskQueueStore.assign(context, taskId,
             listOf("critical-reviewer", "unit-test-engineer"), now = 1_301L))
-        assertTrue(MasterTaskQueueStore.transition(context, taskId, "MASTER",
-            MasterTaskQueueStore.Status.RUNNING, "Start.", 1_302L))
+        assertTrue(startTaskWithCurrentSnapshot(taskId, "Start.", 1_302L))
 
         assertFalse(MasterTaskQueueStore.recordAgentMessage(
             context, taskId, "critical-reviewer", "AGENT:CRITICAL-REVIEWER",
