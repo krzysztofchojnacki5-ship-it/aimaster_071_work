@@ -7878,7 +7878,8 @@ class MainActivity : Activity() {
         }
         if (!queueStore.transition(this, taskId, "USER",
                 pl.aimasterpro.app.core.MasterTaskQueueStore.Status.CANCELLED,
-                "Użytkownik przerwał wykonanie; aktywne żądania HTTP są anulowane.")) {
+                "Użytkownik przerwał wykonanie; aktywne żądania HTTP są anulowane.",
+                expectedCurrentRunId = current.runId)) {
             toast("Nie udało się trwale zapisać anulowania. Nie zgłaszam zakończenia operacji.")
             return
         }
@@ -7898,7 +7899,8 @@ class MainActivity : Activity() {
         if (current?.status == pl.aimasterpro.app.core.MasterTaskQueueStore.Status.RUNNING) {
             queueStore.transition(this, taskId, "MASTER",
                 pl.aimasterpro.app.core.MasterTaskQueueStore.Status.BLOCKED,
-                "$reason Nie wznowiono automatycznie z powodu niepewnego wyniku żądań.")
+                "$reason Nie wznowiono automatycznie z powodu niepewnego wyniku żądań.",
+                expectedCurrentRunId = current.runId)
         }
         activeQueueRequestScope?.let { scope -> runCatching { client.cancelRequestScope(scope) } }
         activeQueueRequestScope = null
