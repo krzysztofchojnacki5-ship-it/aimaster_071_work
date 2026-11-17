@@ -445,6 +445,38 @@ class MasterTaskQueueStoreTest {
         assertEquals(before, MasterTaskQueueStore.snapshot(context).events.size)
     }
 
+    @Test fun agentMessagesAndTracesAdvanceTaskActivityWithoutClockRegression() {
+        val taskId = "task-agent-activity-clock"
+        assertTrue(MasterTaskQueueStore.enqueue(context, taskId, "Activity clock", "Track latest agent activity.", now = 100L))
+        assertTrue(MasterTaskQueueStore.assign(context, taskId, listOf("critical-reviewer"), now = 101L))
+        assertTrue(MasterTaskQueueStore.transition(context, taskId, "MASTER",
+            MasterTaskQueueStore.Status.RUNNING, "Start.", 102L))
+
+        assertTrue(MasterTaskQueueStore.recordAgentMessage(
+            context, taskId, "critical-reviewer", "MASTER", "REPORT",
+            "First report.", now = 103L, expectedRunId = 1
+        ))
+        assertEquals(103L, MasterTaskQueueStore.snapshot(context).tasks.single().updatedAt)
+
+        assertTrue(MasterTaskQueueStore.recordAgentTrace(
+            context, taskId, "agent:critical-reviewer", "MASTER", "NETWORK_FAILOVER",
+            "Provider fallback.", now = 104L, expectedRunId = 1
+        ))
+        assertEquals(104L, MasterTaskQueueStore.snapshot(context).tasks.single().updatedAt)
+
+        // A delayed callback must not roll back either the task activity time or its audit timeline.
+        assertTrue(MasterTaskQueueStore.recordAgentMessage(
+            context, taskId, "critical-reviewer", "MASTER", "PROGRESS",
+            "Delayed report.", now = 90L, expectedRunId = 1
+        ))
+        val snapshot = MasterTaskQueueStore.snapshot(context)
+        val activityEvents = snapshot.events.filter {
+            it.taskId == taskId && it.operation in setOf("AGENT_MESSAGE", "AGENT_TRACE")
+        }
+        assertEquals(104L, snapshot.tasks.single().updatedAt)
+        assertEquals(listOf(103L, 104L, 104L), activityEvents.map { it.timestamp })
+    }
+
     @Test fun communicationAndTraceProviderMetadataAreSanitizedBeforePersistence() {
         val taskId = "task-provider-metadata-redaction"
         assertTrue(MasterTaskQueueStore.enqueue(context, taskId, "Metadata redaction", "Protect provider metadata.", now = 100L))
