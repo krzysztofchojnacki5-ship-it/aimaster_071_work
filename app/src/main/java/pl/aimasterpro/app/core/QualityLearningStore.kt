@@ -107,7 +107,7 @@ object QualityLearningStore {
             objectId = proposal.id,
             reason = "MASTER utworzył propozycję uczenia do decyzji użytkownika."
         )
-        check(MemoryMutationGate.execute(context, request) {
+        check(MemoryMutationGate.execute(context, request) { _: MemoryMutationPermit ->
             saveProposals(context, listOf(proposal) + proposals(context))
         }) {
             "Nie udało się trwale zapisać i zaudytować propozycji uczenia."
