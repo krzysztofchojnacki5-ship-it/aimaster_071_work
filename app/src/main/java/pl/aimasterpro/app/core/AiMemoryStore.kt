@@ -65,7 +65,7 @@ object AiMemoryStore {
 
     @Synchronized
     private fun addMemoryRaw(context: Context, memory: String): Boolean = runCatching {
-        val cleanMemory = memory.trim()
+        val cleanMemory = CommunicationLogSanitizer.sanitize(memory.trim())
         if (cleanMemory.isBlank() || cleanMemory.length > MAX_MEMORY_CHARS ||
             SharedPreferencesWriteHealth.isUncertain(PREFS_NAME)) return@runCatching false
         val list = readStoredMemories(context)?.toMutableList() ?: return@runCatching false
