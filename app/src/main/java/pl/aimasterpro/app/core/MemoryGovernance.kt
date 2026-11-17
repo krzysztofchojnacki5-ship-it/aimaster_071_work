@@ -22,6 +22,7 @@ object MemoryGovernance {
         REMOVE_AGENT_LESSON,
         APPROVE_PROPOSAL,
         REJECT_PROPOSAL,
+        CREATE_PROPOSAL,
         RECONCILE_APPROVED_PROPOSAL,
         RECONCILE_REVOKED_PROPOSAL,
         SET_AGENT_ENABLED,
@@ -80,10 +81,16 @@ object MemoryGovernance {
                 "AGENT_READ_ONLY",
                 "Agenci nie mogą samodzielnie zmieniać trwałej pamięci ani statusów zatwierdzeń."
             )
-            Actor.MASTER -> deny(
-                "MASTER_PROPOSAL_ONLY",
-                "MASTER może przygotować propozycję uczenia, ale nie może sam jej zatwierdzić ani zmienić pamięci."
-            )
+            Actor.MASTER -> {
+                if (request.mutation == Mutation.CREATE_PROPOSAL && request.approvalRef.isBlank()) {
+                    allow("MASTER_PROPOSAL_CREATED", "MASTER może zapisać propozycję do późniejszej decyzji użytkownika.")
+                } else {
+                    deny(
+                        "MASTER_PROPOSAL_ONLY",
+                        "MASTER może wyłącznie utworzyć propozycję; nie może jej zatwierdzić ani zmienić pamięci."
+                    )
+                }
+            }
             Actor.USER -> {
                 if (request.mutation !in userApprovedMutations) {
                     deny("USER_MUTATION_SCOPE", "Ta operacja nie należy do zakresu ręcznego zatwierdzenia użytkownika.")
