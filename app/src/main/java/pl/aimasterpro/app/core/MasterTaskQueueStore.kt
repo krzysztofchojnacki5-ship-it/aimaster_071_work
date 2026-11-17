@@ -215,8 +215,10 @@ object MasterTaskQueueStore {
                 it.operation == "AGENT_RESULT" && it.runId == current.runId
         }
         if (alreadyReported) return@mutate null
+        val activityAt = maxOf(now, current.updatedAt,
+            events.asSequence().filter { it.taskId == taskId }.maxOfOrNull { it.timestamp } ?: 0L)
         val nextEvents = events + event(taskId, "agent:$agentId", "AGENT_RESULT", Status.RUNNING.name,
-            result.name, detail.trim(), now, runId = current.runId)
+            result.name, detail.trim(), activityAt, runId = current.runId)
         val reports = nextEvents.filter {
             it.taskId == taskId && it.operation == "AGENT_RESULT" && it.runId == current.runId
         }
@@ -229,7 +231,7 @@ object MasterTaskQueueStore {
         }
         val step = if (allReported) "Wyniki wszystkich przypisanych agentów zapisane."
             else "Wynik agenta $agentId zapisany (${reportedAgents.size}/${current.assignedAgentIds.size})."
-        val next = current.copy(status = finalStatus, currentStep = step, updatedAt = now)
+        val next = current.copy(status = finalStatus, currentStep = step, updatedAt = activityAt)
         Triple(tasks.map { if (it.id == taskId) next else it }, nextEvents, true)
     }
 
@@ -258,10 +260,12 @@ object MasterTaskQueueStore {
         val safeModel = CommunicationLogSanitizer.sanitize(model).take(120)
         val summary = listOf(state, safeDetail, listOf(safeProvider, safeModel).filter { it.isNotBlank() }.joinToString("/"),
             if (attempts > 0) "próba $attempts" else "").filter { it.isNotBlank() }.joinToString(" • ").take(500)
-        val next = current.copy(currentStep = summary, updatedAt = maxOf(now, current.updatedAt))
+        val activityAt = maxOf(now, current.updatedAt,
+            events.asSequence().filter { it.taskId == taskId }.maxOfOrNull { it.timestamp } ?: 0L)
+        val next = current.copy(currentStep = summary, updatedAt = activityAt)
         Triple(tasks.map { if (it.id == taskId) next else it },
             events + event(taskId, "agent:$agentId", "AGENT_PROGRESS", Status.RUNNING.name,
-                state, summary, now, providerId = safeProvider, model = safeModel, runId = current.runId), true)
+                state, summary, activityAt, providerId = safeProvider, model = safeModel, runId = current.runId), true)
     }
 
     /** Appends sanitized agent-to-agent / agent-to-MASTER communication to the owning task timeline. */
