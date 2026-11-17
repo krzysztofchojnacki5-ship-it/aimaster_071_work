@@ -321,8 +321,12 @@ object MasterTaskQueueStore {
         val safeProvider = CommunicationLogSanitizer.sanitize(providerId).take(80)
         val safeModel = CommunicationLogSanitizer.sanitize(model).take(120)
         val detail = "Do: $canonicalRecipient • $status • $safe"
-        Triple(tasks, events + event(taskId, canonicalSender, "AGENT_MESSAGE", "", status, detail, now,
-            recipient = canonicalRecipient, providerId = safeProvider, model = safeModel, runId = current.runId), true)
+        val activityAt = maxOf(now, current.updatedAt,
+            events.asSequence().filter { it.taskId == taskId }.maxOfOrNull { it.timestamp } ?: 0L)
+        val next = current.copy(updatedAt = activityAt)
+        Triple(tasks.map { if (it.id == taskId) next else it },
+            events + event(taskId, canonicalSender, "AGENT_MESSAGE", "", status, detail, activityAt,
+                recipient = canonicalRecipient, providerId = safeProvider, model = safeModel, runId = current.runId), true)
     }
 
     /**
@@ -396,8 +400,12 @@ object MasterTaskQueueStore {
         val safeProvider = CommunicationLogSanitizer.sanitize(providerId).take(80)
         val safeModel = CommunicationLogSanitizer.sanitize(model).take(120)
         val summary = "Do: $canonicalTarget • $traceType • $safe"
-        Triple(tasks, events + event(taskId, canonicalSource, "AGENT_TRACE", "", traceType, summary, now,
-            recipient = canonicalTarget, providerId = safeProvider, model = safeModel, runId = current.runId), true)
+        val activityAt = maxOf(now, current.updatedAt,
+            events.asSequence().filter { it.taskId == taskId }.maxOfOrNull { it.timestamp } ?: 0L)
+        val next = current.copy(updatedAt = activityAt)
+        Triple(tasks.map { if (it.id == taskId) next else it },
+            events + event(taskId, canonicalSource, "AGENT_TRACE", "", traceType, summary, activityAt,
+                recipient = canonicalTarget, providerId = safeProvider, model = safeModel, runId = current.runId), true)
     }
 
     /** Moves interrupted RUNNING tasks to BLOCKED after process restart; never auto-replays uncertain API work. */
