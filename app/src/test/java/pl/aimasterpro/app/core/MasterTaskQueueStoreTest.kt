@@ -105,6 +105,30 @@ class MasterTaskQueueStoreTest {
         assertEquals(MasterTaskQueueStore.Status.COMPLETED, MasterTaskQueueStore.snapshot(context).tasks.single().status)
     }
 
+    @Test fun agentCallbacksWithoutRunIdentityAreRejected() {
+        val taskId = "task-required-run-identity"
+        val agents = listOf("critical-reviewer", "unit-test-engineer")
+        assertTrue(MasterTaskQueueStore.enqueue(context, taskId, "Run identity", "Reject callbacks without an execution epoch.", now = 8L))
+        assertTrue(MasterTaskQueueStore.assign(context, taskId, agents, now = 9L))
+        assertTrue(MasterTaskQueueStore.transition(context, taskId, "MASTER",
+            MasterTaskQueueStore.Status.RUNNING, "Run started.", 10L))
+
+        assertFalse(MasterTaskQueueStore.recordAgentResult(context, taskId, agents[0],
+            MasterTaskQueueStore.Status.COMPLETED, "Missing run identity.", 11L))
+        assertFalse(MasterTaskQueueStore.recordAgentProgress(context, taskId, agents[0],
+            "RUNNING", "Missing run identity.", now = 12L))
+        assertFalse(MasterTaskQueueStore.recordAgentMessage(context, taskId, agents[0], agents[1],
+            "MESSAGE", "Missing run identity.", now = 13L))
+        assertFalse(MasterTaskQueueStore.recordAgentTrace(context, taskId, "agent:${agents[0]}", "MASTER",
+            "NETWORK_FAILOVER", "Missing run identity.", now = 14L))
+
+        val snapshot = MasterTaskQueueStore.snapshot(context)
+        assertEquals(MasterTaskQueueStore.Status.RUNNING, snapshot.tasks.single().status)
+        assertEquals("Run started.", snapshot.tasks.single().currentStep)
+        assertFalse(snapshot.events.any { it.operation in setOf(
+            "AGENT_RESULT", "AGENT_PROGRESS", "AGENT_MESSAGE", "AGENT_TRACE") })
+    }
+
     @Test fun activeRunFenceRejectsStaleAndCancelledCallbacks() {
         val taskId = "task-active-fence"
         assertTrue(MasterTaskQueueStore.enqueue(context, taskId, "Fence", "Odrzuć spóźnione callbacki.", now = 20L))
