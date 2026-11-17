@@ -103,6 +103,27 @@ class AgentOperationalMemoryStoreTest {
         })
     }
 
+    @Test fun secretBearingAgentAndProvenanceIdentifiersAreRejected() {
+        val secret = "sk-1234567890abcdef"
+        assertNull(addLesson(context, "coder-$secret", "Nie zapisuj niebezpiecznego identyfikatora agenta."))
+        assertNull(addLesson(context, "coder", "Nie zapisuj niebezpiecznego źródła zadania.", sourceTaskIds = listOf("task-api_key=$secret")))
+        assertTrue(AgentOperationalMemoryStore.all(context).isEmpty())
+    }
+
+    @Test fun persistedSecretBearingProvenanceFailsClosedWithoutRewritingOriginalBytes() {
+        val prefs = context.getSharedPreferences("ai_agent_operational_memory_v1", Context.MODE_PRIVATE)
+        val secret = "sk-1234567890abcdef"
+        val raw = org.json.JSONArray().put(org.json.JSONObject()
+            .put("id", "entry-secret").put("agentId", "coder").put("text", "Bezpieczna treść pamięci operacyjnej.")
+            .put("category", "").put("createdAt", 1L)
+            .put("sourceTaskIds", org.json.JSONArray().put("task-api_key=$secret"))
+            .put("confidence", "zatwierdzona")).toString()
+        assertTrue(prefs.edit().putString("entries", raw).commit())
+        assertTrue(AgentOperationalMemoryStore.all(context).isEmpty())
+        assertNull(addLesson(context, "coder", "Nowy wpis po wykryciu sekretu."))
+        assertEquals(raw, prefs.getString("entries", null))
+    }
+
     @Test fun memoryIsScopedToTheOwningAgent() {
         addLesson(context, "code-analyst", "W Kotlin sprawdzaj null safety oraz testy jednostkowe.")
         assertTrue(AgentOperationalMemoryStore.contextString(context, "code-analyst", "Kotlin null safety", 900).contains("null safety"))
