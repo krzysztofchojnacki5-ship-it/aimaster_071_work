@@ -57,7 +57,7 @@ class MasterTaskQueueStoreTest {
         assertTrue(MasterTaskQueueStore.transition(context, "task-001", "MASTER",
             MasterTaskQueueStore.Status.RUNNING, "Agent rozpoczął analizę.", 12L))
         assertTrue(MasterTaskQueueStore.transition(context, "task-001", "agent:critical-reviewer",
-            MasterTaskQueueStore.Status.COMPLETED, "Raport gotowy.", 13L))
+            MasterTaskQueueStore.Status.COMPLETED, "Raport gotowy.", 13L, expectedRunId = 1))
 
         val state = MasterTaskQueueStore.snapshot(context)
         assertEquals(MasterTaskQueueStore.ReadStatus.AVAILABLE, state.status)
@@ -75,12 +75,34 @@ class MasterTaskQueueStoreTest {
 
         // Simulate a delayed callback carrying a timestamp from before the device clock correction.
         assertTrue(MasterTaskQueueStore.transition(context, "task-clock-001", "agent:critical-reviewer",
-            MasterTaskQueueStore.Status.COMPLETED, "Gotowe.", 90L))
+            MasterTaskQueueStore.Status.COMPLETED, "Gotowe.", 90L, expectedRunId = 1))
 
         val snapshot = MasterTaskQueueStore.snapshot(context)
         assertEquals(MasterTaskQueueStore.Status.COMPLETED, snapshot.tasks.single().status)
         assertEquals(120L, snapshot.tasks.single().updatedAt)
         assertEquals(listOf(100L, 110L, 120L, 120L), snapshot.events.map { it.timestamp })
+    }
+
+    @Test fun staleSingleAgentLifecycleCallbackCannotCloseRetriedRun() {
+        val taskId = "task-single-agent-retry-fence"
+        assertTrue(MasterTaskQueueStore.enqueue(context, taskId, "Retry fence", "Reject stale terminal callbacks.", now = 10L))
+        assertTrue(MasterTaskQueueStore.assign(context, taskId, listOf("critical-reviewer"), now = 11L))
+        assertTrue(MasterTaskQueueStore.transition(context, taskId, "MASTER",
+            MasterTaskQueueStore.Status.RUNNING, "First run.", 12L))
+        assertTrue(MasterTaskQueueStore.transition(context, taskId, "MASTER",
+            MasterTaskQueueStore.Status.BLOCKED, "First run interrupted.", 13L))
+        assertTrue(MasterTaskQueueStore.transition(context, taskId, "MASTER",
+            MasterTaskQueueStore.Status.QUEUED, "Retry approved.", 14L))
+        assertTrue(MasterTaskQueueStore.assign(context, taskId, listOf("critical-reviewer"), now = 15L))
+        assertTrue(MasterTaskQueueStore.transition(context, taskId, "MASTER",
+            MasterTaskQueueStore.Status.RUNNING, "Second run.", 16L))
+
+        assertFalse(MasterTaskQueueStore.transition(context, taskId, "agent:critical-reviewer",
+            MasterTaskQueueStore.Status.COMPLETED, "Late result from first run.", 17L, expectedRunId = 1))
+        assertEquals(MasterTaskQueueStore.Status.RUNNING, MasterTaskQueueStore.snapshot(context).tasks.single().status)
+        assertTrue(MasterTaskQueueStore.transition(context, taskId, "agent:critical-reviewer",
+            MasterTaskQueueStore.Status.COMPLETED, "Result from current run.", 18L, expectedRunId = 2))
+        assertEquals(MasterTaskQueueStore.Status.COMPLETED, MasterTaskQueueStore.snapshot(context).tasks.single().status)
     }
 
     @Test fun activeRunFenceRejectsStaleAndCancelledCallbacks() {
