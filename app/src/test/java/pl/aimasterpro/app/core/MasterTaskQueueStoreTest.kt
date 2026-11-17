@@ -228,7 +228,7 @@ class MasterTaskQueueStoreTest {
         assertTrue(MasterTaskQueueStore.transition(context, "task-004", "MASTER",
             MasterTaskQueueStore.Status.RUNNING, "Start.", 43L))
         assertTrue(MasterTaskQueueStore.transition(context, "task-004", "agent:critical-reviewer",
-            MasterTaskQueueStore.Status.COMPLETED, "Gotowe.", 44L))
+            MasterTaskQueueStore.Status.COMPLETED, "Gotowe.", 44L, expectedRunId = 1))
         assertTrue(MasterTaskQueueStore.enqueue(context, "task-005", "Drugie", "Cel.",
             dependencies = listOf("task-004"), now = 45L))
     }
