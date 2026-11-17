@@ -67,6 +67,50 @@ class QualityLearningStoreTest {
         assertEquals(1, QualityLearningStore.summary(context).total)
     }
 
+    @Test fun masterProposalCreationIsAuditedButCannotApproveItsOwnProposal() {
+        val proposal = QualityLearningStore.addProposal(
+            context, "Propozycja MASTER z audytem", 3, "wstępna",
+            listOf("task-master-proposal"), listOf("coder"), listOf("groq/model-a")
+        )
+        val records = MemoryAuditLog.readVerified(context)
+        assertNotNull(records)
+        val creation = records!!.filter {
+            it.actor == "MASTER" && it.mutation == "CREATE_PROPOSAL" && it.objectId == proposal.id
+        }
+        assertEquals(listOf(MemoryAuditLog.Phase.INTENT, MemoryAuditLog.Phase.COMMITTED), creation.map { it.phase })
+        assertTrue(creation.all { it.approvalRef.isBlank() })
+        assertEquals("SUCCESS", creation.last().outcome)
+        assertFalse(AiMemoryStore.getMemories(context).any { it.contains("Propozycja MASTER z audytem") })
+
+        val selfApproval = MemoryGovernance.authorize(MemoryGovernance.Request(
+            actor = MemoryGovernance.Actor.MASTER,
+            mutation = MemoryGovernance.Mutation.APPROVE_PROPOSAL,
+            objectId = proposal.id,
+            reason = "MASTER próbuje zatwierdzić własną propozycję",
+            approvalRef = "forged:${proposal.id}"
+        ))
+        assertFalse(selfApproval.allowed)
+        assertEquals("MASTER_PROPOSAL_ONLY", selfApproval.code)
+    }
+
+    @Test fun proposalCreationCannotBeClaimedByUserOrAgent() {
+        val user = MemoryGovernance.authorize(MemoryGovernance.Request(
+            actor = MemoryGovernance.Actor.USER,
+            mutation = MemoryGovernance.Mutation.CREATE_PROPOSAL,
+            objectId = "proposal-user-forged",
+            reason = "Nieautoryzowane utworzenie",
+            approvalRef = "ui-confirmation:forged"
+        ))
+        val agent = MemoryGovernance.authorize(MemoryGovernance.Request(
+            actor = MemoryGovernance.Actor.AGENT,
+            mutation = MemoryGovernance.Mutation.CREATE_PROPOSAL,
+            objectId = "proposal-agent-forged",
+            reason = "Nieautoryzowane utworzenie"
+        ))
+        assertFalse(user.allowed)
+        assertFalse(agent.allowed)
+    }
+
     @Test fun proposalsOnlyEnterSharedMemoryAfterApproval() {
         val proposal = QualityLearningStore.addProposal(context, "Preferuj model A dla kodu", 8, "wstępna", listOf("t1"), listOf("coder"), listOf("groq/model-a"))
         assertFalse(AiMemoryStore.getMemories(context).any { it.contains("Preferuj model A") })
