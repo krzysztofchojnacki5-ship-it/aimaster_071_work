@@ -95,17 +95,25 @@ object QualityLearningStore {
 
     @Synchronized fun addProposal(context: Context, text: String, evidenceCount: Int, confidence: String,
                                   sourceTaskIds: List<String>, agents: List<String>, models: List<String>): Proposal {
-        require(text.isNotBlank() && text.length <= 3000)
-        require(sourceTaskIds.size <= 100 && sourceTaskIds.all { it.isNotBlank() && it.length <= 240 })
-        require(agents.size <= 50 && agents.all { it.isNotBlank() && it.length <= 100 })
-        require(models.size <= 50 && models.all { it.isNotBlank() && it.length <= 200 })
-        require(confidence.length <= 40)
+        val cleanText = CommunicationLogSanitizer.sanitize(text.trim())
+        val cleanConfidence = CommunicationLogSanitizer.sanitize(confidence.trim())
+        require(cleanText.isNotBlank() && cleanText.length <= 3000)
+        require(sourceTaskIds.size <= 100 && sourceTaskIds.all {
+            it.isNotBlank() && it.length <= 240 && CommunicationLogSanitizer.sanitize(it) == it
+        })
+        require(agents.size <= 50 && agents.all {
+            it.isNotBlank() && it.length <= 100 && CommunicationLogSanitizer.sanitize(it) == it
+        })
+        require(models.size <= 50 && models.all {
+            it.isNotBlank() && it.length <= 200 && CommunicationLogSanitizer.sanitize(it) == it
+        })
+        require(cleanConfidence.length <= 40)
         check(readArrayStrict(context, PROPOSALS_KEY) != null) {
             "Rejestr propozycji jest uszkodzony; zapis został wstrzymany bez nadpisywania danych."
         }
         val now = System.currentTimeMillis()
-        val proposal = Proposal(UUID.randomUUID().toString(), text.take(3000), "PROPOSAL", now, now,
-            evidenceCount.coerceAtLeast(0), confidence.take(40), sourceTaskIds.filter(String::isNotBlank).distinct().take(100),
+        val proposal = Proposal(UUID.randomUUID().toString(), cleanText.take(3000), "PROPOSAL", now, now,
+            evidenceCount.coerceAtLeast(0), cleanConfidence.take(40), sourceTaskIds.filter(String::isNotBlank).distinct().take(100),
             agents.filter(String::isNotBlank).distinct().take(50), models.filter(String::isNotBlank).distinct().take(50))
         val request = MemoryGovernance.Request(
             actor = MemoryGovernance.Actor.MASTER,
@@ -435,7 +443,9 @@ object QualityLearningStore {
                     val id = row.getString("id")
                     require(id.isNotBlank() && id.length <= 120 && seenIds.add(id) &&
                         row.getString("text").isNotBlank() && row.getString("text").length <= 3000 &&
-                        row.getString("confidence").length <= 40)
+                        row.getString("confidence").length <= 40 &&
+                        CommunicationLogSanitizer.sanitize(row.getString("text")) == row.getString("text") &&
+                        CommunicationLogSanitizer.sanitize(row.getString("confidence")) == row.getString("confidence"))
                     require(row.getString("status") in setOf("PROPOSAL", "APPROVED", "REJECTED"))
                     require(exactLong(row.opt("created")) >= 0L && exactLong(row.opt("updated")) >= 0L)
                     require(exactLong(row.opt("evidence")) in 0..Int.MAX_VALUE.toLong())
@@ -446,7 +456,8 @@ object QualityLearningStore {
                         for (i in 0 until values.length()) {
                             val value = values.opt(i)
                             val maxLength = when (field) { "tasks" -> 240; "agents" -> 100; else -> 200 }
-                            require(value is String && value.isNotBlank() && value.length <= maxLength && seenValues.add(value))
+                            require(value is String && value.isNotBlank() && value.length <= maxLength &&
+                                CommunicationLogSanitizer.sanitize(value) == value && seenValues.add(value))
                         }
                     }
                 } else error("Unknown quality journal key.")
