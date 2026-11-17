@@ -455,11 +455,11 @@ class MasterTaskQueueStoreTest {
 
         assertTrue(MasterTaskQueueStore.recordAgentMessage(
             context, taskId, "critical-reviewer", "MASTER", "REPORT", "Message body.",
-            now = 103L, providerId = "api_key=$secret", model = "Bearer $secret"
+            now = 103L, providerId = "api_key=$secret", model = "Bearer $secret", expectedRunId = 1
         ))
         assertTrue(MasterTaskQueueStore.recordAgentTrace(
             context, taskId, "agent:critical-reviewer", "MASTER", "NETWORK_FAILOVER", "Trace body.",
-            now = 104L, providerId = "api_key=$secret", model = "Bearer $secret"
+            now = 104L, providerId = "api_key=$secret", model = "Bearer $secret", expectedRunId = 1
         ))
 
         val snapshot = MasterTaskQueueStore.snapshot(context)
