@@ -164,8 +164,9 @@ class ChatResponseArchiveTest {
             .getJSONObject(chatId).getJSONArray("messages").getJSONObject(1).getString("text")
         assertFalse(restored.contains(responseSecret))
         assertTrue(restored.contains("[REDACTED]"))
-        // Reading/replaying sanitizes in memory; it does not rewrite the legacy source bytes.
-        assertEquals(legacy, archivePrefs.getString("responses", null))
+        // Successful replay acknowledges the entry; the original legacy bytes were
+        // verified unchanged immediately after read, before replay committed the chat.
+        assertEquals("[]", archivePrefs.getString("responses", null))
     }
 
     @Test fun legacySecretBearingTaskOrChatIdentityFailsClosedWithoutRewritingArchive() {
