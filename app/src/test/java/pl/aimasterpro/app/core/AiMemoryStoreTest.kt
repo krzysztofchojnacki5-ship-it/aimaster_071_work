@@ -65,6 +65,17 @@ class AiMemoryStoreTest {
         assertEquals(corrupt, prefs.getString("memories", null))
     }
 
+    @Test fun memoryWriteRedactsSecretMaterialBeforePersistenceAndContextInjection() {
+        val secret = "sk-1234567890abcdef"
+        val unsafe = "Zasada bezpieczeństwa pamięci api_key=$secret nie może ujawniać klucza."
+        assertTrue(mutateAdd(context, unsafe))
+        val raw = context.getSharedPreferences("ai_master_memory_store_v1", Context.MODE_PRIVATE)
+            .getString("memories", null).orEmpty()
+        assertFalse(raw.contains(secret))
+        assertTrue(raw.contains("[REDACTED]"))
+        assertFalse(AiMemoryStore.contextString(context, "bezpieczeństwa").contains(secret))
+    }
+
     @Test fun validMemoryMutationIsCommittedAndReadable() {
         val prefs = context.getSharedPreferences("ai_master_memory_store_v1", Context.MODE_PRIVATE)
         assertTrue(mutateAdd(context, "Zatwierdzona pamięć do testu trwałego zapisu."))
