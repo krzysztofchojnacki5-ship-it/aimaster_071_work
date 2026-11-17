@@ -300,6 +300,36 @@ class MasterTaskQueueStoreTest {
             MasterTaskQueueStore.snapshot(context).tasks.single().status)
     }
 
+    @Test fun agentProgressAndResultsKeepAuditTimelineMonotonicOnDelayedCallbacks() {
+        val taskId = "task-agent-progress-clock"
+        val agent = "critical-reviewer"
+        assertTrue(MasterTaskQueueStore.enqueue(context, taskId, "Agent clock", "Keep callback timestamps ordered.", now = 200L))
+        assertTrue(MasterTaskQueueStore.assign(context, taskId, listOf(agent), now = 201L))
+        assertTrue(MasterTaskQueueStore.transition(context, taskId, "MASTER",
+            MasterTaskQueueStore.Status.RUNNING, "Start.", 202L))
+
+        assertTrue(MasterTaskQueueStore.recordAgentProgress(
+            context, taskId, agent, "REQUESTING", "First progress.", now = 205L, expectedRunId = 1
+        ))
+        assertTrue(MasterTaskQueueStore.recordAgentProgress(
+            context, taskId, agent, "RUNNING", "Delayed progress.", now = 190L, expectedRunId = 1
+        ))
+        assertEquals(205L, MasterTaskQueueStore.snapshot(context).tasks.single().updatedAt)
+
+        assertTrue(MasterTaskQueueStore.recordAgentResult(
+            context, taskId, agent, MasterTaskQueueStore.Status.COMPLETED,
+            "Delayed final result.", now = 180L, expectedRunId = 1
+        ))
+        val snapshot = MasterTaskQueueStore.snapshot(context)
+        val agentEvents = snapshot.events.filter {
+            it.taskId == taskId && it.operation in setOf("AGENT_PROGRESS", "AGENT_RESULT")
+        }
+        assertEquals(MasterTaskQueueStore.Status.COMPLETED, snapshot.tasks.single().status)
+        assertEquals(205L, snapshot.tasks.single().updatedAt)
+        assertEquals(listOf(205L, 205L, 205L), agentEvents.map { it.timestamp })
+        assertEquals(205L, agentEvents.last().timestamp)
+    }
+
     @Test fun assignedAgentProgressUpdatesCurrentStepAndAuditWithoutClosingTask() {
         assertTrue(MasterTaskQueueStore.enqueue(context, "task-011", "Postęp", "Sprawdź status.", now = 100L))
         assertTrue(MasterTaskQueueStore.assign(context, "task-011", listOf("critical-reviewer"), now = 101L))
