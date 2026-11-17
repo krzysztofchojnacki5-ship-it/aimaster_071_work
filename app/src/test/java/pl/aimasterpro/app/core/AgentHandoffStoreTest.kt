@@ -299,8 +299,11 @@ class AgentHandoffStoreTest {
             MasterTaskQueueStore.Status.QUEUED, "Ponowienie po ręcznej decyzji.", 73L))
         assertTrue(MasterTaskQueueStore.assign(context, "handoff-task-01",
             listOf("critical-reviewer", "unit-test-engineer"), 74L))
+        val assignedForNewRun = MasterTaskQueueStore.snapshot(context).tasks.single()
         assertTrue(MasterTaskQueueStore.transition(context, "handoff-task-01", "MASTER",
-            MasterTaskQueueStore.Status.RUNNING, "Nowy przebieg.", 75L))
+            MasterTaskQueueStore.Status.RUNNING, "Nowy przebieg.", 75L,
+            expectedCurrentRunId = assignedForNewRun.runId,
+            expectedAssignedAgentIds = assignedForNewRun.assignedAgentIds))
         val newRunId = MasterTaskQueueStore.snapshot(context).tasks.single().runId
         assertTrue(newRunId > runId)
         assertFalse(AgentHandoffStore.resolveUncertainClaim(context, "handoff-task-01", runId,
