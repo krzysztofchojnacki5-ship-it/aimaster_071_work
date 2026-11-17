@@ -98,13 +98,21 @@ object QualityLearningStore {
             "Rejestr propozycji jest uszkodzony; zapis został wstrzymany bez nadpisywania danych."
         }
         val now = System.currentTimeMillis()
-        val p = Proposal(UUID.randomUUID().toString(), text.take(3000), "PROPOSAL", now, now,
+        val proposal = Proposal(UUID.randomUUID().toString(), text.take(3000), "PROPOSAL", now, now,
             evidenceCount.coerceAtLeast(0), confidence.take(40), sourceTaskIds.filter(String::isNotBlank).distinct().take(100),
             agents.filter(String::isNotBlank).distinct().take(50), models.filter(String::isNotBlank).distinct().take(50))
-        check(saveProposals(context, listOf(p) + proposals(context))) {
-            "Nie udało się trwale zapisać propozycji uczenia."
+        val request = MemoryGovernance.Request(
+            actor = MemoryGovernance.Actor.MASTER,
+            mutation = MemoryGovernance.Mutation.CREATE_PROPOSAL,
+            objectId = proposal.id,
+            reason = "MASTER utworzył propozycję uczenia do decyzji użytkownika."
+        )
+        check(MemoryMutationGate.execute(context, request) {
+            saveProposals(context, listOf(proposal) + proposals(context))
+        }) {
+            "Nie udało się trwale zapisać i zaudytować propozycji uczenia."
         }
-        return p
+        return proposal
     }
 
     /** User-confirmed proposal decision; all related memory writes share one audited gate. */
