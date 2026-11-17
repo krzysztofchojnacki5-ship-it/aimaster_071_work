@@ -47,8 +47,21 @@ object ChatResponseArchive {
             chatId.isBlank() || chatId.length > 200 ||
             agentId.isBlank() || agentId.length > MAX_AGENT_ID_CHARS ||
             providerId.isBlank() || providerId.length > MAX_PROVIDER_ID_CHARS ||
-            model.isBlank() || model.length > MAX_MODEL_CHARS ||
-            response.isBlank() || response.length > MAX_RESPONSE_CHARS || createdAt < 0L
+            model.isBlank() || model.length > MAX_MODEL_CHARS || createdAt < 0L ||
+            CommunicationLogSanitizer.sanitize(taskId) != taskId ||
+            CommunicationLogSanitizer.sanitize(chatId) != chatId
+        ) return@withHealthyAccess false
+
+        // The archive is a write-ahead copy of the final answer. Redact credential-like
+        // material before it reaches disk, while keeping task/chat IDs immutable lookup keys.
+        val safeAgentId = CommunicationLogSanitizer.sanitize(agentId.trim())
+        val safeProviderId = CommunicationLogSanitizer.sanitize(providerId.trim())
+        val safeModel = CommunicationLogSanitizer.sanitize(model.trim())
+        val safeResponse = CommunicationLogSanitizer.sanitize(response)
+        if (safeAgentId.isBlank() || safeAgentId.length > MAX_AGENT_ID_CHARS ||
+            safeProviderId.isBlank() || safeProviderId.length > MAX_PROVIDER_ID_CHARS ||
+            safeModel.isBlank() || safeModel.length > MAX_MODEL_CHARS ||
+            safeResponse.isBlank() || safeResponse.length > MAX_RESPONSE_CHARS
         ) return@withHealthyAccess false
 
         val old = read(context) ?: run {
@@ -56,7 +69,7 @@ object ChatResponseArchive {
             return@withHealthyAccess false
         }
         val next = JSONArray()
-        next.put(encode(Entry(taskId, chatId, agentId, response, providerId, model, createdAt)))
+        next.put(encode(Entry(taskId, chatId, safeAgentId, safeResponse, safeProviderId, safeModel, createdAt)))
         for (i in 0 until old.length()) {
             val row = old.getJSONObject(i)
             if (row.optString("taskId") != taskId) next.put(row)
@@ -212,10 +225,10 @@ object ChatResponseArchive {
     private fun decode(row: JSONObject): Entry = Entry(
         row.getString("taskId"),
         row.getString("chatId"),
-        row.getString("agentId"),
-        row.getString("response"),
-        row.getString("providerId"),
-        row.getString("model"),
+        CommunicationLogSanitizer.sanitize(row.getString("agentId")).take(MAX_AGENT_ID_CHARS),
+        CommunicationLogSanitizer.sanitize(row.getString("response")),
+        CommunicationLogSanitizer.sanitize(row.getString("providerId")).take(MAX_PROVIDER_ID_CHARS),
+        CommunicationLogSanitizer.sanitize(row.getString("model")).take(MAX_MODEL_CHARS),
         row.getLong("createdAt")
     )
 
@@ -243,8 +256,10 @@ object ChatResponseArchive {
                 val response = row.getString("response")
                 val providerId = row.getString("providerId")
                 val model = row.getString("model")
-                require(taskId.isNotBlank() && taskId.length <= MAX_TASK_ID_CHARS && seen.add(taskId))
-                require(chatId.isNotBlank() && chatId.length <= 200)
+                require(taskId.isNotBlank() && taskId.length <= MAX_TASK_ID_CHARS && seen.add(taskId) &&
+                    CommunicationLogSanitizer.sanitize(taskId) == taskId)
+                require(chatId.isNotBlank() && chatId.length <= 200 &&
+                    CommunicationLogSanitizer.sanitize(chatId) == chatId)
                 require(agentId.isNotBlank() && agentId.length <= MAX_AGENT_ID_CHARS)
                 require(response.isNotBlank() && response.length <= MAX_RESPONSE_CHARS)
                 require(providerId.isNotBlank() && providerId.length <= MAX_PROVIDER_ID_CHARS)
