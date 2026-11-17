@@ -1272,7 +1272,10 @@ class QualityLearningStoreTest {
             context, "coder", proposal.text, "proposal:${proposal.id}"
         ) == true)
         val beforeSync = MemoryAuditLog.readVerified(context)!!
-        assertEquals(listOf("AUTHORIZED", "SUCCESS"), beforeSync.map { it.outcome })
+        val approvalAudit = beforeSync.filter {
+            it.actor == "USER" && it.mutation == "APPROVE_PROPOSAL" && it.objectId == proposal.id
+        }
+        assertEquals(listOf("AUTHORIZED", "SUCCESS"), approvalAudit.map { it.outcome })
         assertFalse(MemoryAuditLog.hasUnresolvedIntent(
             context, "USER", "APPROVE_PROPOSAL", proposal.id
         ))
