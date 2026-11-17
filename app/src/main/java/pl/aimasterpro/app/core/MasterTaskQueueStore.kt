@@ -167,10 +167,19 @@ object MasterTaskQueueStore {
         target: Status,
         detail: String,
         now: Long = System.currentTimeMillis(),
-        expectedRunId: Int? = null
+        expectedRunId: Int? = null,
+        expectedCurrentRunId: Int? = null,
+        expectedAssignedAgentIds: List<String>? = null
     ): Boolean = mutate(context) { tasks, events ->
         val current = tasks.firstOrNull { it.id == taskId } ?: return@mutate null
         if (actor.isBlank() || actor.length > 100 || detail.length > 500 || now < 0L) return@mutate null
+        // Starting a queued team is conditional on the exact assignment snapshot MASTER planned.
+        // This closes the gap between reading ASSIGNED and committing RUNNING after budget/config work.
+        if (actor in setOf("MASTER", "USER") && target == Status.RUNNING &&
+            ((expectedCurrentRunId != null && current.runId != expectedCurrentRunId) ||
+             (expectedAssignedAgentIds != null && current.assignedAgentIds != expectedAssignedAgentIds))) {
+            return@mutate null
+        }
         val agentId = actor.removePrefix("agent:")
         val isAgent = actor.startsWith("agent:")
         val allowed = if (isAgent) {

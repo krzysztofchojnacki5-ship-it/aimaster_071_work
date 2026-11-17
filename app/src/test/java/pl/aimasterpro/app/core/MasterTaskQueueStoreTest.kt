@@ -105,6 +105,34 @@ class MasterTaskQueueStoreTest {
         assertEquals(MasterTaskQueueStore.Status.COMPLETED, MasterTaskQueueStore.snapshot(context).tasks.single().status)
     }
 
+    @Test fun staleQueueStartCannotRunAfterAssignmentOrRunEpochChanges() {
+        val taskId = "task-start-snapshot-fence"
+        val plannedAgents = listOf("critical-reviewer")
+        assertTrue(MasterTaskQueueStore.enqueue(context, taskId, "Start snapshot", "Reject stale start plans.", now = 10L))
+        assertTrue(MasterTaskQueueStore.assign(context, taskId, plannedAgents, now = 11L))
+
+        // Simulate MASTER reading the assignment, then a coordinator changing it while
+        // provider configuration and Smart Budget are being prepared.
+        assertTrue(MasterTaskQueueStore.transition(context, taskId, "MASTER",
+            MasterTaskQueueStore.Status.PAUSED, "Assignment changed before start.", 12L))
+        val replacementAgents = listOf("unit-test-engineer")
+        assertTrue(MasterTaskQueueStore.assign(context, taskId, replacementAgents, now = 13L))
+
+        assertFalse(MasterTaskQueueStore.transition(context, taskId, "MASTER",
+            MasterTaskQueueStore.Status.RUNNING, "Stale start must be rejected.", 14L,
+            expectedCurrentRunId = 0, expectedAssignedAgentIds = plannedAgents))
+        val snapshot = MasterTaskQueueStore.snapshot(context)
+        assertEquals(MasterTaskQueueStore.Status.ASSIGNED, snapshot.tasks.single().status)
+        assertEquals(replacementAgents, snapshot.tasks.single().assignedAgentIds)
+        assertEquals(0, snapshot.tasks.single().runId)
+
+        // The matching current snapshot is accepted and advances exactly one run epoch.
+        assertTrue(MasterTaskQueueStore.transition(context, taskId, "MASTER",
+            MasterTaskQueueStore.Status.RUNNING, "Current assignment started.", 15L,
+            expectedCurrentRunId = 0, expectedAssignedAgentIds = replacementAgents))
+        assertEquals(1, MasterTaskQueueStore.snapshot(context).tasks.single().runId)
+    }
+
     @Test fun agentCallbacksWithoutRunIdentityAreRejected() {
         val taskId = "task-required-run-identity"
         val agents = listOf("critical-reviewer", "unit-test-engineer")

@@ -7587,7 +7587,9 @@ class MainActivity : Activity() {
         val allowed = teamTasks.filter { it.id in budgetPlan.allowedTaskIds }
         val blocked = teamTasks.filterNot { it.id in budgetPlan.allowedTaskIds }
         if (!queueStore.transition(this, taskId, "MASTER", pl.aimasterpro.app.core.MasterTaskQueueStore.Status.RUNNING,
-                "MASTER uruchomił TeamRunEngine dla ${allowed.size}/${teamTasks.size} agentów.")) {
+                "MASTER uruchomił TeamRunEngine dla ${allowed.size}/${teamTasks.size} agentów.",
+                expectedCurrentRunId = task.runId,
+                expectedAssignedAgentIds = task.assignedAgentIds)) {
             pl.aimasterpro.app.core.ApiTokenTracker.releaseBatchReservation(budgetPlan.reservationId)
             activeQueueTaskId = ""
             toast("Nie udało się trwale rozpocząć zadania. Nie wysłano żądań.")
