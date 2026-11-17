@@ -206,7 +206,7 @@ object MasterTaskQueueStore {
         expectedRunId: Int? = null
     ): Boolean = mutate(context) { tasks, events ->
         val current = tasks.firstOrNull { it.id == taskId } ?: return@mutate null
-        if (current.status != Status.RUNNING || (expectedRunId != null && current.runId != expectedRunId) ||
+        if (current.status != Status.RUNNING || (expectedRunId == null || current.runId != expectedRunId) ||
             agentId !in current.assignedAgentIds ||
             result !in setOf(Status.COMPLETED, Status.FAILED, Status.BLOCKED) ||
             detail.length > 500 || now < 0L) return@mutate null
@@ -248,7 +248,7 @@ object MasterTaskQueueStore {
         expectedRunId: Int? = null
     ): Boolean = mutate(context) { tasks, events ->
         val current = tasks.firstOrNull { it.id == taskId } ?: return@mutate null
-        if (current.status != Status.RUNNING || (expectedRunId != null && current.runId != expectedRunId) ||
+        if (current.status != Status.RUNNING || (expectedRunId == null || current.runId != expectedRunId) ||
             agentId !in current.assignedAgentIds ||
             state !in progressStates || detail.length > 500 ||
             providerId.length > 120 || model.length > 180 || attempts !in 0..100 ||
@@ -279,7 +279,7 @@ object MasterTaskQueueStore {
         expectedRunId: Int? = null
     ): Boolean = mutate(context) { tasks, events ->
         val current = tasks.firstOrNull { it.id == taskId } ?: return@mutate null
-        if (current.status != Status.RUNNING || (expectedRunId != null && current.runId != expectedRunId) ||
+        if (current.status != Status.RUNNING || (expectedRunId == null || current.runId != expectedRunId) ||
             sender.isBlank() || sender.length > 100 ||
             CommunicationLogSanitizer.sanitize(sender) != sender ||
             recipient.isBlank() || recipient.length > 100 || status !in conversationStatuses ||
@@ -344,7 +344,7 @@ object MasterTaskQueueStore {
         expectedRunId: Int? = null
     ): Boolean = mutate(context) { tasks, events ->
         val current = tasks.firstOrNull { it.id == taskId } ?: return@mutate null
-        if (current.status != Status.RUNNING || (expectedRunId != null && current.runId != expectedRunId) ||
+        if (current.status != Status.RUNNING || (expectedRunId == null || current.runId != expectedRunId) ||
             source.isBlank() || source.length > 140 ||
             target.isBlank() || target.length > 140 ||
             !traceType.matches(traceTypePattern) ||
