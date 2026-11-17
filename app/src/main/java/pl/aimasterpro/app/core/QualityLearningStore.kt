@@ -57,6 +57,10 @@ object QualityLearningStore {
         require(targetId.isNotBlank() && targetId.length <= 240) { "Nieprawidłowy identyfikator ocenianego elementu" }
         require(rating == -1 || rating == 1) { "Ocena musi wynosić +1 albo -1" }
         val normalizedType = targetType.ifBlank { "UNKNOWN" }.take(30)
+        require(CommunicationLogSanitizer.sanitize(targetId) == targetId &&
+            CommunicationLogSanitizer.sanitize(normalizedType) == normalizedType) {
+            "Identyfikator ocenianego elementu zawiera niedozwolone dane."
+        }
         if (readArrayStrict(context, FEEDBACK_KEY) == null) {
             android.util.Log.e("AIMasterQuality", "Nie zapisano oceny: dziennik ocen jest uszkodzony.")
             return
@@ -65,9 +69,11 @@ object QualityLearningStore {
         // A target ID is unique only inside its target type.
         val old = all.firstOrNull { it.targetId == targetId && it.targetType == normalizedType }
         val item = Feedback(old?.id ?: UUID.randomUUID().toString(), targetId, normalizedType, rating,
-            comment.take(1000), System.currentTimeMillis(), agentId.ifBlank { old?.agentId.orEmpty() }.take(100),
-            providerId.ifBlank { old?.providerId.orEmpty() }.take(100), model.ifBlank { old?.model.orEmpty() }.take(160),
-            category.ifBlank { old?.category.orEmpty() }.take(100),
+            CommunicationLogSanitizer.sanitize(comment.take(1000)), System.currentTimeMillis(),
+            CommunicationLogSanitizer.sanitize(agentId.ifBlank { old?.agentId.orEmpty() }.take(100)),
+            CommunicationLogSanitizer.sanitize(providerId.ifBlank { old?.providerId.orEmpty() }.take(100)),
+            CommunicationLogSanitizer.sanitize(model.ifBlank { old?.model.orEmpty() }.take(160)),
+            CommunicationLogSanitizer.sanitize(category.ifBlank { old?.category.orEmpty() }.take(100)),
             (old?.history.orEmpty() + listOfNotNull(old?.let { RatingChange(it.rating, it.comment, it.timestamp) })).takeLast(50))
         all.removeAll { it.targetId == targetId && it.targetType == normalizedType }
         all.add(0, item)
@@ -403,7 +409,11 @@ object QualityLearningStore {
                         targetId.isNotBlank() && targetId.length <= 240 && targetType.isNotBlank() && targetType.length <= 30)
                     require(row.getString("comment").length <= 1000 &&
                         row.getString("agent").length <= 100 && row.getString("provider").length <= 100 &&
-                        row.getString("model").length <= 160 && row.getString("category").length <= 100)
+                        row.getString("model").length <= 160 && row.getString("category").length <= 100 &&
+                        listOf("comment", "agent", "provider", "model", "category").all { field ->
+                            val value = row.getString(field)
+                            CommunicationLogSanitizer.sanitize(value) == value
+                        })
                     require(seenFeedbackTargets.add(listOf(targetType, targetId))) {
                         "Quality journal contains more than one current rating for the same target."
                     }
@@ -414,7 +424,8 @@ object QualityLearningStore {
                         require(history.length() <= 50)
                         for (i in 0 until history.length()) {
                             val item = history.getJSONObject(i)
-                            require(item.opt("comment") is String && item.getString("comment").length <= 1000)
+                            require(item.opt("comment") is String && item.getString("comment").length <= 1000 &&
+                                CommunicationLogSanitizer.sanitize(item.getString("comment")) == item.getString("comment"))
                             require(exactLong(item.opt("rating")) in setOf(-1L, 1L))
                             require(exactLong(item.opt("timestamp")) >= 0L)
                         }
