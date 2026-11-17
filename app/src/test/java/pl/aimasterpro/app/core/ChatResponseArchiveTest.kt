@@ -159,6 +159,8 @@ class ChatResponseArchiveTest {
         assertFalse(entry.response.contains(responseSecret))
         assertFalse(entry.providerId.contains(providerSecret))
         assertTrue(entry.response.contains("[REDACTED]"))
+        // A read sanitizes the decoded entry without rewriting legacy source bytes.
+        assertEquals(legacy, archivePrefs.getString("responses", null))
         assertEquals(1, ChatResponseArchive.restoreArchivedResponses(context))
         val restored = ChatHistoryStore.readRoot(context)!!.getJSONObject("chats")
             .getJSONObject(chatId).getJSONArray("messages").getJSONObject(1).getString("text")
