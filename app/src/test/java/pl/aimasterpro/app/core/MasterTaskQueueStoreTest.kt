@@ -110,6 +110,32 @@ class MasterTaskQueueStoreTest {
         assertEquals(MasterTaskQueueStore.Status.COMPLETED, MasterTaskQueueStore.snapshot(context).tasks.single().status)
     }
 
+    @Test fun staleCoordinatorCancellationCannotCancelRetriedRun() {
+        val taskId = "task-stale-coordinator-cancel"
+        assertTrue(MasterTaskQueueStore.enqueue(context, taskId, "Coordinator epoch", "Reject stale cancellation.", now = 10L))
+        assertTrue(MasterTaskQueueStore.assign(context, taskId, listOf("critical-reviewer"), now = 11L))
+        assertTrue(startTaskWithCurrentSnapshot(taskId, "First run.", 12L))
+        assertTrue(MasterTaskQueueStore.transition(context, taskId, "MASTER",
+            MasterTaskQueueStore.Status.BLOCKED, "First run interrupted.", 13L))
+        assertTrue(MasterTaskQueueStore.transition(context, taskId, "MASTER",
+            MasterTaskQueueStore.Status.QUEUED, "Retry approved.", 14L))
+        assertTrue(MasterTaskQueueStore.assign(context, taskId, listOf("critical-reviewer"), now = 15L))
+        assertTrue(startTaskWithCurrentSnapshot(taskId, "Second run.", 16L))
+
+        assertFalse(MasterTaskQueueStore.transition(context, taskId, "USER",
+            MasterTaskQueueStore.Status.CANCELLED, "Delayed cancellation from first run.", 17L,
+            expectedCurrentRunId = 1))
+        val stillRunning = MasterTaskQueueStore.snapshot(context).tasks.single()
+        assertEquals(MasterTaskQueueStore.Status.RUNNING, stillRunning.status)
+        assertEquals(2, stillRunning.runId)
+
+        assertTrue(MasterTaskQueueStore.transition(context, taskId, "USER",
+            MasterTaskQueueStore.Status.CANCELLED, "Cancel current run.", 18L,
+            expectedCurrentRunId = 2))
+        assertEquals(MasterTaskQueueStore.Status.CANCELLED,
+            MasterTaskQueueStore.snapshot(context).tasks.single().status)
+    }
+
     @Test fun coordinatorCannotStartWithoutExactAssignmentSnapshot() {
         val taskId = "task-start-requires-snapshot"
         assertTrue(MasterTaskQueueStore.enqueue(context, taskId, "Snapshot", "Require exact start fence.", now = 1L))
