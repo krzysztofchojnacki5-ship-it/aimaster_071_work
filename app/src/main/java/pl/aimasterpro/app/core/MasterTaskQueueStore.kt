@@ -173,6 +173,11 @@ object MasterTaskQueueStore {
     ): Boolean = mutate(context) { tasks, events ->
         val current = tasks.firstOrNull { it.id == taskId } ?: return@mutate null
         if (actor.isBlank() || actor.length > 100 || detail.length > 500 || now < 0L) return@mutate null
+        // Coordinator actions may carry a run epoch to prevent a delayed UI/lifecycle
+        // callback from mutating a later retry of the same task.
+        if (actor in setOf("MASTER", "USER") && expectedCurrentRunId != null &&
+            current.runId != expectedCurrentRunId) return@mutate null
+
         // Starting a queued team is conditional on the exact assignment snapshot MASTER planned.
         // This closes the gap between reading ASSIGNED and committing RUNNING after budget/config work.
         if (actor in setOf("MASTER", "USER") && target == Status.RUNNING &&
