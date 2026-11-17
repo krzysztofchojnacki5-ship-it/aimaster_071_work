@@ -80,9 +80,11 @@ object AgentOperationalMemoryStore {
         val cleanCategory = CommunicationLogSanitizer.sanitize(category.trim())
         val cleanConfidence = CommunicationLogSanitizer.sanitize(confidence.trim())
         val sources = sourceTaskIds.map(String::trim)
-        if (agent.isBlank() || agent.length > 100 || clean.length !in 8..MAX_ENTRY_CHARS ||
+        if (agent.isBlank() || agent.length > 100 || CommunicationLogSanitizer.sanitize(agent) != agent ||
+            clean.length !in 8..MAX_ENTRY_CHARS ||
             cleanCategory.length > 80 || cleanConfidence.isBlank() || cleanConfidence.length > 40 ||
-            sources.size > 30 || sources.any { it.isBlank() || it.length > 200 } ||
+            sources.size > 30 || sources.any { it.isBlank() || it.length > 200 ||
+                CommunicationLogSanitizer.sanitize(it) != it } ||
             sources.distinct().size != sources.size) return@withHealthyAccess null
         val entries = read(context)?.toMutableList() ?: return@withHealthyAccess null
         val duplicateIndex = entries.indexOfFirst { it.agentId.equals(agent, true) && it.text.equals(clean, true) }
@@ -210,6 +212,7 @@ object AgentOperationalMemoryStore {
             val text = requiredText("text").trim()
             require(id.isNotBlank() && id.length <= 120 && seenIds.add(id) &&
                 agent.isNotBlank() && agent.length <= 100 &&
+                CommunicationLogSanitizer.sanitize(agent) == agent &&
                 text.length in 8..MAX_ENTRY_CHARS &&
                 CommunicationLogSanitizer.sanitize(text) == text) {
                 "Operational memory entry is missing unique identity or exceeds supported field limits."
@@ -226,7 +229,8 @@ object AgentOperationalMemoryStore {
                 require(sourceArray.length() <= 30)
                 (0 until sourceArray.length()).map { index ->
                     val value = sourceArray.opt(index)
-                    require(value is String && value.isNotBlank() && value.length <= 200) {
+                    require(value is String && value.isNotBlank() && value.length <= 200 &&
+                        CommunicationLogSanitizer.sanitize(value) == value) {
                         "Operational memory provenance contains an invalid ID."
                     }
                     value
@@ -246,13 +250,15 @@ object AgentOperationalMemoryStore {
     private fun validEntry(entry: Entry): Boolean =
         entry.id.isNotBlank() && entry.id.length <= 120 &&
             entry.agentId.isNotBlank() && entry.agentId.length <= 100 &&
+            CommunicationLogSanitizer.sanitize(entry.agentId) == entry.agentId &&
             entry.text.length in 8..MAX_ENTRY_CHARS &&
             CommunicationLogSanitizer.sanitize(entry.text) == entry.text &&
             entry.category.length <= 80 && entry.confidence.length <= 40 &&
             CommunicationLogSanitizer.sanitize(entry.category) == entry.category &&
             CommunicationLogSanitizer.sanitize(entry.confidence) == entry.confidence &&
             entry.createdAt > 0L && entry.sourceTaskIds.size <= 30 &&
-            entry.sourceTaskIds.all { it.isNotBlank() && it.length <= 200 } &&
+            entry.sourceTaskIds.all { it.isNotBlank() && it.length <= 200 &&
+                CommunicationLogSanitizer.sanitize(it) == it } &&
             entry.sourceTaskIds.distinct().size == entry.sourceTaskIds.size
 
     private fun write(context: Context, entries: List<Entry>): Boolean = runCatching {
