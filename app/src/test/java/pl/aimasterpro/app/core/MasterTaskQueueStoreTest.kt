@@ -210,7 +210,7 @@ class MasterTaskQueueStoreTest {
         assertTrue(MasterTaskQueueStore.transition(context, "task-custom-001", "MASTER",
             MasterTaskQueueStore.Status.RUNNING, "Start własnego agenta.", 37L))
         assertTrue(MasterTaskQueueStore.recordAgentResult(context, "task-custom-001", custom.id,
-            MasterTaskQueueStore.Status.COMPLETED, "Raport własnego agenta.", 38L))
+            MasterTaskQueueStore.Status.COMPLETED, "Raport własnego agenta.", 38L, expectedRunId = 1))
         assertEquals(MasterTaskQueueStore.Status.COMPLETED,
             MasterTaskQueueStore.snapshot(context).tasks.first { it.id == "task-custom-001" }.status)
 
@@ -240,10 +240,10 @@ class MasterTaskQueueStoreTest {
         assertTrue(MasterTaskQueueStore.transition(context, "task-008", "MASTER",
             MasterTaskQueueStore.Status.RUNNING, "TeamRunEngine start.", 62L))
         assertTrue(MasterTaskQueueStore.recordAgentMessage(context, "task-008",
-            "critical-reviewer", "MASTER", "REPORT", "Analiza zakończona.", 62L))
+            "critical-reviewer", "MASTER", "REPORT", "Analiza zakończona.", 62L, expectedRunId = 1))
 
         assertTrue(MasterTaskQueueStore.recordAgentResult(context, "task-008", "critical-reviewer",
-            MasterTaskQueueStore.Status.COMPLETED, "Recenzja gotowa.", 63L))
+            MasterTaskQueueStore.Status.COMPLETED, "Recenzja gotowa.", 63L, expectedRunId = 1))
         assertEquals(MasterTaskQueueStore.Status.RUNNING,
             MasterTaskQueueStore.snapshot(context).tasks.single().status)
         assertFalse(MasterTaskQueueStore.recordAgentResult(context, "task-008", "critical-reviewer",
@@ -252,7 +252,7 @@ class MasterTaskQueueStoreTest {
             MasterTaskQueueStore.Status.COMPLETED, "Agent spoza przydziału.", 64L))
 
         assertTrue(MasterTaskQueueStore.recordAgentResult(context, "task-008", "unit-test-engineer",
-            MasterTaskQueueStore.Status.COMPLETED, "Testy gotowe.", 65L))
+            MasterTaskQueueStore.Status.COMPLETED, "Testy gotowe.", 65L, expectedRunId = 1))
         val state = MasterTaskQueueStore.snapshot(context)
         assertEquals(MasterTaskQueueStore.Status.COMPLETED, state.tasks.single().status)
         assertEquals(2, state.events.count { it.operation == "AGENT_RESULT" })
@@ -267,11 +267,11 @@ class MasterTaskQueueStoreTest {
         assertTrue(MasterTaskQueueStore.transition(context, "task-009", "MASTER",
             MasterTaskQueueStore.Status.RUNNING, "TeamRunEngine start.", 72L))
         assertTrue(MasterTaskQueueStore.recordAgentResult(context, "task-009", "critical-reviewer",
-            MasterTaskQueueStore.Status.FAILED, "Błąd providera.", 73L))
+            MasterTaskQueueStore.Status.FAILED, "Błąd providera.", 73L, expectedRunId = 1))
         assertEquals(MasterTaskQueueStore.Status.RUNNING,
             MasterTaskQueueStore.snapshot(context).tasks.single().status)
         assertTrue(MasterTaskQueueStore.recordAgentResult(context, "task-009", "unit-test-engineer",
-            MasterTaskQueueStore.Status.COMPLETED, "Drugi agent zakończył.", 74L))
+            MasterTaskQueueStore.Status.COMPLETED, "Drugi agent zakończył.", 74L, expectedRunId = 1))
         assertEquals(MasterTaskQueueStore.Status.FAILED,
             MasterTaskQueueStore.snapshot(context).tasks.single().status)
     }
@@ -282,7 +282,7 @@ class MasterTaskQueueStoreTest {
         assertTrue(MasterTaskQueueStore.transition(context, "task-011", "MASTER",
             MasterTaskQueueStore.Status.RUNNING, "Start.", 102L))
         assertTrue(MasterTaskQueueStore.recordAgentProgress(context, "task-011", "critical-reviewer",
-            "REQUESTING", "Wysyłam zapytanie.", "provider-free", "model-free", 1, 103L))
+            "REQUESTING", "Wysyłam zapytanie.", "provider-free", "model-free", 1, 103L, expectedRunId = 1))
         val state = MasterTaskQueueStore.snapshot(context)
         assertEquals(MasterTaskQueueStore.Status.RUNNING, state.tasks.single().status)
         assertTrue(state.tasks.single().currentStep.contains("REQUESTING"))
@@ -301,7 +301,7 @@ class MasterTaskQueueStoreTest {
         assertTrue(MasterTaskQueueStore.recordAgentMessage(
             context, "task-comms", "Critical Reviewer", "MASTER", "REPORT",
             "Raport testowy bez sekretów.", now = 73L,
-            providerId = "provider-local", model = "model-test"
+            providerId = "provider-local", model = "model-test", expectedRunId = 1
         ))
         val event = MasterTaskQueueStore.snapshot(context).events.last()
         assertEquals("agent:critical-reviewer", event.actor)
@@ -602,11 +602,11 @@ class MasterTaskQueueStoreTest {
         ))
         assertTrue(MasterTaskQueueStore.recordAgentMessage(
             context, "task-comms-auth", "critical-reviewer", "unit-test-engineer", "HANDOFF",
-            "Przekazuję ustalenia do drugiego agenta.", now = 79L
+            "Przekazuję ustalenia do drugiego agenta.", now = 79L, expectedRunId = 1
         ))
         assertTrue(MasterTaskQueueStore.recordAgentMessage(
             context, "task-comms-auth", "SYSTEM", "critical-reviewer", "PROGRESS",
-            "Systemowy wpis do przypisanego agenta.", now = 80L
+            "Systemowy wpis do przypisanego agenta.", now = 80L, expectedRunId = 1
         ))
         val messages = MasterTaskQueueStore.snapshot(context).events.filter { it.operation == "AGENT_MESSAGE" }
         assertEquals(2, messages.size)
@@ -639,7 +639,7 @@ class MasterTaskQueueStoreTest {
             MasterTaskQueueStore.Status.RUNNING, "Start.", 202L))
         repeat(810) { index ->
             assertTrue(MasterTaskQueueStore.recordAgentProgress(context, "task-012", "critical-reviewer",
-                "RUNNING", "Krok $index", attempts = 1, now = 203L + index))
+                "RUNNING", "Krok $index", attempts = 1, now = 203L + index, expectedRunId = 1))
         }
         val state = MasterTaskQueueStore.snapshot(context)
         assertEquals(MasterTaskQueueStore.ReadStatus.AVAILABLE, state.status)
@@ -654,9 +654,9 @@ class MasterTaskQueueStoreTest {
         assertTrue(MasterTaskQueueStore.transition(context, "task-retry-001", "MASTER",
             MasterTaskQueueStore.Status.RUNNING, "Pierwszy przebieg.", 302L))
         assertTrue(MasterTaskQueueStore.recordAgentResult(context, "task-retry-001", agents[0],
-            MasterTaskQueueStore.Status.COMPLETED, "Pierwszy raport.", 303L))
+            MasterTaskQueueStore.Status.COMPLETED, "Pierwszy raport.", 303L, expectedRunId = 1))
         assertTrue(MasterTaskQueueStore.recordAgentResult(context, "task-retry-001", agents[1],
-            MasterTaskQueueStore.Status.BLOCKED, "Wymaga ponowienia.", 304L))
+            MasterTaskQueueStore.Status.BLOCKED, "Wymaga ponowienia.", 304L, expectedRunId = 1))
         assertEquals(MasterTaskQueueStore.Status.BLOCKED, MasterTaskQueueStore.snapshot(context).tasks.single().status)
 
         assertTrue(MasterTaskQueueStore.transition(context, "task-retry-001", "MASTER",
@@ -665,10 +665,10 @@ class MasterTaskQueueStoreTest {
         assertTrue(MasterTaskQueueStore.transition(context, "task-retry-001", "MASTER",
             MasterTaskQueueStore.Status.RUNNING, "Drugi przebieg.", 307L))
         assertTrue(MasterTaskQueueStore.recordAgentResult(context, "task-retry-001", agents[0],
-            MasterTaskQueueStore.Status.COMPLETED, "Nowy raport pierwszego agenta.", 308L))
+            MasterTaskQueueStore.Status.COMPLETED, "Nowy raport pierwszego agenta.", 308L, expectedRunId = 2))
         assertEquals(MasterTaskQueueStore.Status.RUNNING, MasterTaskQueueStore.snapshot(context).tasks.single().status)
         assertTrue(MasterTaskQueueStore.recordAgentResult(context, "task-retry-001", agents[1],
-            MasterTaskQueueStore.Status.COMPLETED, "Nowy raport drugiego agenta.", 309L))
+            MasterTaskQueueStore.Status.COMPLETED, "Nowy raport drugiego agenta.", 309L, expectedRunId = 2))
 
         val state = MasterTaskQueueStore.snapshot(context)
         assertEquals(MasterTaskQueueStore.Status.COMPLETED, state.tasks.single().status)
@@ -794,13 +794,13 @@ class MasterTaskQueueStoreTest {
         assertTrue(MasterTaskQueueStore.transition(context, "task-result-retention", "MASTER",
             MasterTaskQueueStore.Status.RUNNING, "Start.", 342L))
         assertTrue(MasterTaskQueueStore.recordAgentResult(context, "task-result-retention", agents[0],
-            MasterTaskQueueStore.Status.COMPLETED, "Pierwszy raport.", 343L))
+            MasterTaskQueueStore.Status.COMPLETED, "Pierwszy raport.", 343L, expectedRunId = 1))
         repeat(810) { index ->
             assertTrue(MasterTaskQueueStore.recordAgentProgress(context, "task-result-retention", agents[1],
-                "RUNNING", "Krok $index", attempts = 1, now = 344L + index))
+                "RUNNING", "Krok $index", attempts = 1, now = 344L + index, expectedRunId = 1))
         }
         assertTrue(MasterTaskQueueStore.recordAgentResult(context, "task-result-retention", agents[1],
-            MasterTaskQueueStore.Status.COMPLETED, "Drugi raport.", 1_200L))
+            MasterTaskQueueStore.Status.COMPLETED, "Drugi raport.", 1_200L, expectedRunId = 1))
         val state = MasterTaskQueueStore.snapshot(context)
         assertEquals(MasterTaskQueueStore.Status.COMPLETED, state.tasks.single().status)
         assertEquals(2, state.events.count {
@@ -1146,7 +1146,7 @@ class MasterTaskQueueStoreTest {
         ))
         assertEquals(before, MasterTaskQueueStore.snapshot(context).events.size)
         assertTrue(MasterTaskQueueStore.recordAgentProgress(
-            context, taskId, "critical-reviewer", "RUNNING", "Bezpieczny stan.", now = 34L
+            context, taskId, "critical-reviewer", "RUNNING", "Bezpieczny stan.", now = 34L, expectedRunId = 1
         ))
     }
 
@@ -1199,7 +1199,7 @@ class MasterTaskQueueStoreTest {
         ))
         assertTrue(MasterTaskQueueStore.recordAgentMessage(
             context, taskId, "AGENT:CRITICAL-REVIEWER", "master",
-            "REPORT", "Canonical message.", now = 1_304L
+            "REPORT", "Canonical message.", now = 1_304L, expectedRunId = 1
         ))
         val message = MasterTaskQueueStore.snapshot(context).events.single { it.operation == "AGENT_MESSAGE" }
         assertEquals("agent:critical-reviewer", message.actor)
