@@ -219,6 +219,9 @@ object MemoryAuditLog {
                     MemoryGovernance.Mutation.REMOVE_CUSTOM_AGENT.name
                 ) && event.approvalRef.isNotBlank()
 
+            MemoryGovernance.Actor.MASTER.name ->
+                event.mutation == MemoryGovernance.Mutation.CREATE_PROPOSAL.name && event.approvalRef.isBlank()
+
             MemoryGovernance.Actor.SYSTEM_RECOVERY.name ->
                 event.mutation in setOf(
                     MemoryGovernance.Mutation.RECONCILE_APPROVED_PROPOSAL.name,
