@@ -1330,4 +1330,34 @@ class MasterTaskQueueStoreTest {
         assertEquals(MasterTaskQueueStore.ReadStatus.AVAILABLE, MasterTaskQueueStore.snapshot(context).status)
     }
 
+    @Test fun taskActivityIsReconciledWithLatestPersistedAuditEventOnNextWrite() {
+        val prefs = context.getSharedPreferences("aiforteca_master_task_queue_v1", Context.MODE_PRIVATE)
+        val taskId = "task-activity-ledger"
+        val task = org.json.JSONObject()
+            .put("id", taskId).put("title", "Activity ledger").put("objective", "Keep activity aligned with audit.")
+            .put("agents", org.json.JSONArray()).put("dependencies", org.json.JSONArray())
+            .put("priority", 2).put("status", "QUEUED").put("step", "Waiting")
+            .put("createdAt", 10L).put("updatedAt", 20L).put("runId", 0)
+        val event = org.json.JSONObject()
+            .put("id", "event-activity-ledger").put("taskId", taskId)
+            .put("actor", "MASTER").put("operation", "CREATE")
+            .put("from", "").put("to", "QUEUED").put("detail", "Previously persisted create event.")
+            .put("timestamp", 30L).put("recipient", "").put("providerId", "").put("model", "")
+            .put("runId", 0)
+        val legacyButStructurallyValid = org.json.JSONObject().put("version", 1)
+            .put("tasks", org.json.JSONArray().put(task))
+            .put("events", org.json.JSONArray().put(event)).toString()
+        assertTrue(prefs.edit().putString("state", legacyButStructurallyValid).commit())
+        assertEquals(MasterTaskQueueStore.ReadStatus.AVAILABLE, MasterTaskQueueStore.snapshot(context).status)
+        assertEquals(20L, MasterTaskQueueStore.snapshot(context).tasks.single().updatedAt)
+
+        assertTrue(MasterTaskQueueStore.enqueue(
+            context, "task-activity-trigger", "Trigger", "Cause a durable queue mutation.", now = 40L
+        ))
+        val reconciled = MasterTaskQueueStore.snapshot(context)
+        assertEquals(MasterTaskQueueStore.ReadStatus.AVAILABLE, reconciled.status)
+        assertEquals(30L, reconciled.tasks.single { it.id == taskId }.updatedAt)
+        assertEquals(40L, reconciled.tasks.single { it.id == "task-activity-trigger" }.updatedAt)
+    }
+
 }
