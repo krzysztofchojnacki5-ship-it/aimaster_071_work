@@ -91,6 +91,99 @@ class ChatResponseArchiveTest {
         assertEquals(corrupt, archivePrefs.getString("responses", null))
     }
 
+    @Test fun responseBodyIsRedactedBeforeWriteAheadPersistenceAndReplay() {
+        val chatId = "chat-secret-response"
+        createChat(chatId)
+        val secret = "sk-12345678901234567890"
+        val response = "Odpowiedź zawiera przypadkowo api_key=$secret i dalsze wyjaśnienie."
+        assertTrue(ChatResponseArchive.put(
+            context, "secret-response-task", chatId, "MASTER", response,
+            "provider-a", "model-a", 2_500L
+        ))
+        val stored = archivePrefs.getString("responses", null).orEmpty()
+        assertFalse(stored.contains(secret))
+        assertTrue(stored.contains("[REDACTED]"))
+        assertFalse(ChatResponseArchive.get(context, "secret-response-task")!!.response.contains(secret))
+
+        assertEquals(1, ChatResponseArchive.restoreArchivedResponses(context))
+        val restored = ChatHistoryStore.readRoot(context)!!.getJSONObject("chats")
+            .getJSONObject(chatId).getJSONArray("messages").getJSONObject(1).getString("text")
+        assertFalse(restored.contains(secret))
+        assertTrue(restored.contains("[REDACTED]"))
+    }
+
+    @Test fun archiveMetadataIsRedactedBeforePersistenceAndReadback() {
+        val secret = "abcdefghijklmnopqrstuvwxyz123456"
+        assertTrue(ChatResponseArchive.put(
+            context, "metadata-secret-task", "chat-metadata-safe",
+            "MASTER api_key=sk_live_1234567890", "Answer",
+            "provider token=Bearer $secret", "model secret=sk-proj-12345678901234567890", 2_600L
+        ))
+        val entry = ChatResponseArchive.get(context, "metadata-secret-task")!!
+        val stored = archivePrefs.getString("responses", null).orEmpty()
+        assertFalse(stored.contains("sk_live_1234567890"))
+        assertFalse(stored.contains(secret))
+        assertFalse(stored.contains("sk-proj-12345678901234567890"))
+        assertTrue(entry.agentId.contains("[REDACTED]"))
+        assertTrue(entry.providerId.contains("[REDACTED]"))
+        assertTrue(entry.model.contains("[REDACTED]"))
+    }
+
+    @Test fun taskAndChatArchiveKeysThatWouldChangeUnderRedactionAreRejected() {
+        val taskId = "task-api_key=sk_live_1234567890"
+        val chatId = "chat-api_key=sk_live_1234567890"
+        assertFalse(ChatResponseArchive.put(
+            context, taskId, "chat-safe", "MASTER", "Answer", "provider-a", "model-a", 2_700L
+        ))
+        assertFalse(ChatResponseArchive.put(
+            context, "task-safe", chatId, "MASTER", "Answer", "provider-a", "model-a", 2_700L
+        ))
+        assertTrue(ChatResponseArchive.latest(context).isEmpty())
+    }
+
+    @Test fun legacySecretBearingArchiveContentIsRedactedOnReadAndReplay() {
+        val chatId = "chat-legacy-secret-response"
+        createChat(chatId)
+        val responseSecret = "sk-12345678901234567890"
+        val providerSecret = "abcdefghijklmnopqrstuvwxyz123456"
+        val legacy = JSONArray().put(JSONObject()
+            .put("taskId", "legacy-safe-task").put("chatId", chatId)
+            .put("agentId", "MASTER api_key=sk_live_1234567890")
+            .put("response", "Legacy answer api_key=$responseSecret")
+            .put("providerId", "provider Bearer $providerSecret")
+            .put("model", "model secret=sk-proj-12345678901234567890")
+            .put("createdAt", 2_800L)).toString()
+        assertTrue(archivePrefs.edit().putString("responses", legacy).commit())
+
+        val entry = ChatResponseArchive.get(context, "legacy-safe-task")!!
+        assertFalse(entry.response.contains(responseSecret))
+        assertFalse(entry.providerId.contains(providerSecret))
+        assertTrue(entry.response.contains("[REDACTED]"))
+        assertEquals(1, ChatResponseArchive.restoreArchivedResponses(context))
+        val restored = ChatHistoryStore.readRoot(context)!!.getJSONObject("chats")
+            .getJSONObject(chatId).getJSONArray("messages").getJSONObject(1).getString("text")
+        assertFalse(restored.contains(responseSecret))
+        assertTrue(restored.contains("[REDACTED]"))
+        // Reading/replaying sanitizes in memory; it does not rewrite the legacy source bytes.
+        assertEquals(legacy, archivePrefs.getString("responses", null))
+    }
+
+    @Test fun legacySecretBearingTaskOrChatIdentityFailsClosedWithoutRewritingArchive() {
+        val secret = "sk_live_1234567890"
+        val corrupt = JSONArray().put(JSONObject()
+            .put("taskId", "task-api_key=$secret").put("chatId", "chat-safe")
+            .put("agentId", "MASTER").put("response", "Saved answer")
+            .put("providerId", "provider-a").put("model", "model-a")
+            .put("createdAt", 2_900L)).toString()
+        assertTrue(archivePrefs.edit().putString("responses", corrupt).commit())
+
+        assertFalse(ChatResponseArchive.isArchiveReadable(context))
+        assertFalse(ChatResponseArchive.put(
+            context, "new-safe-task", "chat-safe", "MASTER", "New answer", "provider-a", "model-a", 3_000L
+        ))
+        assertEquals(corrupt, archivePrefs.getString("responses", null))
+    }
+
     @Test fun blankAndOversizedAnswersAreRejected() {
         assertFalse(ChatResponseArchive.put(context, "blank", "chat", "MASTER", " ", "p", "m", 1_000L))
         assertFalse(ChatResponseArchive.put(context, "large", "chat", "MASTER", "x".repeat(32_001), "p", "m", 1_000L))
