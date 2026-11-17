@@ -494,8 +494,16 @@ object MasterTaskQueueStore {
                         event.copy(timestamp = timestamp)
                     }
                 }
+                // A persisted task's activity time must never lag behind its own audit journal,
+                // including when recovering older-but-valid version-1 state.
+                val latestEventTimeByTask = normalizedEvents.groupBy { it.taskId }
+                    .mapValues { (_, rows) -> rows.maxOfOrNull { it.timestamp } ?: 0L }
+                val fullyNormalizedTasks = normalizedTasks.map { task ->
+                    val latestEventAt = latestEventTimeByTask[task.id] ?: 0L
+                    if (task.updatedAt < latestEventAt) task.copy(updatedAt = latestEventAt) else task
+                }
                 // Event history is a rolling bounded journal; reaching the cap must not freeze the queue.
-                write(context, normalizedTasks, normalizedEvents)
+                write(context, fullyNormalizedTasks, normalizedEvents)
             }
         }.getOrDefault(false)
     }
