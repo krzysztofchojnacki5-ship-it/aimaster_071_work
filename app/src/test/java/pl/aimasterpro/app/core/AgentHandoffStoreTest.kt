@@ -30,8 +30,11 @@ class AgentHandoffStoreTest {
         assertTrue(MasterTaskQueueStore.enqueue(context, "handoff-task-01", "Współpraca", "Przekaż ustalenia.", now = 10L))
         assertTrue(MasterTaskQueueStore.assign(context, "handoff-task-01",
             listOf("critical-reviewer", "unit-test-engineer"), now = 11L))
+        val assigned = MasterTaskQueueStore.snapshot(context).tasks.single()
         assertTrue(MasterTaskQueueStore.transition(context, "handoff-task-01", "MASTER",
-            MasterTaskQueueStore.Status.RUNNING, "Start przebiegu.", 12L))
+            MasterTaskQueueStore.Status.RUNNING, "Start przebiegu.", 12L,
+            expectedCurrentRunId = assigned.runId,
+            expectedAssignedAgentIds = assigned.assignedAgentIds))
         return MasterTaskQueueStore.snapshot(context).tasks.single().runId
     }
 
