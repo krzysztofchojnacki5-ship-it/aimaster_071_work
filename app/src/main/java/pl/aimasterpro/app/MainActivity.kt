@@ -7443,7 +7443,9 @@ class MainActivity : Activity() {
                             .setNegativeButton("Wróć", null)
                             .setPositiveButton("Anuluj zadanie") { _, _ ->
                                 if (queueStore.transition(this, task.id, "USER",
-                                        pl.aimasterpro.app.core.MasterTaskQueueStore.Status.CANCELLED, "Anulowano przez użytkownika.")) {
+                                        pl.aimasterpro.app.core.MasterTaskQueueStore.Status.CANCELLED,
+                                        "Anulowano przez użytkownika.",
+                                        expectedCurrentRunId = task.runId)) {
                                     showShell("Zadania"); showTasksCenter()
                                 } else toast("Nie udało się anulować zadania.")
                             }.show()
