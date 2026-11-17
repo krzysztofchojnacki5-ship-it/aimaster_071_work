@@ -166,7 +166,8 @@ object MasterTaskQueueStore {
         actor: String,
         target: Status,
         detail: String,
-        now: Long = System.currentTimeMillis()
+        now: Long = System.currentTimeMillis(),
+        expectedRunId: Int? = null
     ): Boolean = mutate(context) { tasks, events ->
         val current = tasks.firstOrNull { it.id == taskId } ?: return@mutate null
         if (actor.isBlank() || actor.length > 100 || detail.length > 500 || now < 0L) return@mutate null
@@ -177,6 +178,7 @@ object MasterTaskQueueStore {
             // recordAgentResult so one early callback cannot close the whole team task.
             current.assignedAgentIds.size == 1 &&
                 agentId in current.assignedAgentIds && current.status == Status.RUNNING &&
+                expectedRunId != null && expectedRunId == current.runId &&
                 target in setOf(Status.COMPLETED, Status.FAILED, Status.BLOCKED)
         } else {
             actor in setOf("MASTER", "USER") && allowedCoordinatorTransition(current.status, target)
