@@ -27,4 +27,18 @@ class CommunicationLogSanitizerTest {
         val input = "Token usage was 1200 tokens; API key should never be printed."
         assertTrue(CommunicationLogSanitizer.sanitize(input).contains("1200 tokens"))
     }
+
+    @Test
+    fun redactsGenericTokenAndAuthorizationAssignments() {
+        val input = """
+            Authorization: Basic dXNlcjpwYXNz
+            ?token=query-secret-value
+            "session_token":"session-secret-value"
+            auth=auth-secret-value
+        """.trimIndent()
+        val output = CommunicationLogSanitizer.sanitize(input)
+        listOf("dXNlcjpwYXNz", "query-secret-value", "session-secret-value", "auth-secret-value")
+            .forEach { assertFalse("Credential leaked: $it", output.contains(it)) }
+        assertTrue(output.contains("[REDACTED]"))
+    }
 }
