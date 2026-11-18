@@ -503,4 +503,14 @@ class TaskResultArchiveTest {
         assertEquals(80, TaskResultArchive.latest(context).size)
         assertEquals("Updated in place", TaskResultArchive.get(context, "capacity-task-79")?.report)
     }
+    @Test fun executionTaskIdDoesNotCollideWhenLongParentIdsSharePrefix() {
+        val sharedPrefix = "p".repeat(60)
+        val first = TaskResultArchive.executionTaskId("${sharedPrefix}-first", "agent-a", 1)
+        val second = TaskResultArchive.executionTaskId("${sharedPrefix}-second", "agent-a", 1)
+
+        assertNotEquals(first, second)
+        assertTrue(first.length < 100)
+        assertTrue(second.length < 100)
+    }
+
 }
