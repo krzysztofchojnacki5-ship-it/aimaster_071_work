@@ -7370,8 +7370,7 @@ class MainActivity : Activity() {
                         card("ARCHIWUM RAPORTÓW NIEDOSTĘPNE", "Nie można bezpiecznie odczytać raportów dla przebiegu ${task.runId}. Zachowano dane; nie pokazuję skrótów jako pełnych raportów.")
                     } else {
                         val archivedReports = task.assignedAgentIds.mapNotNull { agentId ->
-                            val reportId = archive.executionTaskId(task.id, agentId, task.runId)
-                            archive.get(this, reportId)?.let { agentId to it }
+                            archive.getExecution(this, task.id, agentId, task.runId)?.let { agentId to it }
                         }
                         if (archivedReports.isNotEmpty()) {
                             card("RAPORTY AGENTÓW • PRZEBIEG ${task.runId}",
