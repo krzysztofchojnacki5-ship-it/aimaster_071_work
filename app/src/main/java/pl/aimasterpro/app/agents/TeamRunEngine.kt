@@ -446,13 +446,13 @@ class TeamRunEngine(
                                                     val host = runCatching { URL(candidate.baseUrl).host.lowercase() }.getOrDefault(candidate.baseUrl.lowercase())
                                                     host !in dnsFailedHosts
                                                 }
-                                            onLog(prov.name, agent.name, "[NETWORK FAILOVER] ${category}: ${t.message}. Kolejny niezależny host: ${nextProv?.name ?: "brak"}. Błąd dotyczy tylko tego agenta; konfiguracja dostawcy pozostaje aktywna.", "NETWORK_FAILOVER")
+                                            onLog(prov.name, agent.name, "[NETWORK FAILOVER] $category. Kolejny niezależny host: ${nextProv?.name ?: "brak"}. Błąd dotyczy tylko tego agenta; konfiguracja dostawcy pozostaje aktywna.", "NETWORK_FAILOVER")
                                             if (nextProv != null) continue@providerLoop
                                             break@providerLoop
                                         } else {
                                             // READ_TIMEOUT may happen after the provider processed the POST.
                                             // Never replay it or silently charge another provider.
-                                            onLog(prov.name, agent.name, "[NETWORK STOP] $category: ${t.message}. Bez automatycznego powtórzenia, aby uniknąć podwójnego rozliczenia.", "NETWORK_ERROR")
+                                            onLog(prov.name, agent.name, "[NETWORK STOP] $category. Bez automatycznego powtórzenia, aby uniknąć podwójnego rozliczenia.", "NETWORK_ERROR")
                                             break@providerLoop
                                         }
                                 } finally {
@@ -496,7 +496,11 @@ class TeamRunEngine(
                                         "RESULT_PERSIST_FAILED") }
                                 }
                                 runCatching {
-                                    onLog(agent.name, "MASTER", "[TASK_REPORT_ID:${task.id}]\n$report", "REPORT")
+                                    // The full report is stored in TaskResultArchive. Technical traces
+                                    // retain only a reference and size, not a second copy of user data.
+                                    onLog(agent.name, "MASTER",
+                                        "[TASK_REPORT_ID:${task.id}] Raport wygenerowany; znaki=${report.length}. Pełna treść znajduje się w archiwum raportów.",
+                                        "REPORT")
                                 }
                                 runCatching {
                                     onTaskState(
@@ -526,7 +530,15 @@ class TeamRunEngine(
                                 }
                             }
                         } catch (t: Throwable) {
-                            val err = "${t.javaClass.simpleName}: ${t.message ?: "Nieznany błąd"}"
+                            val providerError = t as? ProviderException
+                            val err = if (providerError != null) {
+                                "ProviderException: ${providerError.category ?: "UNKNOWN"}" +
+                                    (providerError.httpCode?.let { " (HTTP $it)" } ?: "")
+                            } else {
+                                t.javaClass.simpleName.ifBlank { "UnknownException" }
+                            }
+                            // Exception messages may contain provider response bodies or request data.
+                            // Keep only structured failure metadata in durable traces.
                             onLog(agent.name, "MASTER", err, "ERROR")
                             // Checkpoints are durable recovery metadata, not a second error log.
                             // Do not persist arbitrary exception messages that may contain server data.
