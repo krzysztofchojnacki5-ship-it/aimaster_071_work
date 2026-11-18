@@ -10,7 +10,7 @@ object CommunicationLogSanitizer {
     private val slack = Regex("\\bxox[baprs]-[A-Za-z0-9-]{10,}\\b")
     private val urlUserInfo = Regex("(?i)([a-z][a-z0-9+.-]*://[^\\s/:@]+:)[^\\s/@]+(@)")
     private val privateKeyBlock = Regex("(?s)-----BEGIN (?:RSA |EC |OPENSSH |DSA |ENCRYPTED )?PRIVATE KEY-----.*?-----END (?:RSA |EC |OPENSSH |DSA |ENCRYPTED )?PRIVATE KEY-----")
-    private val keyValue = Regex("(?i)(\\b(?:api[_-]?key|x-api-key|access[_-]?token|refresh[_-]?token|id[_-]?token|session[_-]?token|token|authorization|proxy-authorization|auth|client[_-]?secret|password|secret)\\b\\s*[=:]\\s*)(\\\"[^\\\"]*\\\"|'[^']*'|[^\\s,;]+)")
+    private val keyValue = Regex("(?i)(\\b(?:api[_-]?key|x-api-key|access[_-]?token|refresh[_-]?token|id[_-]?token|session[_-]?token|token|authorization|proxy-authorization|auth|client[_-]?secret|aws[_-]?secret[_-]?access[_-]?key|aws[_-]?session[_-]?token|private[_-]?key|signing[_-]?key|secret[_-]?key|password|secret)\\b\\s*[=:]\\s*)(\\\"[^\\\\\\\"]*\\\"|'[^']*'|[^\\\\s,;]+)")
     private val jsonSecret = Regex("(?i)(\\\"(?:apiKey|api_key|access_token|refresh_token|client_secret|password|secret)\\\"\\s*:\\s*\\\")[^\\\"]*(\\\")")
 
     fun sanitize(value: String): String = value
