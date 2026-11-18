@@ -7651,7 +7651,8 @@ class MainActivity : Activity() {
                                     model = senderConfig?.model.orEmpty(), expectedRunId = executionRunId)
                             } == true
                             if (!traced) android.util.Log.w("AiFORTecaQueue", "Pominięto ślad techniczny dla nieaktywnego przebiegu lub nie udało się go zapisać: $taskId • $sender → $recipient")
-                            android.util.Log.i("AiFORTecaQueue", "$taskId • TRACE • $sender → $recipient • $eventStatus • ${message.take(350)}")
+                            // Logcat is an operational channel, not a content archive. Never emit trace payloads.
+                            android.util.Log.i("AiFORTecaQueue", "$taskId • TRACE • $sender → $recipient • $eventStatus • chars=${message.length}")
                         },
                         onUsage = { agentId, subTaskId, actualProvider, usage ->
                             pl.aimasterpro.app.core.ApiTokenTracker.recordQuery(
