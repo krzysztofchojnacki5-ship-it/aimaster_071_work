@@ -60,4 +60,22 @@ class CommunicationLogSanitizerTest {
         assertFalse(output.contains("private-key-material-secret"))
         assertTrue(output.contains("[REDACTED PRIVATE KEY]"))
     }
+
+    @Test
+    fun redactsAwsSessionAndPrivateSigningKeyAssignments() {
+        val input = """
+            aws_secret_access_key=aws-secret-access-value
+            aws_session_token=aws-session-token-value
+            private_key=local-private-key-value
+            signing_key: signing-key-value
+        """.trimIndent()
+        val output = CommunicationLogSanitizer.sanitize(input)
+        listOf(
+            "aws-secret-access-value",
+            "aws-session-token-value",
+            "local-private-key-value",
+            "signing-key-value"
+        ).forEach { assertFalse("Secret leaked: $it", output.contains(it)) }
+        assertTrue(output.contains("[REDACTED]"))
+    }
 }
