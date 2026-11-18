@@ -41,6 +41,18 @@ object TaskResultArchive {
         return "${StableIdentifier.create("queue", parentTaskId, agentId)}-r$runId"
     }
 
+    /**
+     * Reads the collision-resistant key first, then the pre-hardening key for reports
+     * persisted by earlier app versions. New entries always use executionTaskId().
+     */
+    @Synchronized
+    fun getExecution(context: Context, parentTaskId: String, agentId: String, runId: Int): Entry? {
+        val currentId = executionTaskId(parentTaskId, agentId, runId)
+        get(context, currentId)?.let { return it }
+        val legacyId = "q-${parentTaskId.take(42)}-${agentId.take(32)}-r$runId"
+        return if (legacyId == currentId) null else get(context, legacyId)
+    }
+
     @Synchronized
     fun put(
         context: Context,
