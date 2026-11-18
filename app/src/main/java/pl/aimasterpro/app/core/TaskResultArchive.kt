@@ -38,7 +38,7 @@ object TaskResultArchive {
      */
     fun executionTaskId(parentTaskId: String, agentId: String, runId: Int): String {
         require(parentTaskId.isNotBlank() && agentId.isNotBlank() && runId > 0)
-        return "q-${parentTaskId.take(42)}-${agentId.take(32)}-r$runId"
+        return "${StableIdentifier.create("queue", parentTaskId, agentId)}-r$runId"
     }
 
     @Synchronized
