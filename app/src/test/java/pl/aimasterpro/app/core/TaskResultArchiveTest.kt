@@ -34,7 +34,7 @@ class TaskResultArchiveTest {
 
     @Test fun queueExecutionArchiveIdsAreStableAndIsolatedByAgentAndRun() {
         val first = TaskResultArchive.executionTaskId("task-parent-123", "researcher", 1)
-        assertEquals("q-task-parent-123-researcher-r1", first)
+        assertEquals("${StableIdentifier.create("queue", "task-parent-123", "researcher")}-r1", first)
         assertEquals(first, TaskResultArchive.executionTaskId("task-parent-123", "researcher", 1))
         assertNotEquals(first, TaskResultArchive.executionTaskId("task-parent-123", "developer", 1))
         assertNotEquals(first, TaskResultArchive.executionTaskId("task-parent-123", "researcher", 2))
