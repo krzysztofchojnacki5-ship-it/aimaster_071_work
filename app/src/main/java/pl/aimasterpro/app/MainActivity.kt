@@ -7659,7 +7659,7 @@ class MainActivity : Activity() {
                                 this, actualProvider.id, actualProvider.model, agentId, subTaskId,
                                 usage.inputTokens, usage.outputTokens, usage.reasoningTokens, usage.cachedTokens,
                                 usage.status, actualProvider.baseUrl, budgetPlan.reservationId,
-                                "queue:$taskId:$subTaskId:${actualProvider.id}",
+                                pl.aimasterpro.app.core.StableIdentifier.create("team", subTaskId, actualProvider.id),
                                 usage.cacheWriteTokens, usage.cacheWrite1hTokens, usage.reasoningTokensKnown
                             )
                         },
@@ -7669,7 +7669,7 @@ class MainActivity : Activity() {
                                 this, actualProvider.id, actualProvider.model, agentId, subTaskId,
                                 estimatedInput, estimatedOutput, status = "UNAVAILABLE",
                                 baseUrl = actualProvider.baseUrl, reservationId = budgetPlan.reservationId,
-                                idempotencyKey = "queue:$taskId:$subTaskId:${actualProvider.id}"
+                                idempotencyKey = pl.aimasterpro.app.core.StableIdentifier.create("team", subTaskId, actualProvider.id)
                             )
                         },
                         rankProviders = { candidates -> pl.aimasterpro.app.core.ModelHealthTracker.rank(this, candidates) },
@@ -7717,7 +7717,7 @@ class MainActivity : Activity() {
                                 } else {
                                 val index = allowed.indexOfFirst { it.agentId == result.agentId }
                                 val inboundId = if (index > 0) {
-                                    "h-${taskId.take(30)}-$executionRunId-${allowed[index - 1].agentId.take(20)}-${result.agentId.take(20)}"
+                                    pl.aimasterpro.app.core.StableIdentifier.create("handoff", taskId, executionRunId.toString(), allowed[index - 1].agentId, result.agentId)
                                 } else ""
                                 val previous = allowed.getOrNull(index - 1)
                                 val explicitlyRejected = result.handoffRejectionReason.isNotBlank()
@@ -7749,7 +7749,7 @@ class MainActivity : Activity() {
                                     explicitlyRejected -> true // A rejection is terminal for this handoff chain.
                                     next == null -> true
                                     else -> {
-                                    val messageId = "h-${taskId.take(30)}-$executionRunId-${result.agentId.take(20)}-${next.agentId.take(20)}"
+                                    val messageId = pl.aimasterpro.app.core.StableIdentifier.create("handoff", taskId, executionRunId.toString(), result.agentId, next.agentId)
                                     val sent = pl.aimasterpro.app.core.AgentHandoffStore.send(
                                         this, taskId, executionRunId, messageId,
                                         result.agentId, next.agentId, result.report.take(8_000)
@@ -7770,7 +7770,7 @@ class MainActivity : Activity() {
                                 val index = allowed.indexOfFirst { it.agentId == item.agentId }
                                 if (index <= 0) "" else {
                                     val previous = allowed[index - 1]
-                                    val messageId = "h-${taskId.take(30)}-$executionRunId-${previous.agentId.take(20)}-${item.agentId.take(20)}"
+                                    val messageId = pl.aimasterpro.app.core.StableIdentifier.create("handoff", taskId, executionRunId.toString(), previous.agentId, item.agentId)
                                     val claimed = pl.aimasterpro.app.core.AgentHandoffStore.claim(
                                         this, taskId, executionRunId, messageId, item.agentId
                                     ) ?: throw pl.aimasterpro.app.agents.HandoffUnavailableException(
