@@ -80,9 +80,11 @@ class TeamRunEngineNetworkTest {
             })
             assertTrue("Request diagnostics must never persist system or user prompt text",
                 communicationLog.none { it.contains("Return short report") || it.contains("AKTYWNY TRYB:") })
-            assertTrue("Successful agent responses must be logged in full", communicationLog.any {
-                it.contains("[REPORT]") && it.contains("agent-report")
+            assertTrue("Successful report traces must point to the archive without duplicating report text", communicationLog.any {
+                it.contains("[REPORT]") && it.contains("archiwum raportów") && it.contains("znaki=")
             })
+            assertTrue("Technical traces must not duplicate archived report content",
+                communicationLog.none { it.contains("agent-report") })
         } finally { server.stop(0) }
     }
     @Test
