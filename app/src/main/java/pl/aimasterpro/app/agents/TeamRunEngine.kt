@@ -268,8 +268,8 @@ class TeamRunEngine(
                                         actualProviderId = prov.id
                                         actualModel = prov.model
                                         callStartedAt = System.currentTimeMillis()
-                                        // Record the exact text payload sent to the provider. Binary attachment
-                                        // contents are deliberately excluded; only their MIME/type is recorded.
+                                        // Keep durable traces metadata-only. System/user prompts may contain
+                                        // private project data and must never be copied into queue diagnostics.
                                         val requestTrace = buildString {
                                             appendLine("[REQUEST]")
                                             appendLine("TaskId: ${task.id}")
@@ -281,10 +281,8 @@ class TeamRunEngine(
                                             appendLine("Attempt: $attemptCount/${orderedProviders.size}")
                                             appendLine("Attachment MIME: ${attachmentMime.ifBlank { "brak" }}")
                                             appendLine("Attachment payload: ${if (attachmentBase64.isBlank()) "brak" else "dołączony, treść binarna pominięta w dzienniku"}")
-                                            appendLine("--- SYSTEM ---")
-                                            appendLine(system)
-                                            appendLine("--- USER ---")
-                                            append(user)
+                                            appendLine("System prompt: pominięty (${system.length} znaków)")
+                                            appendLine("User prompt: pominięty (${user.length} znaków)")
                                         }
                                         onLog("MASTER", agent.name, requestTrace, "REQUEST")
                                         val estimatedRequestInput = (system.length.toLong() + user.length.toLong() + 2L) / 3L
