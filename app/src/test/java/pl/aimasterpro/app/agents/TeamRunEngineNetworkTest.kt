@@ -72,6 +72,8 @@ class TeamRunEngineNetworkTest {
             assertEquals(6, results.count { it.status == TeamTaskResult.Status.COMPLETED })
             assertEquals(7, server.requestCount.get())
             assertEquals("Ambiguous HTTP 500 must be durably accounted before the task is marked FAILED", 1, unknownUsageRecords.get())
+            assertTrue("Provider response bodies must not enter technical traces",
+                communicationLog.none { it.contains("temporary test failure") })
             assertTrue("Expected parallel execution", peakParallel.get() > 1)
             assertTrue("Parallel requests must remain capped at four", peakParallel.get() <= 4)
             assertTrue(results.first { it.agentId == "accessibility-specialist" }.report.contains("HTTP 500"))
