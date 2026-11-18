@@ -462,9 +462,15 @@ class TeamRunEngineNetworkTest {
             ).single()
             println("RESULT REPORT: ${result.report}")
             assertEquals(TeamTaskResult.Status.COMPLETED, result.status)
+            assertEquals("review-report", result.report)
             assertEquals("app-architect", result.reviewOfAgentId)
             assertTrue(logs.any { it.contains("TaskType: PEER_REVIEW") && it.contains("ReviewOfAgent: app-architect") })
-            assertTrue(logs.any { it.contains("review-report") && it.contains("[REPORT]") })
+            assertTrue(logs.any {
+                it.contains("[REPORT]") &&
+                    it.contains("archiwum raportów") &&
+                    it.contains("znaki=13")
+            })
+            assertTrue("Technical trace must not contain the full report", logs.none { it.contains("review-report") })
         } finally { server.stop(0) }
     }
 
