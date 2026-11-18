@@ -309,14 +309,14 @@ class TeamRunEngine(
                                         runCatching {
                                             onProviderHealth(prov, true, "", System.currentTimeMillis() - callStartedAt)
                                         }.onFailure { error ->
-                                            runCatching { onLog("SYSTEM", agent.name, "[HEALTH RECORD WARNING] ${error.message ?: error.javaClass.simpleName}", "BOOKKEEPING_WARNING") }
+                                            runCatching { onLog("SYSTEM", agent.name, "[HEALTH RECORD WARNING] ${error.javaClass.simpleName}", "BOOKKEEPING_WARNING") }
                                         }
                                         // A successful HTTP response can consume tokens even when its text is empty.
                                         // Record usage before validating the report so the budget cannot undercount it.
                                         val usageRecorded = runCatching { onUsage(agent.id, task.id, responseProvider, chatRes.usage) }
                                         usageRecorded.onFailure { error ->
                                             usageAccountingPending = true
-                                            runCatching { onLog("SYSTEM", agent.name, "[USAGE RECORD FAILED] Odpowiedź API mogła zostać rozliczona przez dostawcę, ale lokalny zapis użycia nie powiódł się: ${error.message ?: error.javaClass.simpleName}", "USAGE_RECORD_FAILED") }
+                                            runCatching { onLog("SYSTEM", agent.name, "[USAGE RECORD FAILED] Odpowiedź API mogła zostać rozliczona przez dostawcę, ale lokalny zapis użycia nie powiódł się (${error.javaClass.simpleName}).", "USAGE_RECORD_FAILED") }
                                         }
                                         if (usageRecorded.isSuccess) {
                                             runCatching { onTaskState(
@@ -361,7 +361,7 @@ class TeamRunEngine(
                                         }
                                         val categoryForHealth = if ((t as? ProviderException)?.httpCode == 429) "HTTP_429" else (t as? ProviderException)?.category ?: "UNKNOWN"
                                         runCatching { onProviderHealth(prov, false, categoryForHealth, if (callStartedAt > 0L) System.currentTimeMillis() - callStartedAt else 0L) }
-                                            .onFailure { error -> runCatching { onLog("SYSTEM", agent.name, "[HEALTH RECORD WARNING] ${error.message ?: error.javaClass.simpleName}", "BOOKKEEPING_WARNING") } }
+                                            .onFailure { error -> runCatching { onLog("SYSTEM", agent.name, "[HEALTH RECORD WARNING] ${error.javaClass.simpleName}", "BOOKKEEPING_WARNING") } }
                                         lastException = t
                                         val httpCode = (t as? ProviderException)?.httpCode
                                         val category = (t as? ProviderException)?.category ?: "UNKNOWN"
