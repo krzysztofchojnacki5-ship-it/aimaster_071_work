@@ -42,6 +42,38 @@ class TaskResultArchiveTest {
         assertTrue(runCatching { TaskResultArchive.executionTaskId("task-parent", "researcher", 0) }.isFailure)
     }
 
+    @Test fun executionLookupReadsLegacyArchiveIdsAfterStableIdMigration() {
+        val parentTaskId = "legacy-parent-task-id-that-is-long-enough-to-test-truncation"
+        val agentId = "researcher"
+        val runId = 3
+        val legacyId = "q-${parentTaskId.take(42)}-${agentId.take(32)}-r$runId"
+        assertTrue(TaskResultArchive.put(
+            context, legacyId, agentId, "Legacy archived report", "provider-old", "model-old", 3_000L
+        ))
+
+        val restored = TaskResultArchive.getExecution(context, parentTaskId, agentId, runId)
+        assertEquals(legacyId, restored?.taskId)
+        assertEquals("Legacy archived report", restored?.report)
+    }
+
+    @Test fun executionLookupPrefersStableArchiveIdOverLegacyEntry() {
+        val parentTaskId = "same-parent-task"
+        val agentId = "researcher"
+        val runId = 4
+        val legacyId = "q-${parentTaskId.take(42)}-${agentId.take(32)}-r$runId"
+        val stableId = TaskResultArchive.executionTaskId(parentTaskId, agentId, runId)
+        assertTrue(TaskResultArchive.put(
+            context, legacyId, agentId, "Old report", "provider-old", "model-old", 4_000L
+        ))
+        assertTrue(TaskResultArchive.put(
+            context, stableId, agentId, "Current report", "provider-new", "model-new", 5_000L
+        ))
+
+        val restored = TaskResultArchive.getExecution(context, parentTaskId, agentId, runId)
+        assertEquals(stableId, restored?.taskId)
+        assertEquals("Current report", restored?.report)
+    }
+
     @Test fun successfulReportIsDurableAndAddressableByTaskId() {
         assertTrue(TaskResultArchive.put(
             context, "task-1", "developer", "Pełny raport agenta.", "provider-a", "model-a", 1_000L
