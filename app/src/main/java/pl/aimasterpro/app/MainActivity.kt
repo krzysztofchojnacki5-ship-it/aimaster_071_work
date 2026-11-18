@@ -2271,7 +2271,7 @@ class MainActivity : Activity() {
                             onLog = { sender, recipient, msg, status -> logAgentDialogueForChat(chatId, sender, recipient, msg, status) },
                             onUsage = { agentId, taskId, actualProvider, usage ->
                                 pl.aimasterpro.app.core.ApiTokenTracker.recordQuery(this, actualProvider.id, actualProvider.model, agentId, taskId, usage.inputTokens, usage.outputTokens, usage.reasoningTokens, usage.cachedTokens, usage.status, actualProvider.baseUrl, budgetPlan.reservationId,
-                                    "team:$taskId:${actualProvider.id}", usage.cacheWriteTokens, usage.cacheWrite1hTokens, usage.reasoningTokensKnown)
+                                    pl.aimasterpro.app.core.StableIdentifier.create("team", taskId, actualProvider.id), usage.cacheWriteTokens, usage.cacheWrite1hTokens, usage.reasoningTokensKnown)
                             },
                             unknownOutputEstimateTokens = adaptivePlan.outputTokensPerAgent,
                             onUnknownUsage = { agentId, taskId, actualProvider, estimatedInput, estimatedOutput ->
@@ -2279,7 +2279,7 @@ class MainActivity : Activity() {
                                     this, actualProvider.id, actualProvider.model, agentId, taskId,
                                     estimatedInput, estimatedOutput, status = "UNAVAILABLE",
                                     baseUrl = actualProvider.baseUrl, reservationId = budgetPlan.reservationId,
-                                    idempotencyKey = "team:$taskId:${actualProvider.id}"
+                                    idempotencyKey = pl.aimasterpro.app.core.StableIdentifier.create("team", taskId, actualProvider.id)
                                 )
                             },
                             rankProviders = { candidates -> pl.aimasterpro.app.core.ModelHealthTracker.rank(this, candidates) },
@@ -2495,7 +2495,7 @@ class MainActivity : Activity() {
                                             this, actualProvider.id, actualProvider.model, agentId, taskId,
                                             usage.inputTokens, usage.outputTokens, usage.reasoningTokens,
                                             usage.cachedTokens, usage.status, actualProvider.baseUrl, reviewBudget.reservationId,
-                                            "team:$taskId:${actualProvider.id}", usage.cacheWriteTokens, usage.cacheWrite1hTokens,
+                                            pl.aimasterpro.app.core.StableIdentifier.create("team", taskId, actualProvider.id), usage.cacheWriteTokens, usage.cacheWrite1hTokens,
                                             usage.reasoningTokensKnown
                                         )
                                     },
@@ -2505,7 +2505,7 @@ class MainActivity : Activity() {
                                             this, actualProvider.id, actualProvider.model, agentId, taskId,
                                             estimatedInput, estimatedOutput, status = "UNAVAILABLE",
                                             baseUrl = actualProvider.baseUrl, reservationId = reviewBudget.reservationId,
-                                            idempotencyKey = "team:$taskId:${actualProvider.id}"
+                                            idempotencyKey = pl.aimasterpro.app.core.StableIdentifier.create("team", taskId, actualProvider.id)
                                         )
                                     },
                                     rankProviders = { candidates -> pl.aimasterpro.app.core.ModelHealthTracker.rank(this, candidates) },
@@ -6423,7 +6423,7 @@ class MainActivity : Activity() {
                                 this, actualProvider.id, actualProvider.model, agentId, taskId,
                                 usage.inputTokens, usage.outputTokens, usage.reasoningTokens,
                                 usage.cachedTokens, usage.status, actualProvider.baseUrl, reviewBudget.reservationId,
-                                "team:$taskId:${actualProvider.id}", usage.cacheWriteTokens, usage.cacheWrite1hTokens,
+                                pl.aimasterpro.app.core.StableIdentifier.create("team", taskId, actualProvider.id), usage.cacheWriteTokens, usage.cacheWrite1hTokens,
                                 usage.reasoningTokensKnown
                             )
                         },
@@ -6433,7 +6433,7 @@ class MainActivity : Activity() {
                                 this, actualProvider.id, actualProvider.model, agentId, taskId,
                                 estimatedInput, estimatedOutput, status = "UNAVAILABLE",
                                 baseUrl = actualProvider.baseUrl, reservationId = reviewBudget.reservationId,
-                                idempotencyKey = "team:$taskId:${actualProvider.id}"
+                                idempotencyKey = pl.aimasterpro.app.core.StableIdentifier.create("team", taskId, actualProvider.id)
                             )
                         },
                         rankProviders = { candidates -> pl.aimasterpro.app.core.ModelHealthTracker.rank(this, candidates) },
