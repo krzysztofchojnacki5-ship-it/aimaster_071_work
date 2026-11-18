@@ -106,7 +106,7 @@ class TeamRunEngineNetworkTest {
                     assertEquals("checkpoint-task", task.id)
                     assertEquals(config.id, actual.id)
                     assertTrue(input > 0L)
-                    assertEquals("team:checkpoint-task:${config.id}", key)
+                    assertEquals(pl.aimasterpro.app.core.StableIdentifier.create("team", "checkpoint-task", config.id), key)
                     assertEquals(4_096L, output)
                     true
                 },
