@@ -41,4 +41,12 @@ class CommunicationLogSanitizerTest {
             .forEach { assertFalse("Credential leaked: $it", output.contains(it)) }
         assertTrue(output.contains("[REDACTED]"))
     }
+
+    @Test
+    fun redactsPasswordsEmbeddedInUrlUserInfo() {
+        val input = "Endpoint: https://service-user:url-password-secret@example.invalid/v1"
+        val output = CommunicationLogSanitizer.sanitize(input)
+        assertFalse(output.contains("url-password-secret"))
+        assertTrue(output.contains("https://service-user:[REDACTED]@example.invalid/v1"))
+    }
 }
