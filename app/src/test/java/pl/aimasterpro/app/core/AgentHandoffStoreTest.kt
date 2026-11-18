@@ -515,4 +515,17 @@ class AgentHandoffStoreTest {
         assertTrue(records === AgentHandoffStore.messagesWithRoomForOne(records))
     }
 
+    @Test fun stableHandoffIdDistinguishesLongTaskAndAgentIdentifiers() {
+        val sharedTaskPrefix = "task".repeat(20)
+        val sharedAgentPrefix = "agent".repeat(10)
+        val first = StableIdentifier.create("handoff", "${sharedTaskPrefix}-one", "7", "${sharedAgentPrefix}-a", "${sharedAgentPrefix}-b")
+        val second = StableIdentifier.create("handoff", "${sharedTaskPrefix}-two", "7", "${sharedAgentPrefix}-a", "${sharedAgentPrefix}-b")
+        val third = StableIdentifier.create("handoff", "${sharedTaskPrefix}-one", "7", "${sharedAgentPrefix}-c", "${sharedAgentPrefix}-b")
+
+        assertNotEquals(first, second)
+        assertNotEquals(first, third)
+        assertEquals(first, StableIdentifier.create("handoff", "${sharedTaskPrefix}-one", "7", "${sharedAgentPrefix}-a", "${sharedAgentPrefix}-b"))
+        assertTrue(first.length <= 120)
+    }
+
 }
