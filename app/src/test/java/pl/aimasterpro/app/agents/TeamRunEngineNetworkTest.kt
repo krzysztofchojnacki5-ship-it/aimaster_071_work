@@ -75,9 +75,11 @@ class TeamRunEngineNetworkTest {
             assertTrue("Expected parallel execution", peakParallel.get() > 1)
             assertTrue("Parallel requests must remain capped at four", peakParallel.get() <= 4)
             assertTrue(results.first { it.agentId == "accessibility-specialist" }.report.contains("HTTP 500"))
-            assertTrue("Each provider call must log the outbound request", communicationLog.any {
-                it.contains("[REQUEST]") && it.contains("--- USER ---") && it.contains("Return short report")
+            assertTrue("Each provider call must log request metadata", communicationLog.any {
+                it.contains("[REQUEST]") && it.contains("User prompt: pominięty")
             })
+            assertTrue("Request diagnostics must never persist system or user prompt text",
+                communicationLog.none { it.contains("Return short report") || it.contains("AKTYWNY TRYB:") })
             assertTrue("Successful agent responses must be logged in full", communicationLog.any {
                 it.contains("[REPORT]") && it.contains("agent-report")
             })
