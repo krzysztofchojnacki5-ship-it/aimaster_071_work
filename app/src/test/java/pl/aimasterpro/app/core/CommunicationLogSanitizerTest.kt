@@ -49,4 +49,15 @@ class CommunicationLogSanitizerTest {
         assertFalse(output.contains("url-password-secret"))
         assertTrue(output.contains("https://service-user:[REDACTED]@example.invalid/v1"))
     }
+
+    @Test
+    fun redactsPemPrivateKeyBlocksAcrossMultipleLines() {
+        val privateKey = """-----BEGIN PRIVATE KEY-----
+            MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcw
+            private-key-material-secret
+            -----END PRIVATE KEY-----""".trimIndent()
+        val output = CommunicationLogSanitizer.sanitize("credential=$privateKey")
+        assertFalse(output.contains("private-key-material-secret"))
+        assertTrue(output.contains("[REDACTED PRIVATE KEY]"))
+    }
 }
