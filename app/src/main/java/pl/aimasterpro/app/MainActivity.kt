@@ -2697,7 +2697,8 @@ class MainActivity : Activity() {
                             providerId = safeConfig.id,
                             baseUrl = safeConfig.baseUrl,
                             modelName = safeConfig.model,
-                            estimatedInputTokens = ((masterSynthesisSystem.length + autonomousSynthesisPrompt.length + 2) / 3).toLong(),
+                            estimatedInputTokens = ((masterSynthesisSystem.length.toLong() + autonomousSynthesisPrompt.length.toLong() +
+                                requestConversationHistory.sumOf { it.content.length.toLong() } + 2L) / 3L),
                             estimatedOutputTokens = 4_096L
                         ))
                     )
@@ -2721,7 +2722,8 @@ class MainActivity : Activity() {
                             AgentRole.MASTER.name,
                             chatId,
                             requestScope,
-                            synthesisBudget.reservationId
+                            synthesisBudget.reservationId,
+                            conversationHistory = requestConversationHistory
                         )
                     } finally {
                         pl.aimasterpro.app.core.ApiTokenTracker.releaseBatchReservation(synthesisBudget.reservationId)
