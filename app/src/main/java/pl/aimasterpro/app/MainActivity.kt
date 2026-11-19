@@ -7377,6 +7377,24 @@ class MainActivity : Activity() {
                 val relatedEvents = queue.events.filter { it.taskId == task.id }.takeLast(5).asReversed()
                     .joinToString("\n") { "${it.actor} • ${it.fromStatus.ifBlank { "—" }} → ${it.toStatus} • ${it.detail}" }
                 val box = card("${task.title}  •  P${task.priority}", "Status: ${task.status}\nID: ${task.id}\nCel: ${task.objective}\nAgenci: $assigned\nZależności: $deps\nBieżący krok: ${task.currentStep}\nAktualizacja: $stamp")
+                if (task.assignedAgentIds.isNotEmpty() && task.runId > 0) {
+                    val reportIds = task.assignedAgentIds.filterTo(mutableSetOf()) { agentId ->
+                        pl.aimasterpro.app.core.TaskResultArchive.getExecution(this, task.id, agentId, task.runId) != null
+                    }
+                    val agentStates = pl.aimasterpro.app.core.TaskRunObservability.forTask(
+                        task, queue.events, checkpoints, reportIds, System.currentTimeMillis()
+                    )
+                    val progressText = agentStates.joinToString("\n\n") { state ->
+                        val updated = if (state.updatedAt > 0L) java.text.SimpleDateFormat(
+                            "dd.MM HH:mm:ss", java.util.Locale.getDefault()
+                        ).format(java.util.Date(state.updatedAt)) else "brak danych"
+                        val freshness = if (state.stale) " • BRAK ŚWIEŻEGO POSTĘPU" else ""
+                        val report = if (state.reportAvailable) " • RAPORT ZAPISANY" else ""
+                        "${state.agentId}: ${state.status}$freshness$report\n${state.detail}\nAktualizacja: $updated" +
+                            if (state.providerId.isNotBlank() || state.model.isNotBlank()) "\nModel: ${state.providerId}/${state.model}" else ""
+                    }
+                    card("POSTĘP AGENTÓW • PRZEBIEG ${task.runId}", progressText)
+                }
                 if (task.runId > 0 && task.assignedAgentIds.isNotEmpty()) {
                     val archive = pl.aimasterpro.app.core.TaskResultArchive
                     if (!archive.isArchiveReadable(this)) {
