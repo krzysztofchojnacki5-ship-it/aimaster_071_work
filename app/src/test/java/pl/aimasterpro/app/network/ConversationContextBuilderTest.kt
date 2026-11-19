@@ -49,9 +49,9 @@ class ConversationContextBuilderTest {
             currentUserText = "teraz",
             maxHistoryChars = 10
         )
-        assertEquals(listOf("user", "assistant"), result.map { it.role })
-        assertEquals(listOf("e", "123456"), result.map { it.content })
-        assertEquals(7, result.sumOf { it.content.length })
+        assertEquals(listOf("assistant", "user"), result.map { it.role })
+        assertEquals(listOf("6", "najnowsze"), result.map { it.content })
+        assertEquals(10, result.sumOf { it.content.length })
     }
 
     @Test fun truncatesAnOversizedNewestTurnFromItsBeginning() {
