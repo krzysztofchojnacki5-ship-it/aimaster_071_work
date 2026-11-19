@@ -337,14 +337,15 @@ class ProviderClient(
     }
 
     fun chat(config: ProviderConfig, systemPrompt: String, userText: String, attachmentMime: String = "", attachmentBase64: String = "",
-             scope: RequestScope? = null): ChatResponse {
+             scope: RequestScope? = null, conversationHistory: List<ConversationTurn> = emptyList()): ChatResponse {
         val requestScope = scope
         if (isCancelled(requestScope)) throw cancelledException()
         requestScopeLocal.set(requestScope)
         allowInsecureLanOllamaLocal.set(config.allowInsecureLanOllama)
         return try {
             if (isCancelled(scope)) throw cancelledException()
-            chatInternal(config, systemPrompt, userText, attachmentMime, attachmentBase64)
+            val boundedHistory = ConversationContextBuilder.build(conversationHistory, userText)
+            chatInternal(config, systemPrompt, userText, attachmentMime, attachmentBase64, boundedHistory)
         } catch (e: ProviderException) {
             // Schema/shape validation happens after a successful HTTP response; that POST may
             // already be billable even though the provider payload cannot be consumed.
@@ -404,7 +405,8 @@ class ProviderClient(
         return reportedTotal == null || reportedTotal == sum
     }
 
-    private fun chatInternal(config: ProviderConfig, systemPrompt: String, userText: String, attachmentMime: String, attachmentBase64: String): ChatResponse = when (config.kind) {
+    private fun chatInternal(config: ProviderConfig, systemPrompt: String, userText: String, attachmentMime: String, attachmentBase64: String,
+                             history: List<ConversationTurn>): ChatResponse = when (config.kind) {
         ProviderKind.ANTHROPIC -> {
             val root = config.baseUrl.trimEnd('/').ifBlank { "https://api.anthropic.com/v1" }
             val endpoint = if (root.endsWith("/messages")) root else "$root/messages"
@@ -416,7 +418,11 @@ class ProviderClient(
                     else -> throw ProviderException(null, "Ten typ załącznika nie jest obsługiwany przez Anthropic.", category = "UNSUPPORTED_ATTACHMENT")
                 }
             }
-            val messages = JSONArray().put(JSONObject().put("role", "user").put("content", contentBlocks))
+            val messages = JSONArray()
+            history.forEach { turn ->
+                messages.put(JSONObject().put("role", turn.role).put("content", turn.content))
+            }
+            messages.put(JSONObject().put("role", "user").put("content", contentBlocks))
             val result = requestWithRetry(endpoint, "POST", config.apiKey,
                 JSONObject().put("model", config.model).put("max_tokens", 4096).put("system", systemPrompt).put("messages", messages),
                 authHeader = "x-api-key", extraHeaders = mapOf("anthropic-version" to "2023-06-01"))
@@ -456,7 +462,7 @@ class ProviderClient(
             val realUsage = metadataObjectsValid && cacheBreakdownValid && validUsageBreakdown(
                 input, output, null, cached, reasoning, cacheWrite = cacheWrite, cacheWrite1h = cacheWrite1h
             )
-            val finalInput = if (realUsage) input!! else (systemPrompt.length + userText.length) / 4.toLong()
+            val finalInput = if (realUsage) input!! else (systemPrompt.length.toLong() + history.sumOf { it.content.length.toLong() } + userText.length.toLong()) / 4L
             val finalOutput = if (realUsage) output!! else text.length / 4.toLong()
             val finalTotal = if (realUsage) Math.addExact(finalInput, finalOutput) else finalInput + finalOutput
             val finalCached = if (realUsage) cached!! else 0L
@@ -478,7 +484,10 @@ class ProviderClient(
             }
             val messages = JSONArray()
                 .put(JSONObject().put("role", "system").put("content", systemPrompt))
-                .put(JSONObject().put("role", "user").put("content", userContent))
+            history.forEach { turn ->
+                messages.put(JSONObject().put("role", turn.role).put("content", turn.content))
+            }
+            messages.put(JSONObject().put("role", "user").put("content", userContent))
             val result = requestWithRetry(endpoint, "POST", config.apiKey,
                 JSONObject().put("model", config.model).put("messages", messages))
 
@@ -521,7 +530,7 @@ class ProviderClient(
                     optionalJsonObjectFieldIsValid(usageObj, "completion_tokens_details")
             val realUsage = metadataObjectsValid && validUsageBreakdown(input, output, reportedTotal, cached, reasoning, reportedTotalFieldValid, cacheWrite, cacheWrite1h)
 
-            val finalInput = if (realUsage) input!! else (systemPrompt.length + userText.length) / 4.toLong()
+            val finalInput = if (realUsage) input!! else (systemPrompt.length.toLong() + history.sumOf { it.content.length.toLong() } + userText.length.toLong()) / 4L
             val finalOutput = if (realUsage) output!! else text.length / 4.toLong()
             val finalTotal = if (realUsage) Math.addExact(finalInput, finalOutput) else finalInput + finalOutput
             val finalCached = if (realUsage) cached!! else 0L
@@ -539,7 +548,10 @@ class ProviderClient(
                 val endpoint = if (root.endsWith("/chat/completions")) root else "$root/chat/completions"
                 val messages = JSONArray()
                     .put(JSONObject().put("role", "system").put("content", systemPrompt))
-                    .put(JSONObject().put("role", "user").put("content", userText))
+                history.forEach { turn ->
+                    messages.put(JSONObject().put("role", turn.role).put("content", turn.content))
+                }
+                messages.put(JSONObject().put("role", "user").put("content", userText))
                 val result = requestWithRetry(endpoint, "POST", config.apiKey,
                     JSONObject().put("model", config.model).put("messages", messages),
                     authHeader = "Authorization")
@@ -562,7 +574,7 @@ class ProviderClient(
                     optionalJsonObjectFieldIsValid(usageObj, "prompt_tokens_details") &&
                         optionalJsonObjectFieldIsValid(usageObj, "completion_tokens_details")
                 val realUsage = metadataObjectsValid && validUsageBreakdown(input, output, reportedTotal, cached, reasoning, reportedTotalFieldValid, cacheWrite, cacheWrite1h)
-                val finalInput = if (realUsage) input!! else (systemPrompt.length + userText.length) / 4L
+                val finalInput = if (realUsage) input!! else (systemPrompt.length.toLong() + history.sumOf { it.content.length.toLong() } + userText.length.toLong()) / 4L
                 val finalOutput = if (realUsage) output!! else text.length / 4L
                 val finalTotal = if (realUsage) Math.addExact(finalInput, finalOutput) else finalInput + finalOutput
                 val finalCached = if (realUsage) cached!! else 0L
@@ -577,12 +589,27 @@ class ProviderClient(
                     "?key=${java.net.URLEncoder.encode(normalizedKey, "UTF-8")}"
                 } else ""
                 val endpoint = "$root/models/${config.model}:generateContent$keyQuery"
-                val parts = JSONArray().put(JSONObject().put("text", "$systemPrompt\n\nUżytkownik: $userText"))
+                val contents = JSONArray()
+                history.forEach { turn ->
+                    val geminiRole = if (turn.role == "assistant") "model" else "user"
+                    contents.put(
+                        JSONObject().put("role", geminiRole)
+                            .put("parts", JSONArray().put(JSONObject().put("text", turn.content)))
+                    )
+                }
+                val parts = JSONArray().put(JSONObject().put("text", userText))
                 if (attachmentBase64.isNotBlank()) {
                     if (!(attachmentMime.startsWith("image/") || attachmentMime == "application/pdf")) throw ProviderException(null, "Gemini: obsługiwane załączniki to obrazy i PDF.", category = "UNSUPPORTED_ATTACHMENT")
                     parts.put(JSONObject().put("inlineData", JSONObject().put("mimeType", attachmentMime).put("data", attachmentBase64)))
                 }
-                val result = requestWithRetry(endpoint, "POST", "", JSONObject().put("contents", JSONArray().put(JSONObject().put("parts", parts))))
+                contents.put(JSONObject().put("role", "user").put("parts", parts))
+                val systemInstruction = JSONObject().put(
+                    "parts", JSONArray().put(JSONObject().put("text", systemPrompt))
+                )
+                val requestBody = JSONObject()
+                    .put("systemInstruction", systemInstruction)
+                    .put("contents", contents)
+                val result = requestWithRetry(endpoint, "POST", "", requestBody)
                 val text = result.optJSONArray("candidates")?.optJSONObject(0)?.optJSONObject("content")?.optJSONArray("parts")?.optJSONObject(0)?.optString("text").orEmpty()
 
                 val meta = result.optJSONObject("usageMetadata")
@@ -596,7 +623,7 @@ class ProviderClient(
                     meta?.isNull("thoughtsTokenCount") == false && reasoning != null
                 val realUsage = validUsageBreakdown(input, output, total, cached, reasoning, totalFieldValid)
 
-                val finalInput = if (realUsage) input!! else (systemPrompt.length + userText.length) / 4.toLong()
+                val finalInput = if (realUsage) input!! else (systemPrompt.length.toLong() + history.sumOf { it.content.length.toLong() } + userText.length.toLong()) / 4L
                 val finalOutput = if (realUsage) output!! else text.length / 4.toLong()
                 val finalTotal = if (realUsage) Math.addExact(finalInput, finalOutput) else finalInput + finalOutput
                 val finalCached = if (realUsage) cached!! else 0L
