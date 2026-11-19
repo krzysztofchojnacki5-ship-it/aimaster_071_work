@@ -1618,7 +1618,8 @@ class MainActivity : Activity() {
 
     private fun chatWithFallback(config: ProviderConfig, systemPrompt: String, userText: String, mime: String, b64: String,
                                  requestTaskId: String, requestAgentId: String, requestChatId: String,
-                                 requestScope: ProviderClient.RequestScope, budgetReservationId: String = ""): ChatResponse {
+                                 requestScope: ProviderClient.RequestScope, budgetReservationId: String = "",
+                                 conversationHistory: List<pl.aimasterpro.app.network.ConversationTurn> = emptyList()): ChatResponse {
         check(agentAssignmentsHealthy) {
             "Przypisania agentów nie zostały bezpiecznie uzgodnione. Żądanie API zostało zablokowane."
         }
@@ -1644,7 +1645,8 @@ class MainActivity : Activity() {
         var ownedBudgetReservationId = ""
         var effectiveBudgetReservationId = budgetReservationId
         if (budgetReservationId.isBlank()) {
-            val estimatedInput = (systemPrompt.length.toLong() + userText.length.toLong() + 2L) / 3L
+            val boundedHistory = pl.aimasterpro.app.network.ConversationContextBuilder.build(conversationHistory, userText)
+            val estimatedInput = (systemPrompt.length.toLong() + boundedHistory.sumOf { it.content.length.toLong() } + userText.length.toLong() + 2L) / 3L
             val directBudget = pl.aimasterpro.app.core.ApiTokenTracker.planBatch(
                 this,
                 listOf(pl.aimasterpro.app.core.BudgetRequest(
@@ -1670,7 +1672,8 @@ class MainActivity : Activity() {
         var lastErr: Throwable? = null
         var requestAttempt = 0
         var budgetedProvider = if (budgetReservationId.isBlank()) ordered.first() else config
-        val estimatedRequestInput = (systemPrompt.length.toLong() + userText.length.toLong() + 2L) / 3L
+        val boundedHistory = pl.aimasterpro.app.network.ConversationContextBuilder.build(conversationHistory, userText)
+        val estimatedRequestInput = (systemPrompt.length.toLong() + boundedHistory.sumOf { it.content.length.toLong() } + userText.length.toLong() + 2L) / 3L
         try {
             for (cfg in ordered) {
                 if (!isProviderAllowedForRouting(cfg)) {
@@ -1740,7 +1743,7 @@ class MainActivity : Activity() {
                         throw ProviderException(null, "Nie udało się trwale zapisać checkpointu żądania; HTTP nie został wysłany.", category = "CHECKPOINT_FAILED")
                     }
                     modelCallStartedAt = System.currentTimeMillis()
-                    val res = client.chat(cfg, systemPrompt, userText, mime, b64, requestScope)
+                    val res = client.chat(cfg, systemPrompt, userText, mime, b64, requestScope, boundedHistory)
                     // A successful provider response may already be billable. Local telemetry or
                     // persistence failures must not be treated as provider failures or trigger fallback.
                     runCatching {
@@ -1751,7 +1754,8 @@ class MainActivity : Activity() {
                     runCatching { pl.aimasterpro.app.core.ProviderQuotaScheduler.markSuccess(quotaKey) }
                     runCatching { pl.aimasterpro.app.core.ProviderCooldownStore.markSuccess(this, cfg) }
                     runCatching {
-                        TokenTracker.recordUsage(this, cfg.id, systemPrompt + "\n" + userText, res.text, "OK", "Aktywny / Działa")
+                        val historyText = boundedHistory.joinToString("\n") { "${it.role}: ${it.content}" }
+                        TokenTracker.recordUsage(this, cfg.id, systemPrompt + "\n" + historyText + "\n" + userText, res.text, "OK", "Aktywny / Działa")
                     }.onFailure { error ->
                         runCatching { logAgentForChat(requestChatId, "[LOCAL USAGE WARNING] Nie zapisano lokalnej historii wywołania: ${error.message ?: error.javaClass.simpleName}") }
                     }
@@ -1932,6 +1936,12 @@ class MainActivity : Activity() {
         hideKeyboard(input)
 
         val chatId = currentChatId
+        // Snapshot only the already completed visible turns for this chat. The pending user
+        // message was persisted above and is deliberately excluded; no worker reads global UI
+        // state after a chat switch.
+        val requestConversationHistory = messages.dropLast(1).map {
+            pl.aimasterpro.app.network.ConversationTurn(it.first, it.second)
+        }
         val requestId = UUID.randomUUID().toString()
         val requestTaskId = "chat-$chatId-$requestId"
         val gen = synchronized(masterJournalLifecycleLock) {
@@ -2073,7 +2083,8 @@ class MainActivity : Activity() {
                             requestTaskId,
                             chosenRole.name,
                             chatId,
-                            requestScope
+                            requestScope,
+                            conversationHistory = requestConversationHistory
                         )
                         actualProviderId = resp.providerId.ifBlank { safeConfig.id }
                         actualModel = resp.model.ifBlank { safeConfig.model }
@@ -2728,7 +2739,7 @@ class MainActivity : Activity() {
                     val mode = modeForRequest
                     val memoryContext = pl.aimasterpro.app.core.AiMemoryStore.contextString(this, prompt, maxChars = 2_200)
                     val singlePrompt = "$prompt\n\nPamięć ciągła:\n$memoryContext"
-                    val resp = chatWithFallback(safeConfig, AgentPrompts.systemPrompt(chosenRole) + "\n\nAKTYWNY TRYB: ${mode.label}\n${mode.systemInstruction}", singlePrompt, sendMime, sendBase64, requestTaskId, chosenRole.name, chatId, requestScope)
+                    val resp = chatWithFallback(safeConfig, AgentPrompts.systemPrompt(chosenRole) + "\n\nAKTYWNY TRYB: ${mode.label}\n${mode.systemInstruction}", singlePrompt, sendMime, sendBase64, requestTaskId, chosenRole.name, chatId, requestScope, conversationHistory = requestConversationHistory)
                     actualProviderId = resp.providerId.ifBlank { safeConfig.id }
                     actualModel = resp.model.ifBlank { safeConfig.model }
                     resp.text
