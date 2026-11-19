@@ -7454,7 +7454,7 @@ class MainActivity : Activity() {
                             list.addView(row)
                             list.addView(View(this).apply { setBackgroundColor(muted); layoutParams = LinearLayout.LayoutParams(-1, dp(1)) })
                         }
-                        root.addView(ScrollView(this).apply { addView(list) }, LinearLayout.LayoutParams(-1, 0, 1f))
+                        root.addView(ScrollView(this).apply { addView(list) }, LinearLayout.LayoutParams(-1, dp(480)))
                         val dialog = AlertDialog.Builder(this).setTitle("Przydział: ${task.title}")
                             .setView(root).setNegativeButton("Anuluj", null)
                             .setPositiveButton("Zapisz przydział", null).create()
@@ -7596,14 +7596,14 @@ class MainActivity : Activity() {
         }
         val unknown = config != null && !free && entry != null && isUnknownPriceCatalogEntry(entry)
         val approved = config != null && ready && unknown && isApprovedUnknownPriceConfig(config)
-        val status = when {
-            config == null -> pl.aimasterpro.app.core.TaskAgentAvailability.Status.NOT_CONFIGURED
-            !ready -> pl.aimasterpro.app.core.TaskAgentAvailability.Status.NOT_READY
-            free -> pl.aimasterpro.app.core.TaskAgentAvailability.Status.FREE_READY
-            approved -> pl.aimasterpro.app.core.TaskAgentAvailability.Status.UNKNOWN_PRICE_APPROVED
-            unknown -> pl.aimasterpro.app.core.TaskAgentAvailability.Status.UNKNOWN_PRICE_UNAPPROVED
-            else -> pl.aimasterpro.app.core.TaskAgentAvailability.Status.PAID_OR_UNVERIFIED
-        }
+        val status = pl.aimasterpro.app.core.TaskAgentAvailability.classify(
+            agentId = spec.id,
+            configured = config != null,
+            ready = ready,
+            verifiedFree = free,
+            unknownPrice = unknown,
+            unknownPriceApproved = approved
+        )
         val detail = when (status) {
             pl.aimasterpro.app.core.TaskAgentAvailability.Status.FREE_READY -> "Cena wejścia i wyjścia potwierdzona jako 0."
             pl.aimasterpro.app.core.TaskAgentAvailability.Status.UNKNOWN_PRICE_APPROVED -> "Cena nieznana; zapisana zgoda. To nie jest potwierdzony model darmowy."
