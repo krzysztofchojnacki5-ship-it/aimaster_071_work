@@ -2109,7 +2109,7 @@ class MainActivity : Activity() {
                             id = "task-$chatId-$requestId-${index + 1}-${spec.id}",
                             agentId = spec.id,
                             goal = "Niezależna analiza zadania z perspektywy: ${spec.name}",
-                            prompt = "Zadanie użytkownika:\\n$prompt\\n\\nPamięć i zatwierdzone reguły:\\n$memoryBlock\\n\\nWykonaj specjalistyczną analizę z perspektywy swojej roli. Podaj konkretne ustalenia, ryzyka, niewiadome i zalecane działania. Wnioski z pamięci traktuj jako wskazówki, a nie niepodważalne fakty.",
+                            prompt = "Zadanie użytkownika:\n$prompt\n\nPamięć i zatwierdzone reguły:\n$memoryBlock\n\nWykonaj specjalistyczną analizę z perspektywy swojej roli. Podaj konkretne ustalenia, ryzyka, niewiadome i zalecane działania. Wnioski z pamięci traktuj jako wskazówki, a nie niepodważalne fakty.",
                             writeScope = emptyList()
                         )
                     }
@@ -2428,12 +2428,12 @@ class MainActivity : Activity() {
                             )
                         )
                         }
-                        logAgentForChat(chatId, "${result.agentId}: ${result.status}${if (result.providerId == "CACHE") " • CACHE" else ""} • ${result.report.take(180).replace("\\n", " ")}")
+                        logAgentForChat(chatId, "${result.agentId}: ${result.status}${if (result.providerId == "CACHE") " • CACHE" else ""} • ${result.report.take(180).replace("\n", " ")}")
                     }
                     val completed = results.filter { it.status == pl.aimasterpro.app.agents.TeamTaskResult.Status.COMPLETED }
                     if (completed.isEmpty()) {
                         throw IllegalStateException("Żaden agent nie zwrócił poprawnego raportu. " +
-                            results.joinToString("\\n") { "${it.agentId}: ${it.report}" })
+                            results.joinToString("\n") { "${it.agentId}: ${it.report}" })
                     }
                     // Stage 2: real peer review. Reviewers receive another agent's actual report
                     // and return an independent critique through a separate provider request.
@@ -7422,7 +7422,7 @@ class MainActivity : Activity() {
                         val selected = BooleanArray(catalog.size) { catalog[it].id in task.assignedAgentIds }
                         val root = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(12), dp(8), dp(12), dp(8)) }
                         root.addView(TextView(this).apply {
-                            text = "🟢 DARMOWY I GOTOWY • 🟡 CENA NIEZNANA • 🔴 ZABLOKOWANY / NIEGOTOWY\\nZielony oznacza potwierdzoną cenę 0. Status jest wspólny dla wszystkich agentów przypisanych do tej samej roli."
+                            text = "🟢 DARMOWY I GOTOWY • 🟡 CENA NIEZNANA • 🔴 ZABLOKOWANY / NIEGOTOWY\nZielony oznacza potwierdzoną cenę 0. Status jest wspólny dla wszystkich agentów przypisanych do tej samej roli."
                             setTextColor(white); textSize = 12f; setPadding(0, 0, 0, dp(8))
                         })
                         val states = catalog.map { taskAgentAvailability(it) }
@@ -7448,7 +7448,7 @@ class MainActivity : Activity() {
                                 setOnCheckedChangeListener { _, checked -> selected[index] = checked }
                             })
                             row.addView(TextView(this).apply {
-                                text = "${agent.category} • rola: ${role.label}\\n${agent.responsibility}\\nModel: ${state.providerName} / ${state.model}\\n${state.detail}"
+                                text = "${agent.category} • rola: ${role.label}\n${agent.responsibility}\nModel: ${state.providerName} / ${state.model}\n${state.detail}"
                                 setTextColor(muted); textSize = 11f; setPadding(dp(32), 0, dp(4), 0)
                             })
                             list.addView(row)
@@ -7661,12 +7661,12 @@ class MainActivity : Activity() {
         if (blockedAgents.isNotEmpty() ||
             configByAgent.values.any { it == null || !providerReady(it) || !isProviderAllowedForRouting(it) }) {
             activeQueueTaskId = ""
-            val details = blockedAgents.joinToString("\\n\\n") { spec ->
+            val details = blockedAgents.joinToString("\n\n") { spec ->
                 val state = availabilityByAgent.getValue(spec.id)
-                "• ${spec.name} — ${state.status.label}\\n  Rola: ${pl.aimasterpro.app.agents.AgentProviderRouting.roleFor(spec).label}\\n  ${state.providerName} / ${state.model}\\n  ${state.detail}"
+                "• ${spec.name} — ${state.status.label}\n  Rola: ${pl.aimasterpro.app.agents.AgentProviderRouting.roleFor(spec).label}\n  ${state.providerName} / ${state.model}\n  ${state.detail}"
             }.ifBlank { "Profil zmienił stan między podglądem a uruchomieniem." }
             AlertDialog.Builder(this).setTitle("Zespół nie został uruchomiony")
-                .setMessage("Nie wysłano żadnych żądań. Popraw przypisania modeli:\\n\\n$details")
+                .setMessage("Nie wysłano żadnych żądań. Popraw przypisania modeli:\n\n$details")
                 .setPositiveButton("Rozumiem", null).show()
             return
         }
