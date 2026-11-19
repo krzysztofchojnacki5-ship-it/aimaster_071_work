@@ -418,11 +418,7 @@ class ProviderClient(
                     else -> throw ProviderException(null, "Ten typ załącznika nie jest obsługiwany przez Anthropic.", category = "UNSUPPORTED_ATTACHMENT")
                 }
             }
-            val messages = JSONArray()
-            history.forEach { turn ->
-                messages.put(JSONObject().put("role", turn.role).put("content", turn.content))
-            }
-            messages.put(JSONObject().put("role", "user").put("content", contentBlocks))
+            val messages = ProviderConversationPayloads.anthropic(history, contentBlocks)
             val result = requestWithRetry(endpoint, "POST", config.apiKey,
                 JSONObject().put("model", config.model).put("max_tokens", 4096).put("system", systemPrompt).put("messages", messages),
                 authHeader = "x-api-key", extraHeaders = mapOf("anthropic-version" to "2023-06-01"))
@@ -482,12 +478,7 @@ class ProviderClient(
                 JSONArray().put(JSONObject().put("type", "text").put("text", userText))
                     .put(JSONObject().put("type", "image_url").put("image_url", JSONObject().put("url", "data:$attachmentMime;base64,$attachmentBase64")))
             }
-            val messages = JSONArray()
-                .put(JSONObject().put("role", "system").put("content", systemPrompt))
-            history.forEach { turn ->
-                messages.put(JSONObject().put("role", turn.role).put("content", turn.content))
-            }
-            messages.put(JSONObject().put("role", "user").put("content", userContent))
+            val messages = ProviderConversationPayloads.openAi(systemPrompt, history, userContent)
             val result = requestWithRetry(endpoint, "POST", config.apiKey,
                 JSONObject().put("model", config.model).put("messages", messages))
 
@@ -546,12 +537,7 @@ class ProviderClient(
             if (root.contains("/openai")) {
                 // Official Google Gemini OpenAI-compatible endpoint: https://generativelanguage.googleapis.com/v1beta/openai/
                 val endpoint = if (root.endsWith("/chat/completions")) root else "$root/chat/completions"
-                val messages = JSONArray()
-                    .put(JSONObject().put("role", "system").put("content", systemPrompt))
-                history.forEach { turn ->
-                    messages.put(JSONObject().put("role", turn.role).put("content", turn.content))
-                }
-                messages.put(JSONObject().put("role", "user").put("content", userText))
+                val messages = ProviderConversationPayloads.openAi(systemPrompt, history, userText)
                 val result = requestWithRetry(endpoint, "POST", config.apiKey,
                     JSONObject().put("model", config.model).put("messages", messages),
                     authHeader = "Authorization")
@@ -589,26 +575,13 @@ class ProviderClient(
                     "?key=${java.net.URLEncoder.encode(normalizedKey, "UTF-8")}"
                 } else ""
                 val endpoint = "$root/models/${config.model}:generateContent$keyQuery"
-                val contents = JSONArray()
-                history.forEach { turn ->
-                    val geminiRole = if (turn.role == "assistant") "model" else "user"
-                    contents.put(
-                        JSONObject().put("role", geminiRole)
-                            .put("parts", JSONArray().put(JSONObject().put("text", turn.content)))
-                    )
-                }
                 val parts = JSONArray().put(JSONObject().put("text", userText))
                 if (attachmentBase64.isNotBlank()) {
                     if (!(attachmentMime.startsWith("image/") || attachmentMime == "application/pdf")) throw ProviderException(null, "Gemini: obsługiwane załączniki to obrazy i PDF.", category = "UNSUPPORTED_ATTACHMENT")
                     parts.put(JSONObject().put("inlineData", JSONObject().put("mimeType", attachmentMime).put("data", attachmentBase64)))
                 }
-                contents.put(JSONObject().put("role", "user").put("parts", parts))
-                val systemInstruction = JSONObject().put(
-                    "parts", JSONArray().put(JSONObject().put("text", systemPrompt))
-                )
-                val requestBody = JSONObject()
-                    .put("systemInstruction", systemInstruction)
-                    .put("contents", contents)
+                val contents = ProviderConversationPayloads.geminiContents(history, parts)
+                val requestBody = ProviderConversationPayloads.geminiNativeRequest(systemPrompt, contents)
                 val result = requestWithRetry(endpoint, "POST", "", requestBody)
                 val text = result.optJSONArray("candidates")?.optJSONObject(0)?.optJSONObject("content")?.optJSONArray("parts")?.optJSONObject(0)?.optString("text").orEmpty()
 
