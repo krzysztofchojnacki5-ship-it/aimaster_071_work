@@ -1,7 +1,8 @@
-AiFORTeca 0.2 full Android build requested after package 21.
-Source PR: #3
-Source branch: work/aiforteca-0.2-master-agent-foundation
-Source HEAD before CI trigger: 63616ba38f3f69b651c24f5d5f6d13836d23a252
-Required outputs: debug APK; unsigned release APK unless signing secrets are configured and verified.
-Verification: run unit tests, Gradle wrapper validation, assembleDebug and assembleRelease. Do not treat reports or source ZIP as APK.
-Package 21: bounded conversation history, provider payload mapping and chat-scoped MASTER context.
+AiFORTeca 0.2 full Android build requested after package 22.
+Package 22 branch: work/aiforteca-0.2-package-22-task-observability
+Package 22 source HEAD before CI trigger: 0c1d83598c8947777a598d4d52bf3ea3f61b6b30
+Package 22 unit tests: PASS — 1345 tests, 0 failures, 0 errors, 0 skipped; 126 test suites.
+Gradle Wrapper Validation: PASS.
+Required outputs: debug APK; release APK (signed only if signing secrets are configured and verified, otherwise unsigned).
+Verification: run unit tests, verify Gradle wrapper, assembleDebug and assembleRelease. Confirm APK artifacts and metadata. Do not treat reports or source ZIP as APK.
+Package 22 scope: task-run observability projection, agent progress/status UI integration, stale progress handling and regression tests.
