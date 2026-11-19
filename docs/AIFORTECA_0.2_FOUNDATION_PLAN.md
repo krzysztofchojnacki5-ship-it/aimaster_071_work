@@ -193,3 +193,23 @@ Cover unauthorized create/update/delete, scope escape, missing or forged approva
 - Android `assembleDebug`, APK metadata inspection and physical-device checks have not been run in this package; the Android Build/APK cadence remains separate from the unit-test CI cadence.
 - Pull request #3 remains open. Work branch: `work/aiforteca-0.2-master-agent-foundation`; latest code HEAD at this checkpoint: `55db41ccef9266ebeee32fdc56b813d42bd5294c`.
 
+
+
+## Implementation checkpoint — package 21 / reliable conversation context (2026-11-19)
+
+- Base code HEAD: `a46d33512cd9bfd5c93406f59c93a94e96b35a56`.
+- Final code HEAD: `fb8d4b6d10526f1107a164827ae6795069d10351`.
+- Four logical corrections delivered:
+  1. Added `ConversationContextBuilder`: only visible `user`/`assistant` turns are accepted; internal/system/tool events are excluded; the most recent context is retained under a 12,000-character history budget; a pending duplicate current user turn is removed.
+  2. Added provider-specific payload mapping and connected it to all four transports: OpenAI-compatible, Anthropic, Gemini OpenAI-compatible and Gemini Native. Gemini Native now uses `systemInstruction` separately and maps assistant turns to `model`.
+  3. `MainActivity` snapshots completed turns for the exact active chat before starting the worker. The pending message is excluded from the snapshot. The immutable snapshot follows the request even if the user switches chats; no global chat history is read by the worker. History is supplied to direct MASTER/selected-agent requests and the final MASTER synthesis, but not fanned out to specialist tasks.
+  4. Added regression tests for ordering, role filtering, duplicate suppression, context bounds, all provider payload shapes, Gemini role mapping and attachment isolation. History length is included in request budget estimates and local usage input accounting.
+- Files changed: `MainActivity.kt`, `ProviderClient.kt`; added `ConversationContextBuilder.kt`, `ProviderConversationPayloads.kt`, `ConversationContextBuilderTest.kt`, `ProviderConversationPayloadsTest.kt`.
+- Initial CI attempt run `44552018355` exposed a test-fixture issue: four JSON payload tests ran against the Android stub `org.json` implementation without Robolectric. The production Kotlin sources compiled. The tests were corrected to use `RobolectricTestRunner`; no production code was weakened to accommodate the fixture.
+- Final verification on code HEAD `fb8d4b6d10526f1107a164827ae6795069d10351`:
+  - `AiFORTeca Unit Tests` run `44552837544` — SUCCESS.
+  - XML artifact `14542654144`, SHA-256 `55b5de62630e23c6c6045f12fd536e18c806c906c782f090c0786166da9a5213`.
+  - 1,342 tests across 125 suites; 0 failures, 0 errors, 0 skipped.
+  - `Gradle Wrapper Validation` run `44552837439` — SUCCESS.
+- No `assembleDebug`/APK artifact or emulator/device test was run by this unit-test workflow. APK build and manual conversation-retention verification remain pending.
+- Gradle 9.9.0 and AGP 9.4.0 were not changed. PR #3 remains open in Draft state.
