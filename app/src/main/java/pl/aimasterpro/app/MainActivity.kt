@@ -7420,17 +7420,55 @@ class MainActivity : Activity() {
                         val catalog = pl.aimasterpro.app.core.AgentManagerStore.enabledCatalog(this)
                         if (catalog.isEmpty()) { toast("Brak aktywnych agentów albo magazyn katalogu jest niedostępny."); return@action }
                         val selected = BooleanArray(catalog.size) { catalog[it].id in task.assignedAgentIds }
-                        AlertDialog.Builder(this).setTitle("Przydział: ${task.title}")
-                            .setMultiChoiceItems(catalog.map { "${it.name} — ${it.category}" }.toTypedArray(), selected) { _, which, checked ->
-                                selected[which] = checked
-                            }.setNegativeButton("Anuluj", null)
-                            .setPositiveButton("Zapisz przydział") { _, _ ->
+                        val root = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(12), dp(8), dp(12), dp(8)) }
+                        root.addView(TextView(this).apply {
+                            text = "🟢 DARMOWY I GOTOWY • 🟡 CENA NIEZNANA • 🔴 ZABLOKOWANY / NIEGOTOWY\\nZielony oznacza potwierdzoną cenę 0. Status jest wspólny dla wszystkich agentów przypisanych do tej samej roli."
+                            setTextColor(white); textSize = 12f; setPadding(0, 0, 0, dp(8))
+                        })
+                        val states = catalog.map { taskAgentAvailability(it) }
+                        root.addView(TextView(this).apply {
+                            text = "Darmowi i gotowi: ${states.count { it.status == pl.aimasterpro.app.core.TaskAgentAvailability.Status.FREE_READY }} / ${catalog.size}"
+                            setTextColor(orange); textSize = 12f; setPadding(0, 0, 0, dp(8))
+                        })
+                        val list = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+                        catalog.forEachIndexed { index, agent ->
+                            val state = states[index]
+                            val role = pl.aimasterpro.app.agents.AgentProviderRouting.roleFor(agent)
+                            val row = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(4), dp(8), dp(4), dp(8)) }
+                            row.addView(android.widget.CheckBox(this).apply {
+                                text = "${agent.name} • ${state.status.label}"
+                                isChecked = selected[index]
+                                setTextColor(when (state.status) {
+                                    pl.aimasterpro.app.core.TaskAgentAvailability.Status.FREE_READY -> Color.rgb(80, 200, 120)
+                                    pl.aimasterpro.app.core.TaskAgentAvailability.Status.UNKNOWN_PRICE_APPROVED,
+                                    pl.aimasterpro.app.core.TaskAgentAvailability.Status.UNKNOWN_PRICE_UNAPPROVED -> Color.rgb(255, 190, 60)
+                                    else -> Color.rgb(255, 90, 90)
+                                })
+                                textSize = 14f
+                                setOnCheckedChangeListener { _, checked -> selected[index] = checked }
+                            })
+                            row.addView(TextView(this).apply {
+                                text = "${agent.category} • rola: ${role.label}\\n${agent.responsibility}\\nModel: ${state.providerName} / ${state.model}\\n${state.detail}"
+                                setTextColor(muted); textSize = 11f; setPadding(dp(32), 0, dp(4), 0)
+                            })
+                            list.addView(row)
+                            list.addView(View(this).apply { setBackgroundColor(muted); layoutParams = LinearLayout.LayoutParams(-1, dp(1)) })
+                        }
+                        root.addView(ScrollView(this).apply { addView(list) }, LinearLayout.LayoutParams(-1, 0, 1f))
+                        val dialog = AlertDialog.Builder(this).setTitle("Przydział: ${task.title}")
+                            .setView(root).setNegativeButton("Anuluj", null)
+                            .setPositiveButton("Zapisz przydział", null).create()
+                        dialog.setOnShowListener {
+                            dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
                                 val ids = catalog.indices.filter { selected[it] }.map { catalog[it].id }
                                 if (queueStore.assign(this, task.id, ids)) {
+                                    dialog.dismiss()
                                     toast("Zapisano przydział: ${ids.size} agentów.")
                                     showShell("Zadania"); showTasksCenter()
                                 } else toast("Przydział odrzucony. Sprawdź status zadania i aktywność agentów.")
-                            }.show()
+                            }
+                        }
+                        dialog.show()
                     }
                 }
                 if (task.status == pl.aimasterpro.app.core.MasterTaskQueueStore.Status.ASSIGNED) {
@@ -7539,6 +7577,47 @@ class MainActivity : Activity() {
      * Executes a durable queue item through the same provider routing, cost-policy guard,
      * Smart Budget, usage ledger, checkpoints and result archive used by MASTER chat.
      */
+    /** Read-only availability check. It never sends a provider request. */
+    private fun taskAgentAvailability(
+        spec: pl.aimasterpro.app.agents.AgentSpec
+    ): pl.aimasterpro.app.core.TaskAgentAvailability.Snapshot {
+        val role = pl.aimasterpro.app.agents.AgentProviderRouting.roleFor(spec)
+        val assignedId = agentProviders[role.name] ?: resolvedMasterProviderId().orEmpty()
+        val config = loadProvider(assignedId)
+        val ready = providerReady(config)
+        val free = config != null && ready && isVerifiedFreeConfig(config)
+        val baseId = config?.parentProviderId?.ifBlank { config.id }.orEmpty()
+        val entry = config?.let { cfg ->
+            readModelCatalogEntries().firstOrNull {
+                it.providerId == baseId && it.info.id == cfg.model &&
+                    pl.aimasterpro.app.core.ProviderCatalogCachePolicy.normalizeBaseUrl(it.baseUrl) ==
+                    pl.aimasterpro.app.core.ProviderCatalogCachePolicy.normalizeBaseUrl(cfg.baseUrl)
+            }
+        }
+        val unknown = config != null && !free && entry != null && isUnknownPriceCatalogEntry(entry)
+        val approved = config != null && ready && unknown && isApprovedUnknownPriceConfig(config)
+        val status = when {
+            config == null -> pl.aimasterpro.app.core.TaskAgentAvailability.Status.NOT_CONFIGURED
+            !ready -> pl.aimasterpro.app.core.TaskAgentAvailability.Status.NOT_READY
+            free -> pl.aimasterpro.app.core.TaskAgentAvailability.Status.FREE_READY
+            approved -> pl.aimasterpro.app.core.TaskAgentAvailability.Status.UNKNOWN_PRICE_APPROVED
+            unknown -> pl.aimasterpro.app.core.TaskAgentAvailability.Status.UNKNOWN_PRICE_UNAPPROVED
+            else -> pl.aimasterpro.app.core.TaskAgentAvailability.Status.PAID_OR_UNVERIFIED
+        }
+        val detail = when (status) {
+            pl.aimasterpro.app.core.TaskAgentAvailability.Status.FREE_READY -> "Cena wejścia i wyjścia potwierdzona jako 0."
+            pl.aimasterpro.app.core.TaskAgentAvailability.Status.UNKNOWN_PRICE_APPROVED -> "Cena nieznana; zapisana zgoda. To nie jest potwierdzony model darmowy."
+            pl.aimasterpro.app.core.TaskAgentAvailability.Status.UNKNOWN_PRICE_UNAPPROVED -> "Cena nieznana i brak zgody. Agent zostanie zablokowany przed HTTP."
+            pl.aimasterpro.app.core.TaskAgentAvailability.Status.NOT_CONFIGURED -> "Brak przypisanego profilu dostawcy/modelu."
+            pl.aimasterpro.app.core.TaskAgentAvailability.Status.NOT_READY -> "Niekompletny adres, model lub klucz API."
+            pl.aimasterpro.app.core.TaskAgentAvailability.Status.PAID_OR_UNVERIFIED -> "Cena 0 nie została potwierdzona i brak zatwierdzenia nieznanej ceny."
+        }
+        return pl.aimasterpro.app.core.TaskAgentAvailability.Snapshot(
+            agentId = spec.id, providerName = config?.name ?: assignedId.ifBlank { "brak" },
+            model = config?.model?.ifBlank { "brak" } ?: "brak", status = status, detail = detail
+        )
+    }
+
     private fun executeQueuedMasterTask(taskId: String) {
         if (isThinking || store.isStorageUncertain() || !agentAssignmentsHealthy) {
             toast("Nie można uruchomić kolejki: trwa inne żądanie albo konfiguracja nie jest bezpiecznie uzgodniona.")
@@ -7573,9 +7652,22 @@ class MainActivity : Activity() {
             val assignedId = agentProviders[role.name] ?: resolvedMasterProviderId().orEmpty()
             spec.id to loadProvider(assignedId)
         }
-        if (configByAgent.values.any { it == null || !providerReady(it) || !isProviderAllowedForRouting(it) }) {
+        val availabilityByAgent = specs.associate { it.id to taskAgentAvailability(it) }
+        val blockedAgents = specs.filter { spec ->
+            val status = availabilityByAgent.getValue(spec.id).status
+            status != pl.aimasterpro.app.core.TaskAgentAvailability.Status.FREE_READY &&
+                status != pl.aimasterpro.app.core.TaskAgentAvailability.Status.UNKNOWN_PRICE_APPROVED
+        }
+        if (blockedAgents.isNotEmpty() ||
+            configByAgent.values.any { it == null || !providerReady(it) || !isProviderAllowedForRouting(it) }) {
             activeQueueTaskId = ""
-            toast("Brak gotowego modelu dozwolonego przez politykę kosztów dla co najmniej jednego agenta. Nie wysłano żądań.")
+            val details = blockedAgents.joinToString("\\n\\n") { spec ->
+                val state = availabilityByAgent.getValue(spec.id)
+                "• ${spec.name} — ${state.status.label}\\n  Rola: ${pl.aimasterpro.app.agents.AgentProviderRouting.roleFor(spec).label}\\n  ${state.providerName} / ${state.model}\\n  ${state.detail}"
+            }.ifBlank { "Profil zmienił stan między podglądem a uruchomieniem." }
+            AlertDialog.Builder(this).setTitle("Zespół nie został uruchomiony")
+                .setMessage("Nie wysłano żadnych żądań. Popraw przypisania modeli:\\n\\n$details")
+                .setPositiveButton("Rozumiem", null).show()
             return
         }
         val configs = configByAgent.mapValues { it.value!! }
