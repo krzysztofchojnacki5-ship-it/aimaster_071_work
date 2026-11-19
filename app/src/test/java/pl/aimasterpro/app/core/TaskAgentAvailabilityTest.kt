@@ -13,7 +13,7 @@ class TaskAgentAvailabilityTest {
         unknown: Boolean = false,
         approved: Boolean = false
     ) = TaskAgentAvailability.classify(
-        agentId = "researcher", providerName = "Provider", model = "model-x",
+        agentId = "researcher",
         configured = configured, ready = ready, verifiedFree = free,
         unknownPrice = unknown, unknownPriceApproved = approved
     )
