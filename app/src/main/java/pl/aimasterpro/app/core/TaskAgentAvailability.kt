@@ -24,8 +24,6 @@ object TaskAgentAvailability {
 
     fun classify(
         agentId: String,
-        providerName: String,
-        model: String,
         configured: Boolean,
         ready: Boolean,
         verifiedFree: Boolean,
