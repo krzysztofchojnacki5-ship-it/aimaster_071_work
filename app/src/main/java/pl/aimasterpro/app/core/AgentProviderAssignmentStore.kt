@@ -53,6 +53,39 @@ object AgentProviderAssignmentStore {
     }
 
     /**
+     * Closes interrupted user assignment intents only after startup has read and durably
+     * reconciled the complete role-assignment snapshot. The approval reference carries the
+     * intended provider ID as "u:<nonce>:<providerId>"; current durable state is authoritative.
+     */
+    @Synchronized
+    internal fun resolvePendingGovernance(
+        context: Context,
+        verifiedAssignments: Map<String, String>
+    ): Int {
+        val pending = MemoryAuditLog.unresolvedOperations(context) ?: return 0
+        var resolved = 0
+        pending.filter {
+            it.actor == MemoryGovernance.Actor.USER.name &&
+                it.mutation == MemoryGovernance.Mutation.SET_AGENT_PROVIDER.name
+        }.forEach { record ->
+            if (!validRole(record.objectId) || !record.approvalRef.startsWith("u:")) return@forEach
+            val separator = record.approvalRef.indexOf(':', startIndex = 2)
+            if (separator <= 2 || separator == record.approvalRef.lastIndex) return@forEach
+            val intendedProviderId = record.approvalRef.substring(separator + 1)
+            if (!validProviderId(intendedProviderId) ||
+                CommunicationLogSanitizer.sanitize(intendedProviderId) != intendedProviderId) return@forEach
+            val actualProviderId = verifiedAssignments[record.objectId] ?: return@forEach
+            val recoveryReason = if (actualProviderId == intendedProviderId) {
+                "Odzyskiwanie potwierdziło trwałe przypisanie ${record.objectId}=${actualProviderId}."
+            } else {
+                "Odzyskiwanie potwierdziło zachowanie ${record.objectId}=${actualProviderId}; zmiana na ${intendedProviderId} nie została utrwalona."
+            }
+            if (MemoryAuditLog.resolveUnresolved(context, record, recoveryReason)) resolved++
+        }
+        return resolved
+    }
+
+    /**
      * Startup recovery: keep every still-valid assignment and repair stale IDs left by
      * process death between provider replacement and assignment reconciliation.
      * The MASTER legacy key and all role assignments are committed atomically.
