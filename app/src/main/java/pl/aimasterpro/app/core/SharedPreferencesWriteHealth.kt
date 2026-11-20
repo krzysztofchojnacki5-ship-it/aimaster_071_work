@@ -11,6 +11,11 @@ import java.util.concurrent.ConcurrentHashMap
 internal object SharedPreferencesWriteHealth {
     private val uncertainFiles = ConcurrentHashMap.newKeySet<String>()
     private val fileLocks = ConcurrentHashMap<String, Any>()
+    @Volatile private var commitOverrideForTests: ((String, SharedPreferences.Editor) -> Boolean)? = null
+
+    internal fun setCommitOverrideForTests(override: ((String, SharedPreferences.Editor) -> Boolean)?) {
+        commitOverrideForTests = override
+    }
 
     private fun lockFor(preferencesName: String): Any =
         fileLocks.computeIfAbsent(preferencesName) { Any() }
@@ -29,7 +34,7 @@ internal object SharedPreferencesWriteHealth {
     fun commit(preferencesName: String, editor: SharedPreferences.Editor): Boolean =
         synchronized(lockFor(preferencesName)) {
             if (isUncertain(preferencesName)) return@synchronized false
-            val committed = runCatching { editor.commit() }.getOrDefault(false)
+            val committed = runCatching { commitOverrideForTests?.invoke(preferencesName, editor) ?: editor.commit() }.getOrDefault(false)
             if (!committed) uncertainFiles.add(preferencesName)
             committed
         }
