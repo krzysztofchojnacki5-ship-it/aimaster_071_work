@@ -108,3 +108,12 @@ Pełny opis pakietów 15–21 znajduje się w `docs/AIFORTECA_0.2_FOUNDATION_PLA
 - Test: dodano regresję filtra `QUEUE`/`HANDOFF`; istniejące testy redakcji payloadów pozostają.
 - Status: implementacja przygotowana, CI PENDING. Lokalny Gradle 9.9.0 nie uruchomił się, bo `services.gradle.org` nie rozwiązał DNS (`UnknownHostException`). Nie oznaczać pakietu jako PASS przed zielonym CI na finalnym HEAD.
 - Release identity bez zmian: `0.2` / `versionCode 3`.
+
+
+### Aktualizacja pakietu 22 — wyniki CI i testów użytkownika (2026-11-20)
+- Po commicie kodu pakietu `f3030e516722b40a63f19bf553f55861e48f7861` oraz triggerze `0f625db363fb131c9004bfef3a67c258bcf3c58d`, oba przebiegi Unit Tests zakończyły się FAILURE: PUSH run `44809127357`, PR run `44809137058`.
+- Przyczyna: w `MainActivity.showDiagnostics()` użyto `queueDiagnostics` i `handoffDiagnostics` bez lokalnego pobrania snapshotów; kompilator zgłosił niezdefiniowane referencje i błędy wtórne. Raportów testowych nie utworzono; brak artefaktów.
+- Poprawka: commit `3c16997226956e3bd70822a27592dc6526d974c0` dodaje odczyt `MasterTaskQueueStore.snapshot(this)` i `AgentHandoffStore.snapshot(this)` w zakresie funkcji. Oczekuje na ponowne pełne CI; brak potwierdzenia PASS i APK.
+- Testy ręczne użytkownika APK 0.2: PASS — pamięć w bieżącym czacie, pamięć między nowymi czatami, kolejka MASTER, diagnostyka/dziennik, powrót po przełączeniu aplikacji. Nie zaliczone/do ponownego sprawdzenia — komunikacja agentów, odzyskiwanie zadania po restarcie.
+- Zgłoszone defekty do kolejnego zakresu: (1) poprawić usuwanie modeli i spójne czyszczenie przypisań; (2) umożliwić agentom wybór modeli podstawowych z puli modeli głównych już skonfigurowanych w aplikacji.
+- Pakiet 22 pozostaje OTWARTY do czasu zielonego CI na finalnym HEAD, weryfikacji testów i zbudowania APK. Pakiet 23 nie rozpoczęty.
