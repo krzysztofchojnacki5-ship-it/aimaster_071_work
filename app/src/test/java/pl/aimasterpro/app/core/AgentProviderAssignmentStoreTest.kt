@@ -91,7 +91,8 @@ class AgentProviderAssignmentStoreTest {
                                 auditCommitCalls++
                                 // Persist INTENT, but fail the terminal COMMITTED audit append.
                                 return if (auditCommitCalls == 2) false else editor.commit()
-                            }                        }
+                            }
+                        }
                     }
                 }
             }
@@ -104,6 +105,9 @@ class AgentProviderAssignmentStoreTest {
         // A process restart clears only in-memory uncertainty. Startup reads the durable
         // assignment snapshot and then closes the unmatched audit intent without replaying it.
         SharedPreferencesWriteHealth.resetForTests("ai_memory_audit_log_v1")
+        val interrupted = MemoryAuditLog.readVerified(context)!!
+        assertEquals(1, interrupted.size)
+        assertEquals(MemoryAuditLog.Phase.INTENT, interrupted.single().phase)
         val verified = AgentProviderAssignmentStore.reconcileExistingAssignments(
             context, defaults, setOf("provider-new", "groq"), "groq"
         )
@@ -116,6 +120,32 @@ class AgentProviderAssignmentStoreTest {
         assertEquals("RECOVERED_STATE", rows.last().outcome)
         assertTrue(rows.last().reason.contains("provider-new"))
         assertEquals("provider-new", prefs.getString("agent_provider_CODER", null))
+    }
+
+    @Test fun failedAssignmentCommitIsResolvedWithoutReplayingTheRequestedProvider() {
+        val failingAssignmentContext = AmbiguousCommitContext(
+            context, "chat_state", applyBeforeFailure = false
+        )
+        assertFalse(mutateSave("CODER", "provider-never-written", targetContext = failingAssignmentContext))
+        assertTrue(SharedPreferencesWriteHealth.isUncertain("chat_state"))
+        assertFalse(SharedPreferencesWriteHealth.isUncertain("ai_memory_audit_log_v1"))
+
+        // Restart and verify the actual durable snapshot before resolving the failed intent.
+        SharedPreferencesWriteHealth.resetForTests("chat_state")
+        val verified = AgentProviderAssignmentStore.reconcileExistingAssignments(
+            context, defaults, setOf("groq", "provider-never-written"), "groq"
+        )
+        assertNotNull(verified)
+        assertEquals("groq", verified!!["CODER"])
+        assertEquals(1, AgentProviderAssignmentStore.resolvePendingGovernance(context, verified))
+        assertFalse(MemoryAuditLog.hasUnresolvedIntent(
+            context, "USER", "SET_AGENT_PROVIDER", "CODER"
+        ))
+        val terminal = MemoryAuditLog.readVerified(context)!!.last()
+        assertEquals("RECOVERED_STATE", terminal.outcome)
+        assertTrue(terminal.reason.contains("groq"))
+        assertTrue(terminal.reason.contains("nie została utrwalona"))
+        assertEquals("groq", prefs.getString("agent_provider_CODER", null))
     }
 
     @Test fun readUsesDefaultsOnlyForMissingOrBlankAssignments() {
