@@ -27,6 +27,7 @@ object MemoryGovernance {
         RECONCILE_REVOKED_PROPOSAL,
         SET_AGENT_ENABLED,
         SET_AGENT_DISABLED,
+        SET_AGENT_PROVIDER,
         ADD_CUSTOM_AGENT,
         UPDATE_CUSTOM_AGENT,
         REMOVE_CUSTOM_AGENT
@@ -55,6 +56,7 @@ object MemoryGovernance {
         Mutation.REJECT_PROPOSAL,
         Mutation.SET_AGENT_ENABLED,
         Mutation.SET_AGENT_DISABLED,
+        Mutation.SET_AGENT_PROVIDER,
         Mutation.ADD_CUSTOM_AGENT,
         Mutation.UPDATE_CUSTOM_AGENT,
         Mutation.REMOVE_CUSTOM_AGENT
