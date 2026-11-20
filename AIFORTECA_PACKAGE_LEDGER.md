@@ -90,3 +90,21 @@ Aktualizacja: 2026-11-15
 - Priorytet: kontrolowane mutacje pamięci i konfiguracji agentów — zakres uprawnień, wymagane zatwierdzenie operacji wrażliwych, historia zmian i bezpieczne zachowanie przy błędach odczytu/zapisu.
 - Przed zmianami kodu wymagany audyt istniejących store'ów i testów, aby nie dublować mechanizmów już obecnych.
 - Limit: cztery poprawki kodu, następnie pełne CI; bez oznaczania pakietu jako zaliczonego przed potwierdzeniem.
+
+
+## Rejestr uzupełniający — pakiety 21–22 (2026-11-20)
+
+Pełny opis pakietów 15–21 znajduje się w `docs/AIFORTECA_0.2_FOUNDATION_PLAN.md` i w checkpointach wskazanych w `AGENT_HANDOFF_PROMPT_PL.md`. Poniższe wpisy uzupełniają starszy rejestr, który nie został historycznie zsynchronizowany z późniejszymi pakietami.
+
+### Pakiet 21 — niezawodny kontekst rozmowy
+- Baza: `a46d33512cd9bfd5c93406f59c93a94e96b35a56`; końcowy kod: `fb8d4b6d10526f1107a164827ae6795069d10351`; commit kontrolny Android build: `7e7ae1e025eb17c7cb9753a30f18566e3fa343f5`.
+- Zakres: bounded conversation history, provider-specific payload mapping, exact chat snapshot dla request worker i regresje provider payload/history isolation.
+- CI: Unit Tests SUCCESS, 1 342 testy / 0 failures / 0 errors / 0 skipped; Gradle Wrapper Validation SUCCESS. Android Build #758 SUCCESS; debug i signed release APK opublikowane. Raporty i artefakty: run ID `44554818564`, artefakty `14546770962` i `14544344776`.
+- Status: pakiet 21 zamknięty; testy urządzenia i ręczna walidacja historii na telefonie pozostają osobne.
+
+### Pakiet 22 — konsola diagnostyczna na żywo
+- Baza: `7e7ae1e025eb17c7cb9753a30f18566e3fa343f5`.
+- Zakres czterech zmian: filtr źródła zdarzeń; widoczne filtry dziennika; odświeżanie listy in-place co 5 s; zatrzymywanie/wznawianie odświeżania zgodnie z lifecycle Activity i zmianą działu.
+- Test: dodano regresję filtra `QUEUE`/`HANDOFF`; istniejące testy redakcji payloadów pozostają.
+- Status: implementacja przygotowana, CI PENDING. Lokalny Gradle 9.9.0 nie uruchomił się, bo `services.gradle.org` nie rozwiązał DNS (`UnknownHostException`). Nie oznaczać pakietu jako PASS przed zielonym CI na finalnym HEAD.
+- Release identity bez zmian: `0.2` / `versionCode 3`.

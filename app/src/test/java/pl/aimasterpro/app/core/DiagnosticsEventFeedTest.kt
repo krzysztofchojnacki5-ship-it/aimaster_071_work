@@ -90,6 +90,11 @@ class DiagnosticsEventFeedTest {
             DiagnosticsEventFeed.Filter(operation = " handoff_pending ")
         )
         assertEquals(listOf("handoff-a"), operationFiltered.entries.map { it.id })
+        val sourceFiltered = DiagnosticsEventFeed.build(
+            queue(events = events), handoffs(messages = messages),
+            DiagnosticsEventFeed.Filter(source = " handoff ")
+        )
+        assertEquals(listOf("handoff-a"), sourceFiltered.entries.map { it.id })
     }
 
     @Test fun queueAgentEventsExposeStateButNeverFreeFormMessageOrReportBodies() {

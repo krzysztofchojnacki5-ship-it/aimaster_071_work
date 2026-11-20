@@ -17,6 +17,8 @@ import android.graphics.drawable.RippleDrawable
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.text.Editable
 import android.text.InputType
 import android.text.SpannableStringBuilder
@@ -110,6 +112,15 @@ class MainActivity : Activity() {
     private val collaborationRenderedEntries = mutableListOf<String>()
     /** Dedicated live view of durable MASTER-queue agent messages. */
     private var queueCommunicationListLayout: LinearLayout? = null
+    /** Read-only diagnostics feed refreshes in place so the screen does not jump to the top. */
+    private val diagnosticsRefreshHandler = Handler(Looper.getMainLooper())
+    private var diagnosticsRefreshRunnable: Runnable? = null
+    private var diagnosticsEventContainer: LinearLayout? = null
+    private var diagnosticsTaskFilter = ""
+    private var diagnosticsAgentFilter = ""
+    private var diagnosticsProviderFilter = ""
+    private var diagnosticsOperationFilter = ""
+    private var diagnosticsSourceFilter = ""
     private val agentProviders = mutableMapOf<String, String>()
     /** False until every persisted role assignment has been reconciled successfully. */
     private var agentAssignmentsHealthy = true
@@ -387,6 +398,10 @@ class MainActivity : Activity() {
     }
 
     private fun showShell(title: String) {
+        if (title != "Diagnostyka") {
+            stopDiagnosticsAutoRefresh()
+            diagnosticsEventContainer = null
+        }
         cancelPendingCatalogSearch()
         if (title != "Rozmowy") {
             collaborationListLayout = null
@@ -7133,6 +7148,108 @@ class MainActivity : Activity() {
         card("Stan wdrożenia kontroli zmian", "Panel ustawień jest punktem wejścia. Audytowalny rejestr operacji zapisu, aktualizacji i usuwania oraz system uprawnień agentów są osobnym wymaganiem wdrożeniowym — nie oznaczamy ich jako ukończonych, dopóki nie obejmą wszystkich magazynów danych.")
     }
 
+    private fun diagnosticsEventCard(parent: LinearLayout, title: String, description: String = ""): LinearLayout {
+        val box = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(16), dp(14), dp(16), dp(14))
+            background = rounded(cardBg, 16, border)
+        }
+        val heading = TextView(this).apply {
+            text = title
+            textSize = 15f
+            typeface = Typeface.DEFAULT_BOLD
+            setTextColor(white)
+        }
+        box.addView(heading)
+        if (description.isNotBlank()) {
+            box.addView(TextView(this).apply {
+                text = description
+                textSize = 12f
+                setTextColor(muted)
+                setLineSpacing(dp(2).toFloat(), 1f)
+                setPadding(0, dp(5), 0, 0)
+            })
+        }
+        parent.addView(box, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(10) })
+        return box
+    }
+
+    private fun renderDiagnosticsEventFeed(target: LinearLayout) {
+        if (target !== diagnosticsEventContainer || screen != "Diagnostyka") return
+        val queue = pl.aimasterpro.app.core.MasterTaskQueueStore.snapshot(this)
+        val handoffs = pl.aimasterpro.app.core.AgentHandoffStore.snapshot(this)
+        val feed = pl.aimasterpro.app.core.DiagnosticsEventFeed.build(
+            queue, handoffs,
+            filter = pl.aimasterpro.app.core.DiagnosticsEventFeed.Filter(
+                taskId = diagnosticsTaskFilter,
+                agentId = diagnosticsAgentFilter,
+                providerId = diagnosticsProviderFilter,
+                operation = diagnosticsOperationFilter,
+                source = diagnosticsSourceFilter
+            ),
+            limit = 50
+        )
+        target.removeAllViews()
+        if (!feed.isComplete) {
+            diagnosticsEventCard(target, "Częściowe źródła diagnostyczne",
+                "Dziennik kolejki: ${feed.queueStatus} • Skrzynka przekazań: ${feed.handoffStatus}. Niedostępne źródło nie jest traktowane jako puste.")
+        }
+        if (feed.entries.isEmpty()) {
+            diagnosticsEventCard(target, "Brak zdarzeń dla wybranych filtrów",
+                "Zmień lub wyczyść filtry. Odświeżanie dziennika działa automatycznie co 5 sekund.")
+            return
+        }
+        val taskTitles = queue.tasks.associate { it.id to it.title }
+        val eventTime = java.text.SimpleDateFormat("dd.MM HH:mm:ss", java.util.Locale.getDefault())
+        feed.entries.forEach { event ->
+            val kind = when (event.operation) {
+                "HANDOFF_PENDING" -> "PRZEKAZANIE OCZEKUJE"
+                "HANDOFF_CLAIMED" -> "PRZEKAZANIE PRZEJĘTE"
+                "HANDOFF_ACKNOWLEDGED" -> "PRZEKAZANIE POTWIERDZONE"
+                "HANDOFF_REJECTED" -> "PRZEKAZANIE ODRZUCONE"
+                "HANDOFF_MANUALLY_RESOLVED" -> "PRZEKAZANIE ZAMKNIĘTE — WYNIK NIEZNANY"
+                "AGENT_TRACE" -> "ŚLAD TECHNICZNY AGENTA"
+                "AGENT_MESSAGE" -> "WIADOMOŚĆ"
+                "AGENT_PROGRESS" -> "POSTĘP AGENTA"
+                "AGENT_RESULT" -> "WYNIK AGENTA"
+                "TRANSITION" -> "ZMIANA STANU"
+                "RECOVER_INTERRUPTED" -> "ODZYSKIWANIE PRZERWANEGO ZADANIA"
+                "CREATE" -> "UTWORZENIE ZADANIA"
+                "ASSIGN" -> "PRZYDZIAŁ AGENTÓW"
+                else -> event.operation
+            }
+            val route = if (event.recipient.isNotBlank()) " → ${event.recipient}" else ""
+            val provider = listOf(event.providerId, event.model).filter { it.isNotBlank() }.joinToString(" / ")
+            val metadata = listOf(
+                taskTitles[event.taskId] ?: event.taskId,
+                "${event.actor}${route}", provider, event.source,
+                eventTime.format(java.util.Date(event.timestamp))
+            ).filter { it.isNotBlank() }.joinToString(" • ")
+            diagnosticsEventCard(target, kind, "$metadata\n${event.detail.take(350)}")
+        }
+    }
+
+    private fun scheduleDiagnosticsAutoRefresh() {
+        if (diagnosticsRefreshRunnable != null) return
+        val refresh = object : Runnable {
+            override fun run() {
+                if (screen != "Diagnostyka" || isFinishing || isDestroyed) {
+                    diagnosticsRefreshRunnable = null
+                    return
+                }
+                diagnosticsEventContainer?.let { renderDiagnosticsEventFeed(it) }
+                diagnosticsRefreshHandler.postDelayed(this, 5_000L)
+            }
+        }
+        diagnosticsRefreshRunnable = refresh
+        diagnosticsRefreshHandler.postDelayed(refresh, 5_000L)
+    }
+
+    private fun stopDiagnosticsAutoRefresh() {
+        diagnosticsRefreshRunnable?.let { diagnosticsRefreshHandler.removeCallbacks(it) }
+        diagnosticsRefreshRunnable = null
+    }
+
     private fun showDiagnostics() {
         val usage = pl.aimasterpro.app.core.ApiTokenTracker.budgetUsageSnapshot(this)
         val used = usage.recordedTodayTokens + usage.activeReservedTokens
@@ -7140,57 +7257,48 @@ class MainActivity : Activity() {
         card("Centrum diagnostyczne", "Szybka kontrola lokalnego budżetu, rezerwacji i konfiguracji. Klucze API nie są wyświetlane ani kopiowane.")
         addCompanionTrustCard()
         // Unified read-only feed: queue transitions plus durable handoff states.
-        val queueDiagnostics = pl.aimasterpro.app.core.MasterTaskQueueStore.snapshot(this)
-        val handoffDiagnostics = pl.aimasterpro.app.core.AgentHandoffStore.snapshot(this)
-        val diagnosticsFeed = pl.aimasterpro.app.core.DiagnosticsEventFeed.build(
-            queueDiagnostics, handoffDiagnostics, limit = 12
-        )
-        card("Ostatnie zdarzenia kolejki i agentów",
-            "Połączony wycinek trwałego dziennika kolejki i skrzynki przekazań. Treści raportów agentów nie są kopiowane do diagnostyki.")
-        action("↻ Odśwież zdarzenia", onClick = {
-            showShell("Diagnostyka")
-            showDiagnostics()
-        })
-        if (!diagnosticsFeed.isComplete) {
-            card("Częściowe źródła diagnostyczne",
-                "Dziennik kolejki: ${diagnosticsFeed.queueStatus} • Skrzynka przekazań: ${diagnosticsFeed.handoffStatus}. Dostępne wpisy pokazuję częściowo; niedostępne źródło nie jest traktowane jako puste.")
-        }
-        if (diagnosticsFeed.entries.isEmpty()) {
-            card("Brak dostępnych zdarzeń",
-                "Po utworzeniu zadania lub rozpoczęciu pracy zespołu pojawią się tu zdarzenia operacyjne.")
-        } else {
-            val taskTitles = queueDiagnostics.tasks.associate { it.id to it.title }
-            val eventTime = java.text.SimpleDateFormat("dd.MM HH:mm:ss", java.util.Locale.getDefault())
-            diagnosticsFeed.entries.forEach { event ->
-                val kind = when (event.operation) {
-                    "HANDOFF_PENDING" -> "PRZEKAZANIE OCZEKUJE"
-                    "HANDOFF_CLAIMED" -> "PRZEKAZANIE PRZEJĘTE"
-                    "HANDOFF_ACKNOWLEDGED" -> "PRZEKAZANIE POTWIERDZONE"
-                    "HANDOFF_REJECTED" -> "PRZEKAZANIE ODRZUCONE"
-                    "HANDOFF_MANUALLY_RESOLVED" -> "PRZEKAZANIE ZAMKNIĘTE — WYNIK NIEZNANY"
-                    "AGENT_TRACE" -> "ŚLAD TECHNICZNY AGENTA"
-                    "AGENT_MESSAGE" -> "WIADOMOŚĆ"
-                    "AGENT_PROGRESS" -> "POSTĘP AGENTA"
-                    "AGENT_RESULT" -> "WYNIK AGENTA"
-                    "TRANSITION" -> "ZMIANA STANU"
-                    "RECOVER_INTERRUPTED" -> "ODZYSKIWANIE PRZERWANEGO ZADANIA"
-                    "CREATE" -> "UTWORZENIE ZADANIA"
-                    "ASSIGN" -> "PRZYDZIAŁ AGENTÓW"
-                    else -> event.operation
-                }
-                val route = if (event.recipient.isNotBlank()) " → ${event.recipient}" else ""
-                val provider = listOf(event.providerId, event.model)
-                    .filter { it.isNotBlank() }.joinToString(" / ")
-                val metadata = listOf(
-                    taskTitles[event.taskId] ?: event.taskId,
-                    "${event.actor}${route}",
-                    provider,
-                    event.source,
-                    eventTime.format(java.util.Date(event.timestamp))
-                ).filter { it.isNotBlank() }.joinToString(" • ")
-                card(kind, "${metadata}\n${event.detail.take(350)}")
+        card("Dziennik zdarzeń MASTER i agentów",
+            "Filtruj wpisy według zadania, agenta, dostawcy/modelu, rodzaju operacji lub źródła. Treści raportów i payloady przekazań pozostają ukryte.")
+        val filterCard = card("Filtry dziennika")
+        val taskFilterInput = field("ID zadania", diagnosticsTaskFilter)
+        val agentFilterInput = field("ID agenta", diagnosticsAgentFilter)
+        val providerFilterInput = field("Dostawca lub model", diagnosticsProviderFilter)
+        val operationFilterInput = field("Operacja, np. AGENT_RESULT", diagnosticsOperationFilter)
+        val sourceFilterInput = field("Źródło: QUEUE albo HANDOFF", diagnosticsSourceFilter)
+        listOf(taskFilterInput, agentFilterInput, providerFilterInput, operationFilterInput, sourceFilterInput)
+            .forEach { input ->
+                filterCard.addView(input, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(7) })
             }
+        action("Zastosuj filtry", filterCard) {
+            diagnosticsTaskFilter = taskFilterInput.text.toString().trim()
+            diagnosticsAgentFilter = agentFilterInput.text.toString().trim()
+            diagnosticsProviderFilter = providerFilterInput.text.toString().trim()
+            diagnosticsOperationFilter = operationFilterInput.text.toString().trim()
+            diagnosticsSourceFilter = sourceFilterInput.text.toString().trim()
+            diagnosticsEventContainer?.let { renderDiagnosticsEventFeed(it) }
         }
+        action("Wyczyść filtry", filterCard) {
+            diagnosticsTaskFilter = ""
+            diagnosticsAgentFilter = ""
+            diagnosticsProviderFilter = ""
+            diagnosticsOperationFilter = ""
+            diagnosticsSourceFilter = ""
+            taskFilterInput.setText("")
+            agentFilterInput.setText("")
+            providerFilterInput.setText("")
+            operationFilterInput.setText("")
+            sourceFilterInput.setText("")
+            diagnosticsEventContainer?.let { renderDiagnosticsEventFeed(it) }
+        }
+        action("↻ Odśwież zdarzenia teraz", filterCard) {
+            diagnosticsEventContainer?.let { renderDiagnosticsEventFeed(it) }
+        }
+        diagnosticsEventContainer = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            content.addView(this, LinearLayout.LayoutParams(-1, -2))
+        }
+        renderDiagnosticsEventFeed(diagnosticsEventContainer!!)
+        scheduleDiagnosticsAutoRefresh()
 
         val handoffTime = java.text.SimpleDateFormat("dd.MM HH:mm:ss", java.util.Locale.getDefault())
         if (handoffDiagnostics.status != pl.aimasterpro.app.core.AgentHandoffStore.ReadStatus.AVAILABLE) {
@@ -8929,7 +9037,18 @@ class MainActivity : Activity() {
 
     private fun toast(text: String) = Toast.makeText(this, text, Toast.LENGTH_LONG).show()
 
+    override fun onResume() {
+        super.onResume()
+        if (screen == "Diagnostyka") scheduleDiagnosticsAutoRefresh()
+    }
+
+    override fun onPause() {
+        stopDiagnosticsAutoRefresh()
+        super.onPause()
+    }
+
     override fun onDestroy() {
+        stopDiagnosticsAutoRefresh()
         cancelPendingCatalogSearch()
         pulse?.cancel()
         interruptActiveQueuedTask("Activity została zamknięta lub odtworzona.")

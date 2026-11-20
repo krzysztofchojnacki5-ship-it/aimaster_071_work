@@ -11,7 +11,8 @@ object DiagnosticsEventFeed {
         val taskId: String = "",
         val agentId: String = "",
         val providerId: String = "",
-        val operation: String = ""
+        val operation: String = "",
+        val source: String = ""
     )
 
     data class Entry(
@@ -101,6 +102,7 @@ object DiagnosticsEventFeed {
         val agentFilter = filter.agentId.trim().removePrefix("agent:")
         val providerFilter = filter.providerId.trim()
         val operationFilter = filter.operation.trim()
+        val sourceFilter = filter.source.trim()
 
         fun matchesAgent(endpoint: String): Boolean {
             val endpointId = endpoint.removePrefix("agent:")
@@ -119,6 +121,7 @@ object DiagnosticsEventFeed {
                     it.model.contains(providerFilter, ignoreCase = true)
             }
             .filter { operationFilter.isEmpty() || it.operation.equals(operationFilter, ignoreCase = true) }
+            .filter { sourceFilter.isEmpty() || it.source.equals(sourceFilter, ignoreCase = true) }
             .sortedWith(
                 compareByDescending<Entry> { it.timestamp }
                     .thenBy { it.id }

@@ -213,3 +213,15 @@ Cover unauthorized create/update/delete, scope escape, missing or forged approva
   - `Gradle Wrapper Validation` run `44552837439` — SUCCESS.
 - No `assembleDebug`/APK artifact or emulator/device test was run by this unit-test workflow. APK build and manual conversation-retention verification remain pending.
 - Gradle 9.9.0 and AGP 9.4.0 were not changed. PR #3 remains open in Draft state.
+
+
+## Implementation checkpoint — pakiet 22 / konsola diagnostyczna na żywo (2026-11-20)
+
+- Baza: branch HEAD `7e7ae1e025eb17c7cb9753a30f18566e3fa343f5` (pakiet 21 i pełny Android Build #758 zweryfikowane osobno).
+- Zakres dokładnie czterech zmian: (1) filtr źródła `QUEUE`/`HANDOFF` w `DiagnosticsEventFeed`; (2) widoczne filtry ID zadania, agenta, dostawcy/modelu, operacji i źródła wraz z zastosowaniem/czyszczeniem; (3) automatyczne odświeżanie samego dziennika co 5 sekund, bez przebudowy ekranu i skoku przewijania; (4) lifecycle fencing odświeżania — stop przy zmianie działu, `onPause` i `onDestroy`, wznowienie po `onResume`.
+- Test regresyjny dodany dla filtra źródła; istniejące testy ochrony payloadów/sekretów pozostają bez osłabienia.
+- Zmodyfikowane pliki: `MainActivity.kt`, `DiagnosticsEventFeed.kt`, `DiagnosticsEventFeedTest.kt`.
+- Weryfikacja lokalna: `./gradlew testDebugUnitTest --no-daemon` NIE WYKONANA — wrapper nie zdołał pobrać Gradle 9.9.0 z powodu `UnknownHostException: services.gradle.org`. Nie jest to wynik testów ani błąd kompilacji źródeł.
+- Status pakietu 22: IMPLEMENTACJA PRZYGOTOWANA, CI PENDING; nie oznaczać jako zaliczonego, dopóki testy i wrapper validation nie zakończą się sukcesem na dokładnym HEAD.
+- Nie zmieniono `versionName=0.2` ani `versionCode=3`; nie zmieniono base branch, nie wykonano merge.
+- Następny krok po CI: sprawdzić raporty testów i ewentualne poprawki; dopiero po zielonym CI zamknąć pakiet 22. Następny priorytet pozostaje przegląd pełnego magazynu eventów/diagnostyki i kompletności governance, bez deklarowania całej konsoli jako kompletnej.
