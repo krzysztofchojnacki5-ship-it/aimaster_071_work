@@ -23,7 +23,7 @@ class AgentProviderAssignmentStoreTest {
         providerId: String,
         targetContext: Context = context,
         actor: MemoryGovernance.Actor = MemoryGovernance.Actor.USER,
-        approvalRef: String = "test-confirmation:${java.util.UUID.randomUUID()}"
+        approvalRef: String = "u:${java.util.UUID.randomUUID()}:$providerId"
     ): Boolean {
         val request = MemoryGovernance.Request(
             actor = actor,
@@ -75,6 +75,48 @@ class AgentProviderAssignmentStoreTest {
         assertNull(prefs.getString("agent_provider_CODER", null))
         assertEquals("DENIED_AGENT_READ_ONLY",
             MemoryAuditLog.readVerified(context)!!.single().outcome)
+    }
+
+    @Test fun interruptedAssignmentAuditIsClosedOnlyAfterStartupVerifiesDurableState() {
+        val failingAuditContext = object : android.content.ContextWrapper(context) {
+            override fun getSharedPreferences(name: String, mode: Int): android.content.SharedPreferences {
+                val delegate = context.getSharedPreferences(name, mode)
+                if (name != "ai_memory_audit_log_v1") return delegate
+                return object : android.content.SharedPreferences by delegate {
+                    override fun edit(): android.content.SharedPreferences.Editor {
+                        val editor = delegate.edit()
+                        return object : android.content.SharedPreferences.Editor by editor {
+                            override fun commit(): Boolean {
+                                // Persist INTENT, but fail the terminal COMMITTED audit append.
+                                return if (delegate.getString("events", null)?.contains("\\"phase\\":\\"INTENT\\"") == true) {
+                                    false
+                                } else editor.commit()
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        assertFalse(mutateSave("CODER", "provider-new", targetContext = failingAuditContext))
+        assertEquals("provider-new", prefs.getString("agent_provider_CODER", null))
+        assertTrue(SharedPreferencesWriteHealth.isUncertain("ai_memory_audit_log_v1"))
+
+        // A process restart clears only in-memory uncertainty. Startup reads the durable
+        // assignment snapshot and then closes the unmatched audit intent without replaying it.
+        SharedPreferencesWriteHealth.resetForTests("ai_memory_audit_log_v1")
+        val verified = AgentProviderAssignmentStore.reconcileExistingAssignments(
+            context, defaults, setOf("provider-new", "groq"), "groq"
+        )
+        assertNotNull(verified)
+        assertEquals(1, AgentProviderAssignmentStore.resolvePendingGovernance(context, verified!!))
+        assertFalse(MemoryAuditLog.hasUnresolvedIntent(
+            context, "USER", "SET_AGENT_PROVIDER", "CODER"
+        ))
+        val rows = MemoryAuditLog.readVerified(context)!!
+        assertEquals("RECOVERED_STATE", rows.last().outcome)
+        assertTrue(rows.last().reason.contains("provider-new"))
+        assertEquals("provider-new", prefs.getString("agent_provider_CODER", null))
     }
 
     @Test fun readUsesDefaultsOnlyForMissingOrBlankAssignments() {
