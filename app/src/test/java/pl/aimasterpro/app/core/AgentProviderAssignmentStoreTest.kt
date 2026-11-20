@@ -18,9 +18,30 @@ class AgentProviderAssignmentStoreTest {
     private val prefs get() = context.getSharedPreferences("chat_state", Context.MODE_PRIVATE)
     private val defaults = linkedMapOf("MASTER" to "groq", "CODER" to "groq", "RESEARCHER" to "groq")
 
+    private fun mutateSave(
+        role: String,
+        providerId: String,
+        targetContext: Context = context,
+        actor: MemoryGovernance.Actor = MemoryGovernance.Actor.USER,
+        approvalRef: String = "test-confirmation:${java.util.UUID.randomUUID()}"
+    ): Boolean {
+        val request = MemoryGovernance.Request(
+            actor = actor,
+            mutation = MemoryGovernance.Mutation.SET_AGENT_PROVIDER,
+            objectId = role,
+            reason = "Test przypisania profilu $providerId do roli $role",
+            approvalRef = approvalRef
+        )
+        return MemoryMutationGate.execute(targetContext, request) { permit ->
+            AgentProviderAssignmentStore.save(targetContext, role, providerId, permit)
+        }
+    }
+
     @Before fun reset() {
         prefs.edit().clear().commit()
         SharedPreferencesWriteHealth.resetForTests("chat_state")
+        context.getSharedPreferences("ai_memory_audit_log_v1", Context.MODE_PRIVATE).edit().clear().commit()
+        SharedPreferencesWriteHealth.resetForTests("ai_memory_audit_log_v1")
         SecureStoreHealth.resetForTests()
     }
 
@@ -30,9 +51,30 @@ class AgentProviderAssignmentStoreTest {
     }
 
     @Test fun saveMasterCommitsBothLegacyKeysTogether() {
-        assertTrue(AgentProviderAssignmentStore.save(context, "MASTER", "gemini"))
+        assertTrue(mutateSave("MASTER", "gemini"))
         assertEquals("gemini", prefs.getString("agent_provider_MASTER", null))
         assertEquals("gemini", prefs.getString("selected_provider", null))
+    }
+
+    @Test fun providerAssignmentRequiresUserGovernanceAndIsAudited() {
+        assertTrue(mutateSave("CODER", "groq"))
+        val records = MemoryAuditLog.readVerified(context)!!
+            .filter { it.mutation == MemoryGovernance.Mutation.SET_AGENT_PROVIDER.name }
+        assertEquals(listOf(MemoryAuditLog.Phase.INTENT, MemoryAuditLog.Phase.COMMITTED),
+            records.map { it.phase })
+        assertEquals("CODER", records.first().objectId)
+        assertTrue(records.first().reason.contains("groq"))
+        assertEquals("groq", prefs.getString("agent_provider_CODER", null))
+    }
+
+    @Test fun agentCannotChangeProviderAssignmentEvenWithForgedApprovalReference() {
+        assertFalse(mutateSave(
+            "CODER", "provider-attacker", actor = MemoryGovernance.Actor.AGENT,
+            approvalRef = "agent-forged-confirmation"
+        ))
+        assertNull(prefs.getString("agent_provider_CODER", null))
+        assertEquals("DENIED_AGENT_READ_ONLY",
+            MemoryAuditLog.readVerified(context)!!.single().outcome)
     }
 
     @Test fun readUsesDefaultsOnlyForMissingOrBlankAssignments() {
@@ -145,8 +187,8 @@ class AgentProviderAssignmentStoreTest {
     }
 
     @Test fun invalidRoleOrProviderIdIsRejectedWithoutMutation() {
-        assertFalse(AgentProviderAssignmentStore.save(context, "MASTER", " "))
-        assertFalse(AgentProviderAssignmentStore.save(context, " ", "gemini"))
+        assertFalse(mutateSave("MASTER", " "))
+        assertFalse(mutateSave(" ", "gemini"))
         assertNull(prefs.getString("agent_provider_MASTER", null))
     }
 
@@ -164,7 +206,7 @@ class AgentProviderAssignmentStoreTest {
             }
         }
         val writer = Thread {
-            saveResult.set(AgentProviderAssignmentStore.save(context, "MASTER", "gemini"))
+            saveResult.set(mutateSave("MASTER", "gemini"))
             saveFinished.countDown()
         }
 
@@ -188,7 +230,7 @@ class AgentProviderAssignmentStoreTest {
 
     @Test fun ambiguousAssignmentCommitQuarantinesRoutingState() {
         val failing = AmbiguousCommitContext(context, "chat_state")
-        assertFalse(AgentProviderAssignmentStore.save(failing, "MASTER", "provider-new"))
+        assertFalse(mutateSave("MASTER", "provider-new", targetContext = failing))
         assertTrue(runCatching { AgentProviderAssignmentStore.read(context, defaults) }.isFailure)
         assertNull(AgentProviderAssignmentStore.reconcileExistingAssignments(
             context, defaults, setOf("gemini", "groq"), "gemini"
@@ -330,8 +372,8 @@ class AgentProviderAssignmentStoreTest {
     }
 
     @Test fun oversizedRoleAndProviderIdsAreRejectedWithoutMutation() {
-        assertFalse(AgentProviderAssignmentStore.save(context, "R".repeat(81), "gemini"))
-        assertFalse(AgentProviderAssignmentStore.save(context, "MASTER", "P".repeat(161)))
+        assertFalse(mutateSave("R".repeat(81), "gemini"))
+        assertFalse(mutateSave("MASTER", "P".repeat(161)))
         assertNull(prefs.getString("agent_provider_MASTER", null))
         assertNull(AgentProviderAssignmentStore.reconcileExistingAssignments(
             context, defaults, setOf("P".repeat(161)), "gemini"
