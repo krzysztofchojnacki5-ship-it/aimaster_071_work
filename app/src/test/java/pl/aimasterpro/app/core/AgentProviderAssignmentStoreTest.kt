@@ -123,9 +123,25 @@ class AgentProviderAssignmentStoreTest {
     }
 
     @Test fun failedAssignmentCommitIsResolvedWithoutReplayingTheRequestedProvider() {
-        val failingAssignmentContext = AmbiguousCommitContext(
-            context, "chat_state", applyBeforeFailure = false
-        )
+        var assignmentCommitCalls = 0
+        val failingAssignmentContext = object : android.content.ContextWrapper(context) {
+            override fun getSharedPreferences(name: String, mode: Int): android.content.SharedPreferences {
+                val delegate = context.getSharedPreferences(name, mode)
+                if (name != "chat_state") return delegate
+                return object : android.content.SharedPreferences by delegate {
+                    override fun edit(): android.content.SharedPreferences.Editor {
+                        val editor = delegate.edit()
+                        return object : android.content.SharedPreferences.Editor by editor {
+                            override fun commit(): Boolean {
+                                assignmentCommitCalls++
+                                // Model commit(false) with the previous durable snapshot intact.
+                                return if (assignmentCommitCalls == 1) false else editor.commit()
+                            }
+                        }
+                    }
+                }
+            }
+        }
         assertFalse(mutateSave("CODER", "provider-never-written", targetContext = failingAssignmentContext))
         assertTrue(SharedPreferencesWriteHealth.isUncertain("chat_state"))
         assertFalse(SharedPreferencesWriteHealth.isUncertain("ai_memory_audit_log_v1"))
