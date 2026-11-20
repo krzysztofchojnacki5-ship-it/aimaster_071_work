@@ -7145,6 +7145,44 @@ class MainActivity : Activity() {
         val diagnosticsFeed = pl.aimasterpro.app.core.DiagnosticsEventFeed.build(
             queueDiagnostics, handoffDiagnostics, limit = 12
         )
+        val storageHealth = pl.aimasterpro.app.core.DiagnosticsStorageHealth.build(
+            listOf(
+                pl.aimasterpro.app.core.DiagnosticsStorageHealth.Source(
+                    "master_queue", "Kolejka zadań MASTER",
+                    queueDiagnostics.status == pl.aimasterpro.app.core.MasterTaskQueueStore.ReadStatus.AVAILABLE,
+                    queueDiagnostics.status.name
+                ),
+                pl.aimasterpro.app.core.DiagnosticsStorageHealth.Source(
+                    "agent_handoffs", "Skrzynka przekazań agentów",
+                    handoffDiagnostics.status == pl.aimasterpro.app.core.AgentHandoffStore.ReadStatus.AVAILABLE,
+                    handoffDiagnostics.status.name
+                ),
+                pl.aimasterpro.app.core.DiagnosticsStorageHealth.Source(
+                    "chat_history", "Historia rozmów",
+                    runCatching { pl.aimasterpro.app.core.ChatHistoryStore.readRoot(this) != null }.getOrDefault(false),
+                    "Odczyt i walidacja chats_v2"
+                ),
+                pl.aimasterpro.app.core.DiagnosticsStorageHealth.Source(
+                    "chat_response_archive", "Archiwum odpowiedzi MASTER-a",
+                    runCatching { pl.aimasterpro.app.core.ChatResponseArchive.isArchiveReadable(this) }.getOrDefault(false),
+                    "Odczyt archiwum odpowiedzi"
+                ),
+                pl.aimasterpro.app.core.DiagnosticsStorageHealth.Source(
+                    "task_result_archive", "Archiwum raportów agentów",
+                    runCatching { pl.aimasterpro.app.core.TaskResultArchive.isArchiveReadable(this) }.getOrDefault(false),
+                    "Odczyt archiwum raportów"
+                ),
+                pl.aimasterpro.app.core.DiagnosticsStorageHealth.Source(
+                    "task_checkpoints", "Dziennik checkpointów zadań",
+                    runCatching { pl.aimasterpro.app.core.TaskCheckpointStore.isJournalReadable(this) }.getOrDefault(false),
+                    "Odczyt dziennika odzyskiwania"
+                )
+            )
+        )
+        card(
+            "Stan trwałych magazynów",
+            "${storageHealth.summary}\n${storageHealth.details}"
+        )
         card("Ostatnie zdarzenia kolejki i agentów",
             "Połączony wycinek trwałego dziennika kolejki i skrzynki przekazań. Treści raportów agentów nie są kopiowane do diagnostyki.")
         action("↻ Odśwież zdarzenia", onClick = {
