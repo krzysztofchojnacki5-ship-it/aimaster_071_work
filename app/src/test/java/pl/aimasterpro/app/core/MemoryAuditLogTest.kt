@@ -130,6 +130,36 @@ class MemoryAuditLogTest {
         assertTrue(MemoryAuditLog.readVerified(context)!!.isEmpty())
     }
 
+    @Test fun providerAssignmentHasAValidAuditedLifecycle() {
+        val intent = event(MemoryAuditLog.Phase.INTENT, "AUTHORIZED").copy(
+            mutation = MemoryGovernance.Mutation.SET_AGENT_PROVIDER.name,
+            objectId = "CODER",
+            reason = "Użytkownik przypisał profil groq do roli CODER.",
+            approvalRef = "ui-confirmation:provider-assignment-1"
+        )
+        assertTrue(MemoryAuditLog.append(context, intent))
+        assertTrue(MemoryAuditLog.append(context, intent.copy(
+            phase = MemoryAuditLog.Phase.COMMITTED,
+            outcome = "SUCCESS"
+        )))
+        val records = MemoryAuditLog.readVerified(context)!!
+        assertEquals(listOf(MemoryAuditLog.Phase.INTENT, MemoryAuditLog.Phase.COMMITTED),
+            records.map { it.phase })
+        assertEquals("SET_AGENT_PROVIDER", records.first().mutation)
+        assertEquals("CODER", records.first().objectId)
+        assertTrue(records.first().reason.contains("groq"))
+    }
+
+    @Test fun providerAssignmentRequiresUserApprovalReference() {
+        val intent = event(MemoryAuditLog.Phase.INTENT, "AUTHORIZED").copy(
+            mutation = MemoryGovernance.Mutation.SET_AGENT_PROVIDER.name,
+            objectId = "CODER",
+            approvalRef = ""
+        )
+        assertFalse(MemoryAuditLog.append(context, intent))
+        assertTrue(MemoryAuditLog.readVerified(context)!!.isEmpty())
+    }
+
     @Test fun appendAllowsDeniedAgentDecisionButNotAnAgentIntent() {
         val denied = event(MemoryAuditLog.Phase.FAILED, "DENIED_AGENT_READ_ONLY").copy(
             actor = MemoryGovernance.Actor.AGENT.name
