@@ -78,6 +78,7 @@ class AgentProviderAssignmentStoreTest {
     }
 
     @Test fun interruptedAssignmentAuditIsClosedOnlyAfterStartupVerifiesDurableState() {
+        var auditCommitCalls = 0
         val failingAuditContext = object : android.content.ContextWrapper(context) {
             override fun getSharedPreferences(name: String, mode: Int): android.content.SharedPreferences {
                 val delegate = context.getSharedPreferences(name, mode)
@@ -87,12 +88,10 @@ class AgentProviderAssignmentStoreTest {
                         val editor = delegate.edit()
                         return object : android.content.SharedPreferences.Editor by editor {
                             override fun commit(): Boolean {
+                                auditCommitCalls++
                                 // Persist INTENT, but fail the terminal COMMITTED audit append.
-                                return if (delegate.getString("events", null)?.contains("\\"phase\\":\\"INTENT\\"") == true) {
-                                    false
-                                } else editor.commit()
-                            }
-                        }
+                                return if (auditCommitCalls == 2) false else editor.commit()
+                            }                        }
                     }
                 }
             }
