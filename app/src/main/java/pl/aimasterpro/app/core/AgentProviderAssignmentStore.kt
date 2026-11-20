@@ -32,9 +32,18 @@ object AgentProviderAssignmentStore {
         }
     }
 
-    /** Returns false on a failed/throwing commit; callers must not mutate in-memory state then. */
-    fun save(context: Context, role: String, providerId: String): Boolean {
-        if (!validRole(role) || !validProviderId(providerId) || SharedPreferencesWriteHealth.isUncertain(PREFS)) return false
+    /** Explicit role changes require a permit issued by the durable memory-governance gate. */
+    internal fun save(
+        context: Context,
+        role: String,
+        providerId: String,
+        permit: MemoryMutationPermit
+    ): Boolean {
+        if (!MemoryMutationGate.isValid(
+                permit, setOf(MemoryGovernance.Mutation.SET_AGENT_PROVIDER), role
+            ) || !validRole(role) || !validProviderId(providerId) ||
+            CommunicationLogSanitizer.sanitize(providerId) != providerId ||
+            SharedPreferencesWriteHealth.isUncertain(PREFS)) return false
         return runCatching {
             val editor = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
                 .putString(key(role), providerId)
