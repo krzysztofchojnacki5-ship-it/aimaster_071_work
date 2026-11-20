@@ -44,6 +44,7 @@ class MemoryGovernanceTest {
             MemoryGovernance.Mutation.REJECT_PROPOSAL,
             MemoryGovernance.Mutation.SET_AGENT_ENABLED,
             MemoryGovernance.Mutation.SET_AGENT_DISABLED,
+            MemoryGovernance.Mutation.SET_AGENT_PROVIDER,
             MemoryGovernance.Mutation.ADD_CUSTOM_AGENT,
             MemoryGovernance.Mutation.UPDATE_CUSTOM_AGENT,
             MemoryGovernance.Mutation.REMOVE_CUSTOM_AGENT
