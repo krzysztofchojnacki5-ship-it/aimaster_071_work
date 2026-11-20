@@ -33,8 +33,10 @@ class SecureStoreReplacementRecoveryTest {
     @Before fun reset() {
         context.getSharedPreferences("secure_provider_store", Context.MODE_PRIVATE).edit().clear().commit()
         context.getSharedPreferences("chat_state", Context.MODE_PRIVATE).edit().clear().commit()
+        context.getSharedPreferences("ai_memory_audit_log_v1", Context.MODE_PRIVATE).edit().clear().commit()
         SecureStoreHealth.resetForTests()
         SharedPreferencesWriteHealth.resetForTests("chat_state")
+        SharedPreferencesWriteHealth.resetForTests("ai_memory_audit_log_v1")
     }
 
     @After fun cleanup() {
@@ -52,11 +54,24 @@ class SecureStoreReplacementRecoveryTest {
         .put("parentProviderId", "")
         .put("apiKey", "")
 
+    private fun saveAssignment(role: String, providerId: String) {
+        val request = MemoryGovernance.Request(
+            actor = MemoryGovernance.Actor.USER,
+            mutation = MemoryGovernance.Mutation.SET_AGENT_PROVIDER,
+            objectId = role,
+            reason = "Testowe przygotowanie przypisania $role",
+            approvalRef = "u:${java.util.UUID.randomUUID()}:$providerId"
+        )
+        assertTrue(MemoryMutationGate.execute(context, request) { permit ->
+            AgentProviderAssignmentStore.save(context, role, providerId, permit)
+        })
+    }
+
     private fun seedOldCatalog() {
         assertTrue(SecureStore(context).replaceAllConfigs(listOf(provider("old-provider"))))
-        assertTrue(AgentProviderAssignmentStore.save(context, "MASTER", "old-provider"))
-        assertTrue(AgentProviderAssignmentStore.save(context, "CODER", "old-provider"))
-        assertTrue(AgentProviderAssignmentStore.save(context, "RESEARCHER", "old-provider"))
+        saveAssignment("MASTER", "old-provider")
+        saveAssignment("CODER", "old-provider")
+        saveAssignment("RESEARCHER", "old-provider")
     }
 
     /** Reproduces the relevant seedDefaultProviders() effects before startup reconciliation. */
