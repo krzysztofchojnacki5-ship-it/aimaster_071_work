@@ -603,9 +603,18 @@ class MainActivity : Activity() {
             toast("Wybrany profil nie istnieje lub nie można go bezpiecznie odczytać. Przypisanie nie zostało zmienione.")
             return false
         }
-        val saved = pl.aimasterpro.app.core.AgentProviderAssignmentStore.save(this, role.name, providerId)
+        val assignmentRequest = pl.aimasterpro.app.core.MemoryGovernance.Request(
+            actor = pl.aimasterpro.app.core.MemoryGovernance.Actor.USER,
+            mutation = pl.aimasterpro.app.core.MemoryGovernance.Mutation.SET_AGENT_PROVIDER,
+            objectId = role.name,
+            reason = "Użytkownik przypisał profil $providerId do roli ${role.name}.",
+            approvalRef = "ui-confirmation:${UUID.randomUUID()}"
+        )
+        val saved = pl.aimasterpro.app.core.MemoryMutationGate.execute(this, assignmentRequest) { permit ->
+            pl.aimasterpro.app.core.AgentProviderAssignmentStore.save(this, role.name, providerId, permit)
+        }
         if (!saved) {
-            toast("Nie udało się trwale zapisać przypisania. Zachowano poprzedni wybór.")
+            toast("Nie zapisano przypisania lub dziennika audytu. Poprzedni wybór pozostaje aktywny; sprawdź Diagnostykę.")
             return false
         }
         agentConnectionTestGate.invalidate(role.name)
