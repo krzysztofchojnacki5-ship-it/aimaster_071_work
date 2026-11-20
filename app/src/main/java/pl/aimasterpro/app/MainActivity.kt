@@ -274,6 +274,12 @@ class MainActivity : Activity() {
             )
         } else null
         if (recoveredAssignments != null) {
+            val resolvedAssignmentAudits = pl.aimasterpro.app.core.AgentProviderAssignmentStore
+                .resolvePendingGovernance(this, recoveredAssignments)
+            if (resolvedAssignmentAudits > 0) android.util.Log.i(
+                "AIMasterAssignments",
+                "Zamknięto $resolvedAssignmentAudits przerwanych operacji przypisania po weryfikacji trwałego stanu."
+            )
             agentProviders.putAll(recoveredAssignments)
             agentAssignmentsHealthy = true
         } else {
@@ -608,13 +614,13 @@ class MainActivity : Activity() {
             mutation = pl.aimasterpro.app.core.MemoryGovernance.Mutation.SET_AGENT_PROVIDER,
             objectId = role.name,
             reason = "Użytkownik przypisał profil $providerId do roli ${role.name}.",
-            approvalRef = "ui-confirmation:${UUID.randomUUID()}"
+            approvalRef = "u:${UUID.randomUUID()}:$providerId"
         )
         val saved = pl.aimasterpro.app.core.MemoryMutationGate.execute(this, assignmentRequest) { permit ->
             pl.aimasterpro.app.core.AgentProviderAssignmentStore.save(this, role.name, providerId, permit)
         }
         if (!saved) {
-            toast("Nie zapisano przypisania lub dziennika audytu. Poprzedni wybór pozostaje aktywny; sprawdź Diagnostykę.")
+            toast("Nie można potwierdzić zapisu i audytu. Po ponownym uruchomieniu aplikacja zweryfikuje trwałe przypisanie; nie ponawiaj teraz tej zmiany.")
             return false
         }
         agentConnectionTestGate.invalidate(role.name)
