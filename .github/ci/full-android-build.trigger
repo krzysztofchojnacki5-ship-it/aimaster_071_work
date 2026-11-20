@@ -1,6 +1,11 @@
-AiFORTeca 0.2 full Android build requested after package 24.
-Package 24 branch: work/aiforteca-0.2-package-24-storage-health-diagnostics
-Package 24 source HEAD before full build trigger: 3f42fd7d3250cd0043e73d84b0ee84efc0993e66
-Package 24 scope: unified read-only diagnostics for durable storage health across MASTER queue, agent handoffs, chat history, MASTER response archive, agent result archive and task checkpoints; fail-closed health projection; regression tests for healthy/degraded/unavailable states.
+AiFORTeca 0.2 full Android build requested after package 25.
+Package 25 branch: work/aiforteca-0.2-package-25-provider-assignment-governance
+Package 25 source HEAD before full build trigger: 65cee36d21f473c21b9a1f2a53e616df0a7d231a
+Package 25 scope: require explicit USER governance and append-only audit for agent-role provider/model assignment changes; bind approval identity to the intended provider; recover interrupted assignment audit records only after startup verifies the durable role-assignment snapshot.
+Four logical fixes:
+1. Add SET_AGENT_PROVIDER to central governance and audit replay authorization.
+2. Require a scoped MemoryMutationPermit for every explicit single-role provider assignment write.
+3. Route MainActivity assignment changes through MemoryMutationGate; publish runtime state only after durable mutation and terminal audit both succeed.
+4. On startup, reconcile unresolved assignment intents against the verified persisted assignment snapshot; never replay the requested write blindly.
 Required outputs: testDebugUnitTest; assembleDebug; assembleRelease; source project; debug APK; release APK (signed only if signing secrets are configured and verified, otherwise unsigned).
-Safety: diagnostics must not mutate stores, interpret unavailable as empty, expose conversation/report contents, or clear/rewrite user data.
+Safety: no paid/unknown-price policy changes, no automatic approvals, no provider-key changes, no writes during recovery other than closing the audit record after the durable assignment snapshot has been read and reconciled.
