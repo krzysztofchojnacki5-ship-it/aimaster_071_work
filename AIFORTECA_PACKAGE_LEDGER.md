@@ -90,3 +90,28 @@ Aktualizacja: 2026-11-15
 - Priorytet: kontrolowane mutacje pamięci i konfiguracji agentów — zakres uprawnień, wymagane zatwierdzenie operacji wrażliwych, historia zmian i bezpieczne zachowanie przy błędach odczytu/zapisu.
 - Przed zmianami kodu wymagany audyt istniejących store'ów i testów, aby nie dublować mechanizmów już obecnych.
 - Limit: cztery poprawki kodu, następnie pełne CI; bez oznaczania pakietu jako zaliczonego przed potwierdzeniem.
+
+## Pakiet 24 — zbiorcza diagnostyka trwałości danych (2026-11-20)
+- Baza: `cfbbd796cc8ba0a75c8f3d63ad8958a1268d3401` (pakiet 23 zaakceptowany na telefonie).
+- Commit kodu: `3f42fd7d3250cd0043e73d84b0ee84efc0993e66`.
+- Commit wyzwalający pełny Android Build: `a1652f066a1e47aaa12f68618c2f7783ea40bb87`.
+- Gałąź: `work/aiforteca-0.2-package-24-storage-health-diagnostics`.
+- Cztery zakresy zmian:
+  1. Dodano czysty, deterministyczny model `DiagnosticsStorageHealth` z agregacją stanów magazynów.
+  2. Dodano rozróżnienie HEALTHY / DEGRADED / UNAVAILABLE; niedostępny odczyt nie jest prezentowany jako pusty magazyn.
+  3. Podłączono kontrolę odczytu sześciu magazynów: kolejka MASTER, handoffy, chats_v2, archiwum odpowiedzi MASTER-a, archiwum raportów agentów i checkpointy zadań.
+  4. Dodano pięć testów regresyjnych agregacji i walidacji źródeł.
+- Pliki kodu: `MainActivity.kt`; nowy `core/DiagnosticsStorageHealth.kt`; nowy `core/DiagnosticsStorageHealthTest.kt`.
+- Kontrola jest wyłącznie read-only; nie wykonuje napraw, czyszczenia ani zapisów i nie kopiuje treści rozmów/raportów do diagnostyki.
+- CI:
+  - Gradle Wrapper Validation run `44674341904` — PASS.
+  - AiFORTeca Unit Tests run `44674341494` — PASS.
+  - Android Build run `44674341482` — PASS; `testDebugUnitTest`, `assembleDebug`, `assembleRelease`, source packaging i publikacja artefaktów zakończone powodzeniem.
+  - Raport: 128 zestawów, 1354 testy, 0 failures, 0 errors, 0 skipped.
+- Artefakty:
+  - Debug APK ID `14601477629`, 2,188,627 B; SHA-256 `4ee8da457815d1d52dd9d5dcebce394cf9029cfe4e5b97dc98770e3b418b773c`.
+  - Release unsigned APK ID `14601502768`, 1,464,389 B; signing pominięty, nie przedstawiać jako podpisanego.
+  - Source project ID `14601482586`, 1,538,340 B.
+  - Raporty testów z Android Build ID `14601621878`; niezależny workflow testowy ID `14601436918`.
+- Archiwum pobranego Debug APK przeszło `unzip -t`; rozmiar pliku APK 2,201,825 B. Fizyczny test nowego panelu Diagnostyki oczekuje na użytkownika.
+- Status: CI, testy i build PASS; pakiet oczekuje na ręczną akceptację nowej sekcji diagnostycznej. Nie rozpoczynać pakietu 25 przed testem telefonu.
