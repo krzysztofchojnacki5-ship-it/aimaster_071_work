@@ -7254,6 +7254,8 @@ class MainActivity : Activity() {
         val usage = pl.aimasterpro.app.core.ApiTokenTracker.budgetUsageSnapshot(this)
         val used = usage.recordedTodayTokens + usage.activeReservedTokens
         val percent = (used * 100.0 / usage.dailyLimitTokens.coerceAtLeast(1L)).toInt().coerceIn(0, 999)
+        val queueDiagnostics = pl.aimasterpro.app.core.MasterTaskQueueStore.snapshot(this)
+        val handoffDiagnostics = pl.aimasterpro.app.core.AgentHandoffStore.snapshot(this)
         card("Centrum diagnostyczne", "Szybka kontrola lokalnego budżetu, rezerwacji i konfiguracji. Klucze API nie są wyświetlane ani kopiowane.")
         addCompanionTrustCard()
         // Unified read-only feed: queue transitions plus durable handoff states.
