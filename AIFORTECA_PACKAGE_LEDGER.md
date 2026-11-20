@@ -117,3 +117,5 @@ Pełny opis pakietów 15–21 znajduje się w `docs/AIFORTECA_0.2_FOUNDATION_PLA
 - Testy ręczne użytkownika APK 0.2: PASS — pamięć w bieżącym czacie, pamięć między nowymi czatami, kolejka MASTER, diagnostyka/dziennik, powrót po przełączeniu aplikacji. Nie zaliczone/do ponownego sprawdzenia — komunikacja agentów, odzyskiwanie zadania po restarcie.
 - Zgłoszone defekty do kolejnego zakresu: (1) poprawić usuwanie modeli i spójne czyszczenie przypisań; (2) umożliwić agentom wybór modeli podstawowych z puli modeli głównych już skonfigurowanych w aplikacji.
 - Pakiet 22 pozostaje OTWARTY do czasu zielonego CI na finalnym HEAD, weryfikacji testów i zbudowania APK. Pakiet 23 nie rozpoczęty.
+
+- Dodatkowa poprawka konfiguracji CI: commit `79224bb23862729bd77aa650f74d448f37a89d00` aktualizuje Foojay resolver convention z `0.10.0` do `1.0.0`. Log run `44829203555` wykazał, że po naprawie błędów Kotlin build zatrzymuje się podczas rozwiązywania pluginu w `settings.gradle.kts`; plugin 0.10.0 poprzedza obsługę Gradle 9, a 1.0.0 jest wersją wymaganą dla Gradle 9/Java 17. Zmiana oczekuje na potwierdzenie CI.
