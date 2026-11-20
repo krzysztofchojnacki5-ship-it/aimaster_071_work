@@ -43,9 +43,11 @@ class AgentProviderAssignmentStoreTest {
         context.getSharedPreferences("ai_memory_audit_log_v1", Context.MODE_PRIVATE).edit().clear().commit()
         SharedPreferencesWriteHealth.resetForTests("ai_memory_audit_log_v1")
         SecureStoreHealth.resetForTests()
+        SharedPreferencesWriteHealth.setCommitOverrideForTests(null)
     }
 
     @After fun cleanup() {
+        SharedPreferencesWriteHealth.setCommitOverrideForTests(null)
         SharedPreferencesWriteHealth.resetForTests("chat_state")
         SecureStoreHealth.resetForTests()
     }
@@ -79,31 +81,16 @@ class AgentProviderAssignmentStoreTest {
 
     @Test fun interruptedAssignmentAuditIsClosedOnlyAfterStartupVerifiesDurableState() {
         var auditCommitCalls = 0
-        val failingAuditContext = object : android.content.ContextWrapper(context) {
-            override fun getSharedPreferences(name: String, mode: Int): android.content.SharedPreferences {
-                val delegate = context.getSharedPreferences(name, mode)
-                if (name != "ai_memory_audit_log_v1") return delegate
-                return object : android.content.SharedPreferences by delegate {
-                    override fun edit(): android.content.SharedPreferences.Editor {
-                        val editor = delegate.edit()
-                        return object : android.content.SharedPreferences.Editor by editor {
-                            override fun commit(): Boolean {
-                                auditCommitCalls++
-                                // Persist INTENT, but fail the terminal COMMITTED audit append.
-                                return if (auditCommitCalls == 2) false else editor.commit()
-                            }
-                        }
-                    }
-                }
-            }
+        SharedPreferencesWriteHealth.setCommitOverrideForTests { name, editor ->
+            if (name == "ai_memory_audit_log_v1" && ++auditCommitCalls == 2) false
+            else editor.commit()
         }
 
-        assertFalse(mutateSave("CODER", "provider-new", targetContext = failingAuditContext))
+        assertFalse(mutateSave("CODER", "provider-new"))
         assertEquals("provider-new", prefs.getString("agent_provider_CODER", null))
         assertTrue(SharedPreferencesWriteHealth.isUncertain("ai_memory_audit_log_v1"))
 
-        // A process restart clears only in-memory uncertainty. Startup reads the durable
-        // assignment snapshot and then closes the unmatched audit intent without replaying it.
+        SharedPreferencesWriteHealth.setCommitOverrideForTests(null)
         SharedPreferencesWriteHealth.resetForTests("ai_memory_audit_log_v1")
         val interrupted = MemoryAuditLog.readVerified(context)!!
         assertEquals(1, interrupted.size)
@@ -113,9 +100,7 @@ class AgentProviderAssignmentStoreTest {
         )
         assertNotNull(verified)
         assertEquals(1, AgentProviderAssignmentStore.resolvePendingGovernance(context, verified!!))
-        assertFalse(MemoryAuditLog.hasUnresolvedIntent(
-            context, "USER", "SET_AGENT_PROVIDER", "CODER"
-        ))
+        assertFalse(MemoryAuditLog.hasUnresolvedIntent(context, "USER", "SET_AGENT_PROVIDER", "CODER"))
         val rows = MemoryAuditLog.readVerified(context)!!
         assertEquals("RECOVERED_STATE", rows.last().outcome)
         assertTrue(rows.last().reason.contains("provider-new"))
@@ -124,29 +109,16 @@ class AgentProviderAssignmentStoreTest {
 
     @Test fun failedAssignmentCommitIsResolvedWithoutReplayingTheRequestedProvider() {
         var assignmentCommitCalls = 0
-        val failingAssignmentContext = object : android.content.ContextWrapper(context) {
-            override fun getSharedPreferences(name: String, mode: Int): android.content.SharedPreferences {
-                val delegate = context.getSharedPreferences(name, mode)
-                if (name != "chat_state") return delegate
-                return object : android.content.SharedPreferences by delegate {
-                    override fun edit(): android.content.SharedPreferences.Editor {
-                        val editor = delegate.edit()
-                        return object : android.content.SharedPreferences.Editor by editor {
-                            override fun commit(): Boolean {
-                                assignmentCommitCalls++
-                                // Model commit(false) with the previous durable snapshot intact.
-                                return if (assignmentCommitCalls == 1) false else editor.commit()
-                            }
-                        }
-                    }
-                }
-            }
+        SharedPreferencesWriteHealth.setCommitOverrideForTests { name, editor ->
+            if (name == "chat_state" && ++assignmentCommitCalls == 1) false
+            else editor.commit()
         }
-        assertFalse(mutateSave("CODER", "provider-never-written", targetContext = failingAssignmentContext))
+
+        assertFalse(mutateSave("CODER", "provider-never-written"))
         assertTrue(SharedPreferencesWriteHealth.isUncertain("chat_state"))
         assertFalse(SharedPreferencesWriteHealth.isUncertain("ai_memory_audit_log_v1"))
 
-        // Restart and verify the actual durable snapshot before resolving the failed intent.
+        SharedPreferencesWriteHealth.setCommitOverrideForTests(null)
         SharedPreferencesWriteHealth.resetForTests("chat_state")
         val verified = AgentProviderAssignmentStore.reconcileExistingAssignments(
             context, defaults, setOf("groq", "provider-never-written"), "groq"
@@ -154,9 +126,7 @@ class AgentProviderAssignmentStoreTest {
         assertNotNull(verified)
         assertEquals("groq", verified!!["CODER"])
         assertEquals(1, AgentProviderAssignmentStore.resolvePendingGovernance(context, verified))
-        assertFalse(MemoryAuditLog.hasUnresolvedIntent(
-            context, "USER", "SET_AGENT_PROVIDER", "CODER"
-        ))
+        assertFalse(MemoryAuditLog.hasUnresolvedIntent(context, "USER", "SET_AGENT_PROVIDER", "CODER"))
         val terminal = MemoryAuditLog.readVerified(context)!!.last()
         assertEquals("RECOVERED_STATE", terminal.outcome)
         assertTrue(terminal.reason.contains("groq"))
