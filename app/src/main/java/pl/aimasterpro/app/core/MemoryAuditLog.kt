@@ -214,6 +214,7 @@ object MemoryAuditLog {
                     MemoryGovernance.Mutation.REJECT_PROPOSAL.name,
                     MemoryGovernance.Mutation.SET_AGENT_ENABLED.name,
                     MemoryGovernance.Mutation.SET_AGENT_DISABLED.name,
+                    MemoryGovernance.Mutation.SET_AGENT_PROVIDER.name,
                     MemoryGovernance.Mutation.ADD_CUSTOM_AGENT.name,
                     MemoryGovernance.Mutation.UPDATE_CUSTOM_AGENT.name,
                     MemoryGovernance.Mutation.REMOVE_CUSTOM_AGENT.name
