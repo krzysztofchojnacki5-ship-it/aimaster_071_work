@@ -21,3 +21,7 @@
 
 ## Kolejny krok
 Opublikować zmiany na tej samej gałęzi przez fast-forward z lease do dokładnego base SHA, następnie sprawdzić testy, raporty i wrapper validation na nowym HEAD. Jeśli CI wskaże błąd, poprawić go w ramach pakietu 22 i ponowić pełne sprawdzenie. Nie rozpoczynać pakietu 23 przed zamknięciem pakietu 22.
+
+
+## CI trigger note
+The package 22 source commit is `f3030e516722b40a63f19bf553f55861e48f7861`. The Git ref update did not create Actions runs for that SHA. This documentation-only follow-up commit is intended to emit a normal Contents API push event so the unit-test and Gradle Wrapper Validation workflows can verify the package source. CI remains pending until those exact runs complete.
