@@ -8165,7 +8165,7 @@ class MainActivity : Activity() {
                                         "Brak możliwego do przejęcia przekazania od agenta $previousAgentId; żądanie API odbiorcy nie zostanie wysłane."
                                     )
                                     val claimAudited = queueStore.recordAgentTrace(
-                                        this, taskId, "agent:${previous.agentId}", "agent:${item.agentId}",
+                                        this, taskId, "agent:$previousAgentId", "agent:${item.agentId}",
                                         "HANDOFF_CLAIMED", "Odbiorca przejął przekazanie przed wysłaniem własnego żądania API.",
                                         expectedRunId = executionRunId
                                     )
