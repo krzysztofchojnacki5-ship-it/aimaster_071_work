@@ -97,11 +97,17 @@ class MemoryAuditLogTest {
         assertNull(MemoryAuditLog.readVerified(context))
     }
 
-    @Test fun legacyAuditRowsWithoutSourceReferenceRemainReadable() {
+    @Test fun legacyAuditRowsWithoutSourceReferenceRemainReadableAfterNewAppends() {
         seedCommittedJournal(1)
-        val records = MemoryAuditLog.readVerified(context)
-        assertNotNull(records)
-        assertEquals("", records!!.single().sourceRef)
+        val before = MemoryAuditLog.readVerified(context)
+        assertNotNull(before)
+        assertEquals("", before!!.single().sourceRef)
+
+        assertTrue(MemoryAuditLog.append(
+            context, event(MemoryAuditLog.Phase.INTENT, "AUTHORIZED").copy(sourceRef = "ui:memory")
+        ))
+        val after = MemoryAuditLog.readVerified(context)!!
+        assertEquals(listOf("", "ui:memory"), after.map { it.sourceRef })
     }
 
     @Test fun appendPersistsOrderedHashChainedEvents() {
