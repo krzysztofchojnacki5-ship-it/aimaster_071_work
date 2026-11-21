@@ -7824,7 +7824,7 @@ class MainActivity : Activity() {
             )
             val resumed = reportsStaged && queueStore.resumeInterruptedRun(this, taskId, task.runId) &&
                 queueStore.snapshot(this).tasks.firstOrNull { it.id == taskId }?.runId == executionRunId
-            val reportsRecovered = resumed && resumePlan.completedAgentIds.all { agentId ->
+            val reportsRecovered = resumed && resumePlan!!.completedAgentIds.all { agentId ->
                 queueStore.recordAgentResult(
                     this, taskId, agentId, pl.aimasterpro.app.core.MasterTaskQueueStore.Status.COMPLETED,
                     "Odzyskano raport z poprzedniego przebiegu bez ponawiania żądania API.",
