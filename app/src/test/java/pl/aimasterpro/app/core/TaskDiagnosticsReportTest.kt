@@ -67,7 +67,8 @@ class TaskDiagnosticsReportTest {
         assertTrue(result.text.contains("DZIENNIK KOLEJKI: UNAVAILABLE"))
         assertTrue(result.text.contains("SKRZYNKA PRZEKAZAŃ: CORRUPT"))
         assertTrue(result.text.contains("ARCHIWUM RAPORTÓW: niedostępne"))
-        assertTrue(result.text.contains("BRAK RAPORTU AGENTA"))
+        // The archive itself is unreadable, so per-agent absence cannot be asserted safely.
+        assertFalse(result.text.contains("BRAK RAPORTU AGENTA"))
         assertTrue(result.text.contains("nie jest traktowana jako pusta"))
     }
 
