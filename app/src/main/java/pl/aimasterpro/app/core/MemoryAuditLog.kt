@@ -22,6 +22,7 @@ object MemoryAuditLog {
     private const val MAX_OBJECT_ID_CHARS = 200
     private const val MAX_TEXT_CHARS = 500
     private const val MAX_APPROVAL_REF_CHARS = 200
+    private const val MAX_SOURCE_REF_CHARS = 200
     private const val MAX_OUTCOME_CHARS = 100
 
     enum class Phase { INTENT, COMMITTED, FAILED }
@@ -34,7 +35,8 @@ object MemoryAuditLog {
         val approvalRef: String,
         val phase: Phase,
         val outcome: String,
-        val timestamp: Long = System.currentTimeMillis()
+        val timestamp: Long = System.currentTimeMillis(),
+        val sourceRef: String = ""
     )
 
     data class Record(
@@ -48,7 +50,8 @@ object MemoryAuditLog {
         val outcome: String,
         val timestamp: Long,
         val previousHash: String,
-        val hash: String
+        val hash: String,
+        val sourceRef: String = ""
     )
 
     /** Null means the persisted journal is malformed or its integrity chain is broken. */
@@ -147,6 +150,7 @@ object MemoryAuditLog {
         require(safeEvent.objectId.isNotBlank() && safeEvent.objectId.length <= MAX_OBJECT_ID_CHARS)
         require(safeEvent.reason.isNotBlank() && safeEvent.reason.length <= MAX_TEXT_CHARS)
         require(safeEvent.approvalRef.length <= MAX_APPROVAL_REF_CHARS)
+        require(safeEvent.sourceRef.length <= MAX_SOURCE_REF_CHARS)
         require(safeEvent.outcome.isNotBlank() && safeEvent.outcome.length <= MAX_OUTCOME_CHARS)
         require(safeEvent.timestamp >= 0L)
         // Identity and control fields must remain byte-for-byte stable; only free-form
@@ -155,6 +159,7 @@ object MemoryAuditLog {
         require(CommunicationLogSanitizer.sanitize(safeEvent.mutation) == safeEvent.mutation)
         require(CommunicationLogSanitizer.sanitize(safeEvent.objectId) == safeEvent.objectId)
         require(CommunicationLogSanitizer.sanitize(safeEvent.approvalRef) == safeEvent.approvalRef)
+        require(CommunicationLogSanitizer.sanitize(safeEvent.sourceRef) == safeEvent.sourceRef)
         require(CommunicationLogSanitizer.sanitize(safeEvent.outcome) == safeEvent.outcome)
         if (SharedPreferencesWriteHealth.isUncertain(PREFS_NAME)) return@runCatching false
 
@@ -177,8 +182,9 @@ object MemoryAuditLog {
             hash = hashRecord(
                 existing.size.toLong() + 1L, safeEvent.actor, safeEvent.mutation, safeEvent.objectId,
                 safeEvent.reason, safeEvent.approvalRef, safeEvent.phase.name, safeEvent.outcome,
-                safeEvent.timestamp, previousHash
-            )
+                safeEvent.timestamp, previousHash, safeEvent.sourceRef
+            ),
+            sourceRef = safeEvent.sourceRef
         )
         val rows = JSONArray()
         existing.forEach { rows.put(toJson(it)) }
@@ -292,7 +298,8 @@ object MemoryAuditLog {
             outcome = event.outcome,
             timestamp = event.timestamp,
             previousHash = "",
-            hash = ""
+            hash = "",
+            sourceRef = event.sourceRef
         )
 
         val latestByIdentity = linkedMapOf<Triple<String, String, String>, Record>()
@@ -371,6 +378,11 @@ object MemoryAuditLog {
             val objectId = row.getString("objectId")
             val reason = row.getString("reason")
             val approvalRef = row.getString("approvalRef")
+            val sourceRef = if (row.has("sourceRef")) {
+                val value = row.opt("sourceRef")
+                require(value is String) { "Memory audit source reference has an invalid type." }
+                value
+            } else ""
             val phase = Phase.valueOf(row.getString("phase"))
             val outcome = row.getString("outcome")
             val timestamp = row.getLong("timestamp")
@@ -383,6 +395,7 @@ object MemoryAuditLog {
             require(objectId.isNotBlank() && objectId.length <= MAX_OBJECT_ID_CHARS)
             require(reason.isNotBlank() && reason.length <= MAX_TEXT_CHARS)
             require(approvalRef.length <= MAX_APPROVAL_REF_CHARS)
+            require(sourceRef.length <= MAX_SOURCE_REF_CHARS)
             require(outcome.isNotBlank() && outcome.length <= MAX_OUTCOME_CHARS)
             // Refuse historical or externally edited rows that contain unredacted secrets.
             require(CommunicationLogSanitizer.sanitize(actor) == actor)
@@ -390,13 +403,18 @@ object MemoryAuditLog {
             require(CommunicationLogSanitizer.sanitize(objectId) == objectId)
             require(CommunicationLogSanitizer.sanitize(reason) == reason)
             require(CommunicationLogSanitizer.sanitize(approvalRef) == approvalRef)
+            require(CommunicationLogSanitizer.sanitize(sourceRef) == sourceRef)
             require(CommunicationLogSanitizer.sanitize(outcome) == outcome)
             require(timestamp >= 0L)
             require(hash.matches(Regex("[0-9a-f]{64}")))
-            require(hash == hashRecord(
+            val expectedHash = if (row.has("sourceRef")) hashRecord(
+                sequence, actor, mutation, objectId, reason, approvalRef, phase.name,
+                outcome, timestamp, previousHash, sourceRef
+            ) else hashRecordLegacy(
                 sequence, actor, mutation, objectId, reason, approvalRef, phase.name,
                 outcome, timestamp, previousHash
-            ))
+            )
+            require(hash == expectedHash)
             val replayedEvent = Event(
                 actor = actor,
                 mutation = mutation,
@@ -405,7 +423,8 @@ object MemoryAuditLog {
                 approvalRef = approvalRef,
                 phase = phase,
                 outcome = outcome,
-                timestamp = timestamp
+                timestamp = timestamp,
+                sourceRef = sourceRef
             )
             // Hash integrity alone is insufficient: replay must also enforce the same
             // governance authority, lifecycle and capacity rules as a live append.
@@ -413,7 +432,7 @@ object MemoryAuditLog {
             require(hasValidTransition(result, replayedEvent))
             require(hasReservedCapacity(result, replayedEvent))
             result.add(Record(sequence, actor, mutation, objectId, reason, approvalRef,
-                phase, outcome, timestamp, previousHash, hash))
+                phase, outcome, timestamp, previousHash, hash, sourceRef))
             expectedPrevious = hash
         }
         result
@@ -429,14 +448,31 @@ object MemoryAuditLog {
         .put("phase", record.phase.name)
         .put("outcome", record.outcome)
         .put("timestamp", record.timestamp)
+        .put("sourceRef", record.sourceRef)
         .put("previousHash", record.previousHash)
         .put("hash", record.hash)
 
     private fun hashRecord(
         sequence: Long, actor: String, mutation: String, objectId: String, reason: String,
-        approvalRef: String, phase: String, outcome: String, timestamp: Long, previousHash: String
+        approvalRef: String, phase: String, outcome: String, timestamp: Long, previousHash: String,
+        sourceRef: String
     ): String {
         // Length-prefixing prevents delimiter ambiguity in attacker-controlled text fields.
+        val values = listOf(
+            sequence.toString(), actor, mutation, objectId, reason, approvalRef,
+            phase, outcome, timestamp.toString(), previousHash, sourceRef
+        )
+        val canonical = values.joinToString("") { "${it.length}:$it" }
+        return MessageDigest.getInstance("SHA-256")
+            .digest(canonical.toByteArray(Charsets.UTF_8))
+            .joinToString("") { "%02x".format(it) }
+    }
+
+    /** Verifies records written before sourceRef became part of the hash-chain schema. */
+    private fun hashRecordLegacy(
+        sequence: Long, actor: String, mutation: String, objectId: String, reason: String,
+        approvalRef: String, phase: String, outcome: String, timestamp: Long, previousHash: String
+    ): String {
         val values = listOf(
             sequence.toString(), actor, mutation, objectId, reason, approvalRef,
             phase, outcome, timestamp.toString(), previousHash
