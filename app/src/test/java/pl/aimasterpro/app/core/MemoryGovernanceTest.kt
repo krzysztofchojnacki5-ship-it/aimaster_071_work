@@ -97,6 +97,20 @@ class MemoryGovernanceTest {
         }
     }
 
+    @Test fun sourceReferenceMustBeBoundedAndSecretFree() {
+        val valid = request(MemoryGovernance.Actor.USER, MemoryGovernance.Mutation.ADD_SHARED_RULE)
+            .copy(sourceRef = "chat:abc123")
+        assertTrue(MemoryGovernance.authorize(valid).allowed)
+
+        val secret = valid.copy(sourceRef = "ui:api_key=sk_live_1234567890")
+        assertFalse(MemoryGovernance.authorize(secret).allowed)
+        assertEquals("INVALID_SOURCE_REF", MemoryGovernance.authorize(secret).code)
+
+        val oversized = valid.copy(sourceRef = "x".repeat(201))
+        assertFalse(MemoryGovernance.authorize(oversized).allowed)
+        assertEquals("INVALID_SOURCE_REF", MemoryGovernance.authorize(oversized).code)
+    }
+
     @Test fun malformedMutationMetadataIsRejected() {
         val missingObject = MemoryGovernance.authorize(
             request(MemoryGovernance.Actor.USER, MemoryGovernance.Mutation.ADD_SHARED_RULE, objectId = "")
