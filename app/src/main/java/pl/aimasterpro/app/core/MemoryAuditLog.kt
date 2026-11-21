@@ -51,7 +51,9 @@ object MemoryAuditLog {
         val timestamp: Long,
         val previousHash: String,
         val hash: String,
-        val sourceRef: String = ""
+        val sourceRef: String = "",
+        /** False only for historical rows whose original hash omitted sourceRef. */
+        val sourceRefHashed: Boolean = true
     )
 
     /** Null means the persisted journal is malformed or its integrity chain is broken. */
@@ -432,25 +434,26 @@ object MemoryAuditLog {
             require(hasValidTransition(result, replayedEvent))
             require(hasReservedCapacity(result, replayedEvent))
             result.add(Record(sequence, actor, mutation, objectId, reason, approvalRef,
-                phase, outcome, timestamp, previousHash, hash, sourceRef))
+                phase, outcome, timestamp, previousHash, hash, sourceRef, row.has("sourceRef")))
             expectedPrevious = hash
         }
         result
     }.getOrNull()
 
-    private fun toJson(record: Record) = JSONObject()
-        .put("sequence", record.sequence)
-        .put("actor", record.actor)
-        .put("mutation", record.mutation)
-        .put("objectId", record.objectId)
-        .put("reason", record.reason)
-        .put("approvalRef", record.approvalRef)
-        .put("phase", record.phase.name)
-        .put("outcome", record.outcome)
-        .put("timestamp", record.timestamp)
-        .put("sourceRef", record.sourceRef)
-        .put("previousHash", record.previousHash)
-        .put("hash", record.hash)
+    private fun toJson(record: Record): JSONObject {
+        val row = JSONObject()
+            .put("sequence", record.sequence)
+            .put("actor", record.actor)
+            .put("mutation", record.mutation)
+            .put("objectId", record.objectId)
+            .put("reason", record.reason)
+            .put("approvalRef", record.approvalRef)
+            .put("phase", record.phase.name)
+            .put("outcome", record.outcome)
+            .put("timestamp", record.timestamp)
+        if (record.sourceRefHashed) row.put("sourceRef", record.sourceRef)
+        return row.put("previousHash", record.previousHash).put("hash", record.hash)
+    }
 
     private fun hashRecord(
         sequence: Long, actor: String, mutation: String, objectId: String, reason: String,
