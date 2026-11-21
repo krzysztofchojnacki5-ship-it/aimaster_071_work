@@ -37,7 +37,9 @@ object MemoryGovernance {
         val mutation: Mutation,
         val objectId: String,
         val reason: String,
-        val approvalRef: String = ""
+        val approvalRef: String = "",
+        /** UI/task/chat origin for audit provenance; never contains prompt or secret content. */
+        val sourceRef: String = ""
     )
 
     data class Decision(
@@ -74,6 +76,10 @@ object MemoryGovernance {
         }
         if (request.approvalRef.length > MAX_FIELD_CHARS) {
             return deny("INVALID_APPROVAL_REF", "Identyfikator zatwierdzenia przekracza limit długości.")
+        }
+        if (request.sourceRef.length > MAX_SOURCE_REF_CHARS ||
+            CommunicationLogSanitizer.sanitize(request.sourceRef) != request.sourceRef) {
+            return deny("INVALID_SOURCE_REF", "Źródło mutacji jest nieprawidłowe lub zawiera dane wymagające redakcji.")
         }
 
         return when (request.actor) {
@@ -117,5 +123,6 @@ object MemoryGovernance {
     private fun deny(code: String, message: String) = Decision(false, code, message)
 
     private const val MAX_FIELD_CHARS = 200
+    private const val MAX_SOURCE_REF_CHARS = 200
     private const val MAX_REASON_CHARS = 500
 }
