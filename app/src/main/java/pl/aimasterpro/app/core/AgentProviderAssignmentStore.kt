@@ -118,6 +118,23 @@ object AgentProviderAssignmentStore {
         }.getOrNull()
     }
 
+    /**
+     * Reconciles all role assignments after a model profile was durably removed.
+     * The removed ID must be absent from the verified provider catalog.
+     */
+    fun reconcileAfterModelRemoval(
+        context: Context,
+        roleDefaults: Map<String, String>,
+        validProviderIds: Set<String>,
+        removedProviderId: String,
+        legacyMasterId: String?
+    ): Map<String, String>? {
+        if (removedProviderId.isBlank() || removedProviderId in validProviderIds ||
+            !validRoleDefaults(roleDefaults) || validProviderIds.isEmpty() ||
+            validProviderIds.size > MAX_PROVIDER_IDS || validProviderIds.any { !validProviderId(it) }) return null
+        return reconcileExistingAssignments(context, roleDefaults, validProviderIds, legacyMasterId)
+    }
+
     private fun validRole(role: String): Boolean = role.isNotBlank() && role.length <= MAX_ROLE_ID_CHARS
     private fun validProviderId(id: String): Boolean = id.isNotBlank() && id.length <= MAX_PROVIDER_ID_CHARS
     private fun validRoleDefaults(values: Map<String, String>): Boolean =
