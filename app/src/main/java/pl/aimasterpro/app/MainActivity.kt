@@ -5148,7 +5148,7 @@ class MainActivity : Activity() {
         }
         AlertDialog.Builder(this)
             .setTitle("Usunąć profil modelu?")
-            .setMessage("Profil „\${profile.name}” zostanie usunięty z konfiguracji. Klucz API dostawcy nadrzędnego pozostanie zachowany. Przypisania agentów zostaną uzgodnione ponownie; historia użycia tokenów nie będzie kasowana.")
+            .setMessage("Profil „${profile.name}” zostanie usunięty z konfiguracji. Klucz API dostawcy nadrzędnego pozostanie zachowany. Przypisania agentów zostaną uzgodnione ponownie; historia użycia tokenów nie będzie kasowana.")
             .setNegativeButton("Anuluj", null)
             .setPositiveButton("Usuń profil") { _, _ ->
                 if (!store.deleteModelProfile(profile.id)) {
