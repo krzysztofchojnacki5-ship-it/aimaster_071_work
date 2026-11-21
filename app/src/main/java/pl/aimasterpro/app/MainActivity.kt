@@ -7276,6 +7276,7 @@ class MainActivity : Activity() {
             val provider = listOf(event.providerId, event.model).filter { it.isNotBlank() }.joinToString(" / ")
             val metadata = listOf(
                 taskTitles[event.taskId] ?: event.taskId,
+                "run #${event.runId}",
                 "${event.actor}${route}", provider, event.source,
                 eventTime.format(java.util.Date(event.timestamp))
             ).filter { it.isNotBlank() }.joinToString(" • ")
