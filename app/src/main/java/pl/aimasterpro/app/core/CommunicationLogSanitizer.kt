@@ -8,16 +8,22 @@ object CommunicationLogSanitizer {
     private val groq = Regex("\\bgsk_[A-Za-z0-9_-]{16,}\\b")
     private val github = Regex("\\bgh[pousr]_[A-Za-z0-9_]{20,}\\b")
     private val slack = Regex("\\bxox[baprs]-[A-Za-z0-9-]{10,}\\b")
-    private val keyValue = Regex("(?i)(\\b(?:api[_-]?key|x-api-key|access[_-]?token|refresh[_-]?token|client[_-]?secret|password|secret)\\b\\s*[=:]\\s*)(\\\"[^\\\"]*\\\"|'[^']*'|[^\\s,;]+)")
-    private val jsonSecret = Regex("(?i)(\\\"(?:apiKey|api_key|access_token|refresh_token|client_secret|password|secret)\\\"\\s*:\\s*\\\")[^\\\"]*(\\\")")
+    private val urlUserInfo = Regex("(?i)([a-z][a-z0-9+.-]*://[^\\s/:@]+:)[^\\s/@]+(@)")
+    private val privateKeyBlock = Regex("(?s)-----BEGIN (?:RSA |EC |OPENSSH |DSA |ENCRYPTED )?PRIVATE KEY-----.*?-----END (?:RSA |EC |OPENSSH |DSA |ENCRYPTED )?PRIVATE KEY-----")
+    private val authorizationHeader = Regex("(?i)(\\b(?:authorization|proxy-authorization)\\b\\s*:\\s*)[^\\r\\n]*")
+    private val keyValue = Regex("(?i)(\\b(?:api[_-]?key|x-api-key|access[_-]?token|refresh[_-]?token|id[_-]?token|session[_-]?token|token|authorization|proxy-authorization|auth|client[_-]?secret|aws[_-]?secret[_-]?access[_-]?key|aws[_-]?session[_-]?token|private[_-]?key|signing[_-]?key|secret[_-]?key|password|secret)\\b\\s*[=:]\\s*)(\\\"[^\\\"]*\\\"|'[^']*'|[^\\s,;]+)")
+    private val jsonSecret = Regex("(?i)(\\\"(?:apiKey|api_key|access_token|refresh_token|id_token|session_token|token|authorization|proxy-authorization|auth|client_secret|aws_secret_access_key|aws_session_token|private_key|signing_key|secret_key|password|secret)\\\"\\s*:\\s*\\\")[^\\\"]*(\\\")")
 
     fun sanitize(value: String): String = value
+        .replace(authorizationHeader) { match -> match.groupValues[1] + "[REDACTED]" }
         .replace(bearer, "Bearer [REDACTED]")
         .replace(google, "AIzaSy[REDACTED]")
         .replace(openAiStyle, "sk-[REDACTED]")
         .replace(groq, "gsk_[REDACTED]")
         .replace(github, "gh[pousr]_[REDACTED]")
         .replace(slack, "xox-[REDACTED]")
+        .replace(urlUserInfo) { match -> match.groupValues[1] + "[REDACTED]" + match.groupValues[2] }
+        .replace(privateKeyBlock, "[REDACTED PRIVATE KEY]")
         .replace(keyValue) { match -> match.groupValues[1] + "[REDACTED]" }
         .replace(jsonSecret) { match -> match.groupValues[1] + "[REDACTED]" + match.groupValues[2] }
 }

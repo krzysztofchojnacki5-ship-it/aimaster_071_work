@@ -213,6 +213,38 @@ class SecureStore internal constructor(
         if (SecureStoreHealth.isUncertain()) emptyList() else configs
     }
 
+    /**
+     * Deletes only a child model profile. Provider roots and profiles with dependent children
+     * are never removed through this path. Metadata, encrypted secret reference and provider ID
+     * are removed in one SharedPreferences commit.
+     */
+    fun deleteModelProfile(id: String): Boolean = synchronized(SecureStoreHealth.lock()) {
+        if (id.isBlank() || SecureStoreHealth.isUncertain()) return@synchronized false
+        try {
+            val ids = readProviderIds()
+            if (SecureStoreHealth.isUncertain() || id !in ids) return@synchronized false
+            val configs = ids.associateWith { candidate ->
+                val raw = prefs.getString("config_$candidate", null)
+                    ?: throw IllegalStateException("Missing provider config: $candidate")
+                JSONObject(raw).also { stored ->
+                    require(stored.optString("id") == candidate) { "Mismatched provider config identity." }
+                }
+            }
+            val target = configs[id] ?: return@synchronized false
+            val parentId = target.optString("parentProviderId")
+            if (parentId.isBlank()) return@synchronized false
+            if (parentId !in configs) throw IllegalStateException("Missing parent provider config.")
+            if (configs.values.any { it.optString("parentProviderId") == id }) return@synchronized false
+            commitOrMarkUncertain(
+                prefs.edit().remove("config_$id").remove("key_$id")
+                    .putStringSet("provider_ids", ids - id)
+            )
+        } catch (_: Exception) {
+            SecureStoreHealth.markUncertain()
+            false
+        }
+    }
+
     private fun validateImportedConfig(config: JSONObject) {
         fun requiredString(name: String, max: Int, allowBlank: Boolean = true): String {
             require(config.has(name) && !config.isNull(name)) { "Brak pola konfiguracji: $name." }

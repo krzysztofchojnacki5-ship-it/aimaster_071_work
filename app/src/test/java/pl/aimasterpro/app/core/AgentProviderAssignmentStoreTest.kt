@@ -329,4 +329,41 @@ class AgentProviderAssignmentStoreTest {
         assertEquals("groq", prefs.getString("selected_provider", null))
     }
 
+    @Test fun modelRemovalReconciliationRepairsEveryStaleRoleAndPreservesValidAssignments() {
+        prefs.edit()
+            .putString("agent_provider_MASTER", "removed-model")
+            .putString("selected_provider", "removed-model")
+            .putString("agent_provider_CODER", "mistral")
+            .putString("agent_provider_RESEARCHER", "removed-model")
+            .commit()
+        val result = AgentProviderAssignmentStore.reconcileAfterModelRemoval(
+            context, defaults, setOf("groq", "mistral"), "removed-model", "removed-model"
+        )
+        assertNotNull(result)
+        assertEquals("groq", result!!["MASTER"])
+        assertEquals("mistral", result["CODER"])
+        assertEquals("groq", result["RESEARCHER"])
+        assertEquals("groq", prefs.getString("selected_provider", null))
+    }
+
+    @Test fun modelRemovalReconciliationRefusesWhenRemovedIdStillExists() {
+        prefs.edit().putString("agent_provider_MASTER", "keep-model")
+            .putString("selected_provider", "keep-model").commit()
+        assertNull(AgentProviderAssignmentStore.reconcileAfterModelRemoval(
+            context, defaults, setOf("groq", "keep-model"), "keep-model", "keep-model"
+        ))
+        assertEquals("keep-model", prefs.getString("agent_provider_MASTER", null))
+        assertEquals("keep-model", prefs.getString("selected_provider", null))
+    }
+
+    @Test fun oversizedRoleAndProviderIdsAreRejectedWithoutMutation() {
+        assertFalse(AgentProviderAssignmentStore.save(context, "R".repeat(81), "gemini"))
+        assertFalse(AgentProviderAssignmentStore.save(context, "MASTER", "P".repeat(161)))
+        assertNull(prefs.getString("agent_provider_MASTER", null))
+        assertNull(AgentProviderAssignmentStore.reconcileExistingAssignments(
+            context, defaults, setOf("P".repeat(161)), "gemini"
+        ))
+        assertTrue(runCatching { AgentProviderAssignmentStore.read(context, mapOf("R".repeat(81) to "gemini")) }.isFailure)
+    }
+
 }

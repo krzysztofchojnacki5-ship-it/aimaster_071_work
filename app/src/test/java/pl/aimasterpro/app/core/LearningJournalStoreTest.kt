@@ -104,11 +104,21 @@ class LearningJournalStoreTest {
     }
 
     @Test fun clearRemovesJournalWithoutTouchingApprovedMemory() {
-        AiMemoryStore.addMemory(context, "TEST_APPROVED_MEMORY")
+        val memory = "TEST_APPROVED_MEMORY"
+        val request = MemoryGovernance.Request(
+            actor = MemoryGovernance.Actor.USER,
+            mutation = MemoryGovernance.Mutation.ADD_SHARED_RULE,
+            objectId = memory,
+            reason = "Test fixture",
+            approvalRef = "test-confirmation:$memory"
+        )
+        assertTrue(MemoryMutationGate.execute(context, request) { permit ->
+            AiMemoryStore.addMemory(context, memory, permit, objectId = request.objectId)
+        })
         LearningJournalStore.record(context, LearningJournalStore.Event(1L, "chat", "MASTER", "groq", "model-a", "COMPLETED", 10L, 1, ""))
         LearningJournalStore.clear(context)
         assertTrue(LearningJournalStore.load(context).isEmpty())
-        assertTrue(AiMemoryStore.getMemories(context).contains("TEST_APPROVED_MEMORY"))
+        assertTrue(AiMemoryStore.getMemories(context).contains(memory))
     }
     @Test fun ambiguousCommitQuarantinesJournalReadsWritesAndClear() {
         val prefs = context.getSharedPreferences("ai_learning_journal_v1", Context.MODE_PRIVATE)
@@ -123,5 +133,16 @@ class LearningJournalStoreTest {
         assertTrue(LearningJournalStore.load(context).isEmpty())
         assertTrue(!LearningJournalStore.clear(context))
         assertEquals(original, prefs.getString("events", null))
+    }
+    @Test fun oversizedRawJournalIsRejectedBeforeParsingAndPreserved() {
+        val prefs = context.getSharedPreferences("ai_learning_journal_v1", Context.MODE_PRIVATE)
+        val oversized = " ".repeat(500_001)
+        assertTrue(prefs.edit().putString("events", oversized).commit())
+
+        assertTrue(LearningJournalStore.load(context).isEmpty())
+        LearningJournalStore.record(
+            context, LearningJournalStore.Event(400L, "agent", "tester", "groq", "model", "COMPLETED", 100L, 1, "")
+        )
+        assertEquals(oversized, prefs.getString("events", null))
     }
 }

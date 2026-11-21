@@ -28,6 +28,52 @@ class ProviderException(
     val requestMayHaveBeenProcessed: Boolean = false
 ) : Exception(message)
 
+internal object ProviderHttpAuth {
+    fun normalizeApiKey(raw: String): String {
+        var value = raw.trim()
+        while (value.startsWith("Bearer ", ignoreCase = true)) value = value.substringAfter(' ').trim()
+        return value
+    }
+
+    fun authorizationHeaderValue(headerName: String, rawApiKey: String): String? {
+        val key = normalizeApiKey(rawApiKey)
+        if (key.isBlank()) return null
+        return if (headerName.equals("Authorization", ignoreCase = true)) "Bearer $key" else key
+    }
+}
+
+internal object ProviderHttpDiagnostics {
+    fun redactErrorBody(rawBody: String, rawApiKey: String): String {
+        var safe = rawBody
+        val key = ProviderHttpAuth.normalizeApiKey(rawApiKey)
+        if (key.isNotBlank()) {
+            safe = safe.replace(key, "[REDACTED]")
+            val encodedKey = java.net.URLEncoder.encode(key, "UTF-8")
+            if (encodedKey != key) safe = safe.replace(encodedKey, "[REDACTED]")
+        }
+        var searchFrom = 0
+        while (true) {
+            val start = safe.indexOf("Bearer ", searchFrom, ignoreCase = true)
+            if (start < 0) break
+            val tokenStart = start + 7
+            val tokenEndCandidate = safe.indexOfAny(charArrayOf(' ', '"', '\'', '<', '>'), tokenStart)
+            val tokenEnd = if (tokenEndCandidate < 0) safe.length else tokenEndCandidate
+            if (tokenEnd > tokenStart) {
+                safe = safe.replaceRange(tokenStart, tokenEnd, "[REDACTED]")
+                searchFrom = tokenStart + 10
+            } else searchFrom = tokenEnd
+        }
+        return safe.take(2500)
+    }
+
+    fun httpFailureHint(code: Int, category: String): String = when (code) {
+        400 -> "HTTP 400: dostawca odrzucił żądanie. Sprawdź ID modelu, endpoint i format payloadu; wymagane pola zależą od dostawcy."
+        401 -> "HTTP 401: dostawca odrzucił autoryzację. Sprawdź klucz API, jego uprawnienia i wymagany typ nagłówka."
+        403 -> "HTTP 403: klucz został rozpoznany, ale dostawca odmawia dostępu. Sprawdź uprawnienia i dostęp do modelu."
+        404 -> "HTTP 404: nie znaleziono endpointu lub modelu. Sprawdź Base URL i identyfikator modelu."
+        else -> "Dostawca zwrócił HTTP $code ($category)."
+    }
+}
 /** Synchronous transport with strict error classification, retry, and token usage extraction. */
 data class ProviderModelInfo(
     val id: String,
@@ -172,7 +218,7 @@ class ProviderClient(
             readTimeout = readTimeoutMs.coerceAtLeast(1)
             setRequestProperty("Accept", "application/json")
             setRequestProperty("Connection", "close")
-            if (apiKey.isNotBlank()) setRequestProperty(authHeader, if (authHeader == "Authorization") "Bearer $apiKey" else apiKey)
+            ProviderHttpAuth.authorizationHeaderValue(authHeader, apiKey)?.let { setRequestProperty(authHeader, it) }
             extraHeaders.forEach { (name, value) -> setRequestProperty(name, value) }
             if (body != null) { doOutput = true; setRequestProperty("Content-Type", "application/json; charset=utf-8") }
         }
@@ -209,9 +255,11 @@ class ProviderClient(
                     else -> "HTTP_ERROR"
                 }
                 val ambiguousServerOutcome = method.equals("POST", true) && (code == 408 || code in 500..599)
+                val safeBody = ProviderHttpDiagnostics.redactErrorBody(text, apiKey)
+                val diagnostic = ProviderHttpDiagnostics.httpFailureHint(code, category)
                 throw ProviderException(
-                    code, "Dostawca zwrócił HTTP $code (${category}): ${text.take(200)}",
-                    text.take(2500), category = category, phase = phase,
+                    code, "$diagnostic ${safeBody.take(200)}".trim(),
+                    safeBody, category = category, phase = phase,
                     requestMayHaveBeenProcessed = ambiguousServerOutcome
                 )
             }
@@ -289,14 +337,15 @@ class ProviderClient(
     }
 
     fun chat(config: ProviderConfig, systemPrompt: String, userText: String, attachmentMime: String = "", attachmentBase64: String = "",
-             scope: RequestScope? = null): ChatResponse {
+             scope: RequestScope? = null, conversationHistory: List<ConversationTurn> = emptyList()): ChatResponse {
         val requestScope = scope
         if (isCancelled(requestScope)) throw cancelledException()
         requestScopeLocal.set(requestScope)
         allowInsecureLanOllamaLocal.set(config.allowInsecureLanOllama)
         return try {
             if (isCancelled(scope)) throw cancelledException()
-            chatInternal(config, systemPrompt, userText, attachmentMime, attachmentBase64)
+            val boundedHistory = ConversationContextBuilder.build(conversationHistory, userText)
+            chatInternal(config, systemPrompt, userText, attachmentMime, attachmentBase64, boundedHistory)
         } catch (e: ProviderException) {
             // Schema/shape validation happens after a successful HTTP response; that POST may
             // already be billable even though the provider payload cannot be consumed.
@@ -356,7 +405,8 @@ class ProviderClient(
         return reportedTotal == null || reportedTotal == sum
     }
 
-    private fun chatInternal(config: ProviderConfig, systemPrompt: String, userText: String, attachmentMime: String, attachmentBase64: String): ChatResponse = when (config.kind) {
+    private fun chatInternal(config: ProviderConfig, systemPrompt: String, userText: String, attachmentMime: String, attachmentBase64: String,
+                             history: List<ConversationTurn>): ChatResponse = when (config.kind) {
         ProviderKind.ANTHROPIC -> {
             val root = config.baseUrl.trimEnd('/').ifBlank { "https://api.anthropic.com/v1" }
             val endpoint = if (root.endsWith("/messages")) root else "$root/messages"
@@ -368,7 +418,7 @@ class ProviderClient(
                     else -> throw ProviderException(null, "Ten typ załącznika nie jest obsługiwany przez Anthropic.", category = "UNSUPPORTED_ATTACHMENT")
                 }
             }
-            val messages = JSONArray().put(JSONObject().put("role", "user").put("content", contentBlocks))
+            val messages = ProviderConversationPayloads.anthropic(history, contentBlocks)
             val result = requestWithRetry(endpoint, "POST", config.apiKey,
                 JSONObject().put("model", config.model).put("max_tokens", 4096).put("system", systemPrompt).put("messages", messages),
                 authHeader = "x-api-key", extraHeaders = mapOf("anthropic-version" to "2023-06-01"))
@@ -408,7 +458,7 @@ class ProviderClient(
             val realUsage = metadataObjectsValid && cacheBreakdownValid && validUsageBreakdown(
                 input, output, null, cached, reasoning, cacheWrite = cacheWrite, cacheWrite1h = cacheWrite1h
             )
-            val finalInput = if (realUsage) input!! else (systemPrompt.length + userText.length) / 4.toLong()
+            val finalInput = if (realUsage) input!! else (systemPrompt.length.toLong() + history.sumOf { it.content.length.toLong() } + userText.length.toLong()) / 4L
             val finalOutput = if (realUsage) output!! else text.length / 4.toLong()
             val finalTotal = if (realUsage) Math.addExact(finalInput, finalOutput) else finalInput + finalOutput
             val finalCached = if (realUsage) cached!! else 0L
@@ -428,9 +478,7 @@ class ProviderClient(
                 JSONArray().put(JSONObject().put("type", "text").put("text", userText))
                     .put(JSONObject().put("type", "image_url").put("image_url", JSONObject().put("url", "data:$attachmentMime;base64,$attachmentBase64")))
             }
-            val messages = JSONArray()
-                .put(JSONObject().put("role", "system").put("content", systemPrompt))
-                .put(JSONObject().put("role", "user").put("content", userContent))
+            val messages = ProviderConversationPayloads.openAi(systemPrompt, history, userContent)
             val result = requestWithRetry(endpoint, "POST", config.apiKey,
                 JSONObject().put("model", config.model).put("messages", messages))
 
@@ -473,7 +521,7 @@ class ProviderClient(
                     optionalJsonObjectFieldIsValid(usageObj, "completion_tokens_details")
             val realUsage = metadataObjectsValid && validUsageBreakdown(input, output, reportedTotal, cached, reasoning, reportedTotalFieldValid, cacheWrite, cacheWrite1h)
 
-            val finalInput = if (realUsage) input!! else (systemPrompt.length + userText.length) / 4.toLong()
+            val finalInput = if (realUsage) input!! else (systemPrompt.length.toLong() + history.sumOf { it.content.length.toLong() } + userText.length.toLong()) / 4L
             val finalOutput = if (realUsage) output!! else text.length / 4.toLong()
             val finalTotal = if (realUsage) Math.addExact(finalInput, finalOutput) else finalInput + finalOutput
             val finalCached = if (realUsage) cached!! else 0L
@@ -489,9 +537,7 @@ class ProviderClient(
             if (root.contains("/openai")) {
                 // Official Google Gemini OpenAI-compatible endpoint: https://generativelanguage.googleapis.com/v1beta/openai/
                 val endpoint = if (root.endsWith("/chat/completions")) root else "$root/chat/completions"
-                val messages = JSONArray()
-                    .put(JSONObject().put("role", "system").put("content", systemPrompt))
-                    .put(JSONObject().put("role", "user").put("content", userText))
+                val messages = ProviderConversationPayloads.openAi(systemPrompt, history, userText)
                 val result = requestWithRetry(endpoint, "POST", config.apiKey,
                     JSONObject().put("model", config.model).put("messages", messages),
                     authHeader = "Authorization")
@@ -514,7 +560,7 @@ class ProviderClient(
                     optionalJsonObjectFieldIsValid(usageObj, "prompt_tokens_details") &&
                         optionalJsonObjectFieldIsValid(usageObj, "completion_tokens_details")
                 val realUsage = metadataObjectsValid && validUsageBreakdown(input, output, reportedTotal, cached, reasoning, reportedTotalFieldValid, cacheWrite, cacheWrite1h)
-                val finalInput = if (realUsage) input!! else (systemPrompt.length + userText.length) / 4L
+                val finalInput = if (realUsage) input!! else (systemPrompt.length.toLong() + history.sumOf { it.content.length.toLong() } + userText.length.toLong()) / 4L
                 val finalOutput = if (realUsage) output!! else text.length / 4L
                 val finalTotal = if (realUsage) Math.addExact(finalInput, finalOutput) else finalInput + finalOutput
                 val finalCached = if (realUsage) cached!! else 0L
@@ -524,16 +570,19 @@ class ProviderClient(
                 ChatResponse(text, TokenUsageResult(finalInput, finalOutput, finalTotal, if (realUsage) reasoning!! else 0L, finalCached, status, finalCacheWrite, finalCacheWrite1h, realUsage && reasoningKnown), providerId = config.id, model = responseModel(result, config.model))
             } else {
                 // Native Gemini REST API
-                val keyQuery = if (config.apiKey.isNotBlank()) {
-                    "?key=${java.net.URLEncoder.encode(config.apiKey, "UTF-8")}"
+                val normalizedKey = ProviderHttpAuth.normalizeApiKey(config.apiKey)
+                val keyQuery = if (normalizedKey.isNotBlank()) {
+                    "?key=${java.net.URLEncoder.encode(normalizedKey, "UTF-8")}"
                 } else ""
                 val endpoint = "$root/models/${config.model}:generateContent$keyQuery"
-                val parts = JSONArray().put(JSONObject().put("text", "$systemPrompt\n\nUżytkownik: $userText"))
+                val parts = JSONArray().put(JSONObject().put("text", userText))
                 if (attachmentBase64.isNotBlank()) {
                     if (!(attachmentMime.startsWith("image/") || attachmentMime == "application/pdf")) throw ProviderException(null, "Gemini: obsługiwane załączniki to obrazy i PDF.", category = "UNSUPPORTED_ATTACHMENT")
                     parts.put(JSONObject().put("inlineData", JSONObject().put("mimeType", attachmentMime).put("data", attachmentBase64)))
                 }
-                val result = requestWithRetry(endpoint, "POST", "", JSONObject().put("contents", JSONArray().put(JSONObject().put("parts", parts))))
+                val contents = ProviderConversationPayloads.geminiContents(history, parts)
+                val requestBody = ProviderConversationPayloads.geminiNativeRequest(systemPrompt, contents)
+                val result = requestWithRetry(endpoint, "POST", "", requestBody)
                 val text = result.optJSONArray("candidates")?.optJSONObject(0)?.optJSONObject("content")?.optJSONArray("parts")?.optJSONObject(0)?.optString("text").orEmpty()
 
                 val meta = result.optJSONObject("usageMetadata")
@@ -547,7 +596,7 @@ class ProviderClient(
                     meta?.isNull("thoughtsTokenCount") == false && reasoning != null
                 val realUsage = validUsageBreakdown(input, output, total, cached, reasoning, totalFieldValid)
 
-                val finalInput = if (realUsage) input!! else (systemPrompt.length + userText.length) / 4.toLong()
+                val finalInput = if (realUsage) input!! else (systemPrompt.length.toLong() + history.sumOf { it.content.length.toLong() } + userText.length.toLong()) / 4L
                 val finalOutput = if (realUsage) output!! else text.length / 4.toLong()
                 val finalTotal = if (realUsage) Math.addExact(finalInput, finalOutput) else finalInput + finalOutput
                 val finalCached = if (realUsage) cached!! else 0L
@@ -652,8 +701,9 @@ class ProviderClient(
                             ProviderModelInfo(id, o.optString("name", id), o.optLong("context_length", -1L).takeIf { it > 0 })
                         }.sortedBy { it.id }
                     } else {
-                        val keyQuery = if (config.apiKey.isNotBlank()) {
-                            "?key=${java.net.URLEncoder.encode(config.apiKey, "UTF-8")}"
+                        val normalizedKey = ProviderHttpAuth.normalizeApiKey(config.apiKey)
+                        val keyQuery = if (normalizedKey.isNotBlank()) {
+                            "?key=${java.net.URLEncoder.encode(normalizedKey, "UTF-8")}"
                         } else ""
                         val json = requestWithRetry("$root/models$keyQuery", "GET", "")
                         val arr = json.optJSONArray("models") ?: JSONArray()

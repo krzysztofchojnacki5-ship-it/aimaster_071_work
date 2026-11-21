@@ -71,6 +71,9 @@ internal object AndroidCompanionTrustIo : CompanionTrustIo {
     override fun deleteIfExists(path: java.nio.file.Path): Boolean = Files.deleteIfExists(path)
 
     override fun syncDirectory(directory: File) {
+        // A failed directory fsync means the rename/unlink is not confirmed durable. Propagate
+        // the failure so callers keep the trust-recovery path fail-closed instead of claiming
+        // that the independent marker was durably published or removed.
         java.nio.channels.FileChannel.open(directory.toPath(), java.nio.file.StandardOpenOption.READ).use {
             it.force(true)
         }

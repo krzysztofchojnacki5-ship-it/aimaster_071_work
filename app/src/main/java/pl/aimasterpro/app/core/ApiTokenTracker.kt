@@ -28,8 +28,14 @@ data class TokenRecord(
     /** Tokens written to a 1-hour prompt cache; zero for legacy ledger rows. */
     val cacheWrite1hTokens: Long = 0L,
     /** False when the provider did not expose a reasoning-token breakdown. */
-    val reasoningTokensKnown: Boolean = false
+    val reasoningTokensKnown: Boolean = false,
+    /** False when usage is known but pricing has not been verified. Legacy rows default to true. */
+    val costKnown: Boolean = true,
+    /** Exact endpoint identity for provider-specific model accounting; blank on legacy rows. */
+    val baseUrl: String = ""
 )
+
+class UnknownModelPricingException(message: String) : IllegalStateException(message)
 
 data class ModelPricing(
     val modelKey: String, // model name or prefix
@@ -50,6 +56,26 @@ data class CatalogModelPrice(
     val cacheWriteInputPer1MUsd: Double? = null,
     val internalReasoningPer1MUsd: Double? = null,
     val cacheWriteInput1hPer1MUsd: Double? = null
+)
+
+data class ModelTokenLimitConfig(
+    val providerId: String,
+    val baseUrl: String,
+    val modelName: String,
+    val dailyLimitTokens: Long,
+    val warningPercent: Int = 90,
+    val enabled: Boolean = true
+)
+
+data class ModelTokenUsage(
+    val config: ModelTokenLimitConfig?,
+    val usedTokens: Long,
+    val reservedTokens: Long,
+    val limitTokens: Long,
+    val remainingTokens: Long,
+    val usagePercent: Int,
+    val warningReached: Boolean,
+    val limitReached: Boolean
 )
 
 data class BudgetRequest(
@@ -74,13 +100,98 @@ object ApiTokenTracker {
     private const val PREFS_NAME = "api_token_tracker_records_v1"
     private const val PRICING_PREFS = "api_token_pricing_v1"
     private const val LIMITS_PREFS = "api_token_limits_v1"
+    private const val MODEL_LIMITS_PREFS = "api_model_token_limits_v1"
 
     private val sessionRecords = mutableListOf<TokenRecord>()
     // Session means the current app process, not an in-memory list that disappears from the monitor.
     private val sessionStartedAt = System.currentTimeMillis()
-    private data class ActiveReservationTask(val taskId: String, val agentId: String, val providerId: String, val baseUrl: String, val modelName: String, var tokensRemaining: Long, var costPlnRemaining: Double, var completed: Boolean = false)
+    private data class ActiveReservationTask(val taskId: String, val agentId: String, var providerId: String, var baseUrl: String, var modelName: String, val estimatedInputTokens: Long, val estimatedOutputTokens: Long, var tokensRemaining: Long, var costPlnRemaining: Double, var completed: Boolean = false)
     private data class ActiveReservation(val id: String, val tasks: MutableList<ActiveReservationTask>, var globalTokensRemaining: Long, val globalReserveAgentId: String = "", val globalReserveCostPln: Double = 0.0, var releaseRequested: Boolean = false)
     private val activeReservations = linkedMapOf<String, ActiveReservation>()
+
+    private fun modelBudgetKey(providerId: String, baseUrl: String, modelName: String): String =
+        listOf(
+            providerId.trim().lowercase(Locale.ROOT),
+            baseUrl.trim().trimEnd('/').lowercase(Locale.ROOT),
+            modelName.trim().lowercase(Locale.ROOT)
+        ).joinToString("|")
+
+    private fun readModelLimits(context: Context): Map<String, ModelTokenLimitConfig> {
+        val raw = context.getSharedPreferences(MODEL_LIMITS_PREFS, Context.MODE_PRIVATE)
+            .getString("limits", null) ?: return emptyMap()
+        val array = JSONArray(raw)
+        val result = linkedMapOf<String, ModelTokenLimitConfig>()
+        for (i in 0 until array.length()) {
+            val item = array.getJSONObject(i)
+            val config = ModelTokenLimitConfig(
+                providerId = item.getString("providerId"),
+                baseUrl = item.getString("baseUrl"),
+                modelName = item.getString("modelName"),
+                dailyLimitTokens = item.getLong("dailyLimitTokens"),
+                warningPercent = item.optInt("warningPercent", 90),
+                enabled = item.optBoolean("enabled", true)
+            )
+            require(config.providerId.isNotBlank() && config.baseUrl.isNotBlank() &&
+                config.modelName.isNotBlank() && config.dailyLimitTokens > 0L &&
+                config.warningPercent in 1..99) { "Nieprawidłowa konfiguracja limitu modelu." }
+            result[modelBudgetKey(config.providerId, config.baseUrl, config.modelName)] = config
+        }
+        return result
+    }
+
+    @Synchronized
+    fun getModelTokenLimit(
+        context: Context, providerId: String, baseUrl: String, modelName: String
+    ): ModelTokenLimitConfig? = readModelLimits(context)[modelBudgetKey(providerId, baseUrl, modelName)]
+
+    @Synchronized
+    fun setModelTokenLimit(context: Context, config: ModelTokenLimitConfig): Boolean {
+        require(config.providerId.isNotBlank() && config.providerId.length <= 128)
+        require(config.baseUrl.isNotBlank() && config.baseUrl.length <= 2048)
+        require(config.modelName.isNotBlank() && config.modelName.length <= 256)
+        require(config.dailyLimitTokens > 0L && config.warningPercent in 1..99)
+        val all = readModelLimits(context).toMutableMap()
+        all[modelBudgetKey(config.providerId, config.baseUrl, config.modelName)] = config
+        val array = JSONArray()
+        all.values.forEach { item ->
+            array.put(JSONObject()
+                .put("providerId", item.providerId)
+                .put("baseUrl", item.baseUrl)
+                .put("modelName", item.modelName)
+                .put("dailyLimitTokens", item.dailyLimitTokens)
+                .put("warningPercent", item.warningPercent)
+                .put("enabled", item.enabled))
+        }
+        return context.getSharedPreferences(MODEL_LIMITS_PREFS, Context.MODE_PRIVATE)
+            .edit().putString("limits", array.toString()).commit()
+    }
+
+    @Synchronized
+    fun getModelTokenUsage(
+        context: Context, providerId: String, baseUrl: String, modelName: String
+    ): ModelTokenUsage {
+        val config = getModelTokenLimit(context, providerId, baseUrl, modelName)
+        val identity = modelBudgetKey(providerId, baseUrl, modelName)
+        val records = loadAllRecordsFromStorage(context)
+        val used = sumTokenCounts(filterRecords(records, "Dzisiaj").filter {
+            modelBudgetKey(it.providerId, it.baseUrl, it.modelName) == identity
+        }.map { it.totalTokens })
+        val reserved = sumTokenCounts(activeReservations.values.flatMap { it.tasks }.filter {
+            modelBudgetKey(it.providerId, it.baseUrl, it.modelName) == identity
+        }.map { it.tokensRemaining })
+        val limit = config?.takeIf { it.enabled }?.dailyLimitTokens ?: 0L
+        val total = addTokenCounts(used, reserved)
+        val percent = if (limit > 0L) ((total.toDouble() / limit.toDouble()) * 100.0)
+            .coerceAtMost(Int.MAX_VALUE.toDouble()).toInt() else 0
+        return ModelTokenUsage(
+            config = config, usedTokens = used, reservedTokens = reserved,
+            limitTokens = limit,
+            remainingTokens = if (limit > 0L) (limit - total).coerceAtLeast(0L) else 0L,
+            usagePercent = percent,
+            warningReached = limit > 0L && percent >= (config?.warningPercent ?: 90),
+            limitReached = limit > 0L && total >= limit
+        )
+    }
 
     private fun addTokenCounts(left: Long, right: Long): Long {
         val a = left.coerceAtLeast(0L)
@@ -102,8 +213,7 @@ object ApiTokenTracker {
         ModelPricing("gemini", 0.075, 0.30),
         ModelPricing("gpt-4o-mini", 0.15, 0.60),
         ModelPricing("gpt-", 2.50, 10.00),
-        ModelPricing("claude", 3.00, 15.00),
-        ModelPricing("default", 0.50, 1.50)
+        ModelPricing("claude", 3.00, 15.00)
     )
 
     private fun calculateUsdCost(
@@ -147,7 +257,7 @@ object ApiTokenTracker {
         idempotencyKey: String = "",
         cacheWriteTokens: Long = 0L,
         cacheWrite1hTokens: Long = 0L,
-        reasoningTokensKnown: Boolean = false
+        reasoningTokensKnown: Boolean = false,
     ): TokenRecord {
         require(inputTokens >= 0L && outputTokens >= 0L && reasoningTokens >= 0L &&
             reasoningTokens <= outputTokens && cachedTokens >= 0L && cacheWriteTokens >= 0L && cacheWrite1hTokens >= 0L &&
@@ -175,18 +285,23 @@ object ApiTokenTracker {
             // never let a later estimate downgrade already-known REAL usage.
             if (existing.status == "UNAVAILABLE" && status == "REAL") {
                 val upgradedTotal = Math.addExact(inputTokens, outputTokens)
-                val upgradePricing = getPricing(context, modelName, providerId, baseUrl)
-                require(upgradePricing.inputPer1MUsd.isFinite() && upgradePricing.outputPer1MUsd.isFinite() &&
-                    upgradePricing.inputPer1MUsd >= 0.0 && upgradePricing.outputPer1MUsd >= 0.0) {
-                    "Nieprawidłowy cennik modelu."
+                val upgradePricing = try {
+                    getPricing(context, modelName, providerId, baseUrl)
+                } catch (error: UnknownModelPricingException) {
+                    // This branch only upgrades an earlier UNAVAILABLE record for the same POST.
+                    // It is bookkeeping, so a later consent revocation or financial-cap change must
+                    // not prevent durable reconciliation of an already processed provider request.
+                    null
                 }
                 val upgradeRate = getExchangeRate(context)
                 require(upgradeRate.isFinite() && upgradeRate > 0.0) {
                     "Nieprawidłowy kurs USD/PLN; rozliczenie API wstrzymano."
                 }
-                val upgradeUsd = calculateUsdCost(inputTokens, outputTokens, reasoningTokens, cachedTokens, cacheWriteTokens, cacheWrite1hTokens, reasoningTokensKnown, upgradePricing)
-                val upgradePln = upgradeUsd * upgradeRate
-                require(upgradeUsd.isFinite() && upgradePln.isFinite() && upgradeUsd >= 0.0 && upgradePln >= 0.0) {
+                val upgradeUsd = upgradePricing?.let {
+                    calculateUsdCost(inputTokens, outputTokens, reasoningTokens, cachedTokens, cacheWriteTokens, cacheWrite1hTokens, reasoningTokensKnown, it)
+                }
+                val upgradePln = upgradeUsd?.times(upgradeRate)
+                require(upgradeUsd == null || (upgradeUsd.isFinite() && upgradePln!!.isFinite() && upgradeUsd >= 0.0 && upgradePln >= 0.0)) {
                     "Nieprawidłowy koszt użycia API."
                 }
                 val upgraded = existing.copy(
@@ -201,8 +316,9 @@ object ApiTokenTracker {
                     reasoningTokensKnown = reasoningTokensKnown || reasoningTokens > 0L,
                     modelName = modelName,
                     status = "REAL",
-                    costUsd = upgradeUsd,
-                    costPln = upgradePln
+                    costUsd = upgradeUsd ?: 0.0,
+                    costPln = upgradePln ?: 0.0,
+                    costKnown = upgradeUsd != null
                 )
                 check(saveRecordToStorage(context, upgraded)) {
                     "Nie udało się trwale uzgodnić rzeczywistego usage z wcześniejszym wpisem UNAVAILABLE."
@@ -224,20 +340,35 @@ object ApiTokenTracker {
         }
 
         val total = Math.addExact(inputTokens, outputTokens)
-        val pricing = getPricing(context, modelName, providerId, baseUrl)
-        require(pricing.inputPer1MUsd.isFinite() && pricing.outputPer1MUsd.isFinite() &&
-            pricing.inputPer1MUsd >= 0.0 && pricing.outputPer1MUsd >= 0.0) { "Nieprawidłowy cennik modelu." }
+        val pricing = try {
+            getPricing(context, modelName, providerId, baseUrl)
+        } catch (error: UnknownModelPricingException) {
+            val unavailableAccounting = status == "UNAVAILABLE"
+            if (!unavailableAccounting) {
+                // planBatch/retargetReservationTask require explicit consent before the HTTP call.
+                // The matching live reservation preserves that authorization if the user revokes
+                // consent while an already-started request is still returning billable usage.
+                require(hasMatchingActiveReservation(
+                    reservationId, taskId, agentId, providerId, baseUrl, modelName
+                )) { "Nieznana cena wymaga aktywnej rezerwacji tokenów utworzonej po świadomej zgodzie." }
+                require(getLimits(context).monthlyCostPlnLimit == 0.0) {
+                    "Nieznany koszt modelu wymaga wyłączenia limitu finansowego; limit tokenów nadal obowiązuje."
+                }
+            }
+                    null
+        }
         val exchangeRate = getExchangeRate(context)
         require(exchangeRate.isFinite() && exchangeRate > 0.0) { "Nieprawidłowy kurs USD/PLN; rozliczenie API wstrzymano." }
-        val usd = calculateUsdCost(inputTokens, outputTokens, reasoningTokens, cachedTokens, cacheWriteTokens, cacheWrite1hTokens, reasoningTokensKnown, pricing)
-        val pln = usd * exchangeRate
-        require(usd.isFinite() && pln.isFinite() && usd >= 0.0 && pln >= 0.0) { "Nieprawidłowy koszt użycia API." }
+        val usd = pricing?.let { calculateUsdCost(inputTokens, outputTokens, reasoningTokens, cachedTokens, cacheWriteTokens, cacheWrite1hTokens, reasoningTokensKnown, it) }
+        val pln = usd?.times(exchangeRate)
+        require(usd == null || (usd.isFinite() && pln!!.isFinite() && usd >= 0.0 && pln >= 0.0)) { "Nieprawidłowy koszt użycia API." }
 
         val record = TokenRecord(
             queryId = stableQueryId,
             timestamp = System.currentTimeMillis(),
             providerId = providerId,
             modelName = modelName,
+            baseUrl = baseUrl.trim().trimEnd('/'),
             agentId = agentId,
             taskId = taskId,
             inputTokens = inputTokens,
@@ -249,8 +380,9 @@ object ApiTokenTracker {
             cacheWrite1hTokens = cacheWrite1hTokens,
             reasoningTokensKnown = reasoningTokensKnown || reasoningTokens > 0L,
             status = status,
-            costUsd = usd,
-            costPln = pln
+            costUsd = usd ?: 0.0,
+            costPln = pln ?: 0.0,
+            costKnown = usd != null
         )
 
         // Keep the usage visible and charged against the in-process reservation even if disk
@@ -290,6 +422,27 @@ object ApiTokenTracker {
         val extraCost = (upgraded.costPln - previous.costPln).coerceAtLeast(0.0)
         task.tokensRemaining = (task.tokensRemaining - extraTokens).coerceAtLeast(0L)
         task.costPlnRemaining = (task.costPlnRemaining - extraCost).coerceAtLeast(0.0)
+    }
+
+    private fun hasMatchingActiveReservation(
+        reservationId: String,
+        taskId: String,
+        agentId: String,
+        providerId: String,
+        baseUrl: String,
+        modelName: String
+    ): Boolean {
+        if (reservationId.isBlank() || taskId.isBlank() || taskId == "general" ||
+            agentId.isBlank() || providerId.isBlank() || baseUrl.isBlank() || modelName.isBlank()) return false
+        val reservation = activeReservations[reservationId] ?: return false
+        return reservation.tasks.any { task ->
+            !task.completed &&
+                task.taskId == taskId &&
+                task.agentId.equals(agentId, true) &&
+                task.providerId.equals(providerId, true) &&
+                task.baseUrl.trim().trimEnd('/').equals(baseUrl.trim().trimEnd('/'), true) &&
+                task.modelName.equals(modelName, true)
+        }
     }
 
     private fun consumeActiveReservation(record: TokenRecord, reservationId: String, baseUrl: String = "") {
@@ -340,6 +493,88 @@ object ApiTokenTracker {
         }
     }
 
+    /**
+     * Atomically moves an existing task reservation to a fallback provider/model.
+     * The global and per-agent token reservations remain unchanged; only the
+     * provider-specific model bucket and estimated monetary reservation are retargeted.
+     */
+    @Synchronized
+    fun retargetReservationTask(
+        context: Context,
+        reservationId: String,
+        taskId: String,
+        agentId: String,
+        providerId: String,
+        baseUrl: String,
+        modelName: String
+    ): Boolean {
+        if (reservationId.isBlank() || taskId.isBlank() || agentId.isBlank() ||
+            providerId.isBlank() || baseUrl.isBlank() || modelName.isBlank()) return false
+        val reservation = activeReservations[reservationId] ?: return false
+        val task = reservation.tasks.singleOrNull {
+            it.taskId == taskId && it.agentId.equals(agentId, true)
+        } ?: return false
+        if (task.completed) return false
+        val persisted = readPersistedRecords(context) ?: return false
+        val limits = getLimits(context)
+        val allRecords = (persisted + sessionRecords).distinctBy { it.queryId }
+        val today = filterRecords(allRecords, "Dzisiaj")
+        val recent = filterRecords(allRecords, "30 dni")
+        val targetKey = modelBudgetKey(providerId, baseUrl, modelName)
+        val modelLimit = readModelLimits(context)[targetKey]?.takeIf { it.enabled }?.dailyLimitTokens ?: 0L
+        val otherReservedForTarget = sumTokenCounts(activeReservations.values.flatMap { it.tasks }.filter {
+            !(it === task) && modelBudgetKey(it.providerId, it.baseUrl, it.modelName) == targetKey
+        }.map { it.tokensRemaining })
+        val recordedForTarget = sumTokenCounts(today.filter {
+            modelBudgetKey(it.providerId, it.baseUrl, it.modelName) == targetKey
+        }.map { it.totalTokens })
+        val targetUsed = addTokenCounts(recordedForTarget, otherReservedForTarget)
+        if (modelLimit > 0L && exceedsTokenLimit(targetUsed, task.tokensRemaining, modelLimit)) return false
+
+        if (task.tokensRemaining != addTokenCounts(task.estimatedInputTokens, task.estimatedOutputTokens)) return false
+        val pricing = try {
+            getPricing(context, modelName, providerId, baseUrl)
+        } catch (error: UnknownModelPricingException) {
+            if (limits.monthlyCostPlnLimit > 0.0 ||
+                !hasUnknownPriceApproval(context, providerId, baseUrl, modelName)) return false
+            null
+        }
+        val targetCost = if (pricing == null) {
+            0.0
+        } else {
+            val inputRate = maxOf(
+                pricing.inputPer1MUsd,
+                pricing.cachedInputPer1MUsd ?: pricing.inputPer1MUsd,
+                pricing.cacheWriteInputPer1MUsd ?: pricing.inputPer1MUsd,
+                pricing.cacheWriteInput1hPer1MUsd ?: pricing.cacheWriteInputPer1MUsd ?: pricing.inputPer1MUsd
+            )
+            val outputRate = maxOf(pricing.outputPer1MUsd, pricing.internalReasoningPer1MUsd ?: pricing.outputPer1MUsd)
+            val estimatedUsd = (task.estimatedInputTokens * inputRate.coerceAtLeast(0.0) +
+                task.estimatedOutputTokens * outputRate.coerceAtLeast(0.0)) / 1_000_000.0
+            val exchangeRate = getExchangeRate(context)
+            val calculated = estimatedUsd * exchangeRate
+            if (!calculated.isFinite() || calculated < 0.0 || !exchangeRate.isFinite() || exchangeRate <= 0.0) return false
+            calculated
+        }
+
+        if (limits.monthlyCostPlnLimit > 0.0) {
+            if (recent.any { !it.costKnown }) return false
+            val otherReservedCosts = activeReservations.values.flatMap { active ->
+                listOf(active.globalReserveCostPln) + active.tasks.filter { it !== task }.map { it.costPlnRemaining }
+            }
+            val committedCosts = recent.filter { it.costKnown }.map { it.costPln }
+            val monthlyUsed = trySumNonNegativeCosts(committedCosts + otherReservedCosts) ?: return false
+            val projected = tryAddNonNegativeCosts(monthlyUsed, targetCost) ?: return false
+            if (projected > limits.monthlyCostPlnLimit) return false
+        }
+
+        task.providerId = providerId
+        task.baseUrl = baseUrl
+        task.modelName = modelName
+        task.costPlnRemaining = targetCost
+        return true
+    }
+
     private fun saveRecordToStorage(context: Context, record: TokenRecord): Boolean {
         val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         // Never turn an unreadable usage ledger into an empty one: the old records may
@@ -357,6 +592,7 @@ object ApiTokenTracker {
                 .put("ts", r.timestamp)
                 .put("prov", r.providerId)
                 .put("model", r.modelName)
+                .put("baseUrl", r.baseUrl)
                 .put("agent", r.agentId)
                 .put("task", r.taskId)
                 .put("in", r.inputTokens)
@@ -370,6 +606,7 @@ object ApiTokenTracker {
                 .put("status", r.status)
                 .put("usd", r.costUsd)
                 .put("pln", r.costPln)
+                .put("costKnown", r.costKnown)
             )
         }
         // Usage may represent a billable provider response. Return the commit result so
@@ -446,6 +683,7 @@ object ApiTokenTracker {
                 timestamp = timestamp,
                 providerId = providerId,
                 modelName = modelName,
+                baseUrl = o.optString("baseUrl", ""),
                 agentId = agentId,
                 taskId = taskId,
                 inputTokens = input,
@@ -458,7 +696,8 @@ object ApiTokenTracker {
                 reasoningTokensKnown = reasoningKnown,
                 status = status,
                 costUsd = costUsd,
-                costPln = costPln
+                costPln = costPln,
+                costKnown = if (o.has("costKnown")) o.opt("costKnown") as? Boolean ?: throw IllegalArgumentException("Invalid cost-known flag.") else true
             ))
         }
         list
@@ -550,6 +789,66 @@ object ApiTokenTracker {
         }
     }
 
+    private data class PricingCatalogSnapshot(
+        val raw: String,
+        val exactRows: Map<List<String>, JSONObject>,
+        val rowsByModelAndBase: Map<Pair<String, String>, List<JSONObject>>
+    )
+
+    @Volatile private var pricingCatalogSnapshotCache: PricingCatalogSnapshot? = null
+    private var pricingCatalogSnapshotBuildCount = 0
+
+    /** Reads, validates and indexes the persisted price catalog once per distinct stored value. */
+    @Synchronized
+    private fun readPricingCatalogSnapshot(context: Context): PricingCatalogSnapshot {
+        val raw = context.getSharedPreferences(PRICING_PREFS, Context.MODE_PRIVATE)
+            .getString("catalog_model_prices", "[]") ?: "[]"
+        pricingCatalogSnapshotCache?.takeIf { it.raw == raw }?.let { return it }
+
+        val catalog = try {
+            JSONArray(raw)
+        } catch (error: Exception) {
+            throw IllegalStateException("Zapisany katalog cen jest uszkodzony; bezpieczna wycena została wstrzymana.", error)
+        }
+        require(catalog.length() <= 10_000) { "Katalog cen przekracza bezpieczny rozmiar." }
+
+        val exactRows = linkedMapOf<List<String>, JSONObject>()
+        val rowsByModelAndBase = linkedMapOf<Pair<String, String>, MutableList<JSONObject>>()
+        for (index in 0 until catalog.length()) {
+            val row = catalog.opt(index) as? JSONObject
+                ?: throw IllegalStateException("Katalog cen zawiera wpis, który nie jest obiektem.")
+            val rowProvider = row.opt("providerId") as? String
+            val rowModel = row.opt("modelName") as? String
+            val rowBase = row.opt("baseUrl") as? String
+            require(!rowProvider.isNullOrBlank() && !rowModel.isNullOrBlank() && !rowBase.isNullOrBlank()) {
+                "Katalog cen zawiera niekompletną tożsamość wpisu."
+            }
+            val rowNormalizedBase = rowBase.trimEnd('/').lowercase(Locale.ROOT)
+            val identity = listOf(rowProvider, rowNormalizedBase, rowModel)
+            require(!exactRows.containsKey(identity)) {
+                "Katalog cen zawiera zduplikowaną tożsamość modelu."
+            }
+            val freeValue = row.opt("explicitlyFree")
+            require(freeValue == null || freeValue === JSONObject.NULL || freeValue is Boolean) {
+                "Katalog cen zawiera nieprawidłową flagę bezpłatnego modelu."
+            }
+            exactRows[identity] = row
+            rowsByModelAndBase.getOrPut(rowModel to rowNormalizedBase) { mutableListOf() }.add(row)
+        }
+        return PricingCatalogSnapshot(
+            raw = raw,
+            exactRows = exactRows.toMap(),
+            rowsByModelAndBase = rowsByModelAndBase.mapValues { it.value.toList() }
+        ).also {
+            pricingCatalogSnapshotCache = it
+            pricingCatalogSnapshotBuildCount++
+        }
+    }
+
+    internal fun pricingCatalogSnapshotBuildCountForTests(): Int = synchronized(this) {
+        pricingCatalogSnapshotBuildCount
+    }
+
     private fun readCatalogRate(row: JSONObject, key: String): Double? {
         if (!row.has(key) || row.isNull(key)) return null
         val value = row.opt(key) as? Number
@@ -563,42 +862,12 @@ object ApiTokenTracker {
 
     @Synchronized
     fun getPricing(context: Context, modelName: String, providerId: String = "", baseUrl: String = ""): ModelPricing {
-        val raw = context.getSharedPreferences(PRICING_PREFS, Context.MODE_PRIVATE)
-            .getString("catalog_model_prices", "[]") ?: "[]"
-        val catalog = try {
-            JSONArray(raw)
-        } catch (error: Exception) {
-            throw IllegalStateException("Zapisany katalog cen jest uszkodzony; bezpieczna wycena została wstrzymana.", error)
-        }
-        require(catalog.length() <= 10_000) { "Katalog cen przekracza bezpieczny rozmiar." }
-
+        val snapshot = readPricingCatalogSnapshot(context)
         val normalizedBase = baseUrl.trimEnd('/').lowercase(Locale.ROOT)
-        var exact: JSONObject? = null
-        val baseMatches = mutableListOf<JSONObject>()
-        val identities = mutableSetOf<List<String>>()
-        for (index in 0 until catalog.length()) {
-            val row = catalog.opt(index) as? JSONObject
-                ?: throw IllegalStateException("Katalog cen zawiera wpis, który nie jest obiektem.")
-            val rowProvider = row.opt("providerId") as? String
-            val rowModel = row.opt("modelName") as? String
-            val rowBase = row.opt("baseUrl") as? String
-            require(!rowProvider.isNullOrBlank() && !rowModel.isNullOrBlank() && !rowBase.isNullOrBlank()) {
-                "Katalog cen zawiera niekompletną tożsamość wpisu."
-            }
-            val rowNormalizedBase = rowBase.trimEnd('/').lowercase(Locale.ROOT)
-            require(identities.add(listOf(rowProvider, rowNormalizedBase, rowModel))) {
-                "Katalog cen zawiera zduplikowaną tożsamość modelu."
-            }
-            val freeValue = row.opt("explicitlyFree")
-            require(freeValue == null || freeValue === JSONObject.NULL || freeValue is Boolean) {
-                "Katalog cen zawiera nieprawidłową flagę bezpłatnego modelu."
-            }
-
-            if (rowModel == modelName && rowNormalizedBase == normalizedBase) {
-                if (rowProvider == providerId) exact = row
-                else if (normalizedBase.isNotBlank()) baseMatches += row
-            }
-        }
+        val exact = snapshot.exactRows[listOf(providerId, normalizedBase, modelName)]
+        val baseMatches = if (normalizedBase.isBlank()) emptyList() else
+            snapshot.rowsByModelAndBase[modelName to normalizedBase].orEmpty()
+                .filter { it.optString("providerId") != providerId }
 
         require(exact != null || baseMatches.size <= 1) {
             "Katalog cen zawiera niejednoznaczne dopasowanie modelu dla adresu bazowego."
@@ -616,8 +885,8 @@ object ApiTokenTracker {
             if (explicitlyFree == true && allRates.all { it == null || it == 0.0 }) {
                 return ModelPricing(modelName, 0.0, 0.0)
             }
-            require(input != null && output != null) {
-                "Katalog cen nie zawiera kompletnej stawki wejścia i wyjścia dla modelu $modelName."
+            if (input == null || output == null) {
+                throw UnknownModelPricingException("Katalog cen nie zawiera kompletnej stawki wejścia i wyjścia dla modelu $modelName.")
             }
             // A contradictory free flag never erases published paid rates.
             return ModelPricing(modelName, input, output, cached, cacheWrite, reasoning, cacheWrite1h)
@@ -631,7 +900,24 @@ object ApiTokenTracker {
         for (pricing in defaultPricing) {
             if (lower.contains(pricing.modelKey)) return pricing.copy()
         }
-        return defaultPricing.last().copy()
+        throw UnknownModelPricingException(
+            "Katalog cen nie zawiera kompletnej stawki wejścia i wyjścia dla modelu $modelName."
+        )
+    }
+
+    private fun hasUnknownPriceApproval(
+        context: Context, providerId: String, baseUrl: String, modelName: String
+    ): Boolean {
+        if (UnknownPriceApprovalStore.isApproved(context, providerId, baseUrl, modelName)) return true
+        // Model profiles have their own IDs but inherit catalog identity from the parent provider.
+        // Resolve that one unambiguous provider entry before checking the user's exact-scope consent.
+        val canonicalProvider = runCatching {
+            val normalizedBase = baseUrl.trim().trimEnd('/').lowercase(Locale.ROOT)
+            readPricingCatalogSnapshot(context).rowsByModelAndBase[modelName to normalizedBase]
+                .orEmpty().mapNotNull { it.optString("providerId").takeIf(String::isNotBlank) }
+                .distinct().singleOrNull()
+        }.getOrNull() ?: return false
+        return UnknownPriceApprovalStore.isApproved(context, canonicalProvider, baseUrl, modelName)
     }
 
     @Synchronized
@@ -714,8 +1000,8 @@ object ApiTokenTracker {
         totalTokens = sumTokenCounts(records.map { it.totalTokens }),
         reasoningTokens = sumTokenCounts(records.map { it.reasoningTokens }),
         cachedTokens = sumTokenCounts(records.map { it.cachedTokens }),
-        costUsd = sumNonNegativeCosts(records.map { it.costUsd }),
-        costPln = sumNonNegativeCosts(records.map { it.costPln })
+        costUsd = sumNonNegativeCosts(records.filter { it.costKnown }.map { it.costUsd }),
+        costPln = sumNonNegativeCosts(records.filter { it.costKnown }.map { it.costPln })
     )
 
     /**
@@ -775,8 +1061,12 @@ object ApiTokenTracker {
             val key = globalReserveAgentId.lowercase(Locale.ROOT)
             perAgentUsed[key] = addTokenCounts(perAgentUsed[key] ?: 0L, globalReserveTokens)
         }
+        if (limits.monthlyCostPlnLimit > 0.0 && recent.any { !it.costKnown }) {
+            val reason = "Wstrzymano: w bieżącym okresie istnieje użycie z nieznanym kosztem; limit finansowy nie może być bezpiecznie zweryfikowany."
+            return BatchBudgetPlan(emptySet(), requests.associate { it.taskId to reason }, 0L, 0.0)
+        }
         val monthlyCostUsedInitial = trySumNonNegativeCosts(
-            recent.map { it.costPln } +
+            recent.filter { it.costKnown }.map { it.costPln } +
                 activeReservations.values.flatMap { r ->
                     listOf(r.globalReserveCostPln) + r.tasks.map { it.costPlnRemaining }
                 } + listOf(globalReserveCostPln)
@@ -794,41 +1084,74 @@ object ApiTokenTracker {
         var reservedTokens = 0L
         var reservedCost = 0.0
         val newReservationTasks = mutableListOf<ActiveReservationTask>()
+        val modelTokensUsed = mutableMapOf<String, Long>()
+        val modelLimits = readModelLimits(context)
+        activeReservations.values.flatMap { it.tasks }.forEach { task ->
+            val key = modelBudgetKey(task.providerId, task.baseUrl, task.modelName)
+            modelTokensUsed[key] = addTokenCounts(modelTokensUsed[key] ?: 0L, task.tokensRemaining)
+        }
+        all.filter { filterRecords(listOf(it), "Dzisiaj").isNotEmpty() }.forEach { record ->
+            val key = modelBudgetKey(record.providerId, record.baseUrl, record.modelName)
+            modelTokensUsed[key] = addTokenCounts(modelTokensUsed[key] ?: 0L, record.totalTokens)
+        }
 
         requests.forEach { request ->
             val estimate = Math.addExact(request.estimatedInputTokens, request.estimatedOutputTokens)
             val agentKey = request.agentId.lowercase(Locale.ROOT)
             val agentUsed = perAgentUsed[agentKey] ?: 0L
-            val pricing = getPricing(context, request.modelName, request.providerId, request.baseUrl)
+            val modelKey = modelBudgetKey(request.providerId, request.baseUrl, request.modelName)
+            val modelLimit = modelLimits[modelKey]?.takeIf { it.enabled }?.dailyLimitTokens ?: 0L
+            val modelUsed = modelTokensUsed[modelKey] ?: 0L
+            val pricing = try {
+                getPricing(context, request.modelName, request.providerId, request.baseUrl)
+            } catch (error: UnknownModelPricingException) {
+                if (limits.monthlyCostPlnLimit > 0.0) {
+                    blocked[request.taskId] = "Wstrzymano: cena modelu jest nieznana, a miesięczny limit finansowy jest aktywny."
+                    return@forEach
+                }
+                if (!hasUnknownPriceApproval(context, request.providerId, request.baseUrl, request.modelName)) {
+                    blocked[request.taskId] = "Wstrzymano: nieznana cena wymaga osobnej zgody dla tego dostawcy, endpointu i modelu."
+                    return@forEach
+                }
+                null
+            }
             // Reserve against the most expensive published input path. Automatic/provider
             // caching can turn part of this prompt into cache writes with a premium rate.
-            val conservativeInputRate = maxOf(
-                maxOf(
-                    pricing.inputPer1MUsd,
+            // With no financial cap, token reservations do not depend on the price catalogue.
+            val estimatedPln = if (pricing == null) {
+                0.0
+            } else {
+                val conservativeInputRate = maxOf(
                     maxOf(
-                        pricing.cachedInputPer1MUsd ?: pricing.inputPer1MUsd,
-                        pricing.cacheWriteInputPer1MUsd ?: pricing.inputPer1MUsd
-                    )
-                ),
-                pricing.cacheWriteInput1hPer1MUsd ?: pricing.cacheWriteInputPer1MUsd ?: pricing.inputPer1MUsd
-            )
-            val conservativeOutputRate = maxOf(
-                pricing.outputPer1MUsd,
-                pricing.internalReasoningPer1MUsd ?: pricing.outputPer1MUsd
-            )
-            val usd = (request.estimatedInputTokens.coerceAtLeast(0L) * conservativeInputRate +
-                request.estimatedOutputTokens.coerceAtLeast(0L) * conservativeOutputRate) / 1_000_000.0
-            val exchangeRate = getExchangeRate(context)
-            val estimatedPln = usd * exchangeRate
-            val nextMonthlyCost = if (estimatedPln.isFinite() && estimatedPln >= 0.0)
-                tryAddNonNegativeCosts(monthlyCostUsed, estimatedPln) else null
-            val nextBatchReserveCost = if (estimatedPln.isFinite() && estimatedPln >= 0.0)
-                tryAddNonNegativeCosts(reservedCost, estimatedPln) else null
+                        pricing.inputPer1MUsd,
+                        maxOf(
+                            pricing.cachedInputPer1MUsd ?: pricing.inputPer1MUsd,
+                            pricing.cacheWriteInputPer1MUsd ?: pricing.inputPer1MUsd
+                        )
+                    ),
+                    pricing.cacheWriteInput1hPer1MUsd ?: pricing.cacheWriteInputPer1MUsd ?: pricing.inputPer1MUsd
+                )
+                val conservativeOutputRate = maxOf(
+                    pricing.outputPer1MUsd,
+                    pricing.internalReasoningPer1MUsd ?: pricing.outputPer1MUsd
+                )
+                val usd = (request.estimatedInputTokens.coerceAtLeast(0L) * conservativeInputRate +
+                    request.estimatedOutputTokens.coerceAtLeast(0L) * conservativeOutputRate) / 1_000_000.0
+                val exchangeRate = getExchangeRate(context)
+                val value = usd * exchangeRate
+                if (!exchangeRate.isFinite() || exchangeRate <= 0.0 || !value.isFinite() || value < 0.0) {
+                    blocked[request.taskId] = "Wstrzymano: nieprawidłowy kurs waluty lub wycena modelu."
+                    return@forEach
+                }
+                value
+            }
+            val nextMonthlyCost = tryAddNonNegativeCosts(monthlyCostUsed, estimatedPln)
+            val nextBatchReserveCost = tryAddNonNegativeCosts(reservedCost, estimatedPln)
             val reason = when {
-                !exchangeRate.isFinite() || exchangeRate <= 0.0 || !estimatedPln.isFinite() || estimatedPln < 0.0 -> "Wstrzymano: nieprawidłowy kurs waluty lub wycena modelu; nie można bezpiecznie obliczyć kosztu."
                 nextMonthlyCost == null || nextBatchReserveCost == null -> "Pominięto: łączna wycena zadań i rezerw przekroczyłaby zakres bezpiecznej reprezentacji kosztu."
                 exceedsTokenLimit(dailyUsed, estimate, limits.dailyTokenLimit) -> "Pominięto: brak dziennego budżetu tokenów."
                 exceedsTokenLimit(agentUsed, estimate, limits.agentTokenLimit) -> "Pominięto: agent przekroczyłby dzienny limit tokenów."
+                modelLimit > 0L && exceedsTokenLimit(modelUsed, estimate, modelLimit) -> "Pominięto: model przekroczyłby własny dzienny limit tokenów."
                 limits.monthlyCostPlnLimit > 0.0 && nextMonthlyCost > limits.monthlyCostPlnLimit -> "Pominięto: przekroczony zostałby miesięczny budżet."
                 else -> null
             }
@@ -836,10 +1159,11 @@ object ApiTokenTracker {
                 allowed += request.taskId
                 dailyUsed = addTokenCounts(dailyUsed, estimate)
                 perAgentUsed[agentKey] = addTokenCounts(agentUsed, estimate)
+                modelTokensUsed[modelKey] = addTokenCounts(modelUsed, estimate)
                 monthlyCostUsed = nextMonthlyCost!!
                 reservedTokens += estimate
                 reservedCost = nextBatchReserveCost!!
-                newReservationTasks += ActiveReservationTask(request.taskId, request.agentId, request.providerId, request.baseUrl, request.modelName, estimate, estimatedPln)
+                newReservationTasks += ActiveReservationTask(request.taskId, request.agentId, request.providerId, request.baseUrl, request.modelName, request.estimatedInputTokens, request.estimatedOutputTokens, estimate, estimatedPln)
             } else {
                 blocked[request.taskId] = reason
             }
@@ -876,7 +1200,8 @@ object ApiTokenTracker {
         val activeReservedCostPln: Double,
         val monthlyCostLimitPln: Double,
         val perAgentLimitTokens: Long,
-        val ledgerHealthy: Boolean = true
+        val ledgerHealthy: Boolean = true,
+        val unknownCostRecords: Int = 0
     )
 
     @Synchronized
@@ -896,7 +1221,9 @@ object ApiTokenTracker {
         val limits = getLimits(context)
         val records = loadAllRecordsFromStorage(context)
         val todayTokens = sumTokenCounts(filterRecords(records, "Dzisiaj").map { it.totalTokens })
-        val recentCost = sumNonNegativeCosts(filterRecords(records, "30 dni").map { it.costPln })
+        val recentRecords = filterRecords(records, "30 dni")
+        val recentCost = sumNonNegativeCosts(recentRecords.filter { it.costKnown }.map { it.costPln })
+        val unknownCostRecords = recentRecords.count { !it.costKnown }
         val reservations = activeReservationStats()
         val ledgerIsHealthy = readPersistedRecords(context) != null
         val usedIncludingReservations = addTokenCounts(todayTokens, reservations.tokens)
@@ -909,7 +1236,8 @@ object ApiTokenTracker {
             activeReservedCostPln = reservations.costPln,
             monthlyCostLimitPln = limits.monthlyCostPlnLimit,
             perAgentLimitTokens = limits.agentTokenLimit,
-            ledgerHealthy = ledgerIsHealthy
+            ledgerHealthy = ledgerIsHealthy,
+            unknownCostRecords = unknownCostRecords
         )
     }
 
@@ -957,6 +1285,8 @@ object ApiTokenTracker {
     internal fun resetInMemoryStateForTests() {
         sessionRecords.clear()
         activeReservations.clear()
+        pricingCatalogSnapshotCache = null
+        pricingCatalogSnapshotBuildCount = 0
     }
 
     data class LimitCheckResult(
@@ -1002,6 +1332,9 @@ object ApiTokenTracker {
 
         if (exceedsTokenLimit(todayTokens, estimatedTokens, limits.dailyTokenLimit)) {
             return LimitCheckResult(false, "Osiągnięto dzienny limit tokenów (${limits.dailyTokenLimit}). Zapytanie zostało wstrzymane dla agenta $agentId.")
+        }
+        if (limits.monthlyCostPlnLimit > 0.0 && monthlyRecords.any { !it.costKnown }) {
+            return LimitCheckResult(false, "W rejestrze istnieje użycie z nieznanym kosztem. Miesięcznego limitu finansowego nie można bezpiecznie zweryfikować.")
         }
         if (limits.monthlyCostPlnLimit > 0.0 && monthlyCost >= limits.monthlyCostPlnLimit) {
             return LimitCheckResult(false, "Osiągnięto miesięczny limit kosztów (${limits.monthlyCostPlnLimit} PLN).")

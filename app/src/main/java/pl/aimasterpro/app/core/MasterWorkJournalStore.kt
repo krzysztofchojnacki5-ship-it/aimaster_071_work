@@ -14,6 +14,7 @@ object MasterWorkJournalStore {
     private const val MAX_RECORDS = 60
     private const val MAX_STEPS = 40
     private const val MAX_DECISIONS = 40
+    private const val MAX_RAW_CHARS = 1_000_000
 
     data class Record(
         val taskId: String,
@@ -43,16 +44,20 @@ object MasterWorkJournalStore {
     /** Inserts or replaces one task record atomically, preserving other active work. */
     fun save(context: Context, record: Record): Boolean = transaction(context) { rows ->
         if (!valid(record)) return@transaction false
-        val updated = listOf(record) + rows.filterNot { it.taskId == record.taskId }
-        write(context, updated.take(MAX_RECORDS))
+        val previous = rows.firstOrNull { it.taskId == record.taskId }
+        if (previous == null && rows.size >= MAX_RECORDS) return@transaction false
+        val monotonic = if (previous == null) record else record.copy(updatedAt = maxOf(record.updatedAt, previous.updatedAt))
+        val updated = listOf(monotonic) + rows.filterNot { it.taskId == record.taskId }
+        write(context, updated)
     } ?: false
 
     /** Atomic progress update; null indicates missing/corrupt data or a rejected mutation. */
     fun update(context: Context, taskId: String, transform: (Record) -> Record?): Record? =
         transaction(context) { rows ->
             val current = rows.firstOrNull { it.taskId == taskId } ?: return@transaction null
-            val next = runCatching { transform(current) }.getOrNull() ?: return@transaction null
-            if (next.taskId != current.taskId || !valid(next)) return@transaction null
+            val proposed = runCatching { transform(current) }.getOrNull() ?: return@transaction null
+            if (proposed.taskId != current.taskId || !valid(proposed)) return@transaction null
+            val next = proposed.copy(updatedAt = maxOf(proposed.updatedAt, current.updatedAt))
             if (!write(context, listOf(next) + rows.filterNot { it.taskId == taskId })) return@transaction null
             next
         }
@@ -70,11 +75,17 @@ object MasterWorkJournalStore {
         transaction(context) { rows ->
             val current = rows.firstOrNull { it.taskId == taskId } ?: return@transaction null
             if (current.status != "ACTIVE") return@transaction null
-            val next = runCatching { transform(current) }.getOrNull() ?: return@transaction null
-            if (next.taskId != current.taskId || !valid(next)) return@transaction null
+            val proposed = runCatching { transform(current) }.getOrNull() ?: return@transaction null
+            if (proposed.taskId != current.taskId || !valid(proposed)) return@transaction null
+            val next = proposed.copy(updatedAt = maxOf(proposed.updatedAt, current.updatedAt))
             if (!write(context, listOf(next) + rows.filterNot { it.taskId == taskId })) return@transaction null
             next
         }
+
+    private fun pauseNextSteps(existing: List<String>): List<String> {
+        val instruction = "Sprawdź checkpointy i zdecyduj o wznowieniu."
+        return if (instruction in existing || existing.size >= MAX_STEPS) existing else existing + instruction
+    }
 
     /** Pauses one known task without touching unrelated work or terminal states. */
     fun pauseActiveTask(context: Context, taskId: String, now: Long = System.currentTimeMillis()): Record? =
@@ -82,8 +93,8 @@ object MasterWorkJournalStore {
             current.copy(
                 status = "PAUSED",
                 currentStep = "Przerwano przez użytkownika lub zamknięcie Activity; wznowienie wymaga jawnej decyzji koordynatora.",
-                nextSteps = (current.nextSteps + "Sprawdź checkpointy i zdecyduj o wznowieniu.").distinct().take(MAX_STEPS),
-                updatedAt = now.coerceAtLeast(0L)
+                nextSteps = pauseNextSteps(current.nextSteps),
+                updatedAt = maxOf(now.coerceAtLeast(0L), current.updatedAt)
             )
         } ?: get(context, taskId)?.takeIf { it.status in setOf("PAUSED", "BLOCKED", "COMPLETED") }
 
@@ -96,8 +107,8 @@ object MasterWorkJournalStore {
                 if (record.status != "ACTIVE") record else record.copy(
                     status = "PAUSED",
                     currentStep = "Przerwano po zamknięciu procesu; wznowienie wymaga jawnej decyzji koordynatora.",
-                    nextSteps = (record.nextSteps + "Sprawdź checkpointy i zdecyduj o wznowieniu.").distinct().take(MAX_STEPS),
-                    updatedAt = now.coerceAtLeast(0L)
+                    nextSteps = pauseNextSteps(record.nextSteps),
+                    updatedAt = maxOf(now.coerceAtLeast(0L), record.updatedAt)
                 )
             }
             if (write(context, paused)) active.size else 0
@@ -124,6 +135,7 @@ object MasterWorkJournalStore {
 
     private fun read(context: Context): List<Record>? = runCatching {
         val raw = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString(KEY, null) ?: "[]"
+        require(raw.length <= MAX_RAW_CHARS) { "Master work journal exceeds its supported raw size." }
         val array = JSONArray(raw)
         require(array.length() <= MAX_RECORDS)
         val ids = hashSetOf<String>()
@@ -135,7 +147,8 @@ object MasterWorkJournalStore {
                 return v
             }
             fun list(name: String, max: Int): List<String> {
-                val a = o.optJSONArray(name) ?: JSONArray()
+                val a = if (!o.has(name)) JSONArray() else
+                    o.optJSONArray(name) ?: error("Master work journal field '$name' is not an array.")
                 require(a.length() <= max)
                 return (0 until a.length()).map { index ->
                     val v = a.opt(index)
@@ -174,7 +187,9 @@ object MasterWorkJournalStore {
                 .put("decisions", JSONArray(r.decisions)).put("nextSteps", JSONArray(r.nextSteps))
                 .put("updatedAt", r.updatedAt))
         }
+        val serialized = array.toString()
+        if (serialized.length > MAX_RAW_CHARS) return@runCatching false
         SharedPreferencesWriteHealth.commit(PREFS,
-            context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putString(KEY, array.toString()))
+            context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putString(KEY, serialized))
     }.getOrDefault(false)
 }

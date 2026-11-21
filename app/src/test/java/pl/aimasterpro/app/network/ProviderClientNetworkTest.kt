@@ -86,6 +86,55 @@ class ProviderClientNetworkTest {
         } finally { server.stop(0) }
     }
 
+
+    @Test
+    fun providerAuthHeaderPolicyNormalizesKeysAndUsesProviderSpecificSchemes() {
+        assertEquals("test-openai-key", ProviderHttpAuth.normalizeApiKey("Bearer Bearer test-openai-key"))
+        assertEquals("Bearer test-openai-key", ProviderHttpAuth.authorizationHeaderValue("Authorization", "Bearer Bearer test-openai-key"))
+        assertEquals("test-anthropic-key", ProviderHttpAuth.authorizationHeaderValue("x-api-key", "Bearer test-anthropic-key"))
+        assertEquals("Bearer test-gemini-key", ProviderHttpAuth.authorizationHeaderValue("Authorization", "test-gemini-key"))
+        assertEquals(null, ProviderHttpAuth.authorizationHeaderValue("Authorization", "  "))
+    }
+
+    @Test
+    fun http401And400IncludeActionableHintsAndRedactApiKey() {
+        val secret = "secret-provider-key"
+        val (unauthorized, unauthorizedCount) = server { _, _ -> 401 to """{"error":"invalid key"}""" }
+        try {
+            val cfg = config("http://127.0.0.1:${unauthorized.address.port}/v1")
+            try {
+                ProviderClient().chat(cfg, "system", "test")
+                throw AssertionError("Expected HTTP 401")
+            } catch (e: ProviderException) {
+                assertEquals("AUTH_UNAUTHORIZED", e.category)
+                assertTrue(e.message.orEmpty().contains("Sprawdź klucz API"))
+                assertTrue(e.responseBody.contains("invalid key"))
+            }
+            assertEquals(1, unauthorizedCount.get())
+        } finally { unauthorized.stop(0) }
+
+        val redacted = ProviderHttpDiagnostics.redactErrorBody(
+            """invalid key $secret; echoed Authorization: Bearer bearer-token-value""",
+            secret
+        )
+        assertFalse(redacted.contains(secret))
+        assertFalse(redacted.contains("bearer-token-value"))
+        assertTrue(redacted.contains("[REDACTED]"))
+        val (badRequest, badRequestCount) = server { _, _ -> 400 to """{"error":"unknown model"}""" }
+        try {
+            val cfg = config("http://127.0.0.1:${badRequest.address.port}/v1")
+            try {
+                ProviderClient().chat(cfg, "system", "test")
+                throw AssertionError("Expected HTTP 400")
+            } catch (e: ProviderException) {
+                assertEquals("BAD_REQUEST", e.category)
+                assertTrue(e.message.orEmpty().contains("Sprawdź ID modelu"))
+                assertTrue(e.responseBody.contains("unknown model"))
+            }
+            assertEquals(1, badRequestCount.get())
+        } finally { badRequest.stop(0) }
+    }
+
     @Test
     fun rejectsCleartextLanEndpointsAndApiKeysBeforeOpeningConnection() {
         val lan = config("http://192.168.1.50:11434/v1")
