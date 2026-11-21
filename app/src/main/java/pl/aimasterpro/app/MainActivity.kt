@@ -4428,7 +4428,8 @@ class MainActivity : Activity() {
                         "Edytuj nazwę profilu",
                         "Ustaw limit tokenów",
                         "Testuj ten profil",
-                        "Kopiuj ID modelu"
+                        "Kopiuj ID modelu",
+                        "Usuń profil modelu"
                     )
                     AlertDialog.Builder(this)
                         .setTitle("Opcje profilu: ${profile.name}")
@@ -4443,6 +4444,7 @@ class MainActivity : Activity() {
                                 2 -> showModelTokenLimitDialog(profile, modelUsage?.config)
                                 3 -> testProvider(profile)
                                 4 -> copyText(profile.model)
+                                5 -> deleteModelProfile(profile)
                             }
                         }
                         .show()
@@ -5129,6 +5131,58 @@ class MainActivity : Activity() {
             .show()
     }
 
+    private fun deleteModelProfile(profile: ProviderConfig) {
+        if (profile.parentProviderId.isBlank()) {
+            toast("Ten wpis jest dostawcą głównym. Usuwanie dostawcy wymaga osobnej procedury.")
+            return
+        }
+        if (activeQueueTaskId.isNotBlank() || activeChatTaskId.isNotBlank() || activeMasterWorkTaskId.isNotBlank()) {
+            toast("Najpierw zakończ lub zatrzymaj aktywne zadanie. Nie usuwam modelu podczas pracy agentów.")
+            return
+        }
+        val queue = pl.aimasterpro.app.core.MasterTaskQueueStore.snapshot(this)
+        if (queue.status != pl.aimasterpro.app.core.MasterTaskQueueStore.ReadStatus.AVAILABLE ||
+            queue.tasks.any { it.status == pl.aimasterpro.app.core.MasterTaskQueueStore.Status.RUNNING }) {
+            toast("Kolejka MASTER jest niedostępna lub ma aktywne zadanie. Usuwanie modelu zostało zablokowane.")
+            return
+        }
+        AlertDialog.Builder(this)
+            .setTitle("Usunąć profil modelu?")
+            .setMessage("Profil „\${profile.name}” zostanie usunięty z konfiguracji. Klucz API dostawcy nadrzędnego pozostanie zachowany. Przypisania agentów zostaną uzgodnione ponownie; historia użycia tokenów nie będzie kasowana.")
+            .setNegativeButton("Anuluj", null)
+            .setPositiveButton("Usuń profil") { _, _ ->
+                if (!store.deleteModelProfile(profile.id)) {
+                    toast(if (store.isStorageUncertain()) {
+                        "Nie udało się potwierdzić zapisu. Magazyn został zabezpieczony; uruchom aplikację ponownie."
+                    } else {
+                        "Profil nie został usunięty. Sprawdź, czy jest profilem modelu i nie ma profili zależnych."
+                    })
+                    return@setPositiveButton
+                }
+                agentAssignmentsHealthy = false
+                agentProviders.clear()
+                selectedProviderId = ""
+                val remainingIds = store.allConfigs().map { it.optString("id") }.filter { it.isNotBlank() }.toSet()
+                val defaults = AgentRole.values().associate { role -> role.name to "groq" }
+                val legacyMaster = runCatching { chatPrefs.getString("selected_provider", null) }.getOrNull()
+                val reconciled = pl.aimasterpro.app.core.AgentProviderAssignmentStore.reconcileAfterModelRemoval(
+                    this, defaults, remainingIds, profile.id, legacyMaster
+                )
+                if (reconciled == null) {
+                    toast("Profil usunięto, ale nie udało się potwierdzić naprawy wszystkich przypisań. Routing agentów pozostaje zablokowany do ponownego uruchomienia.")
+                } else {
+                    agentProviders.putAll(reconciled)
+                    selectedProviderId = reconciled[AgentRole.MASTER.name].orEmpty()
+                    agentAssignmentsHealthy = true
+                    AgentRole.values().forEach { role -> agentConnection[role.name] = "unknown" }
+                    toast("Usunięto profil modelu i uzgodniono przypisania agentów. Historia tokenów została zachowana.")
+                }
+                showShell("Modele")
+                showProviders()
+            }
+            .show()
+    }
+
     private fun recordModelTestUsage(
         config: ProviderConfig,
         response: ChatResponse?,
@@ -5496,7 +5550,7 @@ class MainActivity : Activity() {
                 setTextColor(Color.RED); textSize = 12f; setPadding(0, 8, 0, 0)
             })
         }
-        val configs = store.allConfigs().mapNotNull { j -> runCatching { loadProvider(j.optString("id")) }.getOrNull() }.filter { providerReady(it) && isModelPresentInCatalog(it) }
+        val configs = store.allConfigs().mapNotNull { j -> runCatching { loadProvider(j.optString("id")) }.getOrNull() }.filter { providerReady(it) }
         if (configs.isEmpty()) {
             val missing = card("Brak gotowych profili modeli", "Najpierw otwórz MODELE, skonfiguruj dostawcę, pobierz jego listę i utwórz profil modelu. Wybór obejmuje zweryfikowane modele darmowe oraz modele z nieznaną ceną, dla których jawnie zapisano zgodę. Wróć tutaj, aby przypisać model agentom.")
             action("OTWÓRZ KATALOG MODELI", missing) { navigate("Modele") }
