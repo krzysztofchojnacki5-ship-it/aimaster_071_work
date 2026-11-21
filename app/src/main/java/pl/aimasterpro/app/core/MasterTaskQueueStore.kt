@@ -440,20 +440,23 @@ object MasterTaskQueueStore {
     ): Boolean = mutate(context) { tasks, events ->
         val current = tasks.firstOrNull { it.id == taskId } ?: return@mutate null
         if (current.status != Status.BLOCKED || current.runId <= 0 ||
-            current.runId != expectedRunId || current.assignedAgentIds.isEmpty() || now < 0L) {
+            current.runId == Int.MAX_VALUE || current.runId != expectedRunId ||
+            current.assignedAgentIds.isEmpty() || now < 0L) {
             return@mutate null
         }
         val recoveryAt = maxOf(now, current.updatedAt)
+        val nextRunId = current.runId + 1
         val next = current.copy(
             status = Status.RUNNING,
-            currentStep = "MASTER bezpiecznie wznowił przebieg #${current.runId}; zachowano ukończone raporty.",
-            updatedAt = recoveryAt
+            currentStep = "MASTER wznowił zadanie jako przebieg #$nextRunId; wcześniejsze raporty zostaną zachowane.",
+            updatedAt = recoveryAt,
+            runId = nextRunId
         )
         Triple(
             tasks.map { if (it.id == taskId) next else it },
             events + event(taskId, "MASTER", "RESUME_INTERRUPTED", Status.BLOCKED.name,
-                Status.RUNNING.name, "Wznowiono ten sam przebieg bez zmiany runId.", recoveryAt,
-                runId = current.runId),
+                Status.RUNNING.name, "Wznowiono zadanie w nowym, odgrodzonym przebiegu; zachowano wcześniejsze raporty.", recoveryAt,
+                runId = nextRunId),
             true
         )
     }

@@ -36,13 +36,6 @@ object QueueResumePlanner {
                 return Plan(false, reason = "Agent ${item.agentId} zakończył przebieg błędem lub blokadą. Użyj ponowienia od początku.")
             }
             if (item.reportArchived) {
-                if (checkpoint in setOf(
-                        "REQUESTING", "USAGE_RECORDED", "USAGE_PENDING", "RESULT_PERSIST_PENDING",
-                        "INTERRUPTED_USAGE_PENDING", "INTERRUPTED", "TIMED_OUT", "CANCELLED",
-                        "FAILED", "BLOCKED"
-                    )) {
-                    return Plan(false, reason = "Raport agenta ${item.agentId} istnieje, ale jego checkpoint wymaga jeszcze uzgodnienia ($checkpoint).")
-                }
                 if (pendingStarted) {
                     return Plan(false, reason = "Archiwum nie zachowuje kolejności agentów. Nie można bezpiecznie odtworzyć przekazań.")
                 }

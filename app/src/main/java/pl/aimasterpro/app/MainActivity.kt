@@ -7641,7 +7641,7 @@ class MainActivity : Activity() {
                     }
                 }
                 if (task.status == pl.aimasterpro.app.core.MasterTaskQueueStore.Status.BLOCKED) {
-                    action("▶ WZNÓW BEZPIECZNIE • TEN SAM PRZEBIEG", box) {
+                    action("▶ WZNÓW • ZACHOWAJ UKOŃCZONE RAPORTY", box) {
                         executeQueuedMasterTask(task.id, resumeExistingRun = true)
                     }
                     action("↻ PONÓW OD POCZĄTKU • NOWY PRZEBIEG", box) {
@@ -7811,26 +7811,25 @@ class MainActivity : Activity() {
             }
             activeQueueTaskId = taskId
         }
-        val executionRunId = if (resumeExistingRun) task.runId else task.runId + 1
+        val executionRunId = task.runId + 1
         val teamOrder = task.assignedAgentIds
         val pendingAgentIds = resumePlan?.pendingAgentIds ?: teamOrder
         val enabledAgentCatalog = pl.aimasterpro.app.core.AgentManagerStore.enabledCatalog(this)
         if (resumeExistingRun && pendingAgentIds.isEmpty()) {
-            val resumed = queueStore.resumeInterruptedRun(this, taskId, task.runId)
+            val resumed = queueStore.resumeInterruptedRun(this, taskId, task.runId) &&
+                queueStore.snapshot(this).tasks.firstOrNull { it.id == taskId }?.runId == executionRunId
             val reportsRecovered = resumed && resumePlan!!.completedAgentIds.all { agentId ->
-                val alreadyRecorded = queueSnapshot.events.any {
-                    it.taskId == taskId && it.operation == "AGENT_RESULT" &&
-                        it.actor == "agent:$agentId" && it.runId == executionRunId &&
-                        it.toStatus == pl.aimasterpro.app.core.MasterTaskQueueStore.Status.COMPLETED.name
-                }
-                if (alreadyRecorded) true else {
-                    val entry = archive.getExecution(this, taskId, agentId, executionRunId)
-                    entry != null && queueStore.recordAgentResult(
-                        this, taskId, agentId, pl.aimasterpro.app.core.MasterTaskQueueStore.Status.COMPLETED,
-                        "Odzyskano wcześniej zapisany raport bez ponawiania żądania API.",
-                        expectedRunId = executionRunId
-                    )
-                }
+                val previousEntry = archive.getExecution(this, taskId, agentId, task.runId)
+                val copied = previousEntry != null && archive.put(
+                    this, archive.executionTaskId(taskId, agentId, executionRunId), agentId,
+                    previousEntry.report, previousEntry.providerId, previousEntry.model,
+                    previousEntry.createdAt, previousEntry.chatId
+                )
+                copied && queueStore.recordAgentResult(
+                    this, taskId, agentId, pl.aimasterpro.app.core.MasterTaskQueueStore.Status.COMPLETED,
+                    "Odzyskano raport z poprzedniego przebiegu bez ponawiania żądania API.",
+                    expectedRunId = executionRunId
+                )
             }
             if (!reportsRecovered) queueStore.transition(
                 this, taskId, "MASTER", pl.aimasterpro.app.core.MasterTaskQueueStore.Status.BLOCKED,
@@ -7930,19 +7929,18 @@ class MainActivity : Activity() {
             return
         }
         if (resumeExistingRun) {
-            val alreadyRecorded = queueSnapshot.events.filter {
-                it.taskId == taskId && it.operation == "AGENT_RESULT" && it.runId == executionRunId
-            }.associateBy { it.actor.removePrefix("agent:") }
             val completedSaved = resumePlan!!.completedAgentIds.all { agentId ->
-                if (alreadyRecorded[agentId]?.toStatus == pl.aimasterpro.app.core.MasterTaskQueueStore.Status.COMPLETED.name) true
-                else {
-                    val entry = archive.getExecution(this, taskId, agentId, executionRunId)
-                    entry != null && queueStore.recordAgentResult(
-                        this, taskId, agentId, pl.aimasterpro.app.core.MasterTaskQueueStore.Status.COMPLETED,
-                        "Odzyskano wcześniej zapisany raport bez ponawiania żądania API.",
-                        expectedRunId = executionRunId
-                    )
-                }
+                val previousEntry = archive.getExecution(this, taskId, agentId, task.runId)
+                val copied = previousEntry != null && archive.put(
+                    this, archive.executionTaskId(taskId, agentId, executionRunId), agentId,
+                    previousEntry.report, previousEntry.providerId, previousEntry.model,
+                    previousEntry.createdAt, previousEntry.chatId
+                )
+                copied && queueStore.recordAgentResult(
+                    this, taskId, agentId, pl.aimasterpro.app.core.MasterTaskQueueStore.Status.COMPLETED,
+                    "Odzyskano raport z poprzedniego przebiegu bez ponawiania żądania API.",
+                    expectedRunId = executionRunId
+                )
             }
             if (!completedSaved) {
                 queueStore.transition(this, taskId, "MASTER",
@@ -7964,7 +7962,7 @@ class MainActivity : Activity() {
                 val handoffSnapshot = pl.aimasterpro.app.core.AgentHandoffStore.snapshot(this)
                 val existing = handoffSnapshot.messages.firstOrNull { it.id == messageId }
                 if (existing == null) {
-                    val previousReport = archive.getExecution(this, taskId, previousAgentId, executionRunId)
+                    val previousReport = archive.getExecution(this, taskId, previousAgentId, task.runId)
                     val sent = previousReport != null && pl.aimasterpro.app.core.AgentHandoffStore.send(
                         this, taskId, executionRunId, messageId, previousAgentId, nextAgentId,
                         previousReport.report.take(8_000)
