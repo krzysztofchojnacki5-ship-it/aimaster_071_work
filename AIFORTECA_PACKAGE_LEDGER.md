@@ -184,9 +184,10 @@ Ten blok jest aktualnym uzupełnieniem rejestru. Starszy wpis z 2026-11-20, w kt
 
 - Repozytorium: `krzysztofchojnacki5-ship-it/aimaster_071_work`.
 - PR #3: OPEN, DRAFT, nie scalony; baza `work/aiforteca-0.0.2-provider-connectivity`; gałąź `work/aiforteca-0.2-master-agent-foundation`.
-- HEAD gałęzi i PR: `012254d0fbceab847de9d85fbbb7725135486211`.
-- Porównanie z bazą: 650 commitów do przodu, 0 commitów za bazą; 140 plików różnicy (17 658 additions / 1 028 deletions).
-- Wszystkie wymagane workflowy na dokładnym HEAD `012254d0...` zakończone SUCCESS: Unit Tests PUSH/PR, Gradle Wrapper Validation PUSH/PR oraz pełny Android Build PUSH.
+- HEAD kodu pakietu 27, na którym wykonano pełny Android Build: `012254d0fbceab847de9d85fbbb7725135486211`.
+- Następny commit `48b98c340df61b96004975bb11b9072455b28741` zawiera wyłącznie uzgodnienie tego rejestru; nie zmienia kodu aplikacji. Dla tego commitu `Gradle Wrapper Validation` zakończył się SUCCESS (run `44962585678`).
+- Porównanie gałęzi po aktualizacji rejestru: 651 commitów do przodu, 0 commitów za bazą; 140 plików różnicy (17 730 additions / 1 028 deletions).
+- Wszystkie wymagane workflowy na kodowym HEAD `012254d0...` zakończone SUCCESS: Unit Tests PUSH/PR, Gradle Wrapper Validation PUSH/PR oraz pełny Android Build PUSH. Po aktualizacji samej dokumentacji dodatkowo potwierdzono Wrapper Validation SUCCESS na `48b98c34...`.
 - Android Build wykonał testy, assemble release APK, spakował projekt źródłowy i przesłał debug APK, signed release APK, source ZIP oraz raporty testów.
 - Dawne anulowane/nieudane przebiegi na wcześniejszych SHA są historią CI i nie są wynikiem dla aktualnego HEAD. Nie usuwano ich.
 - PR pozostaje Draft; nie wykonywać merge bez wyraźnej decyzji użytkownika.
