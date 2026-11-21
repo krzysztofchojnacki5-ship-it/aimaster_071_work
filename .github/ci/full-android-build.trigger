@@ -1,8 +1,7 @@
-AiFORTeca 0.2 full Android build requested after package 23.
+AiFORTeca 0.2 full Android build requested after package 24.
 Source PR: #3
 Source branch: work/aiforteca-0.2-master-agent-foundation
-Source HEAD before CI trigger: fdc13ac9682ed007a955aba214a32c3f01654531
-Required outputs: debug APK; unsigned release APK unless signing secrets are configured and verified.
-Verification: run unit tests, Gradle wrapper validation, assembleDebug and assembleRelease. Do not treat reports or source ZIP as APK.
-Package 23: safe model-profile deletion, provider assignment reconciliation, deletion UI safeguards, and model catalog selection fallback.
-Build request: produce installable debug APK and release APK from the exact package 23 source revision.
+Package 24 source HEAD: 8aa6c9db0ce9e58d559af1dfbc63f963fc708bfc
+Scope: task-scoped contextual diagnostics, merged queue/handoff event feed, agent report completeness, secret redaction, and corrected unreadable-archive test expectation.
+Required outputs: installable debug APK, release APK (signed only if signing secrets are configured and validated), and source project archive.
+Verification: run unit tests, Gradle wrapper validation, assembleDebug and assembleRelease against this source revision. Do not mark build or package complete until workflow and artifacts are verified.
