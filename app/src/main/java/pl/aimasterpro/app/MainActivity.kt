@@ -7641,11 +7641,21 @@ class MainActivity : Activity() {
                     }
                 }
                 if (task.status == pl.aimasterpro.app.core.MasterTaskQueueStore.Status.BLOCKED) {
-                    action("ODBLOCKUJ → KOLEJKA", box) {
-                        if (queueStore.transition(this, task.id, "MASTER",
-                                pl.aimasterpro.app.core.MasterTaskQueueStore.Status.QUEUED, "MASTER przywrócił zadanie do kolejki.")) {
-                            showShell("Zadania"); showTasksCenter()
-                        } else toast("Nie udało się odblokować zadania.")
+                    action("▶ WZNÓW BEZPIECZNIE • TEN SAM PRZEBIEG", box) {
+                        executeQueuedMasterTask(task.id, resumeExistingRun = true)
+                    }
+                    action("↻ PONÓW OD POCZĄTKU • NOWY PRZEBIEG", box) {
+                        AlertDialog.Builder(this)
+                            .setTitle("Ponowić zadanie od początku?")
+                            .setMessage("Wszystkie agenty wykonają zadanie ponownie, także te, które wcześniej przygotowały raporty. Może to ponownie zużyć tokeny API. Bezpieczne wznowienie nie powtarza potwierdzonych raportów.")
+                            .setNegativeButton("Anuluj", null)
+                            .setPositiveButton("Ponów od początku") { _, _ ->
+                                if (queueStore.transition(this, task.id, "MASTER",
+                                        pl.aimasterpro.app.core.MasterTaskQueueStore.Status.QUEUED,
+                                        "Użytkownik zatwierdził nowy przebieg od początku.")) {
+                                    showShell("Zadania"); showTasksCenter()
+                                } else toast("Nie udało się przygotować nowego przebiegu.")
+                            }.show()
                     }
                 }
                 if (task.status == pl.aimasterpro.app.core.MasterTaskQueueStore.Status.ASSIGNED) {
@@ -7732,18 +7742,68 @@ class MainActivity : Activity() {
      * Executes a durable queue item through the same provider routing, cost-policy guard,
      * Smart Budget, usage ledger, checkpoints and result archive used by MASTER chat.
      */
-    private fun executeQueuedMasterTask(taskId: String) {
+    private fun executeQueuedMasterTask(taskId: String, resumeExistingRun: Boolean = false) {
         if (isThinking || store.isStorageUncertain() || !agentAssignmentsHealthy) {
             toast("Nie można uruchomić kolejki: trwa inne żądanie albo konfiguracja nie jest bezpiecznie uzgodniona.")
             return
         }
         val queueStore = pl.aimasterpro.app.core.MasterTaskQueueStore
-        val task = queueStore.snapshot(this).tasks.firstOrNull { it.id == taskId }
-        if (task == null || task.status != pl.aimasterpro.app.core.MasterTaskQueueStore.Status.ASSIGNED ||
-            task.assignedAgentIds.isEmpty() || task.runId == Int.MAX_VALUE) {
-            toast("Zadanie nie jest gotowe do uruchomienia.")
+        val queueSnapshot = queueStore.snapshot(this)
+        val task = queueSnapshot.tasks.firstOrNull { it.id == taskId }
+        val expectedStatus = if (resumeExistingRun) pl.aimasterpro.app.core.MasterTaskQueueStore.Status.BLOCKED
+            else pl.aimasterpro.app.core.MasterTaskQueueStore.Status.ASSIGNED
+        if (task == null || task.status != expectedStatus || task.assignedAgentIds.isEmpty() ||
+            (!resumeExistingRun && task.runId == Int.MAX_VALUE) || (resumeExistingRun && task.runId <= 0)) {
+            toast("Zadanie nie jest gotowe do ${if (resumeExistingRun) "bezpiecznego wznowienia" else "uruchomienia"}.")
             return
         }
+        val archive = pl.aimasterpro.app.core.TaskResultArchive
+        val resumePlan = if (resumeExistingRun) {
+            if (!archive.isArchiveReadable(this) ||
+                !pl.aimasterpro.app.core.TaskCheckpointStore.isJournalReadable(this)) {
+                toast("Nie można bezpiecznie wznowić: archiwum raportów lub dziennik checkpointów jest niedostępny.")
+                return
+            }
+            val checkpointById = pl.aimasterpro.app.core.TaskCheckpointStore.latest(this)
+                .filter { it.runId == task.runId }.associateBy { it.taskId }
+            val resultByAgent = queueSnapshot.events.filter {
+                it.taskId == task.id && it.operation == "AGENT_RESULT" && it.runId == task.runId
+            }.associateBy { it.actor.removePrefix("agent:") }
+            val evidence = task.assignedAgentIds.map { agentId ->
+                val executionId = archive.executionTaskId(task.id, agentId, task.runId)
+                val checkpoint = checkpointById[executionId]
+                pl.aimasterpro.app.core.QueueResumePlanner.AgentEvidence(
+                    agentId = agentId,
+                    reportArchived = archive.getExecution(this, task.id, agentId, task.runId) != null,
+                    checkpointStatus = checkpoint?.status.orEmpty(),
+                    queueResultStatus = resultByAgent[agentId]?.toStatus.orEmpty()
+                )
+            }
+            val plan = pl.aimasterpro.app.core.QueueResumePlanner.plan(evidence)
+            if (!plan.safe) {
+                toast("Bezpieczne wznowienie zablokowane: ${plan.reason} Ponowienie od początku pozostaje dostępne.")
+                return
+            }
+            val handoffs = pl.aimasterpro.app.core.AgentHandoffStore.snapshot(this)
+            if (handoffs.status != pl.aimasterpro.app.core.AgentHandoffStore.ReadStatus.AVAILABLE) {
+                toast("Nie można bezpiecznie wznowić: skrzynka przekazań jest niedostępna.")
+                return
+            }
+            val firstPendingIndex = task.assignedAgentIds.indexOfFirst { it in plan.pendingAgentIds }
+            if (firstPendingIndex > 0) {
+                val previous = task.assignedAgentIds[firstPendingIndex - 1]
+                val recipient = task.assignedAgentIds[firstPendingIndex]
+                val messageId = pl.aimasterpro.app.core.StableIdentifier.create(
+                    "handoff", task.id, task.runId.toString(), previous, recipient
+                )
+                val existing = handoffs.messages.firstOrNull { it.id == messageId }
+                if (existing != null && existing.state != pl.aimasterpro.app.core.AgentHandoffStore.State.PENDING) {
+                    toast("Nie można bezpiecznie wznowić: przekazanie do $recipient jest już przejęte lub rozstrzygnięte, ale raport odbiorcy nie został potwierdzony.")
+                    return
+                }
+            }
+            plan
+        } else null
         synchronized(masterJournalLifecycleLock) {
             if (activeQueueTaskId.isNotBlank() || isThinking || activeChatTaskId.isNotBlank()) {
                 toast("Inne zadanie MASTER-a jest już uruchomione.")
@@ -7751,14 +7811,44 @@ class MainActivity : Activity() {
             }
             activeQueueTaskId = taskId
         }
-        val executionRunId = task.runId + 1
+        val executionRunId = if (resumeExistingRun) task.runId else task.runId + 1
+        val teamOrder = task.assignedAgentIds
+        val pendingAgentIds = resumePlan?.pendingAgentIds ?: teamOrder
         val enabledAgentCatalog = pl.aimasterpro.app.core.AgentManagerStore.enabledCatalog(this)
-        val specs = task.assignedAgentIds.mapNotNull { id ->
+        if (resumeExistingRun && pendingAgentIds.isEmpty()) {
+            val resumed = queueStore.resumeInterruptedRun(this, taskId, task.runId)
+            val reportsRecovered = resumed && resumePlan!!.completedAgentIds.all { agentId ->
+                val alreadyRecorded = queueSnapshot.events.any {
+                    it.taskId == taskId && it.operation == "AGENT_RESULT" &&
+                        it.actor == "agent:$agentId" && it.runId == executionRunId &&
+                        it.toStatus == pl.aimasterpro.app.core.MasterTaskQueueStore.Status.COMPLETED.name
+                }
+                if (alreadyRecorded) true else {
+                    val entry = archive.getExecution(this, taskId, agentId, executionRunId)
+                    entry != null && queueStore.recordAgentResult(
+                        this, taskId, agentId, pl.aimasterpro.app.core.MasterTaskQueueStore.Status.COMPLETED,
+                        "Odzyskano wcześniej zapisany raport bez ponawiania żądania API.",
+                        expectedRunId = executionRunId
+                    )
+                }
+            }
+            if (!reportsRecovered) queueStore.transition(
+                this, taskId, "MASTER", pl.aimasterpro.app.core.MasterTaskQueueStore.Status.BLOCKED,
+                "Nie udało się uzgodnić wszystkich archiwalnych raportów; wymagany jest przegląd ręczny.",
+                expectedCurrentRunId = executionRunId
+            )
+            activeQueueTaskId = ""
+            toast(if (reportsRecovered) "Odzyskano wszystkie raporty. Nie wysłano żadnych nowych żądań API."
+                else "Odzyskiwanie raportów nie zostało w pełni zapisane; zadanie pozostaje zablokowane.")
+            if (screen == "Zadania") { showShell("Zadania"); showTasksCenter() }
+            return
+        }
+        val specs = pendingAgentIds.mapNotNull { id ->
             enabledAgentCatalog.firstOrNull { it.id == id }
         }
-        if (specs.size != task.assignedAgentIds.size) {
+        if (specs.size != pendingAgentIds.size) {
             activeQueueTaskId = ""
-            toast("Co najmniej jeden przydzielony agent nie istnieje w katalogu lub jest wyłączony.")
+            toast("Co najmniej jeden agent oczekujący na wykonanie nie istnieje w katalogu lub jest wyłączony.")
             return
         }
         val configByAgent = specs.associate { spec ->
@@ -7790,7 +7880,7 @@ class MainActivity : Activity() {
             // Reserve headroom for the bounded 8k-character durable report handoff.
             val chars = (spec?.systemPrompt.orEmpty().length + mode.systemInstruction.length +
                 projectContextBase.length + 18_000 + teamTask.prompt.length + 1_800 +
-                if (index > 0) 8_000 else 0)
+                if (teamOrder.indexOf(teamTask.agentId) > 0) 8_000 else 0)
             pl.aimasterpro.app.core.BudgetRequest(
                 taskId = teamTask.id, agentId = teamTask.agentId, providerId = cfg.id,
                 baseUrl = cfg.baseUrl, modelName = cfg.model,
@@ -7811,10 +7901,21 @@ class MainActivity : Activity() {
         }
         val allowed = teamTasks.filter { it.id in budgetPlan.allowedTaskIds }
         val blocked = teamTasks.filterNot { it.id in budgetPlan.allowedTaskIds }
-        if (!queueStore.transition(this, taskId, "MASTER", pl.aimasterpro.app.core.MasterTaskQueueStore.Status.RUNNING,
+        if (resumeExistingRun && blocked.isNotEmpty()) {
+            pl.aimasterpro.app.core.ApiTokenTracker.releaseBatchReservation(budgetPlan.reservationId)
+            activeQueueTaskId = ""
+            toast("Bezpieczne wznowienie wstrzymane: Smart Budget nie dopuścił wszystkich pozostałych agentów. Nie wysłano żądań.")
+            return
+        }
+        val started = if (resumeExistingRun) {
+            queueStore.resumeInterruptedRun(this, taskId, task.runId)
+        } else {
+            queueStore.transition(this, taskId, "MASTER", pl.aimasterpro.app.core.MasterTaskQueueStore.Status.RUNNING,
                 "MASTER uruchomił TeamRunEngine dla ${allowed.size}/${teamTasks.size} agentów.",
                 expectedCurrentRunId = task.runId,
-                expectedAssignedAgentIds = task.assignedAgentIds)) {
+                expectedAssignedAgentIds = task.assignedAgentIds)
+        }
+        if (!started) {
             pl.aimasterpro.app.core.ApiTokenTracker.releaseBatchReservation(budgetPlan.reservationId)
             activeQueueTaskId = ""
             toast("Nie udało się trwale rozpocząć zadania. Nie wysłano żądań.")
@@ -7827,6 +7928,64 @@ class MainActivity : Activity() {
             activeQueueTaskId = ""
             toast("Nie udało się potwierdzić numeru przebiegu kolejki. Nie wysłano żądań.")
             return
+        }
+        if (resumeExistingRun) {
+            val alreadyRecorded = queueSnapshot.events.filter {
+                it.taskId == taskId && it.operation == "AGENT_RESULT" && it.runId == executionRunId
+            }.associateBy { it.actor.removePrefix("agent:") }
+            val completedSaved = resumePlan!!.completedAgentIds.all { agentId ->
+                if (alreadyRecorded[agentId]?.toStatus == pl.aimasterpro.app.core.MasterTaskQueueStore.Status.COMPLETED.name) true
+                else {
+                    val entry = archive.getExecution(this, taskId, agentId, executionRunId)
+                    entry != null && queueStore.recordAgentResult(
+                        this, taskId, agentId, pl.aimasterpro.app.core.MasterTaskQueueStore.Status.COMPLETED,
+                        "Odzyskano wcześniej zapisany raport bez ponawiania żądania API.",
+                        expectedRunId = executionRunId
+                    )
+                }
+            }
+            if (!completedSaved) {
+                queueStore.transition(this, taskId, "MASTER",
+                    pl.aimasterpro.app.core.MasterTaskQueueStore.Status.BLOCKED,
+                    "Nie udało się uzgodnić archiwalnych raportów przed wznowieniem.",
+                    expectedCurrentRunId = executionRunId)
+                pl.aimasterpro.app.core.ApiTokenTracker.releaseBatchReservation(budgetPlan.reservationId)
+                activeQueueTaskId = ""
+                toast("Nie udało się uzgodnić wcześniejszych raportów. Zadanie pozostaje zablokowane.")
+                return
+            }
+            val firstPendingIndex = teamOrder.indexOfFirst { it in pendingAgentIds }
+            if (firstPendingIndex > 0) {
+                val previousAgentId = teamOrder[firstPendingIndex - 1]
+                val nextAgentId = teamOrder[firstPendingIndex]
+                val messageId = pl.aimasterpro.app.core.StableIdentifier.create(
+                    "handoff", taskId, executionRunId.toString(), previousAgentId, nextAgentId
+                )
+                val handoffSnapshot = pl.aimasterpro.app.core.AgentHandoffStore.snapshot(this)
+                val existing = handoffSnapshot.messages.firstOrNull { it.id == messageId }
+                if (existing == null) {
+                    val previousReport = archive.getExecution(this, taskId, previousAgentId, executionRunId)
+                    val sent = previousReport != null && pl.aimasterpro.app.core.AgentHandoffStore.send(
+                        this, taskId, executionRunId, messageId, previousAgentId, nextAgentId,
+                        previousReport.report.take(8_000)
+                    )
+                    val audited = sent && queueStore.recordAgentTrace(
+                        this, taskId, "agent:$previousAgentId", "agent:$nextAgentId",
+                        "HANDOFF_SENT", "Odtworzono brakujące przekazanie z trwałego raportu poprzedniego agenta.",
+                        expectedRunId = executionRunId
+                    )
+                    if (!audited) {
+                        queueStore.transition(this, taskId, "MASTER",
+                            pl.aimasterpro.app.core.MasterTaskQueueStore.Status.BLOCKED,
+                            "Nie udało się odtworzyć przekazania z archiwalnego raportu.",
+                            expectedCurrentRunId = executionRunId)
+                        pl.aimasterpro.app.core.ApiTokenTracker.releaseBatchReservation(budgetPlan.reservationId)
+                        activeQueueTaskId = ""
+                        toast("Nie udało się odtworzyć przekazania. Nie wysłano żądania do następnego agenta.")
+                        return
+                    }
+                }
+            }
         }
         blocked.forEach { item ->
             queueStore.recordAgentResult(this, taskId, item.agentId, pl.aimasterpro.app.core.MasterTaskQueueStore.Status.BLOCKED,
@@ -7869,10 +8028,15 @@ class MainActivity : Activity() {
                                 else -> "provider:${recipient.take(100)}"
                             }
                             val senderConfig = senderSpec?.let { configs[it.id] }
+                            val archivedSender = if (senderConfig == null && senderSpec != null) {
+                                archive.getExecution(this, taskId, senderSpec.id, executionRunId)
+                            } else null
                             val traced = queueStore.withActiveRun(this, taskId, executionRunId) {
                                 queueStore.recordAgentTrace(this, taskId, senderEndpoint, recipientEndpoint,
-                                    eventStatus, message, providerId = senderConfig?.id.orEmpty(),
-                                    model = senderConfig?.model.orEmpty(), expectedRunId = executionRunId)
+                                    eventStatus, message,
+                                    providerId = senderConfig?.id ?: archivedSender?.providerId.orEmpty(),
+                                    model = senderConfig?.model ?: archivedSender?.model.orEmpty(),
+                                    expectedRunId = executionRunId)
                             } == true
                             if (!traced) android.util.Log.w("AiFORTecaQueue", "Pominięto ślad techniczny dla nieaktywnego przebiegu lub nie udało się go zapisać: $taskId • $sender → $recipient")
                             // Logcat is an operational channel, not a content archive. Never emit trace payloads.
@@ -7939,20 +8103,20 @@ class MainActivity : Activity() {
                                 if (!archived) {
                                     false
                                 } else {
-                                val index = allowed.indexOfFirst { it.agentId == result.agentId }
+                                val index = teamOrder.indexOf(result.agentId)
                                 val inboundId = if (index > 0) {
-                                    pl.aimasterpro.app.core.StableIdentifier.create("handoff", taskId, executionRunId.toString(), allowed[index - 1].agentId, result.agentId)
+                                    pl.aimasterpro.app.core.StableIdentifier.create("handoff", taskId, executionRunId.toString(), teamOrder[index - 1], result.agentId)
                                 } else ""
-                                val previous = allowed.getOrNull(index - 1)
+                                val previousAgentId = teamOrder.getOrNull(index - 1)
                                 val explicitlyRejected = result.handoffRejectionReason.isNotBlank()
                                 val inboundResolved = if (inboundId.isBlank()) true else if (explicitlyRejected) {
                                     val rejected = pl.aimasterpro.app.core.AgentHandoffStore.reject(
                                         this, taskId, executionRunId, inboundId, result.agentId,
                                         result.handoffRejectionReason
                                     )
-                                    rejected && previous != null &&
+                                    rejected && previousAgentId != null &&
                                         queueStore.recordAgentTrace(
-                                            this, taskId, "agent:${previous.agentId}", "agent:${result.agentId}",
+                                            this, taskId, "agent:$previousAgentId", "agent:${result.agentId}",
                                             "HANDOFF_REJECTED", result.handoffRejectionReason,
                                             expectedRunId = executionRunId
                                         )
@@ -7960,26 +8124,26 @@ class MainActivity : Activity() {
                                     val acknowledged = pl.aimasterpro.app.core.AgentHandoffStore.acknowledge(
                                         this, taskId, executionRunId, inboundId, result.agentId
                                     )
-                                    acknowledged && previous != null &&
+                                    acknowledged && previousAgentId != null &&
                                         queueStore.recordAgentTrace(
-                                            this, taskId, "agent:${previous.agentId}", "agent:${result.agentId}",
+                                            this, taskId, "agent:$previousAgentId", "agent:${result.agentId}",
                                             "HANDOFF_ACKNOWLEDGED", "Odbiorca trwale zarchiwizował raport i potwierdził przekazanie.",
                                             expectedRunId = executionRunId
                                         )
                                 }
-                                val next = allowed.getOrNull(index + 1)
+                                val nextAgentId = teamOrder.getOrNull(index + 1)
                                 val outboundSent = when {
                                     !inboundResolved -> false
                                     explicitlyRejected -> true // A rejection is terminal for this handoff chain.
-                                    next == null -> true
+                                    nextAgentId == null -> true
                                     else -> {
-                                    val messageId = pl.aimasterpro.app.core.StableIdentifier.create("handoff", taskId, executionRunId.toString(), result.agentId, next.agentId)
+                                    val messageId = pl.aimasterpro.app.core.StableIdentifier.create("handoff", taskId, executionRunId.toString(), result.agentId, nextAgentId)
                                     val sent = pl.aimasterpro.app.core.AgentHandoffStore.send(
                                         this, taskId, executionRunId, messageId,
-                                        result.agentId, next.agentId, result.report.take(8_000)
+                                        result.agentId, nextAgentId, result.report.take(8_000)
                                     )
                                     sent && queueStore.recordAgentTrace(
-                                        this, taskId, "agent:${result.agentId}", "agent:${next.agentId}",
+                                        this, taskId, "agent:${result.agentId}", "agent:$nextAgentId",
                                         "HANDOFF_SENT", "Trwałe przekazanie raportu zapisane w skrzynce odbiorczej.",
                                         expectedRunId = executionRunId
                                     )
@@ -7991,14 +8155,14 @@ class MainActivity : Activity() {
                         },
                         handoffContextForTask = { item ->
                             queueStore.withActiveRun(this, taskId, executionRunId) {
-                                val index = allowed.indexOfFirst { it.agentId == item.agentId }
+                                val index = teamOrder.indexOf(item.agentId)
                                 if (index <= 0) "" else {
-                                    val previous = allowed[index - 1]
-                                    val messageId = pl.aimasterpro.app.core.StableIdentifier.create("handoff", taskId, executionRunId.toString(), previous.agentId, item.agentId)
+                                    val previousAgentId = teamOrder[index - 1]
+                                    val messageId = pl.aimasterpro.app.core.StableIdentifier.create("handoff", taskId, executionRunId.toString(), previousAgentId, item.agentId)
                                     val claimed = pl.aimasterpro.app.core.AgentHandoffStore.claim(
                                         this, taskId, executionRunId, messageId, item.agentId
                                     ) ?: throw pl.aimasterpro.app.agents.HandoffUnavailableException(
-                                        "Brak możliwego do przejęcia przekazania od agenta ${previous.agentId}; żądanie API odbiorcy nie zostanie wysłane."
+                                        "Brak możliwego do przejęcia przekazania od agenta $previousAgentId; żądanie API odbiorcy nie zostanie wysłane."
                                     )
                                     val claimAudited = queueStore.recordAgentTrace(
                                         this, taskId, "agent:${previous.agentId}", "agent:${item.agentId}",

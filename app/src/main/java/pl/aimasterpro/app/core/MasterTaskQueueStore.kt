@@ -427,6 +427,37 @@ object MasterTaskQueueStore {
                 recipient = canonicalTarget, providerId = safeProvider, model = safeModel, runId = current.runId), true)
     }
 
+    /**
+     * Re-enters the exact blocked execution epoch after recovery preflight has proved that
+     * completed reports are archived and no pending agent has an ambiguous provider request.
+     */
+    @Synchronized
+    fun resumeInterruptedRun(
+        context: Context,
+        taskId: String,
+        expectedRunId: Int,
+        now: Long = System.currentTimeMillis()
+    ): Boolean = mutate(context) { tasks, events ->
+        val current = tasks.firstOrNull { it.id == taskId } ?: return@mutate null
+        if (current.status != Status.BLOCKED || current.runId <= 0 ||
+            current.runId != expectedRunId || current.assignedAgentIds.isEmpty() || now < 0L) {
+            return@mutate null
+        }
+        val recoveryAt = maxOf(now, current.updatedAt)
+        val next = current.copy(
+            status = Status.RUNNING,
+            currentStep = "MASTER bezpiecznie wznowił przebieg #${current.runId}; zachowano ukończone raporty.",
+            updatedAt = recoveryAt
+        )
+        Triple(
+            tasks.map { if (it.id == taskId) next else it },
+            events + event(taskId, "MASTER", "RESUME_INTERRUPTED", Status.BLOCKED.name,
+                Status.RUNNING.name, "Wznowiono ten sam przebieg bez zmiany runId.", recoveryAt,
+                runId = current.runId),
+            true
+        )
+    }
+
     /** Moves interrupted RUNNING tasks to BLOCKED after process restart; never auto-replays uncertain API work. */
     @Synchronized
     fun recoverInterruptedRuns(context: Context, now: Long = System.currentTimeMillis()): Int {

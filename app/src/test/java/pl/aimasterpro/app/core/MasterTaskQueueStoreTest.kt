@@ -772,6 +772,45 @@ class MasterTaskQueueStoreTest {
         assertEquals(0, MasterTaskQueueStore.recoverInterruptedRuns(context, now = 91L))
     }
 
+    @Test fun safeResumeKeepsSameRunEpochAndAcceptsOnlyRemainingAgentResults() {
+        val taskId = "task-safe-resume-001"
+        val agents = listOf("critical-reviewer", "unit-test-engineer")
+        assertTrue(MasterTaskQueueStore.enqueue(context, taskId, "Bezpieczne wznowienie", "Zachowaj ukończony raport.", now = 70L))
+        assertTrue(MasterTaskQueueStore.assign(context, taskId, agents, now = 71L))
+        assertTrue(startTaskWithCurrentSnapshot(taskId, "Start pierwszego przebiegu.", 72L))
+        assertTrue(MasterTaskQueueStore.recordAgentResult(context, taskId, agents[0],
+            MasterTaskQueueStore.Status.COMPLETED, "Raport pierwszego agenta.", 73L, expectedRunId = 1))
+        assertTrue(MasterTaskQueueStore.transition(context, taskId, "MASTER",
+            MasterTaskQueueStore.Status.BLOCKED, "Proces został przerwany.", 74L, expectedCurrentRunId = 1))
+
+        assertTrue(MasterTaskQueueStore.resumeInterruptedRun(context, taskId, expectedRunId = 1, now = 75L))
+        val resumed = MasterTaskQueueStore.snapshot(context).tasks.single()
+        assertEquals(MasterTaskQueueStore.Status.RUNNING, resumed.status)
+        assertEquals(1, resumed.runId)
+        assertFalse(MasterTaskQueueStore.recordAgentResult(context, taskId, agents[0],
+            MasterTaskQueueStore.Status.COMPLETED, "Duplikat starego raportu.", 76L, expectedRunId = 1))
+        assertTrue(MasterTaskQueueStore.recordAgentResult(context, taskId, agents[1],
+            MasterTaskQueueStore.Status.COMPLETED, "Raport wznowionego agenta.", 77L, expectedRunId = 1))
+        val completed = MasterTaskQueueStore.snapshot(context).tasks.single()
+        assertEquals(MasterTaskQueueStore.Status.COMPLETED, completed.status)
+        assertEquals(1, completed.runId)
+        assertEquals(1, MasterTaskQueueStore.snapshot(context).events.count {
+            it.taskId == taskId && it.operation == "RESUME_INTERRUPTED" && it.runId == 1
+        })
+    }
+
+    @Test fun safeResumeRejectsWrongEpochAndNonBlockedTask() {
+        val taskId = "task-safe-resume-fence"
+        assertTrue(MasterTaskQueueStore.enqueue(context, taskId, "Fence", "Nie wznawiaj obcego przebiegu.", now = 80L))
+        assertTrue(MasterTaskQueueStore.assign(context, taskId, listOf("critical-reviewer"), now = 81L))
+        assertTrue(startTaskWithCurrentSnapshot(taskId, "Start.", 82L))
+        assertFalse(MasterTaskQueueStore.resumeInterruptedRun(context, taskId, expectedRunId = 1, now = 83L))
+        assertTrue(MasterTaskQueueStore.transition(context, taskId, "MASTER",
+            MasterTaskQueueStore.Status.BLOCKED, "Przerwano.", 84L, expectedCurrentRunId = 1))
+        assertFalse(MasterTaskQueueStore.resumeInterruptedRun(context, taskId, expectedRunId = 2, now = 85L))
+        assertEquals(MasterTaskQueueStore.Status.BLOCKED, MasterTaskQueueStore.snapshot(context).tasks.single().status)
+    }
+
     @Test fun eventJournalRollsOverAtItsBoundWithoutFreezingQueueWrites() {
         assertTrue(MasterTaskQueueStore.enqueue(context, "task-012", "Długi przebieg", "Test limitu historii.", now = 200L))
         assertTrue(MasterTaskQueueStore.assign(context, "task-012", listOf("critical-reviewer"), now = 201L))
