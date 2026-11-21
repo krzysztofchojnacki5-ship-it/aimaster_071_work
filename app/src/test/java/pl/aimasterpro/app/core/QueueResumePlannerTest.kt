@@ -24,6 +24,14 @@ class QueueResumePlannerTest {
         assertTrue(plan.reason.contains("niejednoznaczny"))
     }
 
+    @Test fun archivedReportWithUnreconciledUsageOrBlockedCheckpointIsNotResumed() {
+        val plan = QueueResumePlanner.plan(listOf(
+            QueueResumePlanner.AgentEvidence("agent-a", true, checkpointStatus = "INTERRUPTED_USAGE_PENDING")
+        ))
+        assertFalse(plan.safe)
+        assertTrue(plan.reason.contains("uzgodnienia"))
+    }
+
     @Test fun archivedReportAfterAnUnfinishedAgentBreaksOrderedHandoffChain() {
         val plan = QueueResumePlanner.plan(listOf(
             QueueResumePlanner.AgentEvidence("agent-a", false, "RUNNING"),
