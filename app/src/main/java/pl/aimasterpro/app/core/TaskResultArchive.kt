@@ -110,6 +110,46 @@ object TaskResultArchive {
         } }.getOrDefault(false)
     }
 
+    /**
+     * Stages every already-completed report into the next execution epoch before the queue
+     * advances its runId. If the process dies during staging, the queue remains on the old
+     * BLOCKED epoch and can safely repeat this idempotent operation without replaying agents.
+     *
+     * All source entries and existing destinations are validated before the first write.
+     * A conflicting destination fails closed instead of overwriting a different report.
+     */
+    @Synchronized
+    fun stageExecutionCopies(
+        context: Context,
+        parentTaskId: String,
+        sourceRunId: Int,
+        targetRunId: Int,
+        agentIds: List<String>
+    ): Boolean {
+        if (parentTaskId.isBlank() || sourceRunId <= 0 || targetRunId != sourceRunId + 1 ||
+            targetRunId <= 0 || agentIds.isEmpty() || agentIds.size > 8 ||
+            agentIds.any { it.isBlank() } || agentIds.distinct().size != agentIds.size ||
+            !isArchiveReadable(context)) return false
+
+        val staged = agentIds.map { agentId ->
+            val source = getExecution(context, parentTaskId, agentId, sourceRunId)
+                ?: return false
+            val targetId = executionTaskId(parentTaskId, agentId, targetRunId)
+            val existing = get(context, targetId)
+            if (existing != null && existing != source.copy(taskId = targetId)) return false
+            source.copy(taskId = targetId)
+        }
+
+        // Each write is durable and retry-safe. A partial write leaves the queue epoch unchanged;
+        // the next recovery attempt accepts identical staged rows and completes the remainder.
+        return staged.all { entry ->
+            val existing = get(context, entry.taskId)
+            if (existing == entry) true
+            else put(context, entry.taskId, entry.agentId, entry.report, entry.providerId,
+                entry.model, entry.createdAt, entry.chatId) && get(context, entry.taskId) == entry
+        }
+    }
+
     @Synchronized
     fun get(context: Context, taskId: String): Entry? {
         if (taskId.isBlank()) return null
