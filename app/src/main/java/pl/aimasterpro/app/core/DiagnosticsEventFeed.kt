@@ -18,6 +18,7 @@ object DiagnosticsEventFeed {
     data class Entry(
         val id: String,
         val taskId: String,
+        val runId: Int,
         val timestamp: Long,
         val operation: String,
         val actor: String,
@@ -50,6 +51,7 @@ object DiagnosticsEventFeed {
                 entries += Entry(
                     id = event.id,
                     taskId = event.taskId,
+                    runId = event.runId,
                     timestamp = event.timestamp,
                     operation = event.operation,
                     actor = event.actor,
@@ -86,6 +88,7 @@ object DiagnosticsEventFeed {
                 entries += Entry(
                     id = message.id,
                     taskId = message.taskId,
+                    runId = message.runId,
                     timestamp = message.updatedAt,
                     operation = "HANDOFF_${message.state.name}",
                     actor = "agent:${message.senderAgentId}",
