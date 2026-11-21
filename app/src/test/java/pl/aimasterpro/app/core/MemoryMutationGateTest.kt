@@ -83,6 +83,13 @@ class MemoryMutationGateTest {
             .edit().putString("events", rows.toString()).commit())
     }
 
+    @Test fun mutationGateCarriesSourceReferenceIntoIntentAndTerminalAudit() {
+        val sourced = request().copy(sourceRef = "chat:conversation-42")
+        assertTrue(MemoryMutationGate.execute(context, sourced) { _: MemoryMutationPermit -> true })
+        val rows = MemoryAuditLog.readVerified(context)!!
+        assertEquals(listOf("chat:conversation-42", "chat:conversation-42"), rows.map { it.sourceRef })
+    }
+
     @Test fun deniedAgentNeverRunsMutationAndIsAudited() {
         var invoked = false
         assertFalse(MemoryMutationGate.execute(context, request(MemoryGovernance.Actor.AGENT)) { _: MemoryMutationPermit ->
