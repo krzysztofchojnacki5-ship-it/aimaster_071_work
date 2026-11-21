@@ -7356,6 +7356,52 @@ class MainActivity : Activity() {
         renderDiagnosticsEventFeed(diagnosticsEventContainer!!)
         scheduleDiagnosticsAutoRefresh()
 
+        action("Kopiuj pełny kontekst zadania") {
+            val availableTasks = if (queueDiagnostics.status == pl.aimasterpro.app.core.MasterTaskQueueStore.ReadStatus.AVAILABLE) {
+                queueDiagnostics.tasks.sortedByDescending { it.updatedAt }
+            } else emptyList()
+            if (availableTasks.isEmpty()) {
+                toast("Nie można wybrać zadania: dziennik kolejki jest pusty lub niedostępny.")
+            } else {
+                val labels = availableTasks.map { task ->
+                    "${task.title} • ${task.status} • run #${task.runId} • ${task.id}"
+                }.toTypedArray()
+                android.app.AlertDialog.Builder(this)
+                    .setTitle("Wybierz zadanie do raportu")
+                    .setItems(labels) { _, which ->
+                        val selected = availableTasks.getOrNull(which) ?: return@setItems
+                        val archiveReadable = pl.aimasterpro.app.core.TaskResultArchive.isArchiveReadable(this)
+                        val reports = if (archiveReadable) selected.assignedAgentIds.mapNotNull { agentId ->
+                            pl.aimasterpro.app.core.TaskResultArchive.getExecution(
+                                this, selected.id, agentId, selected.runId
+                            )?.let { entry ->
+                                pl.aimasterpro.app.core.TaskDiagnosticsReport.AgentReport(
+                                    agentId = entry.agentId,
+                                    providerId = entry.providerId,
+                                    model = entry.model,
+                                    createdAt = entry.createdAt,
+                                    content = entry.report
+                                )
+                            }
+                        } else emptyList()
+                        val report = pl.aimasterpro.app.core.TaskDiagnosticsReport.build(
+                            task = selected,
+                            queue = pl.aimasterpro.app.core.MasterTaskQueueStore.snapshot(this),
+                            handoffs = pl.aimasterpro.app.core.AgentHandoffStore.snapshot(this),
+                            reports = reports,
+                            reportArchiveReadable = archiveReadable
+                        )
+                        copyText(report.text)
+                        toast(
+                            if (report.isComplete) "Skopiowano pełny kontekst zadania."
+                            else "Skopiowano kontekst częściowy. Raport zawiera listę braków."
+                        )
+                    }
+                    .setNegativeButton("Anuluj", null)
+                    .show()
+            }
+        }
+
         val handoffTime = java.text.SimpleDateFormat("dd.MM HH:mm:ss", java.util.Locale.getDefault())
         if (handoffDiagnostics.status != pl.aimasterpro.app.core.AgentHandoffStore.ReadStatus.AVAILABLE) {
             card("Skrzynka przekazań agentów — niedostępna",
