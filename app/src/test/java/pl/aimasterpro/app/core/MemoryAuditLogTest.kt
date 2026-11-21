@@ -83,6 +83,27 @@ class MemoryAuditLogTest {
             .edit().putString("events", rows.toString()).commit())
     }
 
+    @Test fun sourceReferenceIsPersistedAndCoveredByTheHashChain() {
+        val source = "ui:memory"
+        assertTrue(MemoryAuditLog.append(context, event(MemoryAuditLog.Phase.INTENT, "AUTHORIZED").copy(sourceRef = source)))
+        assertTrue(MemoryAuditLog.append(context, event(MemoryAuditLog.Phase.COMMITTED, "SUCCESS").copy(sourceRef = source)))
+        val verified = MemoryAuditLog.readVerified(context)!!
+        assertEquals(listOf(source, source), verified.map { it.sourceRef })
+
+        val prefs = context.getSharedPreferences("ai_memory_audit_log_v1", Context.MODE_PRIVATE)
+        val rows = JSONArray(prefs.getString("events", "[]"))
+        rows.getJSONObject(0).put("sourceRef", "ui:tampered")
+        assertTrue(prefs.edit().putString("events", rows.toString()).commit())
+        assertNull(MemoryAuditLog.readVerified(context))
+    }
+
+    @Test fun legacyAuditRowsWithoutSourceReferenceRemainReadable() {
+        seedCommittedJournal(1)
+        val records = MemoryAuditLog.readVerified(context)
+        assertNotNull(records)
+        assertEquals("", records!!.single().sourceRef)
+    }
+
     @Test fun appendPersistsOrderedHashChainedEvents() {
         assertTrue(MemoryAuditLog.append(context, event(MemoryAuditLog.Phase.INTENT, "PREPARED")))
         assertTrue(MemoryAuditLog.append(context, event(MemoryAuditLog.Phase.COMMITTED, "SUCCESS")))
