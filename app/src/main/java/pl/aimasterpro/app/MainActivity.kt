@@ -5732,7 +5732,8 @@ class MainActivity : Activity() {
                     val request = pl.aimasterpro.app.core.MemoryGovernance.Request(
                         actor = pl.aimasterpro.app.core.MemoryGovernance.Actor.USER, mutation = mutation,
                         objectId = agent.id, reason = "Użytkownik zmienił status agenta w menadżerze agentów.",
-                        approvalRef = "ui-confirmation:${java.util.UUID.randomUUID()}"
+                        approvalRef = "ui-confirmation:${java.util.UUID.randomUUID()}",
+                        sourceRef = "ui:agent-manager"
                     )
                     val saved = pl.aimasterpro.app.core.MemoryMutationGate.execute(this, request) { permit ->
                         pl.aimasterpro.app.core.AgentManagerStore.setEnabled(this, agent.id, checked, permit)
@@ -5773,7 +5774,8 @@ class MainActivity : Activity() {
                                         actor = pl.aimasterpro.app.core.MemoryGovernance.Actor.USER,
                                         mutation = pl.aimasterpro.app.core.MemoryGovernance.Mutation.REMOVE_CUSTOM_AGENT,
                                         objectId = agent.id, reason = "Użytkownik potwierdził usunięcie własnego profilu agenta.",
-                                        approvalRef = "ui-confirmation:${java.util.UUID.randomUUID()}"
+                                        approvalRef = "ui-confirmation:${java.util.UUID.randomUUID()}",
+                                        sourceRef = "ui:agent-manager"
                                     )
                                     val removed = pl.aimasterpro.app.core.MemoryMutationGate.execute(this@MainActivity, request) { permit ->
                                         pl.aimasterpro.app.core.AgentManagerStore.removeCustomAgent(this@MainActivity, agent.id, permit)
@@ -5878,7 +5880,8 @@ class MainActivity : Activity() {
                     objectId = agent.id,
                     reason = if (existing == null) "Użytkownik zatwierdził dodanie własnego profilu agenta."
                         else "Użytkownik zatwierdził aktualizację własnego profilu agenta.",
-                    approvalRef = "ui-confirmation:${java.util.UUID.randomUUID()}"
+                    approvalRef = "ui-confirmation:${java.util.UUID.randomUUID()}",
+                    sourceRef = "ui:agent-manager"
                 )
                 val saved = pl.aimasterpro.app.core.MemoryMutationGate.execute(this, request) { permit ->
                     if (existing == null) pl.aimasterpro.app.core.AgentManagerStore.addCustomAgent(this, agent, permit)
@@ -8343,7 +8346,8 @@ class MainActivity : Activity() {
                             mutation = pl.aimasterpro.app.core.MemoryGovernance.Mutation.REMOVE_AGENT_LESSON,
                             objectId = entry.id,
                             reason = "Użytkownik potwierdził usunięcie wpisu pamięci agenta.",
-                            approvalRef = "ui-confirm:${java.util.UUID.randomUUID()}"
+                            approvalRef = "ui-confirm:${java.util.UUID.randomUUID()}",
+                            sourceRef = "ui:agent-memory"
                         )
                         val removed = pl.aimasterpro.app.core.MemoryMutationGate.execute(this, request) { permit ->
                             pl.aimasterpro.app.core.AgentOperationalMemoryStore.remove(this, entry.id, permit)
@@ -8484,7 +8488,8 @@ class MainActivity : Activity() {
                             mutation = pl.aimasterpro.app.core.MemoryGovernance.Mutation.ADD_SHARED_RULE,
                             objectId = "manual:${java.util.UUID.randomUUID()}",
                             reason = "Użytkownik potwierdził dodanie zasady do pamięci wspólnej.",
-                            approvalRef = "ui-confirm:${java.util.UUID.randomUUID()}"
+                            approvalRef = "ui-confirm:${java.util.UUID.randomUUID()}",
+                            sourceRef = "ui:shared-memory"
                         )
                         val saved = pl.aimasterpro.app.core.MemoryMutationGate.execute(this, request) { permit ->
                             pl.aimasterpro.app.core.AiMemoryStore.addMemory(this, value, permit, objectId = request.objectId)
