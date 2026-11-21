@@ -93,6 +93,7 @@ object MemoryMutationGate {
         reason = request.reason,
         approvalRef = request.approvalRef,
         phase = phase,
-        outcome = outcome
+        outcome = outcome,
+        sourceRef = request.sourceRef
     )
 }
