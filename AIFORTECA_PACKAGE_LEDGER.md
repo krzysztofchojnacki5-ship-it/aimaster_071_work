@@ -119,3 +119,75 @@ Pełny opis pakietów 15–21 znajduje się w `docs/AIFORTECA_0.2_FOUNDATION_PLA
 - Pakiet 22 pozostaje OTWARTY do czasu zielonego CI na finalnym HEAD, weryfikacji testów i zbudowania APK. Pakiet 23 nie rozpoczęty.
 
 - Dodatkowa poprawka konfiguracji CI: commit `79224bb23862729bd77aa650f74d448f37a89d00` aktualizuje Foojay resolver convention z `0.10.0` do `1.0.0`. Log run `44829203555` wykazał, że po naprawie błędów Kotlin build zatrzymuje się podczas rozwiązywania pluginu w `settings.gradle.kts`; plugin 0.10.0 poprzedza obsługę Gradle 9, a 1.0.0 jest wersją wymaganą dla Gradle 9/Java 17. Zmiana oczekuje na potwierdzenie CI.
+
+---
+
+# Uzgodnienie rejestru — pakiety 23–27 (stan sprawdzony 2026-11-22)
+
+Ten blok jest aktualnym uzupełnieniem rejestru. Starszy wpis z 2026-11-20, w którym pakiet 22 i pakiet 23 były oznaczone jako oczekujące/nie rozpoczęte, jest historycznym stanem sprzed późniejszych prac. Nie należy go traktować jako aktualnego statusu gałęzi. Weryfikacja dotyczy PR #3 i jego gałęzi `work/aiforteca-0.2-master-agent-foundation`.
+
+## Pakiet 23 — kontrola gotowości agentów przed uruchomieniem
+
+- Końcowy commit kodu/builda: `1fa79f0c008f394a676b1e8045f149f751453e3c`.
+- Zakres: metadane agentów na liście; czytelne stany modeli (bezpłatny/nieznany/niegotowy); blokada startu przed wysłaniem zapytań, gdy przypisany model nie jest gotowy; diagnostyka wskazująca konkretnych agentów i powód blokady. Zachowano istniejące przypisania agentów/modeli oraz ochronę kosztową.
+- Weryfikacja: pełny Android Build SUCCESS; 1 348 testów, 0 failures, 0 errors, 0 skipped. Debug i release APK zostały opublikowane jako artefakty.
+- Debug APK: 2 193 205 B; SHA-256 `6386fe4051b6d5e7aca223c9bdc79f32bc06954bdc9ac2203b7770faae78b827`.
+- Ograniczenie: certyfikat APK nie został niezależnie zweryfikowany narzędziem `apksigner`; nie deklarować takiej weryfikacji.
+- Status: CI/build/testy PASS; testy fizycznego urządzenia pozostają odrębne.
+
+## Pakiet 24 — pełny kontekst diagnostyczny pojedynczego zadania
+
+- Końcowy commit kontrolny CI/build: `2b91c79420b84d226042269a7128cd818ddc00f2`.
+- Wcześniejszy commit implementacyjny funkcji raportu: `92660990e181373ae61dccba49d876595370c0ce`.
+- Zakres: jeden raport obejmujący całe zadanie i konkretny run; pełne raporty agentów; zdarzenia powiązane z runem; zawartość przekazania HANDOFF; przycisk kopiowania pełnego kontekstu; jawne oznaczanie brakujących źródeł/danych; redakcja sekretów; brak fałszywego statusu sukcesu przy niekompletnych danych.
+- Weryfikacja: pełny Android Build i CI PASS; 1 351 testów, 0 failures, 0 errors, 0 skipped. Artefakty debug APK, signed release APK, source ZIP i raporty testów zostały opublikowane i zweryfikowane.
+- Debug APK: 2 201 993 B; SHA-256 `97300d513087110745bce4423ab63206ab1efc2faecc259495a1949fff4da574`.
+- Signed release APK: 1 476 742 B; SHA-256 `943f234d998aa460c20f12a95c534cf72f5b3e4999f564fcac10a31b1d6c33a9`.
+- Status: CI/build/artefakty PASS. Testy urządzenia pozostają osobne.
+
+## Pakiet 25 — bezpieczne odzyskiwanie przerwanego wykonania
+
+- Baza: stan po pakiecie 24.
+- Commity kodu: `1040ec6eb43c0a4c117415ba78ba2d1b256f34ba`, `4e1ee15403bc44495140809156c363ed64ee3784`, `6485c15c29bd862b209bc826d28c6aa12fec42cc`, `21ad8bd921d6d3558458cfff7364ceb239ee32fd`, `af3e4245ce3fcfe58c6d6f4cdb0c0266ff9ae06f`, `247addab560223eab2c5307057420a77d9819221`.
+- Commit kontrolny Android Build: `a1930da0d15154689fc24b5d70f5d65f28d3fa6b`.
+- Zakres: wznowienie tylko po sprawdzeniu checkpointów i rozliczenia użycia; zachowanie ukończonych raportów; blokada wznowienia przy niepewnym/nieuzgodnionym zużyciu; nowy runId/epoch odcinający spóźnione callbacki; wznowienie wyłącznie pozostałych agentów.
+- Weryfikacja: Unit Tests, Gradle Wrapper Validation i Android Build SUCCESS. 1 360 testów, 0 failures, 0 errors, 0 skipped. Artefakty debug APK, signed release APK, source ZIP i raporty testów opublikowane i zweryfikowane. Android Build run `44921097696`.
+- Status: CI/build/artefakty PASS. Fizyczny test odzyskiwania po ubiciu procesu aplikacji nadal PENDING — nie oznaczać go jako zaliczonego.
+
+## Pakiet 26 — atomowe przygotowanie archiwum przed wznowieniem
+
+- Baza: pakiet 25.
+- Commit kodu: `d0b78cd0c720fd0da4b10a7298b6011c18f0f7fb`.
+- Commit kontrolny Android Build: `6feaae94638de5a0b70d2b7884cd22d6e9d99784`.
+- Zakres: idempotentne staging kopii ukończonych raportów do nowej epoki przed zmianą runId; walidacja wszystkich źródeł i istniejących celów przed zapisem; brak nadpisywania konfliktujących danych; bezpieczne ponowienie po przerwaniu procesu; zwolnienie rezerwacji budżetu i blokada wysyłania zapytań przy błędzie stagingu.
+- Testy regresyjne: staging wszystkich raportów przed zmianą epoki; brak źródła bez częściowych zapisów; idempotencja identycznego celu; blokada konfliktu bez nadpisania.
+- Weryfikacja: Unit Tests, Gradle Wrapper Validation i Android Build SUCCESS. 1 364 testy, 0 failures, 0 errors, 0 skipped. Android Build run `44923001624`; raporty i artefakty debug/release/source zostały opublikowane i zweryfikowane.
+- Status: CI/build/artefakty PASS. Fizyczny test odzyskiwania po restarcie/ubiciu procesu nadal PENDING.
+
+## Pakiet 27 — pochodzenie mutacji pamięci w audycie
+
+- Baza: stan po pakiecie 26.
+- Commit kodu: `79eea4084105dd1591965a87397856baa3919157`.
+- Commit kontrolny Android Build / aktualny HEAD PR: `012254d0fbceab847de9d85fbbb7725135486211`.
+- Zakres: `sourceRef` w żądaniu zarządzanej mutacji; walidacja długości i redakcja potencjalnych sekretów; zapis źródła w append-only MemoryAuditLog i objęcie go łańcuchem hashy; odczyt starszych rekordów bez pola sourceRef z zachowaniem zgodności starego hasha; propagacja źródła przez MemoryMutationGate i oznaczone źródła wywołań UI.
+- Testy: trwałość sourceRef i ochrona hashem przed manipulacją; zgodność starych rekordów po dopisaniu nowych; walidacja sourceRef; propagacja do zdarzeń audytowych.
+- Weryfikacja na HEAD `012254d0...`: Unit Tests PUSH run `44926350673` SUCCESS; PR run `44926354726` SUCCESS; Gradle Wrapper Validation PUSH run `44926350688` SUCCESS; PR run `44926354675` SUCCESS; Android Build run `44926350753` SUCCESS.
+- Wynik testów: 1 368 testów, 0 failures, 0 errors, 0 skipped (raport testów pakietu 27 zweryfikowany dla kodu `79eea408...`; pełny Android Build na HEAD `012254d0...` ponownie wykonał testy i opublikował raport).
+- Artefakty Android Build run `44926350753` — wszystkie nieprzeterminowane i powiązane z dokładnym HEAD `012254d0...`:
+  - `aiforteca-debug-apk`, ID `14716496011`, 2 202 037 B, SHA-256 `c77dc7f8c5bee7d6a69ad01ed79258fd4ae2c14e9a79c4113c4bf2fea742f688`.
+  - `aiforteca-release-apk-signed`, ID `14716635414`, 1 473 856 B, SHA-256 `f90b8a8798f0e5af363e3171bcd6fc1d4a262a761534f31f9ad4268d6c39e54d`.
+  - `aiforteca-source-project`, ID `14716496007`, 1 548 250 B, SHA-256 `96c1e7d376c0153e1ae35014d0d5e96fd02596cde00256f32fe07f8a74b1b267`.
+  - `aiforteca-unit-test-reports`, ID `14716365785`, 357 788 B, SHA-256 `67615940edbdc54d0e2bb884ce90f22ce507a3dc278e21618a45dabb0b451972`.
+- Status: CI/build/testy/artefakty PASS. Nie pobierano APK do tej rozmowy, ponieważ nie jest potrzebne do dalszych prac. Test fizycznego urządzenia pozostaje odrębny.
+
+## Stan GitHub po uzgodnieniu — 2026-11-22
+
+- Repozytorium: `krzysztofchojnacki5-ship-it/aimaster_071_work`.
+- PR #3: OPEN, DRAFT, nie scalony; baza `work/aiforteca-0.0.2-provider-connectivity`; gałąź `work/aiforteca-0.2-master-agent-foundation`.
+- HEAD gałęzi i PR: `012254d0fbceab847de9d85fbbb7725135486211`.
+- Porównanie z bazą: 650 commitów do przodu, 0 commitów za bazą; 140 plików różnicy (17 658 additions / 1 028 deletions).
+- Wszystkie wymagane workflowy na dokładnym HEAD `012254d0...` zakończone SUCCESS: Unit Tests PUSH/PR, Gradle Wrapper Validation PUSH/PR oraz pełny Android Build PUSH.
+- Android Build wykonał testy, assemble release APK, spakował projekt źródłowy i przesłał debug APK, signed release APK, source ZIP oraz raporty testów.
+- Dawne anulowane/nieudane przebiegi na wcześniejszych SHA są historią CI i nie są wynikiem dla aktualnego HEAD. Nie usuwano ich.
+- PR pozostaje Draft; nie wykonywać merge bez wyraźnej decyzji użytkownika.
+- Testy ręczne: komunikacja HANDOFF potwierdzona przez użytkownika jako PASS (kod kontrolny przeniesiony między agentami bez regenerowania); fizyczny test odzyskiwania po restarcie/ubiciu procesu nadal PENDING.
