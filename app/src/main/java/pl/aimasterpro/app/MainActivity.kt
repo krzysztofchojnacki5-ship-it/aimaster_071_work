@@ -7816,16 +7816,16 @@ class MainActivity : Activity() {
         val pendingAgentIds = resumePlan?.pendingAgentIds ?: teamOrder
         val enabledAgentCatalog = pl.aimasterpro.app.core.AgentManagerStore.enabledCatalog(this)
         if (resumeExistingRun && pendingAgentIds.isEmpty()) {
-            val resumed = queueStore.resumeInterruptedRun(this, taskId, task.runId) &&
+            // Persist all report copies before changing the queue epoch. A process death during
+            // staging therefore leaves the task BLOCKED on its old run and recovery can retry
+            // without losing the mapping to already-completed agents.
+            val reportsStaged = archive.stageExecutionCopies(
+                this, taskId, task.runId, executionRunId, resumePlan!!.completedAgentIds
+            )
+            val resumed = reportsStaged && queueStore.resumeInterruptedRun(this, taskId, task.runId) &&
                 queueStore.snapshot(this).tasks.firstOrNull { it.id == taskId }?.runId == executionRunId
-            val reportsRecovered = resumed && resumePlan!!.completedAgentIds.all { agentId ->
-                val previousEntry = archive.getExecution(this, taskId, agentId, task.runId)
-                val copied = previousEntry != null && archive.put(
-                    this, archive.executionTaskId(taskId, agentId, executionRunId), agentId,
-                    previousEntry.report, previousEntry.providerId, previousEntry.model,
-                    previousEntry.createdAt, previousEntry.chatId
-                )
-                copied && queueStore.recordAgentResult(
+            val reportsRecovered = resumed && resumePlan.completedAgentIds.all { agentId ->
+                queueStore.recordAgentResult(
                     this, taskId, agentId, pl.aimasterpro.app.core.MasterTaskQueueStore.Status.COMPLETED,
                     "Odzyskano raport z poprzedniego przebiegu bez ponawiania żądania API.",
                     expectedRunId = executionRunId
