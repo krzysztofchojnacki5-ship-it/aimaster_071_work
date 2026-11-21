@@ -7906,6 +7906,14 @@ class MainActivity : Activity() {
             toast("Bezpieczne wznowienie wstrzymane: Smart Budget nie dopuścił wszystkich pozostałych agentów. Nie wysłano żądań.")
             return
         }
+        if (resumeExistingRun && !archive.stageExecutionCopies(
+                this, taskId, task.runId, executionRunId, resumePlan!!.completedAgentIds
+            )) {
+            pl.aimasterpro.app.core.ApiTokenTracker.releaseBatchReservation(budgetPlan.reservationId)
+            activeQueueTaskId = ""
+            toast("Nie udało się trwale przygotować wcześniejszych raportów. Zadanie pozostaje zablokowane; nie wysłano żądań.")
+            return
+        }
         val started = if (resumeExistingRun) {
             queueStore.resumeInterruptedRun(this, taskId, task.runId)
         } else {
@@ -7929,14 +7937,10 @@ class MainActivity : Activity() {
             return
         }
         if (resumeExistingRun) {
+            // Report copies were durably staged while the queue was still BLOCKED. Only now
+            // attach their completion events to the newly committed execution epoch.
             val completedSaved = resumePlan!!.completedAgentIds.all { agentId ->
-                val previousEntry = archive.getExecution(this, taskId, agentId, task.runId)
-                val copied = previousEntry != null && archive.put(
-                    this, archive.executionTaskId(taskId, agentId, executionRunId), agentId,
-                    previousEntry.report, previousEntry.providerId, previousEntry.model,
-                    previousEntry.createdAt, previousEntry.chatId
-                )
-                copied && queueStore.recordAgentResult(
+                queueStore.recordAgentResult(
                     this, taskId, agentId, pl.aimasterpro.app.core.MasterTaskQueueStore.Status.COMPLETED,
                     "Odzyskano raport z poprzedniego przebiegu bez ponawiania żądania API.",
                     expectedRunId = executionRunId
