@@ -545,4 +545,80 @@ class TaskResultArchiveTest {
         assertTrue(second.length < 100)
     }
 
+    @Test fun stagingCopiesAllCompletedReportsBeforeTheQueueEpochCanAdvance() {
+        val parent = "task-stage-reports"
+        val first = "critical-reviewer"
+        val second = "unit-test-engineer"
+        assertTrue(TaskResultArchive.put(context,
+            TaskResultArchive.executionTaskId(parent, first, 4), first,
+            "Review completed", "provider-a", "model-a", 4_100L, "chat-a"))
+        assertTrue(TaskResultArchive.put(context,
+            TaskResultArchive.executionTaskId(parent, second, 4), second,
+            "Tests completed", "provider-b", "model-b", 4_200L, "chat-b"))
+
+        assertTrue(TaskResultArchive.stageExecutionCopies(context, parent, 4, 5, listOf(first, second)))
+
+        assertEquals("Review completed",
+            TaskResultArchive.getExecution(context, parent, first, 5)?.report)
+        assertEquals("Tests completed",
+            TaskResultArchive.getExecution(context, parent, second, 5)?.report)
+        assertEquals("Review completed",
+            TaskResultArchive.getExecution(context, parent, first, 4)?.report)
+        assertEquals("chat-b",
+            TaskResultArchive.getExecution(context, parent, second, 5)?.chatId)
+    }
+
+    @Test fun stagingValidatesEverySourceBeforeWritingAnyNextEpochCopy() {
+        val parent = "task-stage-missing-source"
+        val first = "critical-reviewer"
+        val second = "unit-test-engineer"
+        assertTrue(TaskResultArchive.put(context,
+            TaskResultArchive.executionTaskId(parent, first, 7), first,
+            "Existing report", "provider-a", "model-a", 7_100L))
+
+        assertFalse(TaskResultArchive.stageExecutionCopies(context, parent, 7, 8, listOf(first, second)))
+
+        assertNull(TaskResultArchive.getExecution(context, parent, first, 8))
+        assertNull(TaskResultArchive.getExecution(context, parent, second, 8))
+        assertNotNull(TaskResultArchive.getExecution(context, parent, first, 7))
+    }
+
+    @Test fun stagingIsIdempotentWhenAnIdenticalNextEpochCopyAlreadyExists() {
+        val parent = "task-stage-idempotent"
+        val agent = "critical-reviewer"
+        val sourceId = TaskResultArchive.executionTaskId(parent, agent, 2)
+        val targetId = TaskResultArchive.executionTaskId(parent, agent, 3)
+        assertTrue(TaskResultArchive.put(context, sourceId, agent,
+            "Durable report", "provider-a", "model-a", 2_100L, "chat-1"))
+
+        assertTrue(TaskResultArchive.stageExecutionCopies(context, parent, 2, 3, listOf(agent)))
+        assertTrue(TaskResultArchive.stageExecutionCopies(context, parent, 2, 3, listOf(agent)))
+
+        assertEquals(TaskResultArchive.get(context, sourceId)?.copy(taskId = targetId),
+            TaskResultArchive.get(context, targetId))
+        assertEquals(2, TaskResultArchive.latest(context).size)
+    }
+
+    @Test fun conflictingNextEpochCopyBlocksStagingWithoutOverwritingOrPartialWrites() {
+        val parent = "task-stage-conflict"
+        val first = "critical-reviewer"
+        val second = "unit-test-engineer"
+        val firstSource = TaskResultArchive.executionTaskId(parent, first, 9)
+        val secondSource = TaskResultArchive.executionTaskId(parent, second, 9)
+        val firstTarget = TaskResultArchive.executionTaskId(parent, first, 10)
+        val secondTarget = TaskResultArchive.executionTaskId(parent, second, 10)
+        assertTrue(TaskResultArchive.put(context, firstSource, first,
+            "Original first report", "provider-a", "model-a", 9_100L))
+        assertTrue(TaskResultArchive.put(context, secondSource, second,
+            "Original second report", "provider-b", "model-b", 9_200L))
+        assertTrue(TaskResultArchive.put(context, firstTarget, first,
+            "Conflicting report", "provider-x", "model-x", 9_300L))
+
+        assertFalse(TaskResultArchive.stageExecutionCopies(context, parent, 9, 10, listOf(first, second)))
+
+        assertEquals("Conflicting report", TaskResultArchive.get(context, firstTarget)?.report)
+        assertNull(TaskResultArchive.get(context, secondTarget))
+        assertEquals("Original second report", TaskResultArchive.get(context, secondSource)?.report)
+    }
+
 }
