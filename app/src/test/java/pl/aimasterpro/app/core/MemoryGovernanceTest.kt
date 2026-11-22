@@ -12,7 +12,7 @@ class MemoryGovernanceTest {
         approvalRef: String = "ui-confirmation:proposal-1",
         objectId: String = "proposal-1",
         reason: String = "Jawna decyzja użytkownika"
-    ) = MemoryGovernance.Request(actor, mutation, objectId, reason, approvalRef)
+    ) = MemoryGovernance.Request(actor, mutation, objectId, reason, approvalRef, "test:memory-governance")
 
     @Test fun agentsCannotMutateAnyPersistedLearningState() {
         MemoryGovernance.Mutation.values().forEach { mutation ->
@@ -97,7 +97,12 @@ class MemoryGovernanceTest {
         }
     }
 
-    @Test fun sourceReferenceMustBeBoundedAndSecretFree() {
+    @Test fun sourceReferenceMustBePresentBoundedAndSecretFree() {
+        val missing = request(MemoryGovernance.Actor.USER, MemoryGovernance.Mutation.ADD_SHARED_RULE)
+            .copy(sourceRef = "")
+        assertFalse(MemoryGovernance.authorize(missing).allowed)
+        assertEquals("INVALID_SOURCE_REF", MemoryGovernance.authorize(missing).code)
+
         val valid = request(MemoryGovernance.Actor.USER, MemoryGovernance.Mutation.ADD_SHARED_RULE)
             .copy(sourceRef = "chat:abc123")
         assertTrue(MemoryGovernance.authorize(valid).allowed)
