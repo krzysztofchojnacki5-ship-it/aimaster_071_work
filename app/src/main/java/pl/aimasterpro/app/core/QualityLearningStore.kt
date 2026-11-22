@@ -51,6 +51,20 @@ object QualityLearningStore {
         }.getOrNull()
     }
 
+
+    /**
+     * Feedback that evaluates an agent's actual answer/report can train specialist routing.
+     * Chat-answer ratings were previously stored but excluded because routing consumed only
+     * the AGENT target type. Keep this projection pure and local; no automatic prompt/memory writes.
+     */
+    fun agentQualityEvidenceByAgent(rows: List<Feedback>): Map<String, List<Feedback>> {
+        val eligibleTypes = setOf("AGENT", "CHAT_ANSWER")
+        return rows.asSequence()
+            .filter { it.targetType.trim().uppercase(java.util.Locale.ROOT) in eligibleTypes }
+            .filter { it.targetId.isNotBlank() && it.agentId.isNotBlank() && it.rating in setOf(-1, 1) }
+            .groupBy { it.agentId.trim().lowercase(java.util.Locale.ROOT) }
+    }
+
     /** One current rating per target. Re-rating updates the current value and preserves an audit trail. */
     @Synchronized fun rate(context: Context, targetId: String, targetType: String, rating: Int, comment: String,
                            agentId: String = "", providerId: String = "", model: String = "", category: String = "") {
