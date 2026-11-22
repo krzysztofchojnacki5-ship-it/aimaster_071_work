@@ -336,7 +336,8 @@ object QualityLearningStore {
     /** Returns a smoothed local quality score only after enough independent task ratings. */
     fun qualityScore(rows: List<Feedback>, agentId: String, category: String, minSamples: Int = 5): Double? {
         val evidence = rows.asSequence()
-            .filter { it.targetType == "AGENT" && it.agentId.equals(agentId, true) }
+            .filter { it.targetType.trim().uppercase(java.util.Locale.ROOT) in setOf("AGENT", "CHAT_ANSWER") }
+            .filter { it.agentId.trim().equals(agentId.trim(), ignoreCase = true) }
             .map { AgentQualityRanker.Evidence(it.targetId, it.rating, it.category) }
             .toList()
         return AgentQualityRanker.score(evidence, category, minSamples)

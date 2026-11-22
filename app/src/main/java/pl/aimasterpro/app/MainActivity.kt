@@ -2010,10 +2010,9 @@ class MainActivity : Activity() {
                     // Reconcile approved memory after any prior process interruption before composing context.
                     pl.aimasterpro.app.core.QualityLearningStore.syncApprovedAgentMemories(this)
                     val mode = modeForRequest
-                    val qualityEvidenceByAgent =
-                        pl.aimasterpro.app.core.QualityLearningStore.agentQualityEvidenceByAgent(
-                            pl.aimasterpro.app.core.QualityLearningStore.feedback(this)
-                        )
+                    val qualityEvidenceByAgent = pl.aimasterpro.app.core.QualityLearningStore.feedback(this)
+                        .filter { it.targetType == "AGENT" && it.agentId.isNotBlank() }
+                        .groupBy { it.agentId.lowercase(java.util.Locale.ROOT) }
                     val operationalEvidence = pl.aimasterpro.app.core.AgentEfficiencyTracker.load(this)
                     val agentManagerState = pl.aimasterpro.app.core.AgentManagerStore.snapshot(this)
                     val activeAgentCatalog = if (agentManagerState.status == pl.aimasterpro.app.core.AgentManagerStore.ReadStatus.AVAILABLE)
