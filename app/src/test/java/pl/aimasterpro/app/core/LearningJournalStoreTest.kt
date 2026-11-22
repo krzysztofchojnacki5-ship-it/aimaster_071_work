@@ -110,7 +110,8 @@ class LearningJournalStoreTest {
             mutation = MemoryGovernance.Mutation.ADD_SHARED_RULE,
             objectId = memory,
             reason = "Test fixture",
-            approvalRef = "test-confirmation:$memory"
+            approvalRef = "test-confirmation:$memory",
+            sourceRef = "test:learning-journal"
         )
         assertTrue(MemoryMutationGate.execute(context, request) { permit ->
             AiMemoryStore.addMemory(context, memory, permit, objectId = request.objectId)
