@@ -75,13 +75,27 @@ object QualityLearningStore {
             .filter { it.targetId.isNotBlank() && it.agentId.isNotBlank() && it.rating in setOf(-1, 1) }
             .groupBy { it.agentId.trim().lowercase(java.util.Locale.ROOT) }
 
-    /** Scores a reviewer only from explicit user ratings of that reviewer's reports. */
-    fun reviewQualityScore(rows: List<Feedback>, reviewerId: String, category: String = "", minSamples: Int = 5): Double? {
+    /** One normalized, deduplicated quality snapshot from explicit user ratings of peer reviews. */
+    fun reviewQualitySnapshot(
+        rows: List<Feedback>, reviewerId: String, category: String = "", minSamples: Int = 5
+    ): AgentQualityRanker.Snapshot? {
         if (reviewerId.isBlank()) return null
         val evidence = reviewQualityEvidenceByAgent(rows)[reviewerId.trim().lowercase(java.util.Locale.ROOT)].orEmpty()
             .map { AgentQualityRanker.Evidence(it.targetId, it.rating, it.category) }
-        return AgentQualityRanker.score(evidence, category, minSamples)
+        return AgentQualityRanker.snapshot(evidence, category, minSamples)
     }
+
+    /** Smoothed point estimate retained for diagnostics and display. */
+    fun reviewQualityScore(rows: List<Feedback>, reviewerId: String, category: String = "", minSamples: Int = 5): Double? =
+        reviewQualitySnapshot(rows, reviewerId, category, minSamples)?.score
+
+    /**
+     * Conservative reviewer-selection score: the lower bound of the Wilson 95% interval.
+     * Sparse or unverified evidence never receives a ranking advantage.
+     */
+    fun reviewQualityRankingScore(
+        rows: List<Feedback>, reviewerId: String, category: String = "", minSamples: Int = 5
+    ): Double? = reviewQualitySnapshot(rows, reviewerId, category, minSamples)?.intervalLow
 
     /** One current rating per target. Re-rating updates the current value and preserves an audit trail. */
     @Synchronized fun rate(context: Context, targetId: String, targetType: String, rating: Int, comment: String,
@@ -383,12 +397,18 @@ object QualityLearningStore {
         val agentLines = f.filter { it.targetType == "AGENT" && it.agentId.isNotBlank() }.groupBy { it.agentId }.map { (agent, rows) ->
             "$agent: ${rows.count { it.rating > 0 }}/${rows.size} pozytywnych; ${confidence(rows.size)}"
         }.sorted()
-        val reviewerLines = f.filter { it.targetType == "REVIEW_ANSWER" && it.agentId.isNotBlank() }
-            .groupBy { it.agentId }.map { (reviewer, rows) ->
-                val score = reviewQualityScore(f, reviewer)
-                val scoreLabel = score?.let { "%.3f".format(java.util.Locale.US, it) }
+        val reviewerLines = f.filter { it.targetType.equals("REVIEW_ANSWER", ignoreCase = true) && it.agentId.isNotBlank() }
+            .groupBy { it.agentId.trim().lowercase(java.util.Locale.ROOT) }.map { (reviewer, rows) ->
+                val snapshot = reviewQualitySnapshot(f, reviewer)
+                val scoreLabel = snapshot?.score?.let { "%.3f".format(java.util.Locale.US, it) }
                     ?: "brak — wymagane co najmniej 5 ocen niezależnych"
-                "$reviewer: ${rows.count { it.rating > 0 }}/${rows.size} pozytywnych; wynik=$scoreLabel; ${confidence(rows.size)}"
+                val intervalLabel = snapshot?.let {
+                    "95% CI=%.3f..%.3f; niezależne n=${it.sampleCount}".format(
+                        java.util.Locale.US, it.intervalLow, it.intervalHigh
+                    )
+                } ?: "95% CI=brak"
+                val positive = rows.filter { it.rating == 1 }.distinctBy { it.targetId }.size
+                "$reviewer: $positive pozytywnych; wynik=$scoreLabel; $intervalLabel; ${confidence(snapshot?.sampleCount ?: 0)}"
             }.sorted()
         val modelLines = f.filter { it.model.isNotBlank() }.groupBy { "${it.targetType}: ${it.providerId}/${it.model}" }.map { (model, rows) ->
             "$model: ${rows.count { it.rating > 0 }}/${rows.size} pozytywnych; ${confidence(rows.size)}"
