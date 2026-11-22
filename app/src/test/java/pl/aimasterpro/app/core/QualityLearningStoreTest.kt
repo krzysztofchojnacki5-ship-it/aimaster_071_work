@@ -1514,5 +1514,31 @@ class QualityLearningStoreTest {
         assertTrue(report.contains("RECENZENCI"))
         assertTrue(report.contains("reviewer"))
         assertTrue(report.contains("wynik=0.778"))
+        assertTrue(report.contains("95% CI="))
+        assertTrue(report.contains("niezależne n=5"))
+    }
+
+    @Test fun reviewerSelectionUsesWilsonLowerBoundWhileDiagnosticsKeepSmoothedScore() {
+        fun feedback(agent: String, index: Int, rating: Int) = QualityLearningStore.Feedback(
+            id = "$agent-$index", targetId = "$agent-task-$index", targetType = "REVIEW_ANSWER",
+            rating = rating, comment = "", timestamp = index.toLong(), agentId = agent,
+            providerId = "", model = "", category = "code"
+        )
+        val rows = (1..5).map { feedback("reliable", it, 1) } +
+            (1..5).map { feedback("weak", it, -1) } +
+            listOf(feedback("reliable", 1, -1)) // duplicate task ID must not add a sixth sample
+
+        val reliableSnapshot = QualityLearningStore.reviewQualitySnapshot(rows, "RELIABLE", "code")
+        val weakSnapshot = QualityLearningStore.reviewQualitySnapshot(rows, "weak", "code")
+        assertNotNull(reliableSnapshot)
+        assertNotNull(weakSnapshot)
+        assertEquals(5, reliableSnapshot!!.sampleCount)
+        assertEquals(5, weakSnapshot!!.sampleCount)
+        assertEquals(reliableSnapshot.intervalLow,
+            QualityLearningStore.reviewQualityRankingScore(rows, "reliable", "code")!!, 0.000001)
+        assertEquals(reliableSnapshot.score,
+            QualityLearningStore.reviewQualityScore(rows, "reliable", "code")!!, 0.000001)
+        assertTrue(reliableSnapshot.intervalLow > weakSnapshot.intervalLow)
+        assertTrue(reliableSnapshot.intervalLow < reliableSnapshot.score)
     }
 }
