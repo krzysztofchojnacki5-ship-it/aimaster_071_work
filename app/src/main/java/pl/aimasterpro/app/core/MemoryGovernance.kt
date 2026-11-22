@@ -77,7 +77,7 @@ object MemoryGovernance {
         if (request.approvalRef.length > MAX_FIELD_CHARS) {
             return deny("INVALID_APPROVAL_REF", "Identyfikator zatwierdzenia przekracza limit długości.")
         }
-        if (request.sourceRef.length > MAX_SOURCE_REF_CHARS ||
+        if (request.sourceRef.isBlank() || request.sourceRef.length > MAX_SOURCE_REF_CHARS ||
             CommunicationLogSanitizer.sanitize(request.sourceRef) != request.sourceRef) {
             return deny("INVALID_SOURCE_REF", "Źródło mutacji jest nieprawidłowe lub zawiera dane wymagające redakcji.")
         }
