@@ -382,7 +382,8 @@ object QualityLearningStore {
         fun confidence(n: Int) = when { n >= 10 -> "wyższa (n=$n)"; n >= 5 -> "wstępna (n=$n)"; else -> "za mała próba (n=$n)" }
         val agentLines = f.filter { it.targetType == "AGENT" && it.agentId.isNotBlank() }.groupBy { it.agentId }.map { (agent, rows) ->
             "$agent: ${rows.count { it.rating > 0 }}/${rows.size} pozytywnych; ${confidence(rows.size)}"
-        }.sorted()        val reviewerLines = f.filter { it.targetType == "REVIEW_ANSWER" && it.agentId.isNotBlank() }
+        }.sorted()
+        val reviewerLines = f.filter { it.targetType == "REVIEW_ANSWER" && it.agentId.isNotBlank() }
             .groupBy { it.agentId }.map { (reviewer, rows) ->
                 "$reviewer: ${rows.count { it.rating > 0 }}/${rows.size} pozytywnych; ${confidence(rows.size)}"
             }.sorted()
