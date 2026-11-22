@@ -1541,4 +1541,17 @@ class QualityLearningStoreTest {
         assertTrue(reliable.intervalLow > weak.intervalLow)
         assertTrue(reliable.intervalLow < reliable.score)
     }
+
+    @Test fun reviewerDiagnosticsShowRealIndependentSampleCountBelowRankingThreshold() {
+        (1..3).forEach { index ->
+            QualityLearningStore.rate(
+                context, "reviewer-small-sample-$index", "REVIEW_ANSWER",
+                if (index == 1) 1 else -1, "", agentId = "reviewer", category = "code"
+            )
+        }
+        val report = QualityLearningStore.analysisContext(context)
+        assertTrue(report.contains("reviewer: 1/3 pozytywnych"))
+        assertTrue(report.contains("95% CI=brak"))
+        assertTrue(report.contains("za mała próba (n=3)"))
+    }
 }
