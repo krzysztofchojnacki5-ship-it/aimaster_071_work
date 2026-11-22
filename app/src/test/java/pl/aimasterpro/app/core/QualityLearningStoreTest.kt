@@ -1466,4 +1466,20 @@ class QualityLearningStoreTest {
         assertEquals(auditSize, MemoryAuditLog.readVerified(context)!!.size)
     }
 
+
+    @Test fun qualityScoreUsesChatAnswersButExcludesUnrelatedFeedbackTypes() {
+        val rows = (1..5).map { index ->
+            QualityLearningStore.Feedback(
+                id = "score-chat-$index", targetId = "score-task-$index",
+                targetType = "CHAT_ANSWER", rating = 1, comment = "", timestamp = index.toLong(),
+                agentId = " coder ", providerId = "", model = "", category = "code"
+            )
+        } + QualityLearningStore.Feedback(
+            id = "score-unrelated", targetId = "score-unrelated-task", targetType = "TASK",
+            rating = -1, comment = "", timestamp = 10L, agentId = "coder",
+            providerId = "", model = "", category = "code"
+        )
+        assertNotNull(QualityLearningStore.qualityScore(rows, "coder", "code"))
+    }
+
 }
