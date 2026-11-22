@@ -389,6 +389,9 @@ object MemoryAuditLog {
             } else ""
             val phase = Phase.valueOf(row.getString("phase"))
             val outcome = row.getString("outcome")
+            require(!row.has("sourceRef") || outcome.startsWith("DENIED_") || sourceRef.isNotBlank()) {
+                "Authorized memory audit events must retain their source reference."
+            }
             val timestamp = row.getLong("timestamp")
             val previousHash = row.getString("previousHash")
             val hash = row.getString("hash")
