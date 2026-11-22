@@ -18,7 +18,7 @@ class AiMemoryStoreTest {
         val objectId = "test-add:${java.util.UUID.randomUUID()}"
         val request = MemoryGovernance.Request(MemoryGovernance.Actor.USER,
             MemoryGovernance.Mutation.ADD_SHARED_RULE, objectId,
-            "Test confirms shared-memory addition", "test-approval")
+            "Test confirms shared-memory addition", "test-approval", sourceRef = "test:ai-memory")
         return MemoryMutationGate.execute(ctx, request) { permit ->
             AiMemoryStore.addMemory(ctx, memory, permit, objectId = objectId)
         }
@@ -27,7 +27,7 @@ class AiMemoryStoreTest {
         val objectId = "test-remove:${java.util.UUID.randomUUID()}"
         val request = MemoryGovernance.Request(MemoryGovernance.Actor.USER,
             MemoryGovernance.Mutation.REMOVE_SHARED_RULE, objectId,
-            "Test confirms shared-memory removal", "test-approval")
+            "Test confirms shared-memory removal", "test-approval", sourceRef = "test:ai-memory")
         return MemoryMutationGate.execute(ctx, request) { permit ->
             AiMemoryStore.removeMemory(ctx, memory, permit, objectId = objectId)
         }
