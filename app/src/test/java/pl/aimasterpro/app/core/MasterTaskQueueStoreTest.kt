@@ -43,7 +43,8 @@ class MasterTaskQueueStoreTest {
         val mutation = if (enabled) MemoryGovernance.Mutation.SET_AGENT_ENABLED
             else MemoryGovernance.Mutation.SET_AGENT_DISABLED
         val request = MemoryGovernance.Request(
-            MemoryGovernance.Actor.USER, mutation, id, "Test queue setup", approvalRef()
+            MemoryGovernance.Actor.USER, mutation, id, "Test queue setup", approvalRef(),
+            sourceRef = "test:master-task-queue"
         )
         return MemoryMutationGate.execute(context, request) { permit ->
             AgentManagerStore.setEnabled(context, id, enabled, permit)
@@ -53,7 +54,8 @@ class MasterTaskQueueStoreTest {
     private fun mutateAgentAddCustomAgent(agent: pl.aimasterpro.app.agents.AgentSpec): Boolean {
         val request = MemoryGovernance.Request(
             MemoryGovernance.Actor.USER, MemoryGovernance.Mutation.ADD_CUSTOM_AGENT,
-            agent.id, "Test queue setup", approvalRef()
+            agent.id, "Test queue setup", approvalRef(),
+            sourceRef = "test:master-task-queue"
         )
         return MemoryMutationGate.execute(context, request) { permit ->
             AgentManagerStore.addCustomAgent(context, agent, permit)
