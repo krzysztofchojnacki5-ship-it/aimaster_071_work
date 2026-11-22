@@ -1503,4 +1503,16 @@ class QualityLearningStoreTest {
         assertEquals(2.0 / 9.0, QualityLearningStore.qualityScore(rows, "reviewer", "code")!!, 0.000001)
         assertNull(QualityLearningStore.reviewQualityScore(rows, "unknown", "code"))
     }
+    @Test fun analysisContextShowsSmoothedReviewerScoreSeparatelyAfterMinimumSamples() {
+        (1..5).forEach { index ->
+            QualityLearningStore.rate(
+                context, "analysis-review-$index", "REVIEW_ANSWER", 1, "Przydatna recenzja",
+                agentId = "reviewer", category = "peer_review"
+            )
+        }
+        val report = QualityLearningStore.analysisContext(context)
+        assertTrue(report.contains("RECENZENCI"))
+        assertTrue(report.contains("reviewer"))
+        assertTrue(report.contains("wynik=0.778"))
+    }
 }

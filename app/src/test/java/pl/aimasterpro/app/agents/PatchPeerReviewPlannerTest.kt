@@ -54,4 +54,29 @@ class PatchPeerReviewPlannerTest {
             PatchPeerReviewPlanner.createTasks("review", "src/Foo.kt", emptyList(), maxReviewers = 4)
         }
     }
+    @Test fun higherRatedReviewersArePrioritizedWithoutReusingProviderProfiles() {
+        val assignments = listOf(
+            PatchPeerReviewPlanner.Assignment(reviewers[0], "groq:model-a"),
+            PatchPeerReviewPlanner.Assignment(reviewers[1], "openrouter:model-b"),
+            PatchPeerReviewPlanner.Assignment(reviewers[2], "GROQ:MODEL-A")
+        )
+        val scores = mapOf("critical-reviewer" to 0.20, "systems-architect" to 0.80, "repository-researcher" to 0.99)
+        val tasks = PatchPeerReviewPlanner.createTasks(
+            "review prompt", "src/Foo.kt", assignments, requestId = "quality-ranked",
+            reviewerQualityScore = { scores[it] }
+        )
+        assertEquals(listOf("repository-researcher", "systems-architect"), tasks.map { it.agentId })
+        assertEquals(2, tasks.map { it.providerFingerprint }.distinct().size)
+    }
+
+    @Test fun missingReviewerScoresPreserveOriginalAssignmentOrder() {
+        val tasks = PatchPeerReviewPlanner.createTasks(
+            "review prompt", "src/Foo.kt",
+            listOf(
+                PatchPeerReviewPlanner.Assignment(reviewers[0], "provider:model-a"),
+                PatchPeerReviewPlanner.Assignment(reviewers[1], "provider:model-b")
+            ), requestId = "neutral-order", reviewerQualityScore = { null }
+        )
+        assertEquals(listOf("critical-reviewer", "systems-architect"), tasks.map { it.agentId })
+    }
 }

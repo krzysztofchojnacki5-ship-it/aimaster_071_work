@@ -47,4 +47,26 @@ class PeerReviewPlannerTest {
             listOf(agent("agent-a"), agent("agent-b")), "c", "r", "p"
         ).isEmpty())
     }
+    @Test fun userRatedReviewQualityPrioritizesReviewersWithoutAllowingSelfReview() {
+        val scores = mapOf("agent-a" to 0.99, "agent-b" to 0.95, "agent-c" to 0.80, "agent-d" to 0.60)
+        val tasks = PeerReviewPlanner.createTasks(
+            completedReports = listOf(report("agent-a"), report("agent-b")),
+            selectedAgents = listOf(agent("agent-a"), agent("agent-b"), agent("agent-c"), agent("agent-d")),
+            chatId = "chat", requestId = "rated", originalPrompt = "Inspect", maxReviews = 2,
+            reviewerQualityScore = { scores[it] }
+        )
+        assertEquals(listOf("agent-b", "agent-a"), tasks.map { it.agentId })
+        assertTrue(tasks.all { it.agentId != it.reviewOfAgentId })
+        assertEquals(2, tasks.map { it.agentId }.distinct().size)
+    }
+
+    @Test fun missingOrInvalidReviewerScoresKeepStableInputOrder() {
+        val tasks = PeerReviewPlanner.createTasks(
+            completedReports = listOf(report("agent-a")),
+            selectedAgents = listOf(agent("agent-a"), agent("agent-b"), agent("agent-c")),
+            chatId = "chat", requestId = "neutral", originalPrompt = "Inspect",
+            reviewerQualityScore = { Double.NaN }
+        )
+        assertEquals("agent-b", tasks.single().agentId)
+    }
 }

@@ -2459,13 +2459,18 @@ class MainActivity : Activity() {
                             thinkingText?.text = thinkingLabel
                         }
                     }
+                    val reviewQualityRows = pl.aimasterpro.app.core.QualityLearningStore.feedback(this)
+                    val reviewerScore: (String) -> Double? = { reviewerId ->
+                        pl.aimasterpro.app.core.QualityLearningStore.reviewQualityScore(reviewQualityRows, reviewerId)
+                    }
                     val peerReviewTasks: List<TeamTask> = pl.aimasterpro.app.agents.PeerReviewPlanner.createTasks(
                         completedReports = completed,
                         selectedAgents = selectedSpecs,
                         chatId = chatId,
                         requestId = requestId,
                         originalPrompt = prompt,
-                        maxReviews = 2
+                        maxReviews = 2,
+                        reviewerQualityScore = reviewerScore
                     )
 
                     val peerReviewResults: List<pl.aimasterpro.app.agents.TeamTaskResult> = if (peerReviewTasks.isEmpty()) {
@@ -6422,12 +6427,17 @@ class MainActivity : Activity() {
             pl.aimasterpro.app.agents.PatchPeerReviewPlanner.Assignment(spec, fingerprint)
         }
         val requestId = UUID.randomUUID().toString()
+        val reviewQualityRows = pl.aimasterpro.app.core.QualityLearningStore.feedback(this)
+        val reviewerScore: (String) -> Double? = { reviewerId ->
+            pl.aimasterpro.app.core.QualityLearningStore.reviewQualityScore(reviewQualityRows, reviewerId)
+        }
         val planned = pl.aimasterpro.app.agents.PatchPeerReviewPlanner.createTasks(
             reviewerPrompt = reviewPackage.reviewerPrompt,
             path = path,
             assignments = assignments,
             requestId = requestId,
-            maxReviewers = 2
+            maxReviewers = 2,
+            reviewerQualityScore = reviewerScore
         )
         if (planned.size < 2) {
             AlertDialog.Builder(this)

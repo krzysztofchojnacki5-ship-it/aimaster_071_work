@@ -11,12 +11,20 @@ object PeerReviewPlanner {
         chatId: String,
         requestId: String,
         originalPrompt: String,
-        maxReviews: Int = 2
+        maxReviews: Int = 2,
+        reviewerQualityScore: (String) -> Double? = { _ -> null }
     ): List<TeamTask> {
         require(maxReviews >= 0) { "maxReviews nie może być ujemne" }
         if (maxReviews == 0) return emptyList()
 
         val agents = selectedAgents.distinctBy { it.id }
+            .mapIndexed { index, agent ->
+                val score = runCatching { reviewerQualityScore(agent.id) }.getOrNull()
+                    ?.takeIf { it.isFinite() && it in 0.0..1.0 } ?: 0.5
+                Triple(index, agent, score)
+            }
+            .sortedWith(compareByDescending<Triple<Int, AgentSpec, Double>> { it.third }.thenBy { it.first })
+            .map { it.second }
         if (agents.size < 2) return emptyList()
 
         val reports = completedReports.filter {

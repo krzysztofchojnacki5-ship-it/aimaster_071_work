@@ -23,15 +23,23 @@ object PatchPeerReviewPlanner {
         path: String,
         assignments: List<Assignment>,
         requestId: String = UUID.randomUUID().toString(),
-        maxReviewers: Int = 2
+        maxReviewers: Int = 2,
+        reviewerQualityScore: (String) -> Double? = { _ -> null }
     ): List<ReviewTask> {
         require(maxReviewers in 1..3) { "maxReviewers musi należeć do zakresu 1..3" }
         if (reviewerPrompt.isBlank() || path.isBlank()) return emptyList()
 
+        val rankedAssignments = assignments.withIndex().map { indexed ->
+            val score = runCatching { reviewerQualityScore(indexed.value.agent.id) }.getOrNull()
+                ?.takeIf { it.isFinite() && it in 0.0..1.0 } ?: 0.5
+            Triple(indexed.index, indexed.value, score)
+        }.sortedWith(compareByDescending<Triple<Int, Assignment, Double>> { it.third }.thenBy { it.first })
+            .map { it.second }
+
         val chosen = mutableListOf<Assignment>()
         val agentIds = mutableSetOf<String>()
         val providerIds = mutableSetOf<String>()
-        assignments.forEach { assignment ->
+        rankedAssignments.forEach { assignment ->
             val agentId = assignment.agent.id.trim()
             val providerId = assignment.providerFingerprint.trim().lowercase()
             if (agentId.isBlank() || providerId.isBlank()) return@forEach

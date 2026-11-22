@@ -385,7 +385,10 @@ object QualityLearningStore {
         }.sorted()
         val reviewerLines = f.filter { it.targetType == "REVIEW_ANSWER" && it.agentId.isNotBlank() }
             .groupBy { it.agentId }.map { (reviewer, rows) ->
-                "$reviewer: ${rows.count { it.rating > 0 }}/${rows.size} pozytywnych; ${confidence(rows.size)}"
+                val score = reviewQualityScore(f, reviewer)
+                val scoreLabel = score?.let { "%.3f".format(java.util.Locale.US, it) }
+                    ?: "brak — wymagane co najmniej 5 ocen niezależnych"
+                "$reviewer: ${rows.count { it.rating > 0 }}/${rows.size} pozytywnych; wynik=$scoreLabel; ${confidence(rows.size)}"
             }.sorted()
         val modelLines = f.filter { it.model.isNotBlank() }.groupBy { "${it.targetType}: ${it.providerId}/${it.model}" }.map { (model, rows) ->
             "$model: ${rows.count { it.rating > 0 }}/${rows.size} pozytywnych; ${confidence(rows.size)}"
