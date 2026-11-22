@@ -111,6 +111,36 @@ class MemoryAuditLogTest {
         assertEquals(listOf("", "ui:memory"), after.map { it.sourceRef })
     }
 
+    @Test fun verifiedJournalRejectsHashedAuthorizedRecordWithEmptySourceReference() {
+        val actor = "USER"
+        val mutation = "APPROVE_PROPOSAL"
+        val objectId = "rule-1"
+        val reason = "authorized event"
+        val approvalRef = "proposal:rule-1"
+        val phase = MemoryAuditLog.Phase.INTENT.name
+        val outcome = "AUTHORIZED"
+        val timestamp = 1_800_000_000_000L
+        val previousHash = "GENESIS"
+        val sourceRef = ""
+        val values = listOf(
+            "1", actor, mutation, objectId, reason, approvalRef,
+            phase, outcome, timestamp.toString(), previousHash, sourceRef
+        )
+        val canonical = values.joinToString("") { "${it.length}:$it" }
+        val hash = MessageDigest.getInstance("SHA-256")
+            .digest(canonical.toByteArray(Charsets.UTF_8))
+            .joinToString("") { "%02x".format(it) }
+        val raw = JSONArray().put(JSONObject()
+            .put("sequence", 1L).put("actor", actor).put("mutation", mutation)
+            .put("objectId", objectId).put("reason", reason).put("approvalRef", approvalRef)
+            .put("phase", phase).put("outcome", outcome).put("timestamp", timestamp)
+            .put("previousHash", previousHash).put("sourceRef", sourceRef).put("hash", hash)).toString()
+        context.getSharedPreferences("ai_memory_audit_log_v1", Context.MODE_PRIVATE)
+            .edit().putString("events", raw).commit()
+
+        assertNull(MemoryAuditLog.readVerified(context))
+    }
+
     @Test fun appendRejectsNewAuthorizedEventsWithoutSourceReference() {
         assertFalse(MemoryAuditLog.append(
             context, event(MemoryAuditLog.Phase.INTENT, "AUTHORIZED").copy(sourceRef = "")
@@ -431,6 +461,10 @@ class MemoryAuditLogTest {
         val pendingRecovery = MemoryAuditLog.unresolvedOperations(context, "rule-1")!!
             .single { it.actor == "SYSTEM_RECOVERY" }
         assertTrue(MemoryAuditLog.resolveUnresolved(context, pendingRecovery, "stores verified after repair"))
+        assertEquals(
+            "system:recovery",
+            MemoryAuditLog.readVerified(context)!!.last { it.actor == "SYSTEM_RECOVERY" }.sourceRef
+        )
         val pendingUser = MemoryAuditLog.unresolvedOperations(context, "rule-1")!!
             .single { it.actor == "USER" }
         assertTrue(MemoryAuditLog.resolveUnresolved(context, pendingUser, "proposal stores verified"))
