@@ -232,7 +232,8 @@ class QualityLearningStoreTest {
             reason = "Użytkownik zatwierdził propozycję przed przerwaniem procesu.",
             approvalRef = "ui-confirmation:${proposal.id}",
             phase = MemoryAuditLog.Phase.INTENT,
-            outcome = "AUTHORIZED"
+            outcome = "AUTHORIZED",
+            sourceRef = "test:quality-learning"
         )
         assertTrue(MemoryAuditLog.append(context, intent))
 
@@ -288,7 +289,8 @@ class QualityLearningStoreTest {
             MemoryGovernance.Mutation.RECONCILE_APPROVED_PROPOSAL,
             proposal.id,
             "Test wprowadza błędną kopię u innego agenta.",
-            sourceRef
+            approvalRef = sourceRef,
+            sourceRef = "test:quality-learning"
         )
         assertTrue(MemoryMutationGate.execute(context, request) { permit ->
             AgentOperationalMemoryStore.addApproved(
@@ -340,7 +342,8 @@ class QualityLearningStoreTest {
             reason = "Symulacja przerwania odzyskiwania przed zakończeniem.",
             approvalRef = "proposal:${proposal.id}",
             phase = MemoryAuditLog.Phase.INTENT,
-            outcome = "AUTHORIZED"
+            outcome = "AUTHORIZED",
+            sourceRef = "test:quality-learning"
         )))
         val before = MemoryAuditLog.readVerified(context)!!.size
 
@@ -900,7 +903,8 @@ class QualityLearningStoreTest {
             actor = "USER", mutation = "APPROVE_PROPOSAL", objectId = proposal.id,
             reason = "Test przerwania przed zmianą trwałego rejestru.",
             approvalRef = "test:${proposal.id}", phase = MemoryAuditLog.Phase.INTENT,
-            outcome = "AUTHORIZED"
+            outcome = "AUTHORIZED",
+            sourceRef = "test:quality-learning"
         )))
 
         val before = MemoryAuditLog.readVerified(context)!!.size
@@ -924,13 +928,15 @@ class QualityLearningStoreTest {
         assertTrue(MemoryAuditLog.append(context, MemoryAuditLog.Event(
             actor = "USER", mutation = "REJECT_PROPOSAL", objectId = proposal.id,
             reason = "Test nierozstrzygniętego odrzucenia.", approvalRef = "test-reject:${proposal.id}",
-            phase = MemoryAuditLog.Phase.INTENT, outcome = "AUTHORIZED"
+            phase = MemoryAuditLog.Phase.INTENT, outcome = "AUTHORIZED",
+            sourceRef = "test:quality-learning"
         )))
         assertTrue(MemoryAuditLog.append(context, MemoryAuditLog.Event(
             actor = "SYSTEM_RECOVERY", mutation = "RECONCILE_APPROVED_PROPOSAL",
             objectId = proposal.id, reason = "Test przerwanego zamknięcia odzyskiwania.",
             approvalRef = "proposal:${proposal.id}", phase = MemoryAuditLog.Phase.INTENT,
-            outcome = "AUTHORIZED"
+            outcome = "AUTHORIZED",
+            sourceRef = "test:quality-learning"
         )))
 
         val failingContext = object : ContextWrapper(context) {
@@ -984,7 +990,8 @@ class QualityLearningStoreTest {
             actor = "USER", mutation = "APPROVE_PROPOSAL", objectId = proposal.id,
             reason = "Test przerwania przed zmianą trwałego rejestru.",
             approvalRef = "test-user-close:${proposal.id}", phase = MemoryAuditLog.Phase.INTENT,
-            outcome = "AUTHORIZED"
+            outcome = "AUTHORIZED",
+            sourceRef = "test:quality-learning"
         )))
         val failingContext = object : ContextWrapper(context) {
             override fun getSharedPreferences(name: String, mode: Int): SharedPreferences {
@@ -1186,7 +1193,8 @@ class QualityLearningStoreTest {
             actor = "USER", mutation = "APPROVE_PROPOSAL", objectId = proposal.id,
             reason = "Użytkownik zatwierdził propozycję przed przerwaniem procesu.",
             approvalRef = "test-recovery-terminal:${proposal.id}",
-            phase = MemoryAuditLog.Phase.INTENT, outcome = "AUTHORIZED"
+            phase = MemoryAuditLog.Phase.INTENT, outcome = "AUTHORIZED",
+            sourceRef = "test:quality-learning"
         )))
 
         val auditPrefsName = "ai_memory_audit_log_v1"
