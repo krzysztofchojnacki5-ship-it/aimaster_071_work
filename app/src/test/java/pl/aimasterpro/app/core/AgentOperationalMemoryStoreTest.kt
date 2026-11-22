@@ -18,7 +18,7 @@ class AgentOperationalMemoryStoreTest {
         val objectId = "test-agent:${java.util.UUID.randomUUID()}"
         val request = MemoryGovernance.Request(MemoryGovernance.Actor.USER,
             MemoryGovernance.Mutation.ADD_AGENT_LESSON, objectId,
-            "Test confirms agent-memory addition", "test-approval")
+            "Test confirms agent-memory addition", "test-approval", sourceRef = "test:agent-memory")
         val ok = MemoryMutationGate.execute(ctx, request) { permit ->
             result = AgentOperationalMemoryStore.addApproved(ctx, agentId, text, permit, objectId, category, sourceTaskIds, confidence)
             result != null
@@ -28,13 +28,13 @@ class AgentOperationalMemoryStoreTest {
     private fun removeLesson(ctx: Context, id: String): Boolean {
         val request = MemoryGovernance.Request(MemoryGovernance.Actor.USER,
             MemoryGovernance.Mutation.REMOVE_AGENT_LESSON, id,
-            "Test confirms agent-memory removal", "test-approval")
+            "Test confirms agent-memory removal", "test-approval", sourceRef = "test:agent-memory")
         return MemoryMutationGate.execute(ctx, request) { permit -> AgentOperationalMemoryStore.remove(ctx, id, permit) }
     }
     private fun removeLessonBySource(ctx: Context, source: String): Boolean {
         val request = MemoryGovernance.Request(MemoryGovernance.Actor.USER,
             MemoryGovernance.Mutation.REMOVE_AGENT_LESSON, source,
-            "Test confirms source cleanup", "test-approval")
+            "Test confirms source cleanup", "test-approval", sourceRef = "test:agent-memory")
         return MemoryMutationGate.execute(ctx, request) { permit -> AgentOperationalMemoryStore.removeBySource(ctx, source, permit) }
     }
 
@@ -52,7 +52,8 @@ class AgentOperationalMemoryStoreTest {
             mutation = MemoryGovernance.Mutation.APPROVE_PROPOSAL,
             objectId = "proposal-foreign",
             reason = "Seed a separately approved proposal source.",
-            approvalRef = "test-approval:proposal-foreign"
+            approvalRef = "test-approval:proposal-foreign",
+            sourceRef = "test:agent-memory"
         )
         var seeded: AgentOperationalMemoryStore.Entry? = null
         assertTrue(MemoryMutationGate.execute(context, foreignRequest) { permit ->
@@ -68,7 +69,8 @@ class AgentOperationalMemoryStoreTest {
             mutation = MemoryGovernance.Mutation.APPROVE_PROPOSAL,
             objectId = "proposal-authorized",
             reason = "Test exact proposal object binding.",
-            approvalRef = "test-approval:proposal-authorized"
+            approvalRef = "test-approval:proposal-authorized",
+            sourceRef = "test:agent-memory"
         )
         var addResult: AgentOperationalMemoryStore.Entry? = null
         assertFalse(MemoryMutationGate.execute(context, request) { permit ->
@@ -93,7 +95,8 @@ class AgentOperationalMemoryStoreTest {
             mutation = MemoryGovernance.Mutation.ADD_AGENT_LESSON,
             objectId = "manual-entry-foreign-source",
             reason = "Direct lessons cannot forge proposal provenance.",
-            approvalRef = "test-approval:manual-entry-foreign-source"
+            approvalRef = "test-approval:manual-entry-foreign-source",
+            sourceRef = "test:agent-memory"
         )
         assertFalse(MemoryMutationGate.execute(context, directRequest) { permit ->
             AgentOperationalMemoryStore.addApproved(
