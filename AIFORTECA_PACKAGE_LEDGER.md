@@ -192,3 +192,43 @@ Ten blok jest aktualnym uzupełnieniem rejestru. Starszy wpis z 2026-11-20, w kt
 - Dawne anulowane/nieudane przebiegi na wcześniejszych SHA są historią CI i nie są wynikiem dla aktualnego HEAD. Nie usuwano ich.
 - PR pozostaje Draft; nie wykonywać merge bez wyraźnej decyzji użytkownika.
 - Testy ręczne: komunikacja HANDOFF potwierdzona przez użytkownika jako PASS (kod kontrolny przeniesiony między agentami bez regenerowania); fizyczny test odzyskiwania po restarcie/ubiciu procesu nadal PENDING.
+
+
+## Pakiet 28 — uczenie jakości routingu (wynik końcowy, 2026-11-22)
+
+- Baza: `409ba6097e4182b958cb511c4c2c7d707ad3df3c`.
+- Commity implementacyjne i korekcyjne: `931992d92a23abf0716581afca2ba3ad4100b42a`, `1681d50d7da50b78fdb7741eecc80278595cc1c6`, końcowy testowy HEAD `4915b0ff5358800220c04d458b40e6e45401cea3`.
+- Zakres: uwzględnienie ocen CHAT_ANSWER w danych jakości routingu; normalizacja identyfikatorów agentów; odrzucanie nieprawidłowych i niepowiązanych ocen; deduplikacja prób na podstawie taskId.
+- Pierwszy CI na wcześniejszym commicie `81633e78...` wykazał 3 błędy testów; poprawiono filtr w `qualityScore` i dodano test regresyjny. Nie zaliczano anulowanych runów pośrednich.
+- Końcowe Unit Tests: PUSH run `45028549989` (#661) SUCCESS i PR run `45028553806` (#662) SUCCESS, oba dla HEAD `4915b0f...`.
+- Gradle Wrapper Validation: PUSH `45028549970` (#1409) SUCCESS i PR `45028553847` (#1410) SUCCESS.
+- Zweryfikowane raporty XML: w każdym archiwum 128 plików XML, 1 372 testy, 0 failures, 0 errors, 0 skipped.
+- Artefakty raportów: PUSH `14756454521`; PR `14756897605`; oba nieprzeterminowane i przypięte do właściwego HEAD.
+- Android Build/APK: NOT REQUESTED / NOT RUN. Test urządzenia: NOT RUN.
+- Status pakietu 28: CI + testy + wrapper PASS; brak Android APK nie blokuje dalszej pracy.
+
+## Pakiet 29 — oddzielne uczenie jakości peer-review (2026-11-22)
+
+- Baza: końcowy HEAD pakietu 28 `4915b0ff5358800220c04d458b40e6e45401cea3`.
+- Commit funkcjonalny: `a2841e5b7a7c1894d36bb7e648f0f348999b26eb`.
+- Końcowy kodowy HEAD po korekcie składni raportu MASTER-a: `415a0f314fa0dfcfa6ef0b5b0dfa00efbf8465ed`.
+- Cztery poprawki:
+  1. Dziennik wykonania przechowuje bezpieczne, zgodne wstecznie pole `reviewedAgentId`, dzięki czemu zachowuje relację recenzent → oceniany raport.
+  2. Istniejący ekran 👍/👎 udostępnia ukończone peer-review do jawnej oceny użytkownika i zapisuje je jako `REVIEW_ANSWER`.
+  3. Dodano oddzielną projekcję dowodów i scorer jakości recenzenta; `REVIEW_ANSWER` nie jest mieszany z `AGENT` ani `CHAT_ANSWER` i nie zmienia automatycznie routingu.
+  4. Analiza jakości MASTER-a raportuje oceny recenzentów osobno od ocen odpowiedzi; dodano testy rozdzielenia sygnałów i zgodności starego formatu dziennika.
+- Unit Tests: PUSH run `45030941990` (#665) SUCCESS i PR run `45030945423` (#666) SUCCESS, oba dla HEAD `415a0f3...`.
+- Gradle Wrapper Validation: PUSH `45030941987` (#1413) SUCCESS i PR `45030945406` (#1414) SUCCESS.
+- Zweryfikowane raporty XML: w każdym archiwum 128 plików XML, 1 374 testy, 0 failures, 0 errors, 0 skipped.
+- Artefakty raportów: PUSH `14758245053` (359 243 B, SHA-256 `85982ea58c838c297ee1533446f5a25b398c37865eea8afa6d12d5ef863ba065`); PR `14757628512` (358 947 B, SHA-256 `397904e0f2328569c2852b6af774b25f235fc3ddd87cee19133ee6a70c90f001`). Oba nieprzeterminowane i przypięte do HEAD `415a0f3...`.
+- Android Build/APK: NOT REQUESTED / NOT RUN. Test urządzenia: NOT RUN.
+- Status pakietu 29: CI + testy + wrapper PASS. Nie uruchamiano Android Build i nie deklaruje się APK.
+
+## Stan GitHub po pakiecie 29 — 2026-11-22
+
+- Repozytorium: `krzysztofchojnacki5-ship-it/aimaster_071_work`.
+- PR #3: OPEN, DRAFT, nie scalony; baza `work/aiforteca-0.0.2-provider-connectivity`; gałąź `work/aiforteca-0.2-master-agent-foundation`.
+- Kodowy HEAD pakietu 29: `415a0f314fa0dfcfa6ef0b5b0dfa00efbf8465ed`.
+- Pakiety 28 i 29 mają po cztery poprawki; nie zwiększono rozmiaru pakietu.
+- Nie zmieniano base branch, metadanych PR, wersji aplikacji ani konfiguracji dostawców.
+- Nie tworzono APK. Następny pakiet może rozpocząć się dopiero po zapisaniu tego checkpointu i potwierdzeniu aktualnego HEAD/CI.
