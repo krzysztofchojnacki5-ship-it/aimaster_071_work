@@ -398,17 +398,17 @@ object QualityLearningStore {
             "$agent: ${rows.count { it.rating > 0 }}/${rows.size} pozytywnych; ${confidence(rows.size)}"
         }.sorted()
         val reviewerLines = f.filter { it.targetType.equals("REVIEW_ANSWER", ignoreCase = true) && it.agentId.isNotBlank() }
-            .groupBy { it.agentId.trim().lowercase(java.util.Locale.ROOT) }.map { (reviewer, rows) ->
+            .groupBy { it.agentId.trim().lowercase(java.util.Locale.ROOT) }.map { (reviewer, _) ->
+                val evidenceRows = reviewQualityEvidenceByAgent(f)[reviewer].orEmpty().distinctBy { it.targetId }
+                val sampleCount = evidenceRows.size
                 val snapshot = reviewQualitySnapshot(f, reviewer)
                 val scoreLabel = snapshot?.score?.let { "%.3f".format(java.util.Locale.US, it) }
                     ?: "brak — wymagane co najmniej 5 ocen niezależnych"
                 val intervalLabel = snapshot?.let {
-                    "95% CI=%.3f..%.3f; niezależne n=${it.sampleCount}".format(
-                        java.util.Locale.US, it.intervalLow, it.intervalHigh
-                    )
+                    "95% CI=%.3f..%.3f".format(java.util.Locale.US, it.intervalLow, it.intervalHigh)
                 } ?: "95% CI=brak"
-                val positive = rows.filter { it.rating == 1 }.distinctBy { it.targetId }.size
-                "$reviewer: $positive pozytywnych; wynik=$scoreLabel; $intervalLabel; ${confidence(snapshot?.sampleCount ?: 0)}"
+                val positive = evidenceRows.count { it.rating == 1 }
+                "$reviewer: $positive/$sampleCount pozytywnych; wynik=$scoreLabel; $intervalLabel; ${confidence(sampleCount)}"
             }.sorted()
         val modelLines = f.filter { it.model.isNotBlank() }.groupBy { "${it.targetType}: ${it.providerId}/${it.model}" }.map { (model, rows) ->
             "$model: ${rows.count { it.rating > 0 }}/${rows.size} pozytywnych; ${confidence(rows.size)}"
