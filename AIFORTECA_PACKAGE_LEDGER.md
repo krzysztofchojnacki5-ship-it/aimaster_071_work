@@ -232,3 +232,31 @@ Ten blok jest aktualnym uzupełnieniem rejestru. Starszy wpis z 2026-11-20, w kt
 - Pakiety 28 i 29 mają po cztery poprawki; nie zwiększono rozmiaru pakietu.
 - Nie zmieniano base branch, metadanych PR, wersji aplikacji ani konfiguracji dostawców.
 - Nie tworzono APK. Następny pakiet może rozpocząć się dopiero po zapisaniu tego checkpointu i potwierdzeniu aktualnego HEAD/CI.
+
+
+## Pakiet 30 — ranking recenzentów na podstawie ocen użytkownika (2026-11-22)
+
+- Baza: końcowy, udokumentowany stan po pakiecie 29 `798d051c2bc338bde95f30488ec497ae606f67bd`.
+- Commit kodu: `33052e2c0099d175d0480e13b3b14f60b2c9b5cd`.
+- Pięć poprawek:
+  1. `PeerReviewPlanner` porządkuje kandydatów do recenzji według odrębnego wyniku jakości peer-review; wynik null/niepoprawny jest neutralny, a kolejność wejściowa pozostaje stabilnym tie-breakerem.
+  2. `PatchPeerReviewPlanner` stosuje ten sam ranking, ale nadal wymaga unikalnych agentów i różnych fingerprintów provider/model.
+  3. Oba przepływy produkcyjne w MASTER przekazują scorer oparty wyłącznie na ocenach `REVIEW_ANSWER`; próg domyślny to 5 niezależnych ocen.
+  4. Analiza jakości MASTER-a pokazuje wygładzony wynik recenzenta dopiero po osiągnięciu minimalnej liczby próbek; wynik nie miesza się z jakością zwykłych odpowiedzi.
+  5. Testy regresyjne sprawdzają priorytetyzację, stabilny fallback przy braku/niepoprawnym wyniku, brak self-review i zachowanie różnorodności providerów.
+- Unit Tests: PUSH run `45032331107` (#669) SUCCESS i PR run `45032337589` (#670) SUCCESS, oba dla HEAD `33052e2...`.
+- Gradle Wrapper Validation: PUSH `45032331092` (#1417) SUCCESS i PR `45032337625` (#1418) SUCCESS.
+- Zweryfikowane raporty XML: w każdym archiwum 128 plików XML, 1 379 testów, 0 failures, 0 errors, 0 skipped.
+- Artefakty raportów: PUSH `14758202935` (358 955 B, SHA-256 `70b72990069f1046df65ccc8142267e194a50793fe6f1155c6efa59987941d8a`); PR `14758721602` (359 236 B, SHA-256 `1edd72d3659008be9d3de560dc5ff14d9fef1eef2612756cc0d0671f2d301d69`). Oba nieprzeterminowane i przypięte do HEAD `33052e2...`.
+- Android Build/APK: NOT REQUESTED / NOT RUN. Test urządzenia: NOT RUN.
+- Status pakietu 30: CI + testy + wrapper PASS; pięć poprawek w pakiecie zgodnie z regułą po dwóch kolejnych zaliczeniach.
+
+## Stan GitHub po pakiecie 30 — 2026-11-22
+
+- Repozytorium: `krzysztofchojnacki5-ship-it/aimaster_071_work`.
+- PR #3: OPEN, DRAFT, nie scalony; baza `work/aiforteca-0.0.2-provider-connectivity`; gałąź `work/aiforteca-0.2-master-agent-foundation`.
+- Kodowy HEAD pakietu 30: `33052e2c0099d175d0480e13b3b14f60b2c9b5cd`.
+- Pakiety 28, 29 i 30 mają potwierdzone zielone testy PUSH/PR; rozmiar pakietu 30 wynosi 5 zgodnie z regułą dwóch kolejnych zaliczeń.
+- Nie zmieniano base branch, metadanych PR, wersji aplikacji ani konfiguracji dostawców.
+- Nie tworzono APK ani nie uruchamiano Android Build.
+- Pakiet 31 pozostaje na poziomie maksymalnie 5 poprawek; przed implementacją wykonać ponowną kontrolę repo, branch, HEAD, PR i aktywnych runów.
