@@ -40,7 +40,8 @@ class MemoryAuditLogTest {
         approvalRef = "proposal:rule-1",
         phase = phase,
         outcome = outcome,
-        timestamp = 1_800_000_000_000L
+        timestamp = 1_800_000_000_000L,
+        sourceRef = "test:memory-audit"
     )
 
     private fun seedCommittedJournal(count: Int) {
@@ -110,6 +111,13 @@ class MemoryAuditLogTest {
         assertEquals(listOf("", "ui:memory"), after.map { it.sourceRef })
     }
 
+    @Test fun appendRejectsNewAuthorizedEventsWithoutSourceReference() {
+        assertFalse(MemoryAuditLog.append(
+            context, event(MemoryAuditLog.Phase.INTENT, "AUTHORIZED").copy(sourceRef = "")
+        ))
+        assertTrue(MemoryAuditLog.readVerified(context)!!.isEmpty())
+    }
+
     @Test fun appendPersistsOrderedHashChainedEvents() {
         assertTrue(MemoryAuditLog.append(context, event(MemoryAuditLog.Phase.INTENT, "PREPARED")))
         assertTrue(MemoryAuditLog.append(context, event(MemoryAuditLog.Phase.COMMITTED, "SUCCESS")))
@@ -174,7 +182,8 @@ class MemoryAuditLogTest {
             mutation = MemoryGovernance.Mutation.RECONCILE_APPROVED_PROPOSAL.name,
             objectId = "rule-1", reason = "verified recovery",
             approvalRef = "proposal:another-rule",
-            phase = MemoryAuditLog.Phase.INTENT, outcome = "AUTHORIZED"
+            phase = MemoryAuditLog.Phase.INTENT, outcome = "AUTHORIZED",
+            sourceRef = "test:recovery"
         )
         assertFalse(MemoryAuditLog.append(context, recovery))
         assertTrue(MemoryAuditLog.readVerified(context)!!.isEmpty())
@@ -384,7 +393,8 @@ class MemoryAuditLogTest {
         val recoveryIntent = MemoryAuditLog.Event(
             actor = "SYSTEM_RECOVERY", mutation = "RECONCILE_APPROVED_PROPOSAL",
             objectId = "rule-1", reason = "recovery intent", approvalRef = "proposal:rule-1",
-            phase = MemoryAuditLog.Phase.INTENT, outcome = "AUTHORIZED", timestamp = 1_800_000_000_100L
+            phase = MemoryAuditLog.Phase.INTENT, outcome = "AUTHORIZED", timestamp = 1_800_000_000_100L,
+            sourceRef = "test:recovery"
         )
         val recoveryTerminal = recoveryIntent.copy(
             phase = MemoryAuditLog.Phase.COMMITTED, outcome = "SUCCESS",
@@ -410,7 +420,8 @@ class MemoryAuditLogTest {
         val recoveryIntent = MemoryAuditLog.Event(
             actor = "SYSTEM_RECOVERY", mutation = "RECONCILE_APPROVED_PROPOSAL",
             objectId = "rule-1", reason = "recovery intent", approvalRef = "proposal:rule-1",
-            phase = MemoryAuditLog.Phase.INTENT, outcome = "AUTHORIZED", timestamp = 1_800_000_000_100L
+            phase = MemoryAuditLog.Phase.INTENT, outcome = "AUTHORIZED", timestamp = 1_800_000_000_100L,
+            sourceRef = "test:recovery"
         )
         assertTrue(MemoryAuditLog.append(context, recoveryIntent))
         assertTrue(MemoryAuditLog.append(context, recoveryIntent.copy(
@@ -436,7 +447,8 @@ class MemoryAuditLogTest {
         val recoveryIntent = MemoryAuditLog.Event(
             actor = "SYSTEM_RECOVERY", mutation = "RECONCILE_APPROVED_PROPOSAL",
             objectId = "rule-1", reason = "recovery intent", approvalRef = "proposal:rule-1",
-            phase = MemoryAuditLog.Phase.INTENT, outcome = "AUTHORIZED", timestamp = 1_800_000_000_100L
+            phase = MemoryAuditLog.Phase.INTENT, outcome = "AUTHORIZED", timestamp = 1_800_000_000_100L,
+            sourceRef = "test:recovery"
         )
         assertTrue(MemoryAuditLog.append(context, recoveryIntent))
         assertTrue(MemoryAuditLog.append(context, recoveryIntent.copy(
