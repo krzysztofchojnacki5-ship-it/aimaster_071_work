@@ -119,7 +119,8 @@ object QualityLearningStore {
             actor = MemoryGovernance.Actor.MASTER,
             mutation = MemoryGovernance.Mutation.CREATE_PROPOSAL,
             objectId = proposal.id,
-            reason = "MASTER utworzył propozycję uczenia do decyzji użytkownika."
+            reason = "MASTER utworzył propozycję uczenia do decyzji użytkownika.",
+            sourceRef = "master:quality-learning"
         )
         check(MemoryMutationGate.execute(context, request) { _: MemoryMutationPermit ->
             saveProposals(context, listOf(proposal) + proposals(context))
@@ -144,7 +145,8 @@ object QualityLearningStore {
             objectId = id,
             reason = if (status == "APPROVED") "Użytkownik zatwierdził propozycję uczenia."
                 else "Użytkownik odrzucił propozycję uczenia.",
-            approvalRef = approvalRef
+            approvalRef = approvalRef,
+            sourceRef = "ui:quality-learning"
         )
         return MemoryMutationGate.execute(context, request) { permit ->
             setProposalStatusRaw(context, id, status, permit)
@@ -275,7 +277,8 @@ object QualityLearningStore {
                 objectId = proposal.id,
                 reason = if (approved) "Uzgodnienie pamięci z propozycją trwale zatwierdzoną."
                     else "Usunięcie pamięci powiązanej z propozycją niezatwierdzoną lub cofniętą.",
-                approvalRef = sourceRef
+                approvalRef = sourceRef,
+                sourceRef = "system:recovery"
             )
             val recovered = MemoryMutationGate.execute(context, request) { permit ->
                 if (approved) {
