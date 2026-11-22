@@ -136,7 +136,8 @@ object MemoryAuditLog {
             phase = Phase.COMMITTED,
             outcome = "RECOVERED_STATE",
             // A wall-clock rollback must not make a verified recovery impossible to audit.
-            timestamp = maxOf(System.currentTimeMillis(), pending.timestamp)
+            timestamp = maxOf(System.currentTimeMillis(), pending.timestamp),
+            sourceRef = "system:recovery"
         ))
     }
 
@@ -153,6 +154,7 @@ object MemoryAuditLog {
         require(safeEvent.reason.isNotBlank() && safeEvent.reason.length <= MAX_TEXT_CHARS)
         require(safeEvent.approvalRef.length <= MAX_APPROVAL_REF_CHARS)
         require(safeEvent.sourceRef.length <= MAX_SOURCE_REF_CHARS)
+        require(safeEvent.outcome.startsWith("DENIED_") || safeEvent.sourceRef.isNotBlank())
         require(safeEvent.outcome.isNotBlank() && safeEvent.outcome.length <= MAX_OUTCOME_CHARS)
         require(safeEvent.timestamp >= 0L)
         // Identity and control fields must remain byte-for-byte stable; only free-form
