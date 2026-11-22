@@ -2461,7 +2461,7 @@ class MainActivity : Activity() {
                     }
                     val reviewQualityRows = pl.aimasterpro.app.core.QualityLearningStore.feedback(this)
                     val reviewerScore: (String) -> Double? = { reviewerId ->
-                        pl.aimasterpro.app.core.QualityLearningStore.reviewQualityScore(reviewQualityRows, reviewerId)
+                        pl.aimasterpro.app.core.QualityLearningStore.reviewQualityRankingScore(reviewQualityRows, reviewerId)
                     }
                     val peerReviewTasks: List<TeamTask> = pl.aimasterpro.app.agents.PeerReviewPlanner.createTasks(
                         completedReports = completed,
@@ -6429,7 +6429,7 @@ class MainActivity : Activity() {
         val requestId = UUID.randomUUID().toString()
         val reviewQualityRows = pl.aimasterpro.app.core.QualityLearningStore.feedback(this)
         val reviewerScore: (String) -> Double? = { reviewerId ->
-            pl.aimasterpro.app.core.QualityLearningStore.reviewQualityScore(reviewQualityRows, reviewerId)
+            pl.aimasterpro.app.core.QualityLearningStore.reviewQualityRankingScore(reviewQualityRows, reviewerId)
         }
         val planned = pl.aimasterpro.app.agents.PatchPeerReviewPlanner.createTasks(
             reviewerPrompt = reviewPackage.reviewerPrompt,
