@@ -29,19 +29,19 @@ class AgentManagerStoreTest {
 
     private fun mutateSetEnabled(id: String, enabled: Boolean): Boolean {
         val mutation = if (enabled) MemoryGovernance.Mutation.SET_AGENT_ENABLED else MemoryGovernance.Mutation.SET_AGENT_DISABLED
-        val request = MemoryGovernance.Request(MemoryGovernance.Actor.USER, mutation, id, "Test user action", approvalRef())
+        val request = MemoryGovernance.Request(MemoryGovernance.Actor.USER, mutation, id, "Test user action", approvalRef(), "test:agent-manager")
         return MemoryMutationGate.execute(context, request) { permit -> AgentManagerStore.setEnabled(context, id, enabled, permit) }
     }
     private fun mutateAdd(agent: AgentSpec): Boolean {
-        val request = MemoryGovernance.Request(MemoryGovernance.Actor.USER, MemoryGovernance.Mutation.ADD_CUSTOM_AGENT, agent.id, "Test add", approvalRef())
+        val request = MemoryGovernance.Request(MemoryGovernance.Actor.USER, MemoryGovernance.Mutation.ADD_CUSTOM_AGENT, agent.id, "Test add", approvalRef(), "test:agent-manager")
         return MemoryMutationGate.execute(context, request) { permit -> AgentManagerStore.addCustomAgent(context, agent, permit) }
     }
     private fun mutateUpdate(agent: AgentSpec): Boolean {
-        val request = MemoryGovernance.Request(MemoryGovernance.Actor.USER, MemoryGovernance.Mutation.UPDATE_CUSTOM_AGENT, agent.id, "Test update", approvalRef())
+        val request = MemoryGovernance.Request(MemoryGovernance.Actor.USER, MemoryGovernance.Mutation.UPDATE_CUSTOM_AGENT, agent.id, "Test update", approvalRef(), "test:agent-manager")
         return MemoryMutationGate.execute(context, request) { permit -> AgentManagerStore.updateCustomAgent(context, agent, permit) }
     }
     private fun mutateRemove(id: String): Boolean {
-        val request = MemoryGovernance.Request(MemoryGovernance.Actor.USER, MemoryGovernance.Mutation.REMOVE_CUSTOM_AGENT, id, "Test remove", approvalRef())
+        val request = MemoryGovernance.Request(MemoryGovernance.Actor.USER, MemoryGovernance.Mutation.REMOVE_CUSTOM_AGENT, id, "Test remove", approvalRef(), "test:agent-manager")
         return MemoryMutationGate.execute(context, request) { permit -> AgentManagerStore.removeCustomAgent(context, id, permit) }
     }
 
