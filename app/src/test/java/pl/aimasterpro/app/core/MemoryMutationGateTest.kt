@@ -40,7 +40,8 @@ class MemoryMutationGateTest {
         mutation = MemoryGovernance.Mutation.ADD_SHARED_RULE,
         objectId = "rule-1",
         reason = "Użytkownik potwierdził zapis w interfejsie",
-        approvalRef = approvalRef
+        approvalRef = approvalRef,
+        sourceRef = "test:memory-gate"
     )
 
     private fun seedCommittedJournal(count: Int) {
@@ -88,6 +89,20 @@ class MemoryMutationGateTest {
         assertTrue(MemoryMutationGate.execute(context, sourced) { _: MemoryMutationPermit -> true })
         val rows = MemoryAuditLog.readVerified(context)!!
         assertEquals(listOf("chat:conversation-42", "chat:conversation-42"), rows.map { it.sourceRef })
+    }
+
+    @Test fun missingSourceReferenceBlocksMutationBeforeIntent() {
+        var invoked = false
+        assertFalse(MemoryMutationGate.execute(context, request().copy(sourceRef = "")) {
+            _: MemoryMutationPermit ->
+            invoked = true
+            true
+        })
+        assertFalse(invoked)
+        assertEquals(
+            "DENIED_INVALID_SOURCE_REF",
+            MemoryAuditLog.readVerified(context)!!.single().outcome
+        )
     }
 
     @Test fun deniedAgentNeverRunsMutationAndIsAudited() {
@@ -152,7 +167,8 @@ class MemoryMutationGateTest {
             reason = request.reason,
             approvalRef = request.approvalRef,
             phase = MemoryAuditLog.Phase.INTENT,
-            outcome = "AUTHORIZED"
+            outcome = "AUTHORIZED",
+            sourceRef = request.sourceRef
         )))
 
         var invoked = false
@@ -222,7 +238,8 @@ class MemoryMutationGateTest {
             reason = userRequest.reason,
             approvalRef = userRequest.approvalRef,
             phase = MemoryAuditLog.Phase.INTENT,
-            outcome = "AUTHORIZED"
+            outcome = "AUTHORIZED",
+            sourceRef = userRequest.sourceRef
         )))
 
         assertFalse(MemoryMutationGate.execute(context, request(MemoryGovernance.Actor.AGENT)) {
