@@ -1482,4 +1482,25 @@ class QualityLearningStoreTest {
         assertNotNull(QualityLearningStore.qualityScore(rows, "coder", "code"))
     }
 
+    @Test fun peerReviewRatingsTrainReviewerSeparatelyFromAnswerQuality() {
+        val rows = (1..5).map { index ->
+            QualityLearningStore.Feedback(
+                id = "review-rating-$index", targetId = "review-task-$index",
+                targetType = "REVIEW_ANSWER", rating = 1, comment = "", timestamp = index.toLong(),
+                agentId = " reviewer ", providerId = "", model = "", category = "code"
+            )
+        } + (1..5).map { index ->
+            QualityLearningStore.Feedback(
+                id = "answer-rating-$index", targetId = "answer-task-$index",
+                targetType = "CHAT_ANSWER", rating = -1, comment = "", timestamp = (index + 10).toLong(),
+                agentId = "reviewer", providerId = "", model = "", category = "code"
+            )
+        }
+
+        val reviewEvidence = QualityLearningStore.reviewQualityEvidenceByAgent(rows)
+        assertEquals(5, reviewEvidence["reviewer"]?.size)
+        assertEquals(7.0 / 9.0, QualityLearningStore.reviewQualityScore(rows, "REVIEWER", "code")!!, 0.000001)
+        assertEquals(2.0 / 9.0, QualityLearningStore.qualityScore(rows, "reviewer", "code")!!, 0.000001)
+        assertNull(QualityLearningStore.reviewQualityScore(rows, "unknown", "code"))
+    }
 }

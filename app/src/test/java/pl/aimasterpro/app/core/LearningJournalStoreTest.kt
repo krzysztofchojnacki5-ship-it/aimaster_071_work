@@ -146,4 +146,21 @@ class LearningJournalStoreTest {
         )
         assertEquals(oversized, prefs.getString("events", null))
     }
+    @Test fun peerReviewProvenancePersistsAndLegacyRowsDefaultToNoReviewedAgent() {
+        LearningJournalStore.record(
+            context,
+            LearningJournalStore.Event(
+                timestamp = 300L, kind = "peer_review", agentId = "reviewer", providerId = "groq",
+                model = "review-model", status = "COMPLETED", durationMs = 900L, attempts = 1,
+                category = "peer_review", taskId = "review-task", reviewedAgentId = "coder"
+            )
+        )
+        val review = LearningJournalStore.load(context).single()
+        assertEquals("coder", review.reviewedAgentId)
+
+        val prefs = context.getSharedPreferences("ai_learning_journal_v1", Context.MODE_PRIVATE)
+        val legacy = """[{"ts":10,"kind":"agent","agent":"coder","provider":"groq","model":"legacy-model","status":"COMPLETED","duration":500,"attempts":1,"category":""}]"""
+        assertTrue(prefs.edit().putString("events", legacy).commit())
+        assertEquals("", LearningJournalStore.load(context).single().reviewedAgentId)
+    }
 }

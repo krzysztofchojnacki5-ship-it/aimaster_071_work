@@ -2607,6 +2607,7 @@ class MainActivity : Activity() {
                                 durationMs = review.durationMs, attempts = review.attempts,
                                 category = if (review.status == pl.aimasterpro.app.agents.TeamTaskResult.Status.COMPLETED) "peer_review" else "peer_review_failure",
                                 taskId = review.taskId,
+                                reviewedAgentId = review.reviewOfAgentId,
                                 inputTokens = reviewUsageRows.filter { it.taskId == review.taskId }.sumOf { it.inputTokens.coerceAtLeast(0L) },
                                 outputTokens = reviewUsageRows.filter { it.taskId == review.taskId }.sumOf { it.outputTokens.coerceAtLeast(0L) }
                             )
@@ -8381,25 +8382,29 @@ class MainActivity : Activity() {
         })
         action("👍 / 👎 Oceń ostatnie odpowiedzi agentów i MASTER-a", onClick = {
             val recent = pl.aimasterpro.app.core.LearningJournalStore.load(this)
-                .filter { (it.kind == "agent" || it.agentId.equals("MASTER", true)) && it.status.equals("COMPLETED", true) }
+                .filter { (it.kind == "agent" || it.kind == "peer_review" || it.agentId.equals("MASTER", true)) && it.status.equals("COMPLETED", true) }
                 .distinctBy { it.taskId.ifBlank { "${it.timestamp}-${it.agentId}" } }.take(30)
             if (recent.isEmpty()) { toast("Brak zapisanych przebiegów do oceny."); return@action }
             val labels = recent.map { e ->
-                val targetType = if (e.agentId.equals("MASTER", true)) "MASTER" else "AGENT"
+                val targetType = when {
+                    e.kind == "peer_review" -> "REVIEW_ANSWER"
+                    e.agentId.equals("MASTER", true) -> "MASTER"
+                    else -> "AGENT"
+                }
                 val rated = pl.aimasterpro.app.core.QualityLearningStore.feedback(this).any {
                     it.targetId == e.taskId && it.targetType == targetType
                 }
-                "${if (rated) "★ " else ""}${e.agentId} • ${e.providerId}/${e.model} • ${e.status} • ${java.text.SimpleDateFormat("dd.MM HH:mm", java.util.Locale.getDefault()).format(java.util.Date(e.timestamp))}"
+                "${if (rated) "★ " else ""}${e.agentId}${if (e.kind == "peer_review" && e.reviewedAgentId.isNotBlank()) " → ${e.reviewedAgentId}" else ""} • ${if (e.kind == "peer_review") "RECENZJA" else "${e.providerId}/${e.model}"} • ${e.status} • ${java.text.SimpleDateFormat("dd.MM HH:mm", java.util.Locale.getDefault()).format(java.util.Date(e.timestamp))}"
             }.toTypedArray()
             AlertDialog.Builder(this).setTitle("Wybierz raport do oceny").setItems(labels) { _, which ->
                 val e = recent[which]
                 val comment = EditText(this).apply { hint = "Komentarz (opcjonalnie): co było dobre lub błędne?"; minLines = 2; setTextColor(white) }
                 AlertDialog.Builder(this).setTitle("Ocena: ${e.agentId}").setMessage("Czy ten raport rzeczywiście pomógł rozwiązać zadanie? Ocena dotyczy użyteczności treści, nie samego statusu API.")
                     .setView(comment).setNeutralButton("👎 Nie pomógł") { _, _ ->
-                        pl.aimasterpro.app.core.QualityLearningStore.rate(this, e.taskId.ifBlank { "${e.timestamp}-${e.agentId}" }, if (e.agentId.equals("MASTER", true)) "MASTER" else "AGENT", -1, comment.text.toString(), e.agentId, e.providerId, e.model, e.category)
+                        pl.aimasterpro.app.core.QualityLearningStore.rate(this, e.taskId.ifBlank { "${e.timestamp}-${e.agentId}" }, when { e.kind == "peer_review" -> "REVIEW_ANSWER"; e.agentId.equals("MASTER", true) -> "MASTER"; else -> "AGENT" }, -1, comment.text.toString(), e.agentId, e.providerId, e.model, e.category)
                         toast("Zapisano ocenę negatywną."); showShell("Pamięć"); showMemory()
                     }.setPositiveButton("👍 Pomógł") { _, _ ->
-                        pl.aimasterpro.app.core.QualityLearningStore.rate(this, e.taskId.ifBlank { "${e.timestamp}-${e.agentId}" }, if (e.agentId.equals("MASTER", true)) "MASTER" else "AGENT", 1, comment.text.toString(), e.agentId, e.providerId, e.model, e.category)
+                        pl.aimasterpro.app.core.QualityLearningStore.rate(this, e.taskId.ifBlank { "${e.timestamp}-${e.agentId}" }, when { e.kind == "peer_review" -> "REVIEW_ANSWER"; e.agentId.equals("MASTER", true) -> "MASTER"; else -> "AGENT" }, 1, comment.text.toString(), e.agentId, e.providerId, e.model, e.category)
                         toast("Zapisano ocenę pozytywną."); showShell("Pamięć"); showMemory()
                     }.setNegativeButton("Anuluj", null).show()
             }.setNegativeButton("Zamknij", null).show()

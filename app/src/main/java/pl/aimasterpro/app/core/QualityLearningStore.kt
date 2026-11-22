@@ -65,6 +65,24 @@ object QualityLearningStore {
             .groupBy { it.agentId.trim().lowercase(java.util.Locale.ROOT) }
     }
 
+    /**
+     * Human ratings of peer-review reports are a separate evidence stream.
+     * They must never be blended into the reviewed agent's answer-quality score.
+     */
+    fun reviewQualityEvidenceByAgent(rows: List<Feedback>): Map<String, List<Feedback>> =
+        rows.asSequence()
+            .filter { it.targetType.trim().equals("REVIEW_ANSWER", ignoreCase = true) }
+            .filter { it.targetId.isNotBlank() && it.agentId.isNotBlank() && it.rating in setOf(-1, 1) }
+            .groupBy { it.agentId.trim().lowercase(java.util.Locale.ROOT) }
+
+    /** Scores a reviewer only from explicit user ratings of that reviewer's reports. */
+    fun reviewQualityScore(rows: List<Feedback>, reviewerId: String, category: String = "", minSamples: Int = 5): Double? {
+        if (reviewerId.isBlank()) return null
+        val evidence = reviewQualityEvidenceByAgent(rows)[reviewerId.trim().lowercase(java.util.Locale.ROOT)].orEmpty()
+            .map { AgentQualityRanker.Evidence(it.targetId, it.rating, it.category) }
+        return AgentQualityRanker.score(evidence, category, minSamples)
+    }
+
     /** One current rating per target. Re-rating updates the current value and preserves an audit trail. */
     @Synchronized fun rate(context: Context, targetId: String, targetType: String, rating: Int, comment: String,
                            agentId: String = "", providerId: String = "", model: String = "", category: String = "") {
@@ -364,7 +382,10 @@ object QualityLearningStore {
         fun confidence(n: Int) = when { n >= 10 -> "wyższa (n=$n)"; n >= 5 -> "wstępna (n=$n)"; else -> "za mała próba (n=$n)" }
         val agentLines = f.filter { it.targetType == "AGENT" && it.agentId.isNotBlank() }.groupBy { it.agentId }.map { (agent, rows) ->
             "$agent: ${rows.count { it.rating > 0 }}/${rows.size} pozytywnych; ${confidence(rows.size)}"
-        }.sorted()
+        }.sorted()        val reviewerLines = f.filter { it.targetType == "REVIEW_ANSWER" && it.agentId.isNotBlank() }
+            .groupBy { it.agentId }.map { (reviewer, rows) ->
+                "$reviewer: ${rows.count { it.rating > 0 }}/${rows.size} pozytywnych; ${confidence(rows.size)}"
+            }.sorted()
         val modelLines = f.filter { it.model.isNotBlank() }.groupBy { "${it.targetType}: ${it.providerId}/${it.model}" }.map { (model, rows) ->
             "$model: ${rows.count { it.rating > 0 }}/${rows.size} pozytywnych; ${confidence(rows.size)}"
         }.sorted()
@@ -389,6 +410,8 @@ object QualityLearningStore {
             appendLine(operational.joinToString("\n").ifBlank { "Brak" })
             appendLine("\nOCENY UŻYTKOWNIKA — AGENT:")
             appendLine(agentLines.joinToString("\n").ifBlank { "Brak" })
+            appendLine("\nOCENY UŻYTKOWNIKA — RECENZENCI (oddzielnie od jakości odpowiedzi):")
+            appendLine(reviewerLines.joinToString("\n").ifBlank { "Brak" })
             appendLine("\nOCENY UŻYTKOWNIKA — MODEL/PROVIDER:")
             appendLine(modelLines.joinToString("\n").ifBlank { "Brak" })
             appendLine("\nOCENY WEDŁUG KATEGORII:")
