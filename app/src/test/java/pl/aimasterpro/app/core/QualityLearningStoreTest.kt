@@ -141,7 +141,8 @@ class QualityLearningStoreTest {
             mutation = MemoryGovernance.Mutation.APPROVE_PROPOSAL,
             objectId = proposal.id,
             reason = "MASTER próbuje zatwierdzić własną propozycję",
-            approvalRef = "forged:${proposal.id}"
+            approvalRef = "forged:${proposal.id}",
+            sourceRef = "test:quality-learning"
         ))
         assertFalse(selfApproval.allowed)
         assertEquals("MASTER_PROPOSAL_ONLY", selfApproval.code)
@@ -153,13 +154,15 @@ class QualityLearningStoreTest {
             mutation = MemoryGovernance.Mutation.CREATE_PROPOSAL,
             objectId = "proposal-user-forged",
             reason = "Nieautoryzowane utworzenie",
-            approvalRef = "ui-confirmation:forged"
+            approvalRef = "ui-confirmation:forged",
+            sourceRef = "test:quality-learning"
         ))
         val agent = MemoryGovernance.authorize(MemoryGovernance.Request(
             actor = MemoryGovernance.Actor.AGENT,
             mutation = MemoryGovernance.Mutation.CREATE_PROPOSAL,
             objectId = "proposal-agent-forged",
-            reason = "Nieautoryzowane utworzenie"
+            reason = "Nieautoryzowane utworzenie",
+            sourceRef = "test:quality-learning"
         ))
         assertFalse(user.allowed)
         assertFalse(agent.allowed)
@@ -207,7 +210,7 @@ class QualityLearningStoreTest {
         val memoryEntry = "[UCZENIE ZATWIERDZONE ${proposal.id.take(8)}; dowody=${proposal.evidenceCount}; pewność=${proposal.confidence}] ${proposal.text}".take(1000)
         val removeRequest = MemoryGovernance.Request(MemoryGovernance.Actor.SYSTEM_RECOVERY,
             MemoryGovernance.Mutation.RECONCILE_APPROVED_PROPOSAL, proposal.id,
-            "Test simulates an interrupted approval write", "proposal:${proposal.id}")
+            "Test simulates an interrupted approval write", "proposal:${proposal.id}", sourceRef = "test:quality-learning")
         assertTrue(MemoryMutationGate.execute(context, removeRequest) { permit ->
             AiMemoryStore.removeMemory(context, memoryEntry, permit, objectId = proposal.id)
         })
@@ -1355,7 +1358,8 @@ class QualityLearningStoreTest {
             mutation = MemoryGovernance.Mutation.RECONCILE_REVOKED_PROPOSAL,
             objectId = "missing-proposal",
             reason = "Test idempotentnego odzyskiwania cofniętej propozycji.",
-            approvalRef = "proposal:missing-proposal"
+            approvalRef = "proposal:missing-proposal",
+            sourceRef = "test:quality-learning"
         )
         assertTrue(MemoryMutationGate.execute(context, recoveryRequest) { permit ->
             AiMemoryStore.removeMemory(context, absentEntry, permit, objectId = recoveryRequest.objectId)
@@ -1367,7 +1371,8 @@ class QualityLearningStoreTest {
             mutation = MemoryGovernance.Mutation.REMOVE_SHARED_RULE,
             objectId = "missing-rule",
             reason = "Test ścisłego usuwania ręcznego.",
-            approvalRef = "manual-remove:missing-rule"
+            approvalRef = "manual-remove:missing-rule",
+            sourceRef = "test:quality-learning"
         )
         assertFalse(MemoryMutationGate.execute(context, manualRequest) { permit ->
             AiMemoryStore.removeMemory(context, absentEntry, permit, objectId = manualRequest.objectId)
