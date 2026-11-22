@@ -1530,15 +1530,15 @@ class QualityLearningStoreTest {
 
         val reliableSnapshot = QualityLearningStore.reviewQualitySnapshot(rows, "RELIABLE", "code")
         val weakSnapshot = QualityLearningStore.reviewQualitySnapshot(rows, "weak", "code")
-        assertNotNull(reliableSnapshot)
-        assertNotNull(weakSnapshot)
-        assertEquals(5, reliableSnapshot!!.sampleCount)
-        assertEquals(5, weakSnapshot!!.sampleCount)
-        assertEquals(reliableSnapshot.intervalLow,
+        val reliable = requireNotNull(reliableSnapshot)
+        val weak = requireNotNull(weakSnapshot)
+        assertEquals(5, reliable.sampleCount)
+        assertEquals(5, weak.sampleCount)
+        assertEquals(reliable.intervalLow,
             QualityLearningStore.reviewQualityRankingScore(rows, "reliable", "code")!!, 0.000001)
-        assertEquals(reliableSnapshot.score,
+        assertEquals(reliable.score,
             QualityLearningStore.reviewQualityScore(rows, "reliable", "code")!!, 0.000001)
-        assertTrue(reliableSnapshot.intervalLow > weakSnapshot.intervalLow)
-        assertTrue(reliableSnapshot.intervalLow < reliableSnapshot.score)
+        assertTrue(reliable.intervalLow > weak.intervalLow)
+        assertTrue(reliable.intervalLow < reliable.score)
     }
 }
