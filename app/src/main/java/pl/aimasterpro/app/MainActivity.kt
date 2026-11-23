@@ -4100,7 +4100,9 @@ class MainActivity : Activity() {
         val target = queueCommunicationListLayout ?: return
         val previousScrollY = queueCommunicationScrollView?.scrollY ?: 0
         fun restoreScrollPosition() {
-            queueCommunicationScrollView?.post { it.scrollTo(0, previousScrollY) }
+            queueCommunicationScrollView?.let { scrollView ->
+                scrollView.post { scrollView.scrollTo(0, previousScrollY) }
+            }
         }
         target.removeAllViews()
         val snapshot = pl.aimasterpro.app.core.MasterTaskQueueStore.snapshot(this)
