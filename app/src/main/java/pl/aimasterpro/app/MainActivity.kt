@@ -112,6 +112,8 @@ class MainActivity : Activity() {
     private val collaborationRenderedEntries = mutableListOf<String>()
     /** Dedicated live view of durable MASTER-queue agent messages. */
     private var queueCommunicationListLayout: LinearLayout? = null
+    private val queueCommunicationRefreshHandler = Handler(Looper.getMainLooper())
+    private var queueCommunicationRefreshRunnable: Runnable? = null
     /** Read-only diagnostics feed refreshes in place so the screen does not jump to the top. */
     private val diagnosticsRefreshHandler = Handler(Looper.getMainLooper())
     private var diagnosticsRefreshRunnable: Runnable? = null
@@ -404,6 +406,7 @@ class MainActivity : Activity() {
         }
         cancelPendingCatalogSearch()
         if (title != "Rozmowy") {
+            stopQueueCommunicationAutoRefresh()
             collaborationListLayout = null
             collaborationScrollView = null
             collaborationSummaryText = null
@@ -4086,6 +4089,7 @@ class MainActivity : Activity() {
         col.addView(queueScroll)
         queueCommunicationListLayout = queueTimeline
         refreshQueueCommunicationTimeline()
+        scheduleQueueCommunicationAutoRefresh()
     }
 
     /** Shows durable queue messages with explicit sender, recipient, provider/model and timestamp. */
@@ -4140,6 +4144,28 @@ class MainActivity : Activity() {
             }
             target.addView(row, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(6) })
         }
+    }
+
+    private fun scheduleQueueCommunicationAutoRefresh() {
+        if (queueCommunicationRefreshRunnable != null || screen != "Rozmowy" ||
+            queueCommunicationListLayout == null) return
+        val refresh = object : Runnable {
+            override fun run() {
+                if (screen != "Rozmowy" || queueCommunicationListLayout == null) {
+                    queueCommunicationRefreshRunnable = null
+                    return
+                }
+                refreshQueueCommunicationTimeline()
+                queueCommunicationRefreshHandler.postDelayed(this, 3_000L)
+            }
+        }
+        queueCommunicationRefreshRunnable = refresh
+        queueCommunicationRefreshHandler.postDelayed(refresh, 3_000L)
+    }
+
+    private fun stopQueueCommunicationAutoRefresh() {
+        queueCommunicationRefreshRunnable?.let(queueCommunicationRefreshHandler::removeCallbacks)
+        queueCommunicationRefreshRunnable = null
     }
 
     private fun createAgentActivityCard(entry: String): View {
@@ -9417,15 +9443,21 @@ class MainActivity : Activity() {
     override fun onResume() {
         super.onResume()
         if (screen == "Diagnostyka") scheduleDiagnosticsAutoRefresh()
+        if (screen == "Rozmowy") {
+            refreshQueueCommunicationTimeline()
+            scheduleQueueCommunicationAutoRefresh()
+        }
     }
 
     override fun onPause() {
         stopDiagnosticsAutoRefresh()
+        stopQueueCommunicationAutoRefresh()
         super.onPause()
     }
 
     override fun onDestroy() {
         stopDiagnosticsAutoRefresh()
+        stopQueueCommunicationAutoRefresh()
         cancelPendingCatalogSearch()
         pulse?.cancel()
         interruptActiveQueuedTask("Activity została zamknięta lub odtworzona.")
