@@ -302,3 +302,14 @@ Status: pakiet 31 zamknięty dla testów jednostkowych i walidacji Gradle Wrappe
 ## Następny etap
 
 Pakiet 32: wrócić do głównego celu produktu — rzeczywistego sterowania kolejką MASTER i wykonaniem agentów. Przed zmianami sprawdzić ponownie aktualny HEAD, PR i workflow; wybrać dokładnie pięć poprawek lub mniej, bez osłabiania Smart Budget, rozliczania usage, checkpointów, anulowania i odzyskiwania.
+
+
+## Pakiet 32 — bezpieczna finalizacja wyników kolejki MASTER (2026-11-23)
+- Baza: `103f1ee0461422ac59c10a872723b005494828c3`; końcowy HEAD kodu: `16f19aa84ce028ead70541ea094efdca51bdfc2a`.
+- Pięć zabezpieczeń: fail-closed finalizer wyników TeamRunEngine; zatrzymanie przed wywołaniami API przy nieudanym zapisie decyzji Smart Budget; odrzucanie duplikatów i obcych agentów; jawny FAILED dla brakującego wyniku; BLOCKED przy niekompletnej finalizacji. Obsługa błędu ograniczona do dokładnego task/run ID.
+- Dodano `QueueExecutionResultFinalizerTest` — 6 testów, w tym pusty zestaw agentów, obce/duplikowane wyniki, brakujące wyniki, błąd persystencji i kolejność zapisu.
+- `AiFORTeca Unit Tests` PR run #696 (`45253483098`) i push run #697 (`45253494751`) — SUCCESS. Gradle Wrapper Validation #1444 (`45253483108`) i #1445 (`45253494752`) — SUCCESS.
+- Raport XML z artefaktu `aiforteca-unit-test-reports`, ID `14857134759`: 129 plików XML, 1 390 testów, 0 failures, 0 errors, 0 skipped. Nowy suite `QueueExecutionResultFinalizerTest`: 6/6, bez błędów.
+- Workflow jednostkowy wykonuje `./gradlew --no-daemon testDebugUnitTest`; nie wykonuje `assembleDebug` ani `assembleRelease`. Android Build workflow nie uruchomił się na tym HEAD, ponieważ jest ograniczony ścieżką triggera `.github/ci/full-android-build.trigger`. APK nie jest potwierdzone i nie jest deklarowane jako zbudowane.
+- PR #3 nadal OPEN/DRAFT; bez merge. Zgodnie z wcześniejszą decyzją użytkownika prace funkcjonalne nie czekają na APK; status builda/APK pozostaje jawnie oddzielony.
+- Pakiet 32 zamknięty w zakresie testów jednostkowych i walidacji wrappera. Następny kierunek: audyt i rozbudowa rzeczywistego strumienia komunikacji agent-agent (nadawca/odbiorca/zadanie/provider/model/status/payload redacted), bez dublowania istniejącego AgentHandoffStore.
