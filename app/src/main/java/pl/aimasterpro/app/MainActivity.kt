@@ -4107,10 +4107,16 @@ class MainActivity : Activity() {
             return
         }
         val titles = snapshot.tasks.associate { it.id to it.title }
-        val agentIdsByName = pl.aimasterpro.app.core.AgentManagerStore.enabledCatalog(this)
-            .associate { it.name to it.id }
-        val events = snapshot.events.filter { pl.aimasterpro.app.core.MasterTaskQueueStore.isConversationMessage(it) }.takeLast(120).asReversed()
-        if (events.isEmpty()) {
+        val agentCatalog = pl.aimasterpro.app.core.AgentManagerStore.snapshot(this)
+        val agentNames = (
+            pl.aimasterpro.app.agents.AgentCatalog.all +
+                if (agentCatalog.status == pl.aimasterpro.app.core.AgentManagerStore.ReadStatus.AVAILABLE)
+                    agentCatalog.customAgents else emptyList()
+            ).associate { it.id to it.name }
+        val entries = pl.aimasterpro.app.core.QueueCommunicationTimeline.project(
+            snapshot.events, agentNames, limit = 120
+        )
+        if (entries.isEmpty()) {
             val empty = TextView(this).apply {
                 text = "Brak komunikatów z kolejki MASTER-a. Wiadomości pojawią się tutaj podczas rzeczywistego wykonania zadań."
                 setTextColor(muted)
@@ -4120,21 +4126,13 @@ class MainActivity : Activity() {
             return
         }
         val formatter = java.text.SimpleDateFormat("dd.MM HH:mm:ss", java.util.Locale.getDefault())
-        events.forEach { event ->
-            val senderId = agentIdsByName[event.actor] ?: event.actor
-            val actualProgress = snapshot.events.lastOrNull {
-                it.taskId == event.taskId && it.operation == "AGENT_PROGRESS" &&
-                    it.actor == "agent:$senderId" && it.providerId.isNotBlank()
-            }
-            val providerId = actualProgress?.providerId?.ifBlank { event.providerId } ?: event.providerId
-            val model = actualProgress?.model?.ifBlank { event.model } ?: event.model
-            val provider = listOf(providerId, model).filter { it.isNotBlank() }.joinToString(" / ")
-                .ifBlank { "profil modelu nieustalony" }
+        entries.forEach { entry ->
+            val event = entry.event
             val stamp = formatter.format(java.util.Date(event.timestamp))
             val row = TextView(this).apply {
                 text = buildString {
-                    appendLine("${event.actor} → ${event.recipient.ifBlank { "odbiorca nieokreślony" }}")
-                    appendLine("${titles[event.taskId] ?: event.taskId} • $provider • $stamp • ${event.toStatus}")
+                    appendLine("${entry.senderLabel} → ${entry.recipientLabel}")
+                    appendLine("${titles[event.taskId] ?: event.taskId} • ${entry.providerLabel} • $stamp • ${event.toStatus}")
                     append(event.detail)
                 }
                 textSize = 12f
