@@ -42,14 +42,17 @@ object PatchPeerReviewPlanner {
         val chosen = mutableListOf<Assignment>()
         val agentIds = mutableSetOf<String>()
         val providerIds = mutableSetOf<String>()
-        rankedAssignments.forEach { assignment ->
+        for (assignment in rankedAssignments) {
             val agentId = assignment.agent.id.trim()
             val providerId = assignment.providerFingerprint.trim().lowercase(Locale.ROOT)
-            if (agentId.isBlank() || providerId.isBlank()) return@forEach
-            if (!agentIds.add(agentId)) return@forEach
-            if (!providerIds.add(providerId)) return@forEach
+            if (agentId.isBlank() || providerId.isBlank()) continue
+            if (agentId in agentIds || providerId in providerIds) continue
+            agentIds += agentId
+            providerIds += providerId
             chosen += assignment.copy(providerFingerprint = providerId)
-            if (chosen.size == maxReviewers) return@forEach
+            // forEach's return@forEach only skips the current item; break is required
+            // to enforce the configured reviewer budget and avoid excess review calls.
+            if (chosen.size >= maxReviewers) break
         }
         if (chosen.size < 2) return emptyList()
         return chosen.mapIndexed { index, assignment ->
