@@ -12,34 +12,31 @@ object PeerReviewPlanner {
         requestId: String,
         originalPrompt: String,
         maxReviews: Int = 2,
-        reviewerQualityScore: (String) -> Double? = { _ -> null }
+        reviewerQualityScore: (String) -> Double? = { _ -> null },
+        reviewerQualityScoreForCategory: ((String, String) -> Double?)? = null,
+        reviewCategoryForTarget: (String) -> String = { "" }
     ): List<TeamTask> {
         require(maxReviews >= 0) { "maxReviews nie może być ujemne" }
         if (maxReviews == 0) return emptyList()
-
         val agents = selectedAgents.distinctBy { it.id }
-            .mapIndexed { index, agent ->
-                val score = runCatching { reviewerQualityScore(agent.id) }.getOrNull()
-                    ?.takeIf { it.isFinite() && it in 0.0..1.0 } ?: 0.5
-                Triple(index, agent, score)
-            }
-            .sortedWith(compareByDescending<Triple<Int, AgentSpec, Double>> { it.third }.thenBy { it.first })
-            .map { it.second }
         if (agents.size < 2) return emptyList()
-
         val reports = completedReports.filter {
             it.status == TeamTaskResult.Status.COMPLETED && it.report.isNotBlank() && it.reviewOfAgentId.isBlank()
         }.distinctBy { it.agentId }
-
         val usedReviewers = mutableSetOf<String>()
         return reports.take(maxReviews).mapIndexedNotNull { index, target ->
-            // Prefer a reviewer not used earlier in this round; fall back to a different
-            // agent only when the team is too small to provide distinct reviewers.
-            val reviewer = agents.firstOrNull { it.id != target.agentId && it.id !in usedReviewers }
-                ?: agents.firstOrNull { it.id != target.agentId }
+            val category = runCatching { reviewCategoryForTarget(target.agentId) }.getOrNull().orEmpty().trim()
+            val rankedAgents = agents.mapIndexed { agentIndex, agent ->
+                val categoryScore = runCatching { reviewerQualityScoreForCategory?.invoke(agent.id, category) }.getOrNull()
+                val score = (categoryScore ?: runCatching { reviewerQualityScore(agent.id) }.getOrNull())
+                    ?.takeIf { it.isFinite() && it in 0.0..1.0 } ?: 0.5
+                Triple(agentIndex, agent, score)
+            }.sortedWith(compareByDescending<Triple<Int, AgentSpec, Double>> { it.third }.thenBy { it.first })
+                .map { it.second }
+            val reviewer = rankedAgents.firstOrNull { it.id != target.agentId && it.id !in usedReviewers }
+                ?: rankedAgents.firstOrNull { it.id != target.agentId }
                 ?: return@mapIndexedNotNull null
             usedReviewers += reviewer.id
-
             TeamTask(
                 id = "peer-review-$chatId-$requestId-${index + 1}-${reviewer.id}-${target.agentId}",
                 agentId = reviewer.id,
@@ -48,6 +45,7 @@ object PeerReviewPlanner {
                     Zadanie pierwotne użytkownika:
                     $originalPrompt
 
+                    Specjalizacja ocenianego raportu: ${category.ifBlank { "ogólna" }}
                     Raport do recenzji — autor: ${target.agentId}
                     --- POCZĄTEK RAPORTU ---
                     ${target.report}

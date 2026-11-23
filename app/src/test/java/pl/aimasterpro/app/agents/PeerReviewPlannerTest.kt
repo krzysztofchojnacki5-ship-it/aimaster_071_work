@@ -69,4 +69,38 @@ class PeerReviewPlannerTest {
         )
         assertEquals("agent-b", tasks.single().agentId)
     }
+
+    @Test fun reviewerRankingIsScopedToTheSpecializationOfEachReviewedReport() {
+        val categories = mapOf("agent-a" to "code", "agent-b" to "research")
+        val scores = mapOf(
+            "code" to mapOf("agent-b" to 0.95, "agent-c" to 0.20, "agent-d" to 0.10),
+            "research" to mapOf("agent-a" to 0.90, "agent-c" to 0.30, "agent-d" to 0.10)
+        )
+        val requestedCategories = mutableListOf<String>()
+        val tasks = PeerReviewPlanner.createTasks(
+            completedReports = listOf(report("agent-a"), report("agent-b")),
+            selectedAgents = listOf(agent("agent-a"), agent("agent-b"), agent("agent-c"), agent("agent-d")),
+            chatId = "chat", requestId = "category-ranked", originalPrompt = "Inspect", maxReviews = 2,
+            reviewerQualityScoreForCategory = { reviewer, category ->
+                requestedCategories += category
+                scores[category]?.get(reviewer)
+            },
+            reviewCategoryForTarget = { categories[it].orEmpty() }
+        )
+        assertEquals(listOf("agent-b", "agent-a"), tasks.map { it.agentId })
+        assertEquals(listOf("code", "research"), requestedCategories.distinct())
+        assertTrue(tasks.all { it.agentId != it.reviewOfAgentId })
+    }
+
+    @Test fun categoryScoreFailureFallsBackToLegacyGlobalRanking() {
+        val tasks = PeerReviewPlanner.createTasks(
+            completedReports = listOf(report("agent-a")),
+            selectedAgents = listOf(agent("agent-a"), agent("agent-b"), agent("agent-c")),
+            chatId = "chat", requestId = "category-fallback", originalPrompt = "Inspect",
+            reviewerQualityScore = { if (it == "agent-c") 0.9 else 0.1 },
+            reviewerQualityScoreForCategory = { _, _ -> error("unavailable") }
+        )
+        assertEquals("agent-c", tasks.single().agentId)
+    }
+
 }
