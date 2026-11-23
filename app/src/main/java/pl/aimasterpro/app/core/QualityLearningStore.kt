@@ -405,7 +405,7 @@ object QualityLearningStore {
                 val scoreLabel = snapshot?.score?.let { "%.3f".format(java.util.Locale.US, it) }
                     ?: "brak — wymagane co najmniej 5 ocen niezależnych"
                 val intervalLabel = snapshot?.let {
-                    "95% CI=%.3f..%.3f".format(java.util.Locale.US, it.intervalLow, it.intervalHigh)
+                    "95%% CI=%.3f..%.3f".format(java.util.Locale.US, it.intervalLow, it.intervalHigh)
                 } ?: "95% CI=brak"
                 val positive = evidenceRows.count { it.rating == 1 }
                 "$reviewer: $positive/$sampleCount pozytywnych; wynik=$scoreLabel; $intervalLabel; ${confidence(sampleCount)}"
