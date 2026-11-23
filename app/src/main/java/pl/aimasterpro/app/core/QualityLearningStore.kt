@@ -408,7 +408,7 @@ object QualityLearningStore {
                     "95%% CI=%.3f..%.3f".format(java.util.Locale.US, it.intervalLow, it.intervalHigh)
                 } ?: "95% CI=brak"
                 val positive = evidenceRows.count { it.rating == 1 }
-                "$reviewer: $positive/$sampleCount pozytywnych; wynik=$scoreLabel; $intervalLabel; ${confidence(sampleCount)}"
+                "$reviewer: $positive/$sampleCount pozytywnych; niezależne n=$sampleCount; wynik=$scoreLabel; $intervalLabel; ${confidence(sampleCount)}"
             }.sorted()
         val modelLines = f.filter { it.model.isNotBlank() }.groupBy { "${it.targetType}: ${it.providerId}/${it.model}" }.map { (model, rows) ->
             "$model: ${rows.count { it.rating > 0 }}/${rows.size} pozytywnych; ${confidence(rows.size)}"
