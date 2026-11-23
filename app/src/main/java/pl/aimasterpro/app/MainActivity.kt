@@ -112,6 +112,7 @@ class MainActivity : Activity() {
     private val collaborationRenderedEntries = mutableListOf<String>()
     /** Dedicated live view of durable MASTER-queue agent messages. */
     private var queueCommunicationListLayout: LinearLayout? = null
+    private var queueCommunicationScrollView: ScrollView? = null
     private val queueCommunicationRefreshHandler = Handler(Looper.getMainLooper())
     private var queueCommunicationRefreshRunnable: Runnable? = null
     /** Read-only diagnostics feed refreshes in place so the screen does not jump to the top. */
@@ -413,6 +414,7 @@ class MainActivity : Activity() {
             collaborationChatId = ""
             collaborationRenderedEntries.clear()
             queueCommunicationListLayout = null
+            queueCommunicationScrollView = null
         }
         screen = title
         pulse?.cancel(); pulse = null
@@ -4088,6 +4090,7 @@ class MainActivity : Activity() {
         }
         col.addView(queueScroll)
         queueCommunicationListLayout = queueTimeline
+        queueCommunicationScrollView = queueScroll
         refreshQueueCommunicationTimeline()
         scheduleQueueCommunicationAutoRefresh()
     }
@@ -4095,6 +4098,10 @@ class MainActivity : Activity() {
     /** Shows durable queue messages with explicit sender, recipient, provider/model and timestamp. */
     private fun refreshQueueCommunicationTimeline() {
         val target = queueCommunicationListLayout ?: return
+        val previousScrollY = queueCommunicationScrollView?.scrollY ?: 0
+        fun restoreScrollPosition() {
+            queueCommunicationScrollView?.post { it.scrollTo(0, previousScrollY) }
+        }
         target.removeAllViews()
         val snapshot = pl.aimasterpro.app.core.MasterTaskQueueStore.snapshot(this)
         if (snapshot.status != pl.aimasterpro.app.core.MasterTaskQueueStore.ReadStatus.AVAILABLE) {
@@ -4104,6 +4111,7 @@ class MainActivity : Activity() {
                 setPadding(dp(12), dp(12), dp(12), dp(12))
             }
             target.addView(unavailable)
+            restoreScrollPosition()
             return
         }
         val titles = snapshot.tasks.associate { it.id to it.title }
@@ -4134,6 +4142,7 @@ class MainActivity : Activity() {
                 setPadding(dp(12), dp(12), dp(12), dp(12))
             }
             target.addView(empty)
+            restoreScrollPosition()
             return
         }
         val formatter = java.text.SimpleDateFormat("dd.MM HH:mm:ss", java.util.Locale.getDefault())
@@ -4152,6 +4161,7 @@ class MainActivity : Activity() {
             }
             target.addView(row, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(6) })
         }
+        restoreScrollPosition()
     }
 
     private fun scheduleQueueCommunicationAutoRefresh() {
