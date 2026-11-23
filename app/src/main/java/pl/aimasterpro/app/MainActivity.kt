@@ -8020,9 +8020,34 @@ class MainActivity : Activity() {
                 }
             }
         }
-        blocked.forEach { item ->
-            queueStore.recordAgentResult(this, taskId, item.agentId, pl.aimasterpro.app.core.MasterTaskQueueStore.Status.BLOCKED,
-                budgetPlan.blockedReasons[item.id] ?: "Zablokowano przez Smart Budget.", expectedRunId = executionRunId)
+        val blockedPersistence = pl.aimasterpro.app.core.QueueExecutionResultFinalizer.persistBudgetBlockedResults(
+            assignedAgentIds = task.assignedAgentIds,
+            blockedReasons = blocked.associate { item ->
+                item.agentId to (budgetPlan.blockedReasons[item.id] ?: "Zablokowano przez Smart Budget.")
+            }
+        ) { result ->
+            queueStore.recordAgentResult(
+                this, taskId, result.agentId,
+                pl.aimasterpro.app.core.MasterTaskQueueStore.Status.BLOCKED,
+                result.detail, expectedRunId = executionRunId
+            )
+        }
+        if (!blockedPersistence.success) {
+            val blockedTransitionSaved = queueStore.transition(
+                this, taskId, "MASTER",
+                pl.aimasterpro.app.core.MasterTaskQueueStore.Status.BLOCKED,
+                "Nie udało się trwale zapisać wszystkich decyzji Smart Budget. Wykonanie agentów zatrzymano.",
+                expectedCurrentRunId = executionRunId
+            )
+            pl.aimasterpro.app.core.ApiTokenTracker.releaseBatchReservation(budgetPlan.reservationId)
+            synchronized(masterJournalLifecycleLock) { if (activeQueueTaskId == taskId) activeQueueTaskId = "" }
+            toast(if (blockedTransitionSaved)
+                "Zadanie zablokowane: nie potwierdzono zapisu wyników Smart Budget. Nie wysłano żądań agentów."
+            else
+                "Nie potwierdzono zapisu kolejki. Nie wysłano dalszych żądań; stan wymaga odzyskania magazynu."
+            )
+            if (screen == "Zadania") { showShell("Zadania"); showTasksCenter() }
+            return
         }
         toast("MASTER uruchamia ${allowed.size} agentów. Wyniki będą zapisane w historii zadania.")
         val requestScope = client.beginRequestScope()
@@ -8234,26 +8259,55 @@ class MainActivity : Activity() {
                         }
                     )
                 }
-                val finalizationSaved = queueStore.withActiveRun(this, taskId, executionRunId) {
-                    results.forEach { result ->
-                        val queueResult = when (result.status) {
-                            pl.aimasterpro.app.agents.TeamTaskResult.Status.COMPLETED -> pl.aimasterpro.app.core.MasterTaskQueueStore.Status.COMPLETED
-                            pl.aimasterpro.app.agents.TeamTaskResult.Status.FAILED -> pl.aimasterpro.app.core.MasterTaskQueueStore.Status.FAILED
-                            pl.aimasterpro.app.agents.TeamTaskResult.Status.BLOCKED -> pl.aimasterpro.app.core.MasterTaskQueueStore.Status.BLOCKED
+                val finalization = queueStore.withActiveRun(this, taskId, executionRunId) {
+                    val agentResults = results.map { result ->
+                        val status = when (result.status) {
+                            pl.aimasterpro.app.agents.TeamTaskResult.Status.COMPLETED ->
+                                pl.aimasterpro.app.core.QueueExecutionResultFinalizer.Status.COMPLETED
+                            pl.aimasterpro.app.agents.TeamTaskResult.Status.FAILED ->
+                                pl.aimasterpro.app.core.QueueExecutionResultFinalizer.Status.FAILED
+                            pl.aimasterpro.app.agents.TeamTaskResult.Status.BLOCKED ->
+                                pl.aimasterpro.app.core.QueueExecutionResultFinalizer.Status.BLOCKED
                         }
-                        val saved = queueStore.recordAgentResult(this, taskId, result.agentId, queueResult,
-                            "${result.status}: ${result.report.take(420)}", expectedRunId = executionRunId)
-                        if (!saved) android.util.Log.e("AiFORTecaQueue", "Nie zapisano wyniku agenta ${result.agentId} dla $taskId.")
+                        pl.aimasterpro.app.core.QueueExecutionResultFinalizer.AgentResult(
+                            result.agentId, status, "${result.status}: ${result.report.take(420)}"
+                        )
                     }
-                    val returned = results.map { it.agentId }.toSet()
-                    allowed.filterNot { it.agentId in returned }.forEach { item ->
-                        queueStore.recordAgentResult(this, taskId, item.agentId, pl.aimasterpro.app.core.MasterTaskQueueStore.Status.FAILED,
-                            "TeamRunEngine nie zwrócił wyniku dla tego agenta.", expectedRunId = executionRunId)
+                    val outcome = pl.aimasterpro.app.core.QueueExecutionResultFinalizer.persistAllowedResults(
+                        allowedAgentIds = allowed.map { it.agentId },
+                        results = agentResults
+                    ) { result ->
+                        val queueResult = when (result.status) {
+                            pl.aimasterpro.app.core.QueueExecutionResultFinalizer.Status.COMPLETED ->
+                                pl.aimasterpro.app.core.MasterTaskQueueStore.Status.COMPLETED
+                            pl.aimasterpro.app.core.QueueExecutionResultFinalizer.Status.FAILED ->
+                                pl.aimasterpro.app.core.MasterTaskQueueStore.Status.FAILED
+                            pl.aimasterpro.app.core.QueueExecutionResultFinalizer.Status.BLOCKED ->
+                                pl.aimasterpro.app.core.MasterTaskQueueStore.Status.BLOCKED
+                        }
+                        queueStore.recordAgentResult(
+                            this, taskId, result.agentId, queueResult, result.detail,
+                            expectedRunId = executionRunId
+                        )
                     }
-                    true
+                    if (!outcome.success) {
+                        val blockedSaved = queueStore.transition(
+                            this, taskId, "MASTER",
+                            pl.aimasterpro.app.core.MasterTaskQueueStore.Status.BLOCKED,
+                            "Nie potwierdzono trwałego zapisu wyników wszystkich agentów (${outcome.failedAgentIds.size} nieudanych zapisów; ${outcome.error}). Wymagane bezpieczne wznowienie lub ponowienie.",
+                            expectedCurrentRunId = executionRunId
+                        )
+                        android.util.Log.e(
+                            "AiFORTecaQueue",
+                            "Finalizacja wyników niekompletna dla $taskId; failed=${outcome.failedAgentIds.joinToString()}, BLOCKED zapisany=$blockedSaved."
+                        )
+                    }
+                    outcome
                 }
-                if (finalizationSaved != true) {
+                if (finalization == null) {
                     android.util.Log.i("AiFORTecaQueue", "Pominięto finalizację wyników po zatrzymaniu przebiegu $taskId.")
+                } else if (!finalization.success) {
+                    android.util.Log.e("AiFORTecaQueue", "Zadanie $taskId nie otrzymało potwierdzenia wszystkich wyników końcowych.")
                 }
                 runOnUiThread {
                     if (!isFinishing) {
@@ -8265,16 +8319,32 @@ class MainActivity : Activity() {
                 }
             } catch (error: Throwable) {
                 android.util.Log.e("AiFORTecaQueue", "Błąd wykonania zadania $taskId.", error)
-                val current = queueStore.snapshot(this).tasks.firstOrNull { it.id == taskId }
-                if (current?.status == pl.aimasterpro.app.core.MasterTaskQueueStore.Status.RUNNING) {
-                    current.assignedAgentIds.filter { agentId ->
-                        queueStore.snapshot(this).events.none {
-                            it.taskId == taskId && it.actor == "agent:$agentId" &&
-                                it.operation == "AGENT_RESULT" && it.runId == current.runId
-                        }
-                    }.forEach { agentId ->
-                        queueStore.recordAgentResult(this, taskId, agentId, pl.aimasterpro.app.core.MasterTaskQueueStore.Status.FAILED,
-                            "Błąd wykonania: ${error.message.orEmpty().take(400)}", expectedRunId = executionRunId)
+                val currentSnapshot = queueStore.snapshot(this)
+                val current = currentSnapshot.tasks.firstOrNull { it.id == taskId }
+                if (current?.status == pl.aimasterpro.app.core.MasterTaskQueueStore.Status.RUNNING &&
+                    current.runId == executionRunId) {
+                    val alreadyReported = currentSnapshot.events.filter {
+                        it.taskId == taskId && it.operation == "AGENT_RESULT" && it.runId == executionRunId
+                    }.map { it.actor.removePrefix("agent:") }.toSet()
+                    val unreportedAllowed = allowed.map { it.agentId }.filterNot { it in alreadyReported }
+                    val failurePersistence = pl.aimasterpro.app.core.QueueExecutionResultFinalizer.persistAllowedResults(
+                        allowedAgentIds = unreportedAllowed,
+                        results = emptyList()
+                    ) { result ->
+                        queueStore.recordAgentResult(
+                            this, taskId, result.agentId,
+                            pl.aimasterpro.app.core.MasterTaskQueueStore.Status.FAILED,
+                            "Błąd wykonania: ${error.message.orEmpty().take(400)}",
+                            expectedRunId = executionRunId
+                        )
+                    }
+                    if (!failurePersistence.success) {
+                        queueStore.transition(
+                            this, taskId, "MASTER",
+                            pl.aimasterpro.app.core.MasterTaskQueueStore.Status.BLOCKED,
+                            "Nie udało się trwale zapisać wszystkich wyników po błędzie wykonania; wymagane odzyskanie.",
+                            expectedCurrentRunId = executionRunId
+                        )
                     }
                 }
                 runOnUiThread {
