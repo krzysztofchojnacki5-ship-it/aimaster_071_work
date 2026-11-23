@@ -4113,8 +4113,19 @@ class MainActivity : Activity() {
                 if (agentCatalog.status == pl.aimasterpro.app.core.AgentManagerStore.ReadStatus.AVAILABLE)
                     agentCatalog.customAgents else emptyList()
             ).associate { it.id to it.name }
+        val handoffSnapshot = pl.aimasterpro.app.core.AgentHandoffStore.snapshot(this)
+        if (handoffSnapshot.status != pl.aimasterpro.app.core.AgentHandoffStore.ReadStatus.AVAILABLE) {
+            val warning = TextView(this).apply {
+                text = "Skrzynka przekazań niedostępna (${handoffSnapshot.status}). Nie pokazuję niezweryfikowanych raportów agentów."
+                setTextColor(Color.rgb(255, 160, 90))
+                setPadding(dp(12), dp(8), dp(12), dp(8))
+            }
+            target.addView(warning)
+        }
+        val handoffMessages = if (handoffSnapshot.status == pl.aimasterpro.app.core.AgentHandoffStore.ReadStatus.AVAILABLE)
+            handoffSnapshot.messages else emptyList()
         val entries = pl.aimasterpro.app.core.QueueCommunicationTimeline.project(
-            snapshot.events, agentNames, limit = 120
+            snapshot.events, handoffMessages, agentNames, limit = 120
         )
         if (entries.isEmpty()) {
             val empty = TextView(this).apply {
@@ -4127,13 +4138,12 @@ class MainActivity : Activity() {
         }
         val formatter = java.text.SimpleDateFormat("dd.MM HH:mm:ss", java.util.Locale.getDefault())
         entries.forEach { entry ->
-            val event = entry.event
-            val stamp = formatter.format(java.util.Date(event.timestamp))
+            val stamp = formatter.format(java.util.Date(entry.timestamp))
             val row = TextView(this).apply {
                 text = buildString {
                     appendLine("${entry.senderLabel} → ${entry.recipientLabel}")
-                    appendLine("${titles[event.taskId] ?: event.taskId} • ${entry.providerLabel} • $stamp • ${event.toStatus}")
-                    append(event.detail)
+                    appendLine("${titles[entry.taskId] ?: entry.taskId} • ${entry.providerLabel} • $stamp • ${entry.status} • run #${entry.runId}")
+                    append(entry.detail)
                 }
                 textSize = 12f
                 setTextColor(white)

@@ -30,10 +30,33 @@ class QueueCommunicationTimelineTest {
         runId = runId
     )
 
+    private fun handoff(
+        id: String = "handoff-1",
+        timestamp: Long = 40,
+        state: AgentHandoffStore.State = AgentHandoffStore.State.PENDING,
+        sender: String = "researcher",
+        recipient: String = "architect",
+        task: String = "task-1",
+        runId: Int = 1,
+        payload: String = "raport poprzedniego agenta"
+    ) = AgentHandoffStore.Handoff(
+        id = id,
+        taskId = task,
+        runId = runId,
+        senderAgentId = sender,
+        recipientAgentId = recipient,
+        payload = payload,
+        state = state,
+        createdAt = timestamp,
+        updatedAt = timestamp,
+        claimedAt = if (state == AgentHandoffStore.State.PENDING) 0 else timestamp,
+        resolvedAt = 0
+    )
+
     @Test fun labelsCanonicalAgentIdsIncludingDisabledAgents() {
-        val message = event("message-1")
+        val message = event("message-1", timestamp = 50)
         val result = QueueCommunicationTimeline.project(
-            listOf(message),
+            listOf(message), emptyList(),
             mapOf("researcher" to "Researcher", "architect" to "Systems Architect")
         ).single()
 
@@ -56,7 +79,7 @@ class QueueCommunicationTimelineTest {
             event("message-1", timestamp = 150)
         )
 
-        val result = QueueCommunicationTimeline.project(events, emptyMap()).single()
+        val result = QueueCommunicationTimeline.project(events, emptyList(), emptyMap()).single()
         assertEquals("current-provider / current-model", result.providerLabel)
     }
 
@@ -67,25 +90,43 @@ class QueueCommunicationTimelineTest {
             event("message", timestamp = 20, providerId = "message-provider", model = "message-model")
         )
 
-        val result = QueueCommunicationTimeline.project(events, emptyMap()).single()
+        val result = QueueCommunicationTimeline.project(events, emptyList(), emptyMap()).single()
         assertEquals("message-provider / message-model", result.providerLabel)
     }
 
-    @Test fun projectionKeepsNewestMessagesFirstAndHonorsLimit() {
-        val events = (1L..4L).map { event("message-$it", timestamp = it) } +
-            event("progress", operation = "AGENT_PROGRESS", toStatus = "REQUESTING",
-                timestamp = 5, providerId = "provider", model = "model")
+    @Test fun persistedHandoffPayloadAndStateAppearInCommunicationTimeline() {
+        val transfer = handoff(
+            timestamp = 40,
+            state = AgentHandoffStore.State.CLAIMED,
+            payload = "Pełny raport przekazany odbiorcy"
+        )
+        val result = QueueCommunicationTimeline.project(
+            emptyList(), listOf(transfer),
+            mapOf("researcher" to "Researcher", "architect" to "Systems Architect")
+        ).single()
 
-        val result = QueueCommunicationTimeline.project(events, emptyMap(), limit = 2)
-        assertEquals(listOf("message-4", "message-3"), result.map { it.event.id })
+        assertEquals("Researcher", result.senderLabel)
+        assertEquals("Systems Architect", result.recipientLabel)
+        assertEquals("HANDOFF_CLAIMED", result.status)
+        assertEquals("Pełny raport przekazany odbiorcy", result.detail)
+        assertEquals(1, result.runId)
+    }
+
+    @Test fun projectionMergesSourcesNewestFirstAndHonorsLimit() {
+        val events = (1L..4L).map { event("message-$it", timestamp = it * 10) }
+        val handoffs = listOf(handoff(id = "handoff-1", timestamp = 35))
+        val result = QueueCommunicationTimeline.project(events, handoffs, emptyMap(), limit = 3)
+
+        assertEquals(listOf(40L, 35L, 30L), result.map { it.timestamp })
+        assertEquals("HANDOFF_PENDING", result[1].status)
     }
 
     @Test fun technicalTracesAndUnknownStatusesAreNotShownAsConversation() {
         val events = listOf(
-            event("trace", operation = "AGENT_TRACE", toStatus = "REQUEST"),
-            event("unknown", operation = "AGENT_MESSAGE", toStatus = "INTERNAL")
+            event("trace", operation = "AGENT_TRACE", toStatus = "REQUEST", timestamp = 10),
+            event("unknown", operation = "AGENT_MESSAGE", toStatus = "INTERNAL", timestamp = 20)
         )
 
-        assertTrue(QueueCommunicationTimeline.project(events, emptyMap()).isEmpty())
+        assertTrue(QueueCommunicationTimeline.project(events, emptyList(), emptyMap()).isEmpty())
     }
 }
