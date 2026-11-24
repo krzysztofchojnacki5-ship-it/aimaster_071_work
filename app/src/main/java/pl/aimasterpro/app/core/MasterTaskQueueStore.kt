@@ -156,6 +156,52 @@ object MasterTaskQueueStore {
         }
 
     /**
+     * Commits a MASTER planning result only if the exact queued task snapshot is still current.
+     * Duplicate objectives and agents already at their active-task limit are rejected inside
+     * the same queue transaction, closing the plan/assign race.
+     */
+    @Synchronized
+    fun assignPlanned(
+        context: Context,
+        taskId: String,
+        agentIds: List<String>,
+        expectedUpdatedAt: Long,
+        expectedRunId: Int,
+        maxActiveTasksPerAgent: Int = 1,
+        now: Long = System.currentTimeMillis()
+    ): Boolean = mutate(context) { tasks, events ->
+        val current = tasks.firstOrNull { it.id == taskId } ?: return@mutate null
+        if (current.status !in setOf(Status.QUEUED, Status.PAUSED) ||
+            current.updatedAt != expectedUpdatedAt || current.runId != expectedRunId ||
+            agentIds.isEmpty() || agentIds.size > 8 || agentIds.distinct().size != agentIds.size ||
+            maxActiveTasksPerAgent !in 1..4 || now < 0L ||
+            agentIds.any { !AgentManagerStore.isEnabled(context, it) } ||
+            current.dependencies.any { dep -> tasks.none { it.id == dep && it.status == Status.COMPLETED } }) {
+            return@mutate null
+        }
+        val normalizedObjective = current.objective.trim().lowercase(java.util.Locale.ROOT)
+            .replace(Regex("\\s+"), " ")
+        if (normalizedObjective.length < 40 || tasks.any { other ->
+                other.id != taskId &&
+                    other.status in setOf(Status.ASSIGNED, Status.RUNNING, Status.BLOCKED) &&
+                    other.objective.trim().lowercase(java.util.Locale.ROOT)
+                        .replace(Regex("\\s+"), " ") == normalizedObjective
+            }) return@mutate null
+
+        val activeLoads = tasks.asSequence()
+            .filter { it.id != taskId && it.status in setOf(Status.ASSIGNED, Status.RUNNING) }
+            .flatMap { it.assignedAgentIds.asSequence() }
+            .groupingBy { it }.eachCount()
+        if (agentIds.any { (activeLoads[it] ?: 0) >= maxActiveTasksPerAgent }) return@mutate null
+
+        val next = current.copy(assignedAgentIds = agentIds, status = Status.ASSIGNED,
+            currentStep = "MASTER przydzielił: ${agentIds.joinToString(", ")}", updatedAt = now)
+        Triple(tasks.map { if (it.id == taskId) next else it },
+            events + event(taskId, "MASTER", "ASSIGN_PLANNED", current.status.name, next.status.name,
+                "Przydział zatwierdzony na podstawie aktualnego snapshotu; agentów: ${agentIds.size}.", now), true)
+    }
+
+    /**
      * Agents may report only their own RUNNING task as completed/failed/blocked.
      * Only MASTER or USER may pause, cancel, unblock or otherwise coordinate lifecycle.
      */
