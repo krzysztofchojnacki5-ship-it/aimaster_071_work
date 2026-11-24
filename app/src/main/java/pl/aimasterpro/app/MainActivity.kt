@@ -118,6 +118,10 @@ class MainActivity : Activity() {
     /** Read-only diagnostics feed refreshes in place so the screen does not jump to the top. */
     private val diagnosticsRefreshHandler = Handler(Looper.getMainLooper())
     private var diagnosticsRefreshRunnable: Runnable? = null
+    /** Live MASTER command-center summary; local durable reads only, no provider calls. */
+    private val masterOperationsRefreshHandler = Handler(Looper.getMainLooper())
+    private var masterOperationsRefreshRunnable: Runnable? = null
+    private var masterOperationsSummaryText: TextView? = null
     private var diagnosticsEventContainer: LinearLayout? = null
     private var diagnosticsTaskFilter = ""
     private var diagnosticsAgentFilter = ""
@@ -6744,6 +6748,46 @@ class MainActivity : Activity() {
         parent.addView(horizontal, LinearLayout.LayoutParams(-1, -2))
     }
 
+    private fun buildMasterOperationsSummaryText(): String {
+        val overview = pl.aimasterpro.app.core.MasterOperationsOverview.build(
+            pl.aimasterpro.app.core.MasterTaskQueueStore.snapshot(this),
+            pl.aimasterpro.app.core.AgentHandoffStore.snapshot(this)
+        )
+        val output = StringBuilder()
+        output.appendLine("KOLEJKA MASTER: ${overview.queueStatus}")
+        if (overview.totalTasks == null) {
+            output.appendLine("Liczba zadań i ich statusy: NIEDOSTĘPNE — błąd odczytu nie oznacza pustej kolejki.")
+        } else {
+            val counts = overview.taskCounts
+            output.appendLine("Zadania: ${overview.totalTasks} • oczekujące: ${counts[pl.aimasterpro.app.core.MasterTaskQueueStore.Status.QUEUED] ?: 0} • przydzielone: ${counts[pl.aimasterpro.app.core.MasterTaskQueueStore.Status.ASSIGNED] ?: 0}")
+            output.appendLine("W toku: ${counts[pl.aimasterpro.app.core.MasterTaskQueueStore.Status.RUNNING] ?: 0} • zablokowane: ${counts[pl.aimasterpro.app.core.MasterTaskQueueStore.Status.BLOCKED] ?: 0} • ukończone: ${counts[pl.aimasterpro.app.core.MasterTaskQueueStore.Status.COMPLETED] ?: 0} • błędne: ${counts[pl.aimasterpro.app.core.MasterTaskQueueStore.Status.FAILED] ?: 0}")
+        }
+        output.appendLine("SKRZYNKA AGENTÓW: ${overview.handoffStatus}")
+        if (overview.pendingHandoffs == null) {
+            output.appendLine("Stan przekazań: NIEDOSTĘPNY — brak odczytu nie oznacza zera.")
+        } else {
+            output.appendLine("Przekazania oczekujące: ${overview.pendingHandoffs} • przejęte bez potwierdzenia: ${overview.claimedHandoffs} • odrzucone: ${overview.rejectedHandoffs}")
+        }
+        if (overview.activeTasks.isNotEmpty()) {
+            output.appendLine("\\nAKTYWNE / ZABLOKOWANE ZADANIA")
+            overview.activeTasks.forEach { task -> output.appendLine("• ${task.title} — ${task.status}, run #${task.runId}") }
+        }
+        if (overview.recentAgents.isNotEmpty()) {
+            output.appendLine("\\nOSTATNIA AKTYWNOŚĆ AGENTÓW")
+            overview.recentAgents.take(5).forEach { agent ->
+                val provider = agent.providerLabel.ifBlank { "provider/model nieustalony" }
+                output.appendLine("• ${agent.agentId} — ${agent.status} • ${agent.taskId} • run #${agent.runId} • $provider")
+            }
+        }
+        if (!overview.isComplete) output.appendLine("\\nUWAGA: podsumowanie częściowe. Sprawdź Diagnostykę przed decyzjami operacyjnymi.")
+        return output.toString().trim()
+    }
+
+    private fun refreshMasterOperationsSummary(target: TextView? = masterOperationsSummaryText) {
+        if (screen != "Centrum" || target == null) return
+        target.text = buildMasterOperationsSummaryText()
+    }
+
     private fun showCommandCenter() {
         val col = content
         col.setPadding(dp(16), dp(14), dp(16), dp(24))
@@ -6772,6 +6816,15 @@ class MainActivity : Activity() {
         addMasterShortcutStrip(departmentsCard)
         action("🧠  PAMIĘĆ SYSTEMU", departmentsCard) { navigate("Pamięć") }
         card("Stan wykonania", "Status: ${if (isThinking) "PRACA W TOKU" else "GOTOWY"}\n${if (isThinking) thinkingLabel else "Brak aktywnego zadania."}\nAgenci z historią: ${agentStats.size} • katalog agentów: ${pl.aimasterpro.app.agents.AgentCatalog.all.size}\nZdarzenia dziennika: ${events.size} • ostatnie 5 awarii/blokad: ${recentFailures.size}\nCheckpointy zadań: ${taskStates.size} • przerwane/nieudane: ${interruptedTasks.size}")
+        val operationsCard = card("OPERACYJNY STAN MASTER-A • KOLEJKA / AGENTY / PRZEKAZANIA", "Zestawienie z trwałych magazynów kolejki i przekazań. Odczyt lokalny — bez zapytań API.")
+        masterOperationsSummaryText = TextView(this).apply {
+            textSize = 12.5f
+            setTextColor(white)
+            setLineSpacing(dp(3).toFloat(), 1f)
+            setTextIsSelectable(true)
+            text = buildMasterOperationsSummaryText()
+        }
+        operationsCard.addView(masterOperationsSummaryText, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(7) })
         val consoleLines = events.takeLast(5).asReversed().map { event ->
             "${event.agentId.ifBlank { "MASTER" }} • ${event.status} • ${event.category.ifBlank { "zdarzenie" }}\n${event.providerId}/${event.model} • zadanie: ${event.taskId.ifBlank { "—" }}"
         }
