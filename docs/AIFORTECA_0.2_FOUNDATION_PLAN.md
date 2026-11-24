@@ -225,3 +225,17 @@ Cover unauthorized create/update/delete, scope escape, missing or forged approva
 - Status pakietu 22: IMPLEMENTACJA PRZYGOTOWANA, CI PENDING; nie oznaczać jako zaliczonego, dopóki testy i wrapper validation nie zakończą się sukcesem na dokładnym HEAD.
 - Nie zmieniono `versionName=0.2` ani `versionCode=3`; nie zmieniono base branch, nie wykonano merge.
 - Następny krok po CI: sprawdzić raporty testów i ewentualne poprawki; dopiero po zielonym CI zamknąć pakiet 22. Następny priorytet pozostaje przegląd pełnego magazynu eventów/diagnostyki i kompletności governance, bez deklarowania całej konsoli jako kompletnej.
+
+## Implementation checkpoint — pakiet 23 / obciążenie agentów i wykrywanie konfliktów (2026-11-24)
+
+- Zakres rozbudowy: rozszerzono istniejący, tylko-odczytowy `MasterOperationsOverview`; nie dodano nowego magazynu i nie zmieniano danych użytkownika.
+- Cztery logiczne zmiany:
+  1. Projekcja obciążenia każdego agenta z aktywnej kolejki: QUEUED, ASSIGNED, RUNNING, BLOCKED i PAUSED, z rozdzieleniem liczników i identyfikatorów zadań.
+  2. Wykrywanie konfliktów przydziałów: jeden agent w wielu zadaniach RUNNING oraz agent wyłączony, który nadal ma aktywne przydziały.
+  3. Wykrywanie możliwych duplikatów wyłącznie dla aktywnych zadań z identycznym, znormalizowanym celem o długości co najmniej 40 znaków; zadania terminalne i krótkie ogólne cele są pomijane.
+  4. Rozszerzenie Centrum MASTER o obciążenie, dostępność, konflikt, duplikaty oraz ostatni status i provider/model agenta. Telemetria jest wiązana z dokładnym taskId i runId; nie pokazuje swobodnego payloadu zdarzeń.
+- Katalog agentów i kolejka są odczytywane fail-closed. Niedostępny/uszkodzony katalog nie jest prezentowany jako pusty lub w pełni dostępny zespół; niedostępna kolejka nie jest traktowana jako brak obciążenia.
+- Dodano regresje dla obciążenia stanów, konfliktów, wyłączonego agenta z przydziałem, deduplikacji celów, braku danych katalogu oraz izolacji telemetrii między zadaniami i epokami run.
+- Zmodyfikowane pliki: `MasterOperationsOverview.kt`, `MainActivity.kt`, `MasterOperationsOverviewTest.kt`.
+- Zmiany źródłowe zapisano na wskazanej gałęzi. Pełne CI dla końcowego HEAD pakietu 23 pozostaje do odczytu po zakończeniu automatycznie uruchomionych workflow; do tego czasu pakiet ma status IMPLEMENTACJA ZAPISANA / CI PENDING.
+- Nie zmieniono identyfikacji wydania (`versionName=0.2`, `versionCode=3`), base branch ani PR. Nie wykonano ręcznego ponownego uruchomienia workflow ani budowy APK.
