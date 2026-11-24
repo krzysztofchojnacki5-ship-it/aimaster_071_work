@@ -8375,7 +8375,7 @@ class MainActivity : Activity() {
                         tasks = allowed,
                         provider = fallback,
                         agentProvidersMap = configs,
-                        fallbackProviders = listOf(fallback),
+                        fallbackProviders = configs.values.distinctBy { Triple(it.id, it.baseUrl.trimEnd('/'), it.model) },
                         isFreeProvider = { candidate -> isVerifiedFreeConfig(candidate) },
                             isProviderAllowed = { candidate -> isProviderAllowedForRouting(candidate) },
                         mode = mode,
