@@ -1482,4 +1482,18 @@ class MasterTaskQueueStoreTest {
         assertEquals(MasterTaskQueueStore.Status.QUEUED,
             MasterTaskQueueStore.snapshot(context).tasks.first { it.id == second.id }.status)
     }
+
+    @Test fun plannedAssignmentAllowsShortObjectivesWhenDuplicateHeuristicDoesNotApply() {
+        assertTrue(MasterTaskQueueStore.enqueue(context, "planned-short-001", "Krótki test", "Test.", now = 30L))
+        val task = MasterTaskQueueStore.snapshot(context).tasks.single()
+        assertTrue(MasterTaskQueueStore.assignPlanned(
+            context, task.id, listOf("critical-reviewer"),
+            expectedUpdatedAt = task.updatedAt,
+            expectedRunId = task.runId,
+            now = 31L
+        ))
+        val assigned = MasterTaskQueueStore.snapshot(context).tasks.single()
+        assertEquals(MasterTaskQueueStore.Status.ASSIGNED, assigned.status)
+        assertEquals(listOf("critical-reviewer"), assigned.assignedAgentIds)
+    }
 }
