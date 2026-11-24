@@ -79,7 +79,7 @@ object MasterOperationsOverview {
                     providerLabel = listOf(event.providerId, event.model).filter { it.isNotBlank() }.joinToString(" / "),
                     timestamp = event.timestamp
                 )
-            } else emptyList()
+            }.toList() else emptyList()
 
         return Snapshot(
             queueStatus = queue.status,
