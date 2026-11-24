@@ -164,26 +164,38 @@ class TeamRunEngineNetworkTest {
     }
 
     @Test
-    fun dnsFailureBeforePostIsMarkedSafeToRetry() {
-        ProviderQuotaScheduler.resetForTests()
-        try {
-            val config = ProviderConfig(
-                "retry-dns", "Retry DNS", ProviderKind.OPENAI_COMPATIBLE,
-                "http://aiforteca-nonexistent-host.invalid/v1", "retry-model", ""
+    fun safeRetryClassifierAcceptsOnlyProvenPreProcessingFailures() {
+        assertTrue(isSafeRetryableProviderFailure(
+            pl.aimasterpro.app.network.ProviderException(
+                429, "rate limit", category = "RATE_LIMIT_QUOTA", phase = "READ_RESPONSE"
             )
-            val result = TeamRunEngine(ProviderClient(connectTimeoutMs = 300, readTimeoutMs = 300)).runBatch(
-                tasks = listOf(TeamTask("retry-dns-task", "qa-architect", "DNS failure", "Return a report")),
-                provider = config,
-                agentProvidersMap = mapOf("qa-architect" to config),
-                isFreeProvider = { true },
-                isProviderAllowed = { true },
-                mode = WorkMode.PLANNING
-            ).single()
-            assertEquals(TeamTaskResult.Status.BLOCKED, result.status)
-            assertTrue(result.report.startsWith("SAFE_RETRY:"))
-        } finally {
-            ProviderQuotaScheduler.resetForTests()
-        }
+        ))
+        assertTrue(isSafeRetryableProviderFailure(
+            pl.aimasterpro.app.network.ProviderException(
+                null, "dns", category = "DNS_ERROR", phase = "WRITE_REQUEST"
+            )
+        ))
+        assertTrue(isSafeRetryableProviderFailure(
+            pl.aimasterpro.app.network.ProviderException(
+                null, "connect timeout", category = "CONNECT_TIMEOUT", phase = "CONNECT"
+            )
+        ))
+        assertFalse(isSafeRetryableProviderFailure(
+            pl.aimasterpro.app.network.ProviderException(
+                500, "ambiguous", category = "SERVER_ERROR", phase = "READ_RESPONSE",
+                requestMayHaveBeenProcessed = true
+            )
+        ))
+        assertFalse(isSafeRetryableProviderFailure(
+            pl.aimasterpro.app.network.ProviderException(
+                401, "unauthorized", category = "AUTH_UNAUTHORIZED", phase = "READ_RESPONSE"
+            )
+        ))
+        assertFalse(isSafeRetryableProviderFailure(
+            pl.aimasterpro.app.network.ProviderException(
+                null, "write failure", category = "NETWORK_IO", phase = "WRITE_REQUEST"
+            )
+        ))
     }
 
     @Test
