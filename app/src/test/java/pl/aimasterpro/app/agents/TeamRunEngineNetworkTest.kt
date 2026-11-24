@@ -622,7 +622,9 @@ class TeamRunEngineNetworkTest {
                 requestScope = client.beginRequestScope()
             )
 
-            assertEquals(TeamTaskResult.Status.FAILED, result.single().status)
+            assertEquals(TeamTaskResult.Status.BLOCKED, result.single().status)
+            assertTrue("Cooldown is a known pre-request condition and may be retried safely",
+                result.single().report.startsWith("SAFE_RETRY:"))
             assertTrue("Scheduler should explain why the profile was skipped", logs.any { it.contains("MODEL_THROTTLED") })
             assertTrue("A scheduler cooldown must not be stored as a provider failure", healthEvents.isEmpty())
             assertEquals("No API request should be sent while the scheduler is in cooldown", 0, server.requestCount.get())
