@@ -135,4 +135,91 @@ class MasterOperationsOverviewTest {
         assertEquals(20, result.recentAgents.size)
         assertEquals("task-25", result.recentAgents.first().taskId)
     }
+
+    @Test fun agentWorkloadReflectsEnabledStateAndAssignedTaskStates() {
+        val agents = listOf(
+            pl.aimasterpro.app.agents.AgentSpec("reviewer", "Reviewer", "QA", "Review", listOf("review")),
+            pl.aimasterpro.app.agents.AgentSpec("builder", "Builder", "Engineering", "Build", listOf("build"))
+        )
+        val result = MasterOperationsOverview.build(
+            queue(tasks = listOf(
+                task("task-running", MasterTaskQueueStore.Status.RUNNING, 30L).copy(assignedAgentIds = listOf("reviewer")),
+                task("task-assigned", MasterTaskQueueStore.Status.ASSIGNED, 20L).copy(assignedAgentIds = listOf("reviewer", "builder")),
+                task("task-blocked", MasterTaskQueueStore.Status.BLOCKED, 10L).copy(assignedAgentIds = listOf("builder"))
+            )),
+            handoffs(),
+            agents = agents,
+            enabledAgentIds = setOf("reviewer", "builder")
+        )
+        val reviewer = result.agentWorkloads.single { it.agentId == "reviewer" }
+        assertEquals(MasterOperationsOverview.AgentAvailability.RUNNING, reviewer.availability)
+        assertEquals(1, reviewer.runningTasks)
+        assertEquals(1, reviewer.assignedTasks)
+        assertEquals(setOf("task-running", "task-assigned"), reviewer.activeTaskIds.toSet())
+
+        val builder = result.agentWorkloads.single { it.agentId == "builder" }
+        assertEquals(MasterOperationsOverview.AgentAvailability.ASSIGNED, builder.availability)
+        assertEquals(1, builder.assignedTasks)
+        assertEquals(1, builder.blockedTasks)
+    }
+
+    @Test fun runningTaskCollisionAndDisabledAgentAssignmentAreExplicitConflicts() {
+        val agents = listOf(
+            pl.aimasterpro.app.agents.AgentSpec("reviewer", "Reviewer", "QA", "Review", listOf("review")),
+            pl.aimasterpro.app.agents.AgentSpec("builder", "Builder", "Engineering", "Build", listOf("build"))
+        )
+        val result = MasterOperationsOverview.build(
+            queue(tasks = listOf(
+                task("run-one", MasterTaskQueueStore.Status.RUNNING, 30L).copy(assignedAgentIds = listOf("reviewer")),
+                task("run-two", MasterTaskQueueStore.Status.RUNNING, 20L).copy(assignedAgentIds = listOf("reviewer")),
+                task("disabled-task", MasterTaskQueueStore.Status.ASSIGNED, 10L).copy(assignedAgentIds = listOf("builder"))
+            )),
+            handoffs(),
+            agents = agents,
+            enabledAgentIds = setOf("reviewer")
+        )
+        assertEquals(MasterOperationsOverview.AgentAvailability.CONFLICTED,
+            result.agentWorkloads.single { it.agentId == "reviewer" }.availability)
+        assertEquals(MasterOperationsOverview.AgentAvailability.DISABLED,
+            result.agentWorkloads.single { it.agentId == "builder" }.availability)
+        assertTrue(result.agentConflicts.any {
+            it.agentId == "reviewer" &&
+                it.kind == MasterOperationsOverview.ConflictKind.MULTIPLE_RUNNING_TASKS &&
+                it.taskIds.toSet() == setOf("run-one", "run-two")
+        })
+        assertTrue(result.agentConflicts.any {
+            it.agentId == "builder" &&
+                it.kind == MasterOperationsOverview.ConflictKind.DISABLED_AGENT_ASSIGNED
+        })
+    }
+
+    @Test fun duplicateWorkDetectionRequiresExactLongObjectiveAndIgnoresTerminalTasks() {
+        val objective = "Implement durable task recovery with explicit run identity and safe cancellation."
+        val result = MasterOperationsOverview.build(
+            queue(tasks = listOf(
+                task("duplicate-a", MasterTaskQueueStore.Status.QUEUED).copy(objective = objective),
+                task("duplicate-b", MasterTaskQueueStore.Status.RUNNING).copy(objective = "  " + objective.lowercase() + "  "),
+                task("completed-copy", MasterTaskQueueStore.Status.COMPLETED).copy(objective = objective),
+                task("short-a", MasterTaskQueueStore.Status.QUEUED).copy(objective = "Fix UI"),
+                task("short-b", MasterTaskQueueStore.Status.QUEUED).copy(objective = "Fix UI")
+            )),
+            handoffs()
+        )
+        assertEquals(1, result.duplicateWorkGroups.size)
+        assertEquals(setOf("duplicate-a", "duplicate-b"), result.duplicateWorkGroups.single().taskIds.toSet())
+    }
+
+    @Test fun unavailableAgentCatalogDoesNotClaimAgentsAreAvailable() {
+        val result = MasterOperationsOverview.build(
+            queue(tasks = listOf(task("task-running", MasterTaskQueueStore.Status.RUNNING))),
+            handoffs(),
+            agents = emptyList(),
+            enabledAgentIds = emptySet(),
+            agentCatalogAvailable = false
+        )
+        assertFalse(result.agentCatalogAvailable)
+        assertTrue(result.agentWorkloads.isEmpty())
+        assertTrue(result.agentConflicts.isEmpty())
+        assertFalse(result.isComplete)
+    }
 }
