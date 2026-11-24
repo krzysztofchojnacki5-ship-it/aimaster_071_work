@@ -313,3 +313,19 @@ Pakiet 32: wrócić do głównego celu produktu — rzeczywistego sterowania kol
 - Workflow jednostkowy wykonuje `./gradlew --no-daemon testDebugUnitTest`; nie wykonuje `assembleDebug` ani `assembleRelease`. Android Build workflow nie uruchomił się na tym HEAD, ponieważ jest ograniczony ścieżką triggera `.github/ci/full-android-build.trigger`. APK nie jest potwierdzone i nie jest deklarowane jako zbudowane.
 - PR #3 nadal OPEN/DRAFT; bez merge. Zgodnie z wcześniejszą decyzją użytkownika prace funkcjonalne nie czekają na APK; status builda/APK pozostaje jawnie oddzielony.
 - Pakiet 32 zamknięty w zakresie testów jednostkowych i walidacji wrappera. Następny kierunek: audyt i rozbudowa rzeczywistego strumienia komunikacji agent-agent (nadawca/odbiorca/zadanie/provider/model/status/payload redacted), bez dublowania istniejącego AgentHandoffStore.
+
+
+## Pakiet 33 — jednolita oś komunikacji agentów (2026-11-24)
+
+- Baza: pakiet 32, HEAD kontrolny `16f19aa84ce028ead70541ea094efdca51bdfc2a`.
+- Końcowy kodowy HEAD: `db354e6ab491027aae6f14b291de6fd26756b804`.
+- Zakres czterech zmian:
+  1. Dodano projekcję `QueueCommunicationTimeline`, łączącą zdarzenia kolejki MASTER z trwałymi przekazaniami `AgentHandoffStore`.
+  2. Włączono rzeczywiste payloady przekazań i ich stany do osi; przy niedostępnym magazynie przekazań UI pokazuje ostrzeżenie i nie prezentuje niezweryfikowanych raportów.
+  3. Powiązano metadane provider/model z dokładnym taskId, runId, nadawcą i czasem zdarzenia; dodano mapowanie identyfikatorów agentów na nazwy, także dla agentów niestandardowych/wyłączonych.
+  4. Dodano odświeżanie osi co 3 sekundy wyłącznie podczas wyświetlania ekranu Rozmowy, z zatrzymywaniem w lifecycle Activity i zachowaniem pozycji przewijania.
+- Commity: `4440d4e3e72b306dc111ca1554a74295069d2298`, `8aed9a9acb6aff4ad838638291fb2c9e69d7093b`, `a95b912a897a2c2b85814ce9c0893a5a3099b18a`, `0e9f4bbdf7e96f93d03918aaa7265f71092d10e5`; korekta kompilacji zachowania pozycji przewijania: `db354e6ab491027aae6f14b291de6fd26756b804`.
+- Unit Tests PR run #708 (`45277535826`) na dokładnym HEAD `db354e6...`: SUCCESS. Raport XML z artefaktu `aiforteca-unit-test-reports`, ID `14867916988`: 130 zestawów, 1 396 testów, 0 failures, 0 errors, 0 skipped.
+- Gradle Wrapper Validation run #1456 (`45277535785`) na tym samym HEAD: SUCCESS.
+- Android Build/APK: NOT RUN / NOT REQUESTED. Test urządzenia: NOT RUN.
+- PR #3 pozostaje OPEN/DRAFT; bez merge. Pakiet 33 zamknięty w zakresie testów jednostkowych i walidacji wrappera.
