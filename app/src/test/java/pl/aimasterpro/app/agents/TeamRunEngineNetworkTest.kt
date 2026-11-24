@@ -164,23 +164,26 @@ class TeamRunEngineNetworkTest {
     }
 
     @Test
-    fun connectFailureBeforePostIsMarkedSafeToRetry() {
+    fun dnsFailureBeforePostIsMarkedSafeToRetry() {
         ProviderQuotaScheduler.resetForTests()
-        val config = ProviderConfig(
-            "retry-connect", "Retry connect", ProviderKind.OPENAI_COMPATIBLE,
-            "http://127.0.0.1:1/v1", "retry-model", ""
-        )
-        val result = TeamRunEngine(ProviderClient(connectTimeoutMs = 300, readTimeoutMs = 300)).runBatch(
-            tasks = listOf(TeamTask("retry-connect-task", "qa-architect", "Connect failure", "Return a report")),
-            provider = config,
-            agentProvidersMap = mapOf("qa-architect" to config),
-            isFreeProvider = { true },
-            isProviderAllowed = { true },
-            mode = WorkMode.PLANNING
-        ).single()
-        assertEquals(TeamTaskResult.Status.BLOCKED, result.status)
-        assertTrue(result.report.startsWith("SAFE_RETRY:"))
-        ProviderQuotaScheduler.resetForTests()
+        try {
+            val config = ProviderConfig(
+                "retry-dns", "Retry DNS", ProviderKind.OPENAI_COMPATIBLE,
+                "http://aiforteca-nonexistent-host.invalid/v1", "retry-model", ""
+            )
+            val result = TeamRunEngine(ProviderClient(connectTimeoutMs = 300, readTimeoutMs = 300)).runBatch(
+                tasks = listOf(TeamTask("retry-dns-task", "qa-architect", "DNS failure", "Return a report")),
+                provider = config,
+                agentProvidersMap = mapOf("qa-architect" to config),
+                isFreeProvider = { true },
+                isProviderAllowed = { true },
+                mode = WorkMode.PLANNING
+            ).single()
+            assertEquals(TeamTaskResult.Status.BLOCKED, result.status)
+            assertTrue(result.report.startsWith("SAFE_RETRY:"))
+        } finally {
+            ProviderQuotaScheduler.resetForTests()
+        }
     }
 
     @Test
