@@ -301,6 +301,9 @@ Cover unauthorized create/update/delete, scope escape, missing or forged approva
   4. Atomowy przydział zachowuje tożsamości agentów z wcześniejszych przebiegów: przy ponowieniu nie można usunąć agenta, do którego odwołuje się historia. Dodano testy zastępstwa, alternatywnego profilu o tym samym ID i ochrony historii.
 - Zmodyfikowane pliki: `TeamRunEngine.kt`, `MainActivity.kt`, `MasterTaskQueueStore.kt`, `TeamRunEngineNetworkTest.kt`, `MasterTaskQueueStoreTest.kt`, `MasterQueueAssignmentPlannerTest.kt`, niniejszy checkpoint.
 - Commity kodu pakietu: `9ae0b48f37e234292b87d1df8537ce0648099958`, `3c143c06884765bd327f1a128011f8ce18e1f6dd`, `fcb4b234529c0c813540228c4ce9f09819e6a8e4`, `c4dfca6b7d217d4129dddc8da250ba52b73be46c`, `16019cb87945e9e209b96c62d8df5cd7a2526967`, `7a2026c880b4e26c9650f13ed4d28d803532b884`, `ca1980c2767783a704c8cf302b2527610cbfc045`, `3e1ce5ceb3c8819f514652b9c7a58f1194d41d84`.
-- Status: IMPLEMENTACJA ZAPISANA / CI PENDING. Nie rozpoczynać pakietu 28 przed zakończeniem testów, walidacji wrappera i kontroli raportów na końcowym SHA.
+- Weryfikacja końcowego SHA kodu `3875a572f0f091deba4123be2382c3faf74bef8a`: Unit Tests push run `45469858724` PASS i PR run `45469870838` PASS; oba raporty XML mają 1,426 testów, 0 failures, 0 errors, 0 skipped (133 pliki XML każdy). `TeamRunEngineNetworkTest`: 16/16 PASS; `MasterTaskQueueStoreTest`: 61/61 PASS; `MasterQueueAssignmentPlannerTest`: 4/4 PASS.
+- Gradle Wrapper Validation push `45469858763` PASS i PR `45469870586` PASS. Oba logi testowe potwierdzają `BUILD SUCCESSFUL`.
+- Artefakty raportów: `14956398380` (push) oraz `14958130472` (PR); oba pobrane i sprawdzone.
+- Status: PAKIET 27 ZALICZONY — CI, testy, wrapper i artefakty zweryfikowane na końcowym SHA kodu.
 - Ograniczenie bezpieczeństwa: automatyczne zastępstwo jest ograniczone do pierwszego przebiegu, zanim wysłano żądanie API. Po wcześniejszym przebiegu nie zmieniamy listy agentów, bo zachowujemy pełną proweniencję historii; niejednoznacznych żądań POST nie ponawiamy.
 - Nie zmieniono repozytorium, gałęzi, PR #3, base branch, numeru wersji ani ustawień workflow. Nie uruchomiono ręcznie CI ani budowy APK.
