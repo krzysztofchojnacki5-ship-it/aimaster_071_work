@@ -271,3 +271,18 @@ Cover unauthorized create/update/delete, scope escape, missing or forged approva
 - Status: PAKIET 25 ZALICZONY — CI, testy, wrapper i artefakty zweryfikowane na końcowym SHA kodu.
 - Granica zakresu: planista jest teraz używany w rzeczywistym routingu wiadomości czatu, ale trwałe tworzenie i finalizacja rekordów kolejki dla każdego uruchomienia zespołu oraz automatyczne zastępstwa agentów pozostają osobnym etapem integracji. `assignPlanned` pozostaje atomowym API kolejki i nie jest jeszcze wywoływane przez przepływ czatu.
 - Nie zmieniono repozytorium, gałęzi, PR #3, base branch, numeru wersji ani ustawień workflow. Nie uruchomiono ręcznie CI ani budowy APK.
+
+
+## Implementation checkpoint — pakiet 26 / automatyczny przydział zadań kolejki przez MASTER (2026-11-24)
+
+- Baza: pakiet 25 zaliczony na kodowym SHA `cb4e626fd3fe78bd88d318bcdca5b09934af3ae3`: dwa przebiegi Unit Tests PASS, oba raporty XML po 1,418 testów i 0 failures/errors/skipped; oba przebiegi Gradle Wrapper Validation PASS. Dokumentacyjny HEAD `320ae8a8f46e38174b1104c7762caacbc14cead5` różni się od testowanego SHA wyłącznie plikiem planu.
+- Cztery logiczne zmiany pakietu:
+  1. Dodano `MasterQueueAssignmentPlanner`, który buduje propozycję dla konkretnego zadania kolejki, zachowuje dokładne `updatedAt/runId` i odrzuca niedostępną kolejkę, brak zadania lub niewłaściwy stan.
+  2. Centrum Zadań otrzymało akcję „MASTER — DOBIERZ AGENTÓW”. MASTER uwzględnia aktywne przydziały, dopasowanie kompetencji i dostawców gotowych oraz dozwolonych przez politykę kosztów; użytkownik zatwierdza propozycję przed zapisem.
+  3. Zatwierdzenie korzysta z atomowego `MasterTaskQueueStore.assignPlanned`, które ponownie sprawdza snapshot, duplikat celu i limit obciążenia. Naprawiono też nadmierną blokadę krótkich celów: heurystyka duplikatów pomija cele krótsze niż 40 znaków zamiast odrzucać każdy taki przydział.
+  4. Dodano testy planowania z dokładnym snapshotem kolejki, obciążonym agentem, niedostępnym providerem, niedostępną kolejką, niewłaściwym stanem zadania oraz krótkim celem.
+- Zmodyfikowane pliki: `MasterQueueAssignmentPlanner.kt`, `MasterQueueAssignmentPlannerTest.kt`, `MainActivity.kt`, `MasterTaskQueueStore.kt`, `MasterTaskQueueStoreTest.kt`, niniejszy checkpoint.
+- Commity kodu pakietu: `0a1c97a1a557e8b0ce83551531b95f54ae44bc4f`, `9c883a15b5e01d2e7c6b6940f78c2df94334a0e3`, `235d40c73af600579da809b065d7aaab6e8a942e`, `0a3169edd85e1f6d62391406c2629b70892413a6`, `88e184f1dfda6ccd4837683d18b42310d1c173d6`.
+- Status: IMPLEMENTACJA ZAPISANA / CI PENDING. Nie rozpoczynać pakietu 27 przed zakończeniem testów, walidacji wrappera i kontroli artefaktów na końcowym SHA.
+- Granica zakresu: przydział automatyczny jest teraz dostępny dla zadań w Centrum Zadań i używa istniejącego silnika wykonawczego po zatwierdzeniu. Automatyczne zastępowanie agenta po błędzie/429 oraz wznowienie przez alternatywnego specjalistę pozostaje osobnym etapem.
+- Nie zmieniono repozytorium, gałęzi, PR #3, base branch, numeru wersji ani ustawień workflow. Nie uruchomiono ręcznie CI ani budowy APK.
