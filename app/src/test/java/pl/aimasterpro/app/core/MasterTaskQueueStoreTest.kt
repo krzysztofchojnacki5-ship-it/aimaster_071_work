@@ -1536,4 +1536,40 @@ class MasterTaskQueueStoreTest {
             MasterTaskQueueStore.snapshot(context).tasks.single().assignedAgentIds
         )
     }
+
+    @Test fun plannedAssignmentPreservesHistoricalAgentsAfterFirstRun() {
+        assertTrue(MasterTaskQueueStore.enqueue(
+            context, "planned-history-002", "Zachowaj historię",
+            "Preserve all prior assigned agent identities when retrying a durable task.", now = 50L
+        ))
+        val queued = MasterTaskQueueStore.snapshot(context).tasks.single()
+        val original = "critical-reviewer"
+        assertTrue(MasterTaskQueueStore.assignPlanned(
+            context, queued.id, listOf(original), queued.updatedAt, queued.runId, now = 51L
+        ))
+        assertTrue(MasterTaskQueueStore.transition(
+            context, queued.id, "MASTER", MasterTaskQueueStore.Status.RUNNING,
+            "Start original run.", 52L,
+            expectedCurrentRunId = 0,
+            expectedAssignedAgentIds = listOf(original)
+        ))
+        val running = MasterTaskQueueStore.snapshot(context).tasks.single()
+        assertTrue(MasterTaskQueueStore.transition(
+            context, running.id, "MASTER", MasterTaskQueueStore.Status.BLOCKED,
+            "Interrupt original run.", 53L, expectedCurrentRunId = running.runId
+        ))
+        assertTrue(MasterTaskQueueStore.transition(
+            context, running.id, "MASTER", MasterTaskQueueStore.Status.QUEUED,
+            "Retry from beginning.", 54L, expectedCurrentRunId = running.runId
+        ))
+        val retry = MasterTaskQueueStore.snapshot(context).tasks.single()
+        assertFalse(MasterTaskQueueStore.assignPlanned(
+            context, retry.id, listOf("unit-test-engineer"),
+            retry.updatedAt, retry.runId, now = 55L
+        ))
+        assertTrue(MasterTaskQueueStore.assignPlanned(
+            context, retry.id, listOf(original, "unit-test-engineer"),
+            retry.updatedAt, retry.runId, now = 56L
+        ))
+    }
 }
