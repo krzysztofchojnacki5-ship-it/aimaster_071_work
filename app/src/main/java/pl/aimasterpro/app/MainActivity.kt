@@ -405,6 +405,10 @@ class MainActivity : Activity() {
     }
 
     private fun showShell(title: String) {
+        if (title != "Centrum") {
+            stopMasterOperationsAutoRefresh()
+            masterOperationsSummaryText = null
+        }
         if (title != "Diagnostyka") {
             stopDiagnosticsAutoRefresh()
             diagnosticsEventContainer = null
@@ -6788,6 +6792,27 @@ class MainActivity : Activity() {
         target.text = buildMasterOperationsSummaryText()
     }
 
+    private fun scheduleMasterOperationsAutoRefresh() {
+        if (masterOperationsRefreshRunnable != null || screen != "Centrum" || masterOperationsSummaryText == null) return
+        val refresh = object : Runnable {
+            override fun run() {
+                if (screen != "Centrum" || isFinishing || isDestroyed || masterOperationsSummaryText == null) {
+                    masterOperationsRefreshRunnable = null
+                    return
+                }
+                refreshMasterOperationsSummary()
+                masterOperationsRefreshHandler.postDelayed(this, 5_000L)
+            }
+        }
+        masterOperationsRefreshRunnable = refresh
+        masterOperationsRefreshHandler.postDelayed(refresh, 5_000L)
+    }
+
+    private fun stopMasterOperationsAutoRefresh() {
+        masterOperationsRefreshRunnable?.let(masterOperationsRefreshHandler::removeCallbacks)
+        masterOperationsRefreshRunnable = null
+    }
+
     private fun showCommandCenter() {
         val col = content
         col.setPadding(dp(16), dp(14), dp(16), dp(24))
@@ -7273,6 +7298,7 @@ class MainActivity : Activity() {
             AlertDialog.Builder(this).setTitle("Odzyskiwanie zadań").setMessage(body)
                 .setPositiveButton("Kopiuj") { _, _ -> copyText(body) }.setNegativeButton("Zamknij", null).show()
         })
+        scheduleMasterOperationsAutoRefresh()
     }
 
     private fun addCompanionTrustCard() {
@@ -9515,6 +9541,7 @@ class MainActivity : Activity() {
 
     override fun onResume() {
         super.onResume()
+        if (screen == "Centrum") scheduleMasterOperationsAutoRefresh()
         if (screen == "Diagnostyka") scheduleDiagnosticsAutoRefresh()
         if (screen == "Rozmowy") {
             refreshQueueCommunicationTimeline()
@@ -9523,12 +9550,15 @@ class MainActivity : Activity() {
     }
 
     override fun onPause() {
+        stopMasterOperationsAutoRefresh()
         stopDiagnosticsAutoRefresh()
         stopQueueCommunicationAutoRefresh()
         super.onPause()
     }
 
     override fun onDestroy() {
+        stopMasterOperationsAutoRefresh()
+        masterOperationsSummaryText = null
         stopDiagnosticsAutoRefresh()
         stopQueueCommunicationAutoRefresh()
         cancelPendingCatalogSearch()
