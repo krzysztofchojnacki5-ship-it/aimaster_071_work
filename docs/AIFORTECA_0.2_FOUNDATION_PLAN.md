@@ -307,3 +307,17 @@ Cover unauthorized create/update/delete, scope escape, missing or forged approva
 - Status: PAKIET 27 ZALICZONY — CI, testy, wrapper i artefakty zweryfikowane na końcowym SHA kodu.
 - Ograniczenie bezpieczeństwa: automatyczne zastępstwo jest ograniczone do pierwszego przebiegu, zanim wysłano żądanie API. Po wcześniejszym przebiegu nie zmieniamy listy agentów, bo zachowujemy pełną proweniencję historii; niejednoznacznych żądań POST nie ponawiamy.
 - Nie zmieniono repozytorium, gałęzi, PR #3, base branch, numeru wersji ani ustawień workflow. Nie uruchomiono ręcznie CI ani budowy APK.
+
+
+## Implementation checkpoint — pakiet 28 / klasyfikacja bezpiecznych ponowień providerów (2026-11-24)
+
+- Baza: pakiet 27 zaliczony na kodowym SHA `3875a572f0f091deba4123be2382c3faf74bef8a`; dwa przebiegi Unit Tests PASS, oba raporty XML po 1,426 testów i 0 failures/errors/skipped; oba przebiegi Wrapper Validation PASS. Dokumentacyjny HEAD `bd3bcc4868c9908b910e7da610713ecac0bc74f3` zawiera wyłącznie aktualizację checkpointu i również przeszedł Unit Tests oraz Wrapper Validation.
+- Cztery logiczne zmiany pakietu:
+  1. TeamRunEngine klasyfikuje wyczerpane 429/quota/cooldown oraz DNS/CONNECT przed wysłaniem POST jako `SAFE_RETRY` i zwraca status `BLOCKED`, który zachowuje możliwość ponowienia.
+  2. Klasyfikacja jest fail-closed: `requestMayHaveBeenProcessed=true`, timeout/niejednoznaczny POST, błędy autoryzacji i anulowanie nie otrzymują oznaczenia SAFE_RETRY i pozostają terminalne.
+  3. Checkpoint i wynik agenta zapisują wyłącznie ustrukturyzowaną kategorię błędu oraz znacznik `SAFE_RETRY`; nie zapisują treści odpowiedzi providera ani surowych wyjątków.
+  4. Dodano testy graniczne dla 429, CONNECT, 401 oraz test finalizatora potwierdzający, że bezpieczne błędy pozostają BLOCKED, a nie FAILED.
+- Zmodyfikowane pliki: `TeamRunEngine.kt`, `TeamRunEngineNetworkTest.kt`, `QueueExecutionResultFinalizerTest.kt`, niniejszy checkpoint.
+- Commity kodu pakietu: `f0cdd1888d308d9831eb5a1075d4f05909fb6f5c`, `d83cf4eff21925dfd98f3aa7b6b2bf2e30f26ae4`, `6689fc6c664efa134cab5fd0a8359c8892c67b77`.
+- Status: IMPLEMENTACJA ZAPISANA / CI PENDING. Nie rozpoczynać pakietu 29 przed zakończeniem testów, walidacji wrappera i kontroli raportów na końcowym SHA.
+- Nie zmieniono repozytorium, gałęzi, PR #3, base branch, numeru wersji ani ustawień workflow. Nie uruchomiono ręcznie CI ani budowy APK.
