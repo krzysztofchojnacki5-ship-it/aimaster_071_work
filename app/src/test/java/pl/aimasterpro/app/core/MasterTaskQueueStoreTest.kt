@@ -1496,4 +1496,44 @@ class MasterTaskQueueStoreTest {
         assertEquals(MasterTaskQueueStore.Status.ASSIGNED, assigned.status)
         assertEquals(listOf("critical-reviewer"), assigned.assignedAgentIds)
     }
+
+    @Test fun plannedRetryCannotDropAgentsReferencedByPriorRunHistory() {
+        assertTrue(MasterTaskQueueStore.enqueue(
+            context, "planned-history-001", "Historia przydziału",
+            "Review durable assignment history and preserve prior agent provenance.", now = 40L
+        ))
+        val first = MasterTaskQueueStore.snapshot(context).tasks.single()
+        val originalAgent = "critical-reviewer"
+        assertTrue(MasterTaskQueueStore.assignPlanned(
+            context, first.id, listOf(originalAgent), first.updatedAt, first.runId, now = 41L
+        ))
+        assertTrue(MasterTaskQueueStore.transition(
+            context, first.id, "MASTER", MasterTaskQueueStore.Status.RUNNING,
+            "Start first execution.", 42L,
+            expectedCurrentRunId = 0,
+            expectedAssignedAgentIds = listOf(originalAgent)
+        ))
+        val running = MasterTaskQueueStore.snapshot(context).tasks.single()
+        assertTrue(MasterTaskQueueStore.transition(
+            context, first.id, "MASTER", MasterTaskQueueStore.Status.BLOCKED,
+            "First run interrupted.", 43L, expectedCurrentRunId = running.runId
+        ))
+        assertTrue(MasterTaskQueueStore.transition(
+            context, first.id, "MASTER", MasterTaskQueueStore.Status.QUEUED,
+            "Restart from beginning approved.", 44L, expectedCurrentRunId = running.runId
+        ))
+        val retry = MasterTaskQueueStore.snapshot(context).tasks.single()
+        assertFalse(MasterTaskQueueStore.assignPlanned(
+            context, retry.id, listOf("unit-test-engineer"),
+            retry.updatedAt, retry.runId, now = 45L
+        ))
+        assertTrue(MasterTaskQueueStore.assignPlanned(
+            context, retry.id, listOf(originalAgent, "unit-test-engineer"),
+            retry.updatedAt, retry.runId, now = 46L
+        ))
+        assertEquals(
+            listOf(originalAgent, "unit-test-engineer"),
+            MasterTaskQueueStore.snapshot(context).tasks.single().assignedAgentIds
+        )
+    }
 }
