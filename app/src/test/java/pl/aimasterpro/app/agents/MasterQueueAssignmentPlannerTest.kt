@@ -102,4 +102,30 @@ class MasterQueueAssignmentPlannerTest {
         assertFalse(notAssignable.isAssignable)
         assertEquals("TASK_NOT_ASSIGNABLE", notAssignable.rejectionReason)
     }
+
+    @Test fun pausedFirstRunCanBeReplannedToAReadySubstitute() {
+        val unavailable = agent("unavailable-specialist")
+        val substitute = agent("ready-substitute")
+        val paused = task(
+            "queue-replacement",
+            MasterTaskQueueStore.Status.PAUSED,
+            assigned = listOf(unavailable.id),
+            updatedAt = 222L,
+            runId = 0
+        )
+        val decision = MasterQueueAssignmentPlanner.plan(
+            queue = MasterTaskQueueStore.Snapshot(
+                MasterTaskQueueStore.ReadStatus.AVAILABLE,
+                tasks = listOf(paused)
+            ),
+            taskId = paused.id,
+            enabledCatalog = listOf(unavailable, substitute),
+            providerReadyAgentIds = setOf(substitute.id),
+            maxAgents = 1
+        )
+        assertTrue(decision.isAssignable)
+        assertEquals(listOf(substitute.id), decision.selectedAgentIds)
+        assertEquals(222L, decision.expectedUpdatedAt)
+        assertEquals(0, decision.expectedRunId)
+    }
 }
