@@ -129,6 +129,86 @@ class TeamRunEngineNetworkTest {
     }
 
     @Test
+    fun exhausted429IsBlockedWithExplicitSafeRetryClassification() {
+        ProviderQuotaScheduler.resetForTests()
+        val server = TestHttpServer { _, _ -> 429 to "rate limit" }
+        try {
+            val config = ProviderConfig(
+                "retry-429", "Retry 429", ProviderKind.OPENAI_COMPATIBLE,
+                "http://127.0.0.1:${server.address.port}/v1", "retry-model", ""
+            )
+            val checkpoints = Collections.synchronizedList(mutableListOf<String>())
+            val unknownUsage = AtomicInteger()
+            val result = TeamRunEngine(ProviderClient()).runBatch(
+                tasks = listOf(TeamTask("retry-429-task", "qa-architect", "Rate limit", "Return a report")),
+                provider = config,
+                agentProvidersMap = mapOf("qa-architect" to config),
+                isFreeProvider = { true },
+                isProviderAllowed = { true },
+                mode = WorkMode.PLANNING,
+                onTaskState = { _, state, detail, _, _, _ ->
+                    if (state == "BLOCKED") checkpoints.add(detail)
+                },
+                onUnknownUsage = { _, _, _, _, _ -> unknownUsage.incrementAndGet() }
+            ).single()
+
+            assertEquals(TeamTaskResult.Status.BLOCKED, result.status)
+            assertTrue(result.report.startsWith("SAFE_RETRY:"))
+            assertTrue(checkpoints.any { it.startsWith("SAFE_RETRY:") })
+            assertEquals("A known 429 response must not be billed as ambiguous usage", 0, unknownUsage.get())
+            assertTrue(server.requestCount.get() > 0)
+        } finally {
+            ProviderQuotaScheduler.resetForTests()
+            server.stop(0)
+        }
+    }
+
+    @Test
+    fun connectFailureBeforePostIsMarkedSafeToRetry() {
+        ProviderQuotaScheduler.resetForTests()
+        val config = ProviderConfig(
+            "retry-connect", "Retry connect", ProviderKind.OPENAI_COMPATIBLE,
+            "http://127.0.0.1:1/v1", "retry-model", ""
+        )
+        val result = TeamRunEngine(ProviderClient(connectTimeoutMs = 300, readTimeoutMs = 300)).runBatch(
+            tasks = listOf(TeamTask("retry-connect-task", "qa-architect", "Connect failure", "Return a report")),
+            provider = config,
+            agentProvidersMap = mapOf("qa-architect" to config),
+            isFreeProvider = { true },
+            isProviderAllowed = { true },
+            mode = WorkMode.PLANNING
+        ).single()
+        assertEquals(TeamTaskResult.Status.BLOCKED, result.status)
+        assertTrue(result.report.startsWith("SAFE_RETRY:"))
+        ProviderQuotaScheduler.resetForTests()
+    }
+
+    @Test
+    fun authenticationFailureRemainsTerminalAndIsNotMarkedSafeToRetry() {
+        ProviderQuotaScheduler.resetForTests()
+        val server = TestHttpServer { _, _ -> 401 to "unauthorized" }
+        try {
+            val config = ProviderConfig(
+                "retry-auth", "Retry auth", ProviderKind.OPENAI_COMPATIBLE,
+                "http://127.0.0.1:${server.address.port}/v1", "retry-model", ""
+            )
+            val result = TeamRunEngine(ProviderClient()).runBatch(
+                tasks = listOf(TeamTask("retry-auth-task", "qa-architect", "Auth failure", "Return a report")),
+                provider = config,
+                agentProvidersMap = mapOf("qa-architect" to config),
+                isFreeProvider = { true },
+                isProviderAllowed = { true },
+                mode = WorkMode.PLANNING
+            ).single()
+            assertEquals(TeamTaskResult.Status.FAILED, result.status)
+            assertFalse(result.report.startsWith("SAFE_RETRY:"))
+        } finally {
+            ProviderQuotaScheduler.resetForTests()
+            server.stop(0)
+        }
+    }
+
+    @Test
     fun requestCheckpointIsDurableBeforeHttpAndBlocksSendWhenPersistenceFails() {
         ProviderQuotaScheduler.resetForTests()
         val server = TestHttpServer { _, _ ->
