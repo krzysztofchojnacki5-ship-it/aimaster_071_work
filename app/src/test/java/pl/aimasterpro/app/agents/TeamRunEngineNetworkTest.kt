@@ -90,6 +90,45 @@ class TeamRunEngineNetworkTest {
         } finally { server.stop(0) }
     }
     @Test
+    fun sameProviderIdWithDifferentModelAndEndpointRemainsAValidFallbackProfile() {
+        ProviderQuotaScheduler.resetForTests()
+        val primaryServer = TestHttpServer { _, _ -> 429 to "rate limit" }
+        val fallbackServer = TestHttpServer { _, _ ->
+            200 to """{"choices":[{"message":{"content":"fallback-profile-report"}}],"usage":{"prompt_tokens":4,"completion_tokens":3,"total_tokens":7}}"""
+        }
+        try {
+            val primary = ProviderConfig(
+                "shared-provider-id", "Primary profile", ProviderKind.OPENAI_COMPATIBLE,
+                "http://127.0.0.1:${primaryServer.address.port}/v1", "primary-model", ""
+            )
+            val fallback = primary.copy(
+                name = "Alternate profile",
+                baseUrl = "http://127.0.0.1:${fallbackServer.address.port}/v1",
+                model = "alternate-model"
+            )
+            val result = TeamRunEngine(ProviderClient()).runBatch(
+                tasks = listOf(TeamTask("profile-fallback", "qa-architect", "Fallback", "Return a report")),
+                provider = primary,
+                agentProvidersMap = mapOf("qa-architect" to primary),
+                fallbackProviders = listOf(primary, fallback, fallback),
+                isFreeProvider = { true },
+                isProviderAllowed = { true },
+                mode = WorkMode.PLANNING
+            ).single()
+
+            assertEquals(TeamTaskResult.Status.COMPLETED, result.status)
+            assertEquals("shared-provider-id", result.providerId)
+            assertEquals("alternate-model", result.model)
+            assertEquals(1, primaryServer.requestCount.get())
+            assertEquals("Duplicate fallback profiles must be collapsed", 1, fallbackServer.requestCount.get())
+        } finally {
+            ProviderQuotaScheduler.resetForTests()
+            primaryServer.stop(0)
+            fallbackServer.stop(0)
+        }
+    }
+
+    @Test
     fun requestCheckpointIsDurableBeforeHttpAndBlocksSendWhenPersistenceFails() {
         ProviderQuotaScheduler.resetForTests()
         val server = TestHttpServer { _, _ ->
