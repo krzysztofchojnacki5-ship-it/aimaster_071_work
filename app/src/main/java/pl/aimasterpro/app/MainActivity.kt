@@ -6753,9 +6753,17 @@ class MainActivity : Activity() {
     }
 
     private fun buildMasterOperationsSummaryText(): String {
+        val agentCatalog = pl.aimasterpro.app.core.AgentManagerStore.snapshot(this)
+        val knownAgents = if (agentCatalog.status == pl.aimasterpro.app.core.AgentManagerStore.ReadStatus.AVAILABLE)
+            AgentCatalog.all + agentCatalog.customAgents else emptyList()
+        val enabledAgentIds = if (agentCatalog.status == pl.aimasterpro.app.core.AgentManagerStore.ReadStatus.AVAILABLE)
+            knownAgents.map { it.id }.filterNot { it in agentCatalog.disabledIds }.toSet() else emptySet()
         val overview = pl.aimasterpro.app.core.MasterOperationsOverview.build(
             pl.aimasterpro.app.core.MasterTaskQueueStore.snapshot(this),
-            pl.aimasterpro.app.core.AgentHandoffStore.snapshot(this)
+            pl.aimasterpro.app.core.AgentHandoffStore.snapshot(this),
+            agents = knownAgents,
+            enabledAgentIds = enabledAgentIds,
+            agentCatalogAvailable = agentCatalog.status == pl.aimasterpro.app.core.AgentManagerStore.ReadStatus.AVAILABLE
         )
         val output = StringBuilder()
         output.appendLine("KOLEJKA MASTER: ${overview.queueStatus}")
@@ -6781,6 +6789,40 @@ class MainActivity : Activity() {
             overview.recentAgents.take(5).forEach { agent ->
                 val provider = agent.providerLabel.ifBlank { "provider/model nieustalony" }
                 output.appendLine("• ${agent.agentId} — ${agent.status} • ${agent.taskId} • run #${agent.runId} • $provider")
+            }
+        }
+        output.appendLine("\\nOBCIĄŻENIE I DOSTĘPNOŚĆ AGENTÓW")
+        if (!overview.agentCatalogAvailable) {
+            output.appendLine("Katalog agentów NIEDOSTĘPNY — nie wyciągam wniosków o dostępności.")
+        } else if (overview.queueStatus != pl.aimasterpro.app.core.MasterTaskQueueStore.ReadStatus.AVAILABLE) {
+            output.appendLine("Obciążenie NIEDOSTĘPNE — magazyn kolejki nie został bezpiecznie odczytany.")
+        } else {
+            val busiestAgents = overview.agentWorkloads
+                .sortedWith(compareByDescending<pl.aimasterpro.app.core.MasterOperationsOverview.AgentWorkload> {
+                    it.runningTasks * 10 + it.assignedTasks * 4 + it.blockedTasks * 2 + it.queuedTasks
+                }.thenBy { it.name })
+                .take(8)
+            busiestAgents.forEach { agent ->
+                output.appendLine("• ${agent.name} — ${agent.availability} • RUNNING: ${agent.runningTasks}, ASSIGNED: ${agent.assignedTasks}, BLOCKED/PAUSED: ${agent.blockedTasks}, QUEUED: ${agent.queuedTasks}")
+            }
+            if (overview.agentWorkloads.size > busiestAgents.size) {
+                output.appendLine("Pozostali agenci bez aktywnego obciążenia lub poza TOP 8: ${overview.agentWorkloads.size - busiestAgents.size}.")
+            }
+        }
+        if (overview.agentConflicts.isNotEmpty()) {
+            output.appendLine("\\nKONFLIKTY PRZYDZIAŁÓW")
+            overview.agentConflicts.take(8).forEach { conflict ->
+                val label = when (conflict.kind) {
+                    pl.aimasterpro.app.core.MasterOperationsOverview.ConflictKind.MULTIPLE_RUNNING_TASKS -> "równoległe RUNNING"
+                    pl.aimasterpro.app.core.MasterOperationsOverview.ConflictKind.DISABLED_AGENT_ASSIGNED -> "agent wyłączony z aktywnym przydziałem"
+                }
+                output.appendLine("• ${conflict.agentId} — $label • ${conflict.taskIds.joinToString(", ")}")
+            }
+        }
+        if (overview.duplicateWorkGroups.isNotEmpty()) {
+            output.appendLine("\\nMOŻLIWE DUPLIKATY ZADAŃ — identyczny, długi cel w aktywnej kolejce")
+            overview.duplicateWorkGroups.take(5).forEach { group ->
+                output.appendLine("• ${group.title} • ${group.taskIds.joinToString(", ")}")
             }
         }
         if (!overview.isComplete) output.appendLine("\\nUWAGA: podsumowanie częściowe. Sprawdź Diagnostykę przed decyzjami operacyjnymi.")
