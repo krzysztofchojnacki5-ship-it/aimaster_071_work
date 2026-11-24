@@ -175,6 +175,7 @@ object MasterTaskQueueStore {
             current.updatedAt != expectedUpdatedAt || current.runId != expectedRunId ||
             agentIds.isEmpty() || agentIds.size > 8 || agentIds.distinct().size != agentIds.size ||
             maxActiveTasksPerAgent !in 1..4 || now < 0L ||
+            (current.runId > 0 && !agentIds.containsAll(current.assignedAgentIds)) ||
             agentIds.any { !AgentManagerStore.isEnabled(context, it) } ||
             current.dependencies.any { dep -> tasks.none { it.id == dep && it.status == Status.COMPLETED } }) {
             return@mutate null
