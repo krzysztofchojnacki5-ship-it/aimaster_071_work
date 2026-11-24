@@ -239,3 +239,18 @@ Cover unauthorized create/update/delete, scope escape, missing or forged approva
 - Zmodyfikowane pliki: `MasterOperationsOverview.kt`, `MainActivity.kt`, `MasterOperationsOverviewTest.kt`.
 - Zmiany źródłowe zapisano na wskazanej gałęzi. Pełne CI dla końcowego HEAD pakietu 23 pozostaje do odczytu po zakończeniu automatycznie uruchomionych workflow; do tego czasu pakiet ma status IMPLEMENTACJA ZAPISANA / CI PENDING.
 - Nie zmieniono identyfikacji wydania (`versionName=0.2`, `versionCode=3`), base branch ani PR. Nie wykonano ręcznego ponownego uruchomienia workflow ani budowy APK.
+
+
+## Implementation checkpoint — pakiet 24 / deterministyczny planista i bezpieczny przydział MASTER (2026-11-24)
+
+- Baza: pakiet 23 zweryfikowany na HEAD `dc4d5602dfd75e0849865279607b8026f618d3df`; Unit Tests run `45435510527` PASS (1,408 testów, 0 failures/errors/skipped), Gradle Wrapper Validation run `45435510246` PASS.
+- Cztery logiczne zmiany pakietu:
+  1. Dodano czysty, deterministyczny `MasterAgentCoordinator`: ranking według dopasowania kompetencji, obciążenia, stabilnego tie-breaku oraz limitu agentów.
+  2. Planista odrzuca wyłączonych agentów, agentów bez potwierdzonej gotowości dostawcy i agentów na limicie obciążenia; nie tworzy dopasowania, gdy brak dowodów kompetencji. Gotowość dostawcy jest wejściowym snapshotem dostarczanym przez koordynatora — planista nie udaje aktywnego testu sieci.
+  3. Dodano atomową ścieżkę `MasterTaskQueueStore.assignPlanned`: wymaga zgodności `updatedAt/runId`, blokuje długie identyczne cele w aktywnych zadaniach oraz przydział agenta ponad limit. Walidacja i zapis odbywają się pod blokadą kolejki.
+  4. Dodano testy regresyjne rankingu, tie-breaku, wyłączeń, braku gotowego providera, przeciążenia, braku dopasowania, nieprawidłowego snapshotu, duplikatów zadań i nieaktualnego planu.
+- Zmodyfikowane pliki: `MasterAgentCoordinator.kt`, `MasterAgentCoordinatorTest.kt`, `MasterTaskQueueStore.kt`, `MasterTaskQueueStoreTest.kt`, niniejszy checkpoint.
+- Commity pakietu: `a9c99c1e2edffb137e25d90e84439b5947eda07d`, `32837c33c489c004f109139cd81111385d27b904`, `7b6e1bd719da5efb9bb64093d112bf3f722faef3`, `7a1e7e200d4defdd06912bf56af639ed5d36c3c2`.
+- Status: IMPLEMENTACJA ZAPISANA / CI PENDING. Nie deklarować PASS przed zakończeniem workflow i odczytem raportów XML.
+- Ograniczenie zakresu: pakiet dostarcza planistę i atomowy kontrakt zatwierdzania przydziału; nie podłącza jeszcze automatycznego uruchamiania zadań z kolejki ani aktywnego health-check providera. To pozostaje kolejnym krokiem integracyjnym po weryfikacji tego pakietu.
+- Nie zmieniono `versionName=0.2`, `versionCode=3`, base branch ani PR #3. Nie uruchomiono ręcznie workflow ani budowy APK.
