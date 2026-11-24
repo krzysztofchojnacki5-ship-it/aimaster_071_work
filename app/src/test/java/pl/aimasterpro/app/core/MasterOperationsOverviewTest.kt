@@ -110,7 +110,7 @@ class MasterOperationsOverviewTest {
             )),
             handoffs()
         )
-        assertEquals(2, result.recentAgents.size)
+        assertEquals(3, result.recentAgents.size)
         val current = result.recentAgents.single { it.taskId == "task-overview-1" }
         assertEquals(3, current.runId)
         assertEquals("COMPLETED", current.status)
