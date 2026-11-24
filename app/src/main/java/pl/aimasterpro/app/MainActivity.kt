@@ -7871,10 +7871,15 @@ class MainActivity : Activity() {
                             }.setNegativeButton("Anuluj", null)
                             .setPositiveButton("Zapisz przydział") { _, _ ->
                                 val ids = catalog.indices.filter { selected[it] }.map { catalog[it].id }
-                                if (queueStore.assign(this, task.id, ids)) {
+                                if (queueStore.assignPlanned(
+                                        this, task.id, ids,
+                                        expectedUpdatedAt = task.updatedAt,
+                                        expectedRunId = task.runId,
+                                        maxActiveTasksPerAgent = 1
+                                    )) {
                                     toast("Zapisano przydział: ${ids.size} agentów.")
                                     showShell("Zadania"); showTasksCenter()
-                                } else toast("Przydział odrzucony. Sprawdź status zadania i aktywność agentów.")
+                                } else toast("Przydział odrzucony: snapshot jest nieaktualny, agent jest zajęty albo cel jest duplikatem.")
                             }.show()
                     }
                 }
