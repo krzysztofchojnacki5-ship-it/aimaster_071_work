@@ -39,7 +39,8 @@ object MasterAgentCoordinator {
         providerReadyAgentIds: Set<String>,
         activeAssignments: List<List<String>>,
         maxAgents: Int = 3,
-        maxActiveTasksPerAgent: Int = 1
+        maxActiveTasksPerAgent: Int = 1,
+        includeUnmatchedCandidates: Boolean = false
     ): Plan {
         if (activeAssignments.size > 120 || maxActiveTasksPerAgent !in 1..8 ||
             activeAssignments.any { team -> team.size > 8 || team.any(String::isBlank) }) {
@@ -54,7 +55,8 @@ object MasterAgentCoordinator {
         val loads = catalog.associate { agent ->
             agent.id to AgentLoad(activeCounts[agent.id] ?: 0, maxActiveTasksPerAgent)
         }
-        return plan(objective, catalog, enabledAgentIds, providerReadyAgentIds, loads, maxAgents)
+        return plan(objective, catalog, enabledAgentIds, providerReadyAgentIds, loads, maxAgents,
+            includeUnmatchedCandidates)
     }
 
     fun plan(
@@ -63,14 +65,25 @@ object MasterAgentCoordinator {
         enabledAgentIds: Set<String>,
         providerReadyAgentIds: Set<String>,
         loads: Map<String, AgentLoad> = emptyMap(),
-        maxAgents: Int = 3
+        maxAgents: Int = 3,
+        includeUnmatchedCandidates: Boolean = false
     ): Plan {
         if (objective.isBlank() || objective.length > 1_200 || catalog.isEmpty() ||
             enabledAgentIds.isEmpty() || maxAgents !in 1..8) {
             return Plan(emptyList(), emptyList(), emptyMap(), "INVALID_INPUT")
         }
 
-        val ranked = AgentCatalog.scoreForPrompt(objective, catalog)
+        val keywordMatches = AgentCatalog.scoreForPrompt(objective, catalog).associateBy { it.agent.id }
+        val catalogOrder = catalog.mapIndexed { index, agent -> agent.id to index }.toMap()
+        val ranked = if (includeUnmatchedCandidates) {
+            catalog.map { agent ->
+                AgentCatalog.AgentMatch(agent, keywordMatches[agent.id]?.keywordScore ?: 0)
+            }.sortedWith(compareByDescending<AgentCatalog.AgentMatch> { it.keywordScore }
+                .thenBy { catalogOrder[it.agent.id] ?: Int.MAX_VALUE })
+        } else {
+            keywordMatches.values.sortedWith(compareByDescending<AgentCatalog.AgentMatch> { it.keywordScore }
+                .thenBy { it.agent.id })
+        }
         val rejected = linkedMapOf<String, String>()
         val eligible = mutableListOf<Candidate>()
 
@@ -94,6 +107,7 @@ object MasterAgentCoordinator {
         val ordered = eligible.sortedWith(
             compareByDescending<Candidate> { it.totalScore }
                 .thenBy { it.activeTasks }
+                .thenBy { if (includeUnmatchedCandidates) catalogOrder[it.agent.id] ?: Int.MAX_VALUE else Int.MAX_VALUE }
                 .thenBy { it.agent.id }
         )
         val selected = ordered.take(maxAgents).map { it.agent }
