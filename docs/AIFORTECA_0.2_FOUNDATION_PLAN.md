@@ -254,3 +254,18 @@ Cover unauthorized create/update/delete, scope escape, missing or forged approva
 - Status: IMPLEMENTACJA ZAPISANA / CI PENDING. Nie deklarować PASS przed zakończeniem workflow i odczytem raportów XML.
 - Ograniczenie zakresu: pakiet dostarcza planistę i atomowy kontrakt zatwierdzania przydziału; nie podłącza jeszcze automatycznego uruchamiania zadań z kolejki ani aktywnego health-check providera. To pozostaje kolejnym krokiem integracyjnym po weryfikacji tego pakietu.
 - Nie zmieniono `versionName=0.2`, `versionCode=3`, base branch ani PR #3. Nie uruchomiono ręcznie workflow ani budowy APK.
+
+
+## Implementation checkpoint — pakiet 25 / integracja planisty z routingiem czatu MASTER (2026-11-24)
+
+- Baza: pakiet 24 na HEAD `e8b6752caf1eef878bd6131ab4705d6981f85afb` zweryfikowany: Unit Tests run `45437223468` i `45437239046` PASS; raport XML: 1,415 testów, 0 failures/errors/skipped; oba przebiegi Gradle Wrapper Validation PASS.
+- Cztery logiczne zmiany pakietu:
+  1. `MasterAgentCoordinator.planFromSnapshots` buduje deterministyczny obraz obciążenia z aktywnych przypisań kolejki i odrzuca niepoprawny snapshot.
+  2. Główny przepływ czatu MASTER pobiera snapshot `MasterTaskQueueStore` i przekazuje aktywne przypisania do planisty; obciążony agent nie zostaje wybrany ponad limit jednego aktywnego zadania.
+  3. Przed delegacją sprawdzana jest gotowość przypisanego dostawcy agenta oraz dozwolony fallback MASTER-a. Brak czytelnej kolejki, gotowego dostawcy lub kwalifikowanego agenta powoduje bezpieczny powrót do MASTER-only — bez pustego uruchomienia zespołu.
+  4. Dodano testy liczenia obciążenia z wielu aktywnych zespołów i fail-closed dla uszkodzonego snapshotu.
+- Zmodyfikowane pliki: `MasterAgentCoordinator.kt`, `MainActivity.kt`, `MasterAgentCoordinatorTest.kt`, niniejszy checkpoint.
+- Commity pakietu: `ae024ed17bcf60383ee724a8b6472de97c910acc`, `e4d4cc4ff94725d58b3ac14153ff5859060bd062`, `2f075164c2af90a40454a74cbd466553e5125027`.
+- Status: IMPLEMENTACJA ZAPISANA / CI PENDING. Nie deklarować PASS przed zakończeniem wszystkich workflow na końcowym SHA i odczytem raportów XML.
+- Granica zakresu: planista jest teraz używany w rzeczywistym routingu wiadomości czatu, ale trwałe tworzenie i finalizacja rekordów kolejki dla każdego uruchomienia zespołu oraz automatyczne zastępstwa agentów pozostają osobnym etapem integracji. `assignPlanned` pozostaje atomowym API kolejki i nie jest jeszcze wywoływane przez przepływ czatu.
+- Nie zmieniono repozytorium, gałęzi, PR #3, base branch, numeru wersji ani ustawień workflow. Nie uruchomiono ręcznie CI ani budowy APK.
