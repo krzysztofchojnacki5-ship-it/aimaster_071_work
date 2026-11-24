@@ -543,9 +543,12 @@ class TeamRunEngine(
                             // Keep only structured failure metadata in durable traces.
                             val safeRetryableProviderFailure = providerError != null &&
                                 !providerError.requestMayHaveBeenProcessed &&
-                                (providerError.httpCode == 429 || providerError.category in setOf(
-                                    "RATE_LIMIT_QUOTA", "RATE_LIMIT_COOLDOWN", "DNS_ERROR", "CONNECT_ERROR"
-                                ))
+                                (providerError.httpCode == 429 ||
+                                    providerError.category in setOf(
+                                        "RATE_LIMIT_QUOTA", "RATE_LIMIT_COOLDOWN", "DNS_ERROR", "CONNECT_ERROR"
+                                    ) ||
+                                    (providerError.phase == "CONNECT" &&
+                                        providerError.category in setOf("NETWORK_IO", "NETWORK_ERROR")))
                             onLog(agent.name, "MASTER", err,
                                 if (safeRetryableProviderFailure) "RETRYABLE_PROVIDER_FAILURE" else "ERROR")
                             // Checkpoints are durable recovery metadata, not a second error log.
