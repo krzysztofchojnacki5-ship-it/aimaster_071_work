@@ -8076,6 +8076,90 @@ class MainActivity : Activity() {
     }
 
     /**
+     * Replans an assigned task before its first API request when an assigned provider is no
+     * longer usable. The old team is retained until the user approves a ready replacement.
+     */
+    private fun proposeInitialQueueProviderReplacement(taskId: String) {
+        if (isThinking || activeQueueTaskId.isNotBlank() || store.isStorageUncertain() ||
+            !agentAssignmentsHealthy) {
+            toast("Nie można bezpiecznie przygotować zastępstwa w tej chwili.")
+            return
+        }
+        val queueStore = pl.aimasterpro.app.core.MasterTaskQueueStore
+        val before = queueStore.snapshot(this)
+        val current = before.tasks.firstOrNull { it.id == taskId }
+        if (before.status != pl.aimasterpro.app.core.MasterTaskQueueStore.ReadStatus.AVAILABLE ||
+            current == null || current.status != pl.aimasterpro.app.core.MasterTaskQueueStore.Status.ASSIGNED ||
+            current.runId != 0) {
+            toast("Automatyczne zastępstwo jest dozwolone wyłącznie przed pierwszym przebiegiem zadania.")
+            return
+        }
+        if (!queueStore.transition(
+                this, taskId, "MASTER",
+                pl.aimasterpro.app.core.MasterTaskQueueStore.Status.PAUSED,
+                "Wstrzymano przed pierwszym żądaniem API: co najmniej jeden przypisany profil dostawcy jest niedostępny.",
+                expectedCurrentRunId = 0
+            )) {
+            toast("Nie udało się bezpiecznie wstrzymać zadania. Nie wysłano żądań.")
+            return
+        }
+        val pausedQueue = queueStore.snapshot(this)
+        val catalogState = pl.aimasterpro.app.core.AgentManagerStore.snapshot(this)
+        if (pausedQueue.status != pl.aimasterpro.app.core.MasterTaskQueueStore.ReadStatus.AVAILABLE ||
+            catalogState.status != pl.aimasterpro.app.core.AgentManagerStore.ReadStatus.AVAILABLE) {
+            toast("Zadanie pozostaje wstrzymane: kolejka lub katalog agentów jest niedostępny.")
+            if (screen == "Zadania") { showShell("Zadania"); showTasksCenter() }
+            return
+        }
+        val catalog = pl.aimasterpro.app.core.AgentManagerStore.enabledCatalog(this)
+        val providerReadyIds = catalog.filter { spec ->
+            val role = pl.aimasterpro.app.agents.AgentProviderRouting.roleFor(spec)
+            val assignedId = agentProviders[role.name] ?: resolvedMasterProviderId().orEmpty()
+            val config = loadProvider(assignedId)
+            config != null && providerReady(config) && isProviderAllowedForRouting(config)
+        }.map { it.id }.toSet()
+        val decision = pl.aimasterpro.app.agents.MasterQueueAssignmentPlanner.plan(
+            queue = pausedQueue,
+            taskId = taskId,
+            enabledCatalog = catalog,
+            providerReadyAgentIds = providerReadyIds,
+            maxAgents = 4,
+            maxActiveTasksPerAgent = 1
+        )
+        if (!decision.isAssignable) {
+            toast("Zadanie pozostaje wstrzymane. Nie znaleziono bezpiecznego zastępstwa: ${decision.selection.reason}.")
+            if (screen == "Zadania") { showShell("Zadania"); showTasksCenter() }
+            return
+        }
+        val names = decision.selection.selectedAgents.joinToString("\n") { "• ${it.name} — ${it.category}" }
+        AlertDialog.Builder(this)
+            .setTitle("MASTER proponuje zastępczy zespół")
+            .setMessage(
+                "Wykryto niedostępny lub niedozwolony profil przed pierwszym żądaniem API. " +
+                    "Nie wysłano żadnego żądania.\n\nPoprzedni przydział: ${current.assignedAgentIds.joinToString(", ")}\n\n" +
+                    "Proponowany zespół:\n$names\n\nZatwierdzenie rozpocznie zadanie od nowego przydziału."
+            )
+            .setNegativeButton("Pozostaw wstrzymane", null)
+            .setPositiveButton("Zatwierdź zastępstwo") { _, _ ->
+                val saved = queueStore.assignPlanned(
+                    this,
+                    decision.taskId,
+                    decision.selectedAgentIds,
+                    expectedUpdatedAt = decision.expectedUpdatedAt,
+                    expectedRunId = decision.expectedRunId,
+                    maxActiveTasksPerAgent = 1
+                )
+                if (saved) {
+                    toast("Zapisano zastępczy zespół. Możesz teraz uruchomić zadanie.")
+                } else {
+                    toast("Zastępstwo odrzucone: snapshot kolejki się zmienił albo agent osiągnął limit.")
+                }
+                if (screen == "Zadania") { showShell("Zadania"); showTasksCenter() }
+            }
+            .show()
+    }
+
+    /**
      * Executes a durable queue item through the same provider routing, cost-policy guard,
      * Smart Budget, usage ledger, checkpoints and result archive used by MASTER chat.
      */
@@ -8194,7 +8278,11 @@ class MainActivity : Activity() {
         }
         if (configByAgent.values.any { it == null || !providerReady(it) || !isProviderAllowedForRouting(it) }) {
             activeQueueTaskId = ""
-            toast("Brak gotowego modelu dozwolonego przez politykę kosztów dla co najmniej jednego agenta. Nie wysłano żądań.")
+            if (!resumeExistingRun && task.runId == 0) {
+                proposeInitialQueueProviderReplacement(taskId)
+            } else {
+                toast("Brak gotowego modelu dozwolonego przez politykę kosztów. Zadanie zachowuje dotychczasowy przydział; nie wysłano żądań.")
+            }
             return
         }
         val configs = configByAgent.mapValues { it.value!! }
