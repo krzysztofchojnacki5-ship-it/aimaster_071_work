@@ -28,6 +28,35 @@ object MasterAgentCoordinator {
         val isAssignable: Boolean get() = selectedAgents.isNotEmpty()
     }
 
+    /**
+     * Builds a workload snapshot from currently assigned/running queue teams.
+     * Callers must pass only active assignments from a readable queue snapshot.
+     */
+    fun planFromSnapshots(
+        objective: String,
+        catalog: List<AgentSpec>,
+        enabledAgentIds: Set<String>,
+        providerReadyAgentIds: Set<String>,
+        activeAssignments: List<List<String>>,
+        maxAgents: Int = 3,
+        maxActiveTasksPerAgent: Int = 1
+    ): Plan {
+        if (activeAssignments.size > 120 || maxActiveTasksPerAgent !in 1..8 ||
+            activeAssignments.any { team -> team.size > 8 || team.any(String::isBlank) }) {
+            return Plan(emptyList(), emptyList(),
+                catalog.associate { it.id to "INVALID_WORKLOAD_SNAPSHOT" },
+                "INVALID_WORKLOAD_SNAPSHOT")
+        }
+        val activeCounts = activeAssignments.asSequence()
+            .flatten()
+            .groupingBy { it }
+            .eachCount()
+        val loads = catalog.associate { agent ->
+            agent.id to AgentLoad(activeCounts[agent.id] ?: 0, maxActiveTasksPerAgent)
+        }
+        return plan(objective, catalog, enabledAgentIds, providerReadyAgentIds, loads, maxAgents)
+    }
+
     fun plan(
         objective: String,
         catalog: List<AgentSpec>,
