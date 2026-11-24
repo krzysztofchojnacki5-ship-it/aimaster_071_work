@@ -6803,7 +6803,9 @@ class MainActivity : Activity() {
                 }.thenBy { it.name })
                 .take(8)
             busiestAgents.forEach { agent ->
-                output.appendLine("• ${agent.name} — ${agent.availability} • RUNNING: ${agent.runningTasks}, ASSIGNED: ${agent.assignedTasks}, BLOCKED/PAUSED: ${agent.blockedTasks}, QUEUED: ${agent.queuedTasks}")
+                val provider = agent.providerLabel.ifBlank { "model nieustalony" }
+                val activity = agent.latestActivityStatus.ifBlank { "brak bieżącego zdarzenia" }
+                output.appendLine("• ${agent.name} — ${agent.availability} • RUNNING: ${agent.runningTasks}, ASSIGNED: ${agent.assignedTasks}, BLOCKED/PAUSED: ${agent.blockedTasks}, QUEUED: ${agent.queuedTasks} • $provider • $activity")
             }
             if (overview.agentWorkloads.size > busiestAgents.size) {
                 output.appendLine("Pozostali agenci bez aktywnego obciążenia lub poza TOP 8: ${overview.agentWorkloads.size - busiestAgents.size}.")
