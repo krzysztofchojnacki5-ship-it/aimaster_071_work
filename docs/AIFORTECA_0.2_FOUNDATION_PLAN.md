@@ -289,3 +289,18 @@ Cover unauthorized create/update/delete, scope escape, missing or forged approva
 - Status: PAKIET 26 ZALICZONY — CI, testy, wrapper i artefakty zweryfikowane na końcowym SHA kodu.
 - Granica zakresu: przydział automatyczny jest teraz dostępny dla zadań w Centrum Zadań i używa istniejącego silnika wykonawczego po zatwierdzeniu. Automatyczne zastępowanie agenta po błędzie/429 oraz wznowienie przez alternatywnego specjalistę pozostaje osobnym etapem.
 - Nie zmieniono repozytorium, gałęzi, PR #3, base branch, numeru wersji ani ustawień workflow. Nie uruchomiono ręcznie CI ani budowy APK.
+
+
+## Implementation checkpoint — pakiet 27 / bezpieczne zastępstwa przed startem i failover profili (2026-11-24)
+
+- Baza: pakiet 26 zaliczony na kodowym SHA `62f813c0f5bc12781119c2b7beca164a940d8ca1`: Unit Tests push/PR PASS, oba raporty XML po 1,422 testy, 0 failures/errors/skipped; Wrapper Validation push/PR PASS; oba buildy testowe `BUILD SUCCESSFUL`.
+- Cztery logiczne zmiany pakietu:
+  1. TeamRunEngine rozpoznaje profil providera po pełnej tożsamości `id + baseUrl + model`, a nie wyłącznie po ID. Pozwala to bezpiecznie użyć alternatywnego modelu tego samego dostawcy i usuwa duplikaty identycznych profili.
+  2. Wykonanie z kolejki przekazuje do TeamRunEngine wszystkie unikalne, już zweryfikowane i dozwolone profile przypisane agentom. Przy 429 silnik może przejść do następnego profilu; nie zmienia to zasady zakazu fallbacku po niejednoznacznym POST, błędzie autoryzacji ani anulowaniu.
+  3. Jeśli dostawca przypisanego agenta jest niedostępny przed pierwszym żądaniem API (`runId=0`), zadanie jest bezpiecznie wstrzymywane, a MASTER proponuje gotowy zastępczy zespół do zatwierdzenia. Nie zmieniamy zespołu po wcześniejszych przebiegach z zapisanymi wynikami.
+  4. Atomowy przydział zachowuje tożsamości agentów z wcześniejszych przebiegów: przy ponowieniu nie można usunąć agenta, do którego odwołuje się historia. Dodano testy zastępstwa, alternatywnego profilu o tym samym ID i ochrony historii.
+- Zmodyfikowane pliki: `TeamRunEngine.kt`, `MainActivity.kt`, `MasterTaskQueueStore.kt`, `TeamRunEngineNetworkTest.kt`, `MasterTaskQueueStoreTest.kt`, `MasterQueueAssignmentPlannerTest.kt`, niniejszy checkpoint.
+- Commity kodu pakietu: `9ae0b48f37e234292b87d1df8537ce0648099958`, `3c143c06884765bd327f1a128011f8ce18e1f6dd`, `fcb4b234529c0c813540228c4ce9f09819e6a8e4`, `c4dfca6b7d217d4129dddc8da250ba52b73be46c`, `16019cb87945e9e209b96c62d8df5cd7a2526967`, `7a2026c880b4e26c9650f13ed4d28d803532b884`, `ca1980c2767783a704c8cf302b2527610cbfc045`, `3e1ce5ceb3c8819f514652b9c7a58f1194d41d84`.
+- Status: IMPLEMENTACJA ZAPISANA / CI PENDING. Nie rozpoczynać pakietu 28 przed zakończeniem testów, walidacji wrappera i kontroli raportów na końcowym SHA.
+- Ograniczenie bezpieczeństwa: automatyczne zastępstwo jest ograniczone do pierwszego przebiegu, zanim wysłano żądanie API. Po wcześniejszym przebiegu nie zmieniamy listy agentów, bo zachowujemy pełną proweniencję historii; niejednoznacznych żądań POST nie ponawiamy.
+- Nie zmieniono repozytorium, gałęzi, PR #3, base branch, numeru wersji ani ustawień workflow. Nie uruchomiono ręcznie CI ani budowy APK.
