@@ -45,6 +45,21 @@ private fun parseExplicitHandoffRejection(report: String): String? {
 
 class HandoffUnavailableException(message: String) : IllegalStateException(message)
 
+/**
+ * True only for failures proven to happen before provider processing. Unknown POST outcomes
+ * deliberately remain non-retryable, even if their transport category looks transient.
+ */
+internal fun isSafeRetryableProviderFailure(error: ProviderException): Boolean {
+    if (error.requestMayHaveBeenProcessed) return false
+    if (error.httpCode == 429 || error.category in setOf(
+            "RATE_LIMIT_QUOTA", "RATE_LIMIT_COOLDOWN", "DNS_ERROR", "CONNECT_ERROR"
+        )) return true
+    return error.phase == "CONNECT" && (
+        error.category in setOf("CONNECT_TIMEOUT", "NETWORK_IO", "NETWORK_ERROR")
+    )
+}
+
+
 data class TeamTask(
     val id: String,
     val agentId: String,
@@ -541,14 +556,8 @@ class TeamRunEngine(
                             }
                             // Exception messages may contain provider response bodies or request data.
                             // Keep only structured failure metadata in durable traces.
-                            val safeRetryableProviderFailure = providerError != null &&
-                                !providerError.requestMayHaveBeenProcessed &&
-                                (providerError.httpCode == 429 ||
-                                    providerError.category in setOf(
-                                        "RATE_LIMIT_QUOTA", "RATE_LIMIT_COOLDOWN", "DNS_ERROR", "CONNECT_ERROR"
-                                    ) ||
-                                    (providerError.phase == "CONNECT" &&
-                                        providerError.category in setOf("NETWORK_IO", "NETWORK_ERROR")))
+                            val safeRetryableProviderFailure =
+                                providerError?.let(::isSafeRetryableProviderFailure) == true
                             onLog(agent.name, "MASTER", err,
                                 if (safeRetryableProviderFailure) "RETRYABLE_PROVIDER_FAILURE" else "ERROR")
                             // Checkpoints are durable recovery metadata, not a second error log.
