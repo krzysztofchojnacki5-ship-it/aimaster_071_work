@@ -541,17 +541,28 @@ class TeamRunEngine(
                             }
                             // Exception messages may contain provider response bodies or request data.
                             // Keep only structured failure metadata in durable traces.
-                            onLog(agent.name, "MASTER", err, "ERROR")
+                            val safeRetryableProviderFailure = providerError != null &&
+                                !providerError.requestMayHaveBeenProcessed &&
+                                (providerError.httpCode == 429 || providerError.category in setOf(
+                                    "RATE_LIMIT_QUOTA", "RATE_LIMIT_COOLDOWN", "DNS_ERROR", "CONNECT_ERROR"
+                                ))
+                            onLog(agent.name, "MASTER", err,
+                                if (safeRetryableProviderFailure) "RETRYABLE_PROVIDER_FAILURE" else "ERROR")
                             // Checkpoints are durable recovery metadata, not a second error log.
                             // Do not persist arbitrary exception messages that may contain server data.
-                            val checkpointError = (t as? ProviderException)?.let { providerError ->
-                                "ProviderException: ${providerError.category ?: "UNKNOWN"}" +
-                                    (providerError.httpCode?.let { " (HTTP $it)" } ?: "")
+                            val structuredCheckpointError = providerError?.let {
+                                "ProviderException: ${it.category ?: "UNKNOWN"}" +
+                                    (it.httpCode?.let { code -> " (HTTP $code)" } ?: "")
                             } ?: t.javaClass.simpleName
+                            val checkpointError = if (safeRetryableProviderFailure) {
+                                "SAFE_RETRY: $structuredCheckpointError"
+                            } else structuredCheckpointError
                             val failureStatus = when {
                                 usageAccountingPending -> TeamTaskResult.Status.BLOCKED
                                 t is HandoffUnavailableException -> TeamTaskResult.Status.BLOCKED
-                                t is InterruptedException || (t as? ProviderException)?.category == "CANCELLED" || Thread.currentThread().isInterrupted -> TeamTaskResult.Status.FAILED
+                                t is InterruptedException || providerError?.category == "CANCELLED" || Thread.currentThread().isInterrupted ->
+                                    TeamTaskResult.Status.FAILED
+                                safeRetryableProviderFailure -> TeamTaskResult.Status.BLOCKED
                                 else -> TeamTaskResult.Status.FAILED
                             }
                             val checkpointStatus = when (failureStatus) {
@@ -562,7 +573,12 @@ class TeamRunEngine(
                             runCatching {
                                 onTaskState(task, checkpointStatus, checkpointError, actualProviderId, actualModel, attemptCount)
                             }
-                            TeamTaskResult(task.id, task.agentId, failureStatus, err, System.currentTimeMillis() - taskStartedAt, attemptCount, actualProviderId, actualModel, task.reviewOfAgentId)
+                            TeamTaskResult(
+                                task.id, task.agentId, failureStatus,
+                                if (safeRetryableProviderFailure) "SAFE_RETRY: $err" else err,
+                                System.currentTimeMillis() - taskStartedAt, attemptCount,
+                                actualProviderId, actualModel, task.reviewOfAgentId
+                            )
                         }
                     } finally {
                         workerStates[taskIndex].set(2)
