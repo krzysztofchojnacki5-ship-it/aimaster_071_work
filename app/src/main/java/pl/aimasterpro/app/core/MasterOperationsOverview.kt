@@ -39,7 +39,10 @@ object MasterOperationsOverview {
         val assignedTasks: Int,
         val runningTasks: Int,
         val blockedTasks: Int,
-        val activeTaskIds: List<String>
+        val activeTaskIds: List<String>,
+        val latestActivityStatus: String,
+        val providerLabel: String,
+        val lastActivityAt: Long
     )
 
     data class AgentConflict(
@@ -114,6 +117,13 @@ object MasterOperationsOverview {
                 val running = assigned.count { it.status == MasterTaskQueueStore.Status.RUNNING }
                 val enabled = agent.id in enabledAgentIds
                 val runningIds = assigned.filter { it.status == MasterTaskQueueStore.Status.RUNNING }.map { it.id }
+                val latestActivity = queue.events.asSequence()
+                    .filter { it.actor == "agent:${agent.id}" }
+                    .filter { event -> assigned.any { it.id == event.taskId && it.runId == event.runId } }
+                    .maxWithOrNull(compareBy<MasterTaskQueueStore.Event> { it.timestamp }.thenBy { it.id })
+                val providerLabel = latestActivity?.let { event ->
+                    listOf(event.providerId, event.model).filter { it.isNotBlank() }.joinToString(" / ")
+                }.orEmpty()
                 val availability = when {
                     !enabled -> AgentAvailability.DISABLED
                     runningIds.size > 1 -> AgentAvailability.CONFLICTED
@@ -134,7 +144,10 @@ object MasterOperationsOverview {
                         it.status == MasterTaskQueueStore.Status.BLOCKED ||
                             it.status == MasterTaskQueueStore.Status.PAUSED
                     },
-                    activeTaskIds = assigned.map { it.id }.sorted()
+                    activeTaskIds = assigned.map { it.id }.sorted(),
+                    latestActivityStatus = latestActivity?.toStatus?.ifBlank { latestActivity.operation }.orEmpty(),
+                    providerLabel = providerLabel,
+                    lastActivityAt = latestActivity?.timestamp ?: 0L
                 )
             }
         } else emptyList()
