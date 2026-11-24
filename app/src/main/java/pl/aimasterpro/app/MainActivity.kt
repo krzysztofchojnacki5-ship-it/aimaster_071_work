@@ -2052,7 +2052,54 @@ class MainActivity : Activity() {
                             }
                         }
                     )
-                    logAgentForChat(chatId, "MASTER ROUTING: ${routing.mode} • specjaliści=${routing.specialistCalls} • ${routing.reason}")
+                    val coordinatorQueue = pl.aimasterpro.app.core.MasterTaskQueueStore.snapshot(this)
+                    val coordinatorQueueReady =
+                        coordinatorQueue.status == pl.aimasterpro.app.core.MasterTaskQueueStore.ReadStatus.AVAILABLE
+                    val coordinatorProviderReadyIds = if (coordinatorQueueReady) {
+                        routing.agents.filter { spec ->
+                            val role = pl.aimasterpro.app.agents.AgentProviderRouting.roleFor(spec)
+                            val assignedId = agentProviders[role.name] ?: masterProviderId
+                            val assigned = loadProvider(assignedId)
+                            val assignedReady = assigned?.let { providerReady(it) && isProviderAllowedForRouting(it) } == true
+                            assignedReady || (providerReady(safeConfig) && isProviderAllowedForRouting(safeConfig))
+                        }.map { it.id }.toSet()
+                    } else emptySet()
+                    val activeQueueAssignments = if (coordinatorQueueReady) {
+                        coordinatorQueue.tasks
+                            .filter { it.status in setOf(
+                                pl.aimasterpro.app.core.MasterTaskQueueStore.Status.ASSIGNED,
+                                pl.aimasterpro.app.core.MasterTaskQueueStore.Status.RUNNING
+                            ) }
+                            .map { it.assignedAgentIds }
+                    } else emptyList()
+                    val coordinatorPlan = if (routing.mode == pl.aimasterpro.app.agents.AgentRoutingPolicy.Mode.MASTER_ONLY ||
+                        !coordinatorQueueReady) null else
+                        pl.aimasterpro.app.agents.MasterAgentCoordinator.planFromSnapshots(
+                            objective = prompt,
+                            catalog = routing.agents,
+                            enabledAgentIds = activeAgentCatalog.map { it.id }.toSet(),
+                            providerReadyAgentIds = coordinatorProviderReadyIds,
+                            activeAssignments = activeQueueAssignments,
+                            maxAgents = routing.agents.size.coerceIn(1, 4),
+                            maxActiveTasksPerAgent = 1
+                        )
+                    val coordinatedMode = when {
+                        routing.mode == pl.aimasterpro.app.agents.AgentRoutingPolicy.Mode.MASTER_ONLY ->
+                            pl.aimasterpro.app.agents.AgentRoutingPolicy.Mode.MASTER_ONLY
+                        coordinatorPlan?.selectedAgents?.isNotEmpty() == true -> routing.mode
+                        else -> pl.aimasterpro.app.agents.AgentRoutingPolicy.Mode.MASTER_ONLY
+                    }
+                    if (routing.mode != pl.aimasterpro.app.agents.AgentRoutingPolicy.Mode.MASTER_ONLY) {
+                        if (!coordinatorQueueReady) {
+                            logAgentForChat(chatId, "⚠️ Koordynator MASTER nie uruchomił specjalistów: kolejka zadań jest niedostępna; bezpieczny powrót do odpowiedzi MASTER-only.")
+                        } else {
+                            val plan = coordinatorPlan!!
+                            logAgentForChat(chatId,
+                                "🧭 MASTER COORDINATOR: wybrano=${plan.selectedAgents.joinToString { it.id }.ifBlank { "brak" }} • " +
+                                    "powód=${plan.reason} • odrzucono=${plan.rejectedAgentIds.size}.")
+                        }
+                    }
+                    logAgentForChat(chatId, "MASTER ROUTING: ${coordinatedMode} • specjaliści=${coordinatorPlan?.selectedAgents?.size ?: 0} • ${routing.reason}")
                     // Store the routing choice without copying the user prompt, response, attachment or credentials.
                     val routingDecisionSaved = pl.aimasterpro.app.core.DecisionLedgerStore.append(
                         this,
@@ -2064,8 +2111,8 @@ class MainActivity : Activity() {
                             context = "Wybór trybu obsługi wiadomości",
                             objective = "Wybrać samodzielną odpowiedź MASTER-a albo konsultację specjalistów.",
                             optionsConsidered = pl.aimasterpro.app.agents.AgentRoutingPolicy.Mode.entries.map { it.name },
-                            selectedOption = routing.mode.name,
-                            rationale = routing.reason,
+                            selectedOption = coordinatedMode.name,
+                            rationale = "${routing.reason}; koordynator MASTER: ${coordinatorPlan?.reason ?: if (routing.mode == pl.aimasterpro.app.agents.AgentRoutingPolicy.Mode.MASTER_ONLY) "bez delegacji" else "bezpieczny fallback MASTER-only"}",
                             evidenceRefs = listOf("task:$requestTaskId", "policy:AgentRoutingPolicy"),
                             assumptions = "Routing jest heurystyczny i może wymagać korekty po ocenie odpowiedzi.",
                             confidence = "POLICY_HEURISTIC",
@@ -2079,7 +2126,7 @@ class MainActivity : Activity() {
                     if (!routingDecisionSaved) logAgentForChat(chatId, "⚠️ Rejestr decyzji MASTER-a nie potwierdził zapisu; nie traktuję historii jako kompletnej.")
                     val decisionContext = pl.aimasterpro.app.core.DecisionLedgerStore.contextString(this, maxEntries = 8, maxChars = 1_800)
                     val errorContext = pl.aimasterpro.app.core.ErrorKnowledgeBaseStore.contextString(this, maxRecords = 6, maxChars = 1_500)
-                    if (routing.mode == pl.aimasterpro.app.agents.AgentRoutingPolicy.Mode.MASTER_ONLY) {
+                    if (coordinatedMode == pl.aimasterpro.app.agents.AgentRoutingPolicy.Mode.MASTER_ONLY) {
                         runOnUiThread {
                             if (gen == requestGen) {
                                 thinkingLabel = "MASTER odpowiada samodzielnie…"
@@ -2122,7 +2169,7 @@ class MainActivity : Activity() {
                         else logAgentForChat(chatId, "🛡️ Kontrola MASTER-a: podstawowe kryteria kompletności zaliczone (lokalnie).")
                         resp.text + if (check.warnings.isNotEmpty()) "\n\n_Uwaga kontroli jakości: ${check.warnings.joinToString("; ")}_" else ""
                     } else {
-                    val selectedSpecs = routing.agents
+                    val selectedSpecs = coordinatorPlan?.selectedAgents.orEmpty()
                     val sharedLearningContext = listOf(
                         pl.aimasterpro.app.core.AiMemoryStore.contextString(this, prompt, maxChars = 1_800),
                         decisionContext,
@@ -2172,7 +2219,7 @@ class MainActivity : Activity() {
                         }
                     }
                     val explicitTeamRequest = listOf("cały zespół", "caly zespol", "wszyscy agenci", "uruchom cały zespół", "uruchom caly zespol").any(prompt.lowercase(java.util.Locale.ROOT)::contains)
-                    val adaptivePlan = pl.aimasterpro.app.core.AdaptiveExecutionPolicy.plan(prompt, tasks.size, explicitTeamRequest, routing.mode == pl.aimasterpro.app.agents.AgentRoutingPolicy.Mode.TEAM)
+                    val adaptivePlan = pl.aimasterpro.app.core.AdaptiveExecutionPolicy.plan(prompt, tasks.size, explicitTeamRequest, coordinatedMode == pl.aimasterpro.app.agents.AgentRoutingPolicy.Mode.TEAM)
                     val adaptiveTasks = tasks.take(adaptivePlan.maxAgents)
                     val workJournalRecord = pl.aimasterpro.app.core.MasterWorkJournalStore.Record(
                         taskId = requestTaskId,
