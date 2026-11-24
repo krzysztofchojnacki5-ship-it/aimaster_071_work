@@ -181,7 +181,7 @@ object MasterTaskQueueStore {
         }
         val normalizedObjective = current.objective.trim().lowercase(java.util.Locale.ROOT)
             .replace(Regex("\\s+"), " ")
-        if (normalizedObjective.length < 40 || tasks.any { other ->
+        if (normalizedObjective.length >= 40 && tasks.any { other ->
                 other.id != taskId &&
                     other.status in setOf(Status.ASSIGNED, Status.RUNNING, Status.BLOCKED) &&
                     other.objective.trim().lowercase(java.util.Locale.ROOT)
