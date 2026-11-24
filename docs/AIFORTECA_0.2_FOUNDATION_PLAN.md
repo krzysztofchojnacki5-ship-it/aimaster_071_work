@@ -265,7 +265,9 @@ Cover unauthorized create/update/delete, scope escape, missing or forged approva
   3. Przed delegacją sprawdzana jest gotowość przypisanego dostawcy agenta oraz dozwolony fallback MASTER-a. Brak czytelnej kolejki, gotowego dostawcy lub kwalifikowanego agenta powoduje bezpieczny powrót do MASTER-only — bez pustego uruchomienia zespołu.
   4. Dodano testy liczenia obciążenia z wielu aktywnych zespołów i fail-closed dla uszkodzonego snapshotu.
 - Zmodyfikowane pliki: `MasterAgentCoordinator.kt`, `MainActivity.kt`, `MasterAgentCoordinatorTest.kt`, niniejszy checkpoint.
-- Commity pakietu: `ae024ed17bcf60383ee724a8b6472de97c910acc`, `e4d4cc4ff94725d58b3ac14153ff5859060bd062`, `2f075164c2af90a40454a74cbd466553e5125027`.
-- Status: IMPLEMENTACJA ZAPISANA / CI PENDING. Nie deklarować PASS przed zakończeniem wszystkich workflow na końcowym SHA i odczytem raportów XML.
+- Commity kodu pakietu: `ae024ed17bcf60383ee724a8b6472de97c910acc`, `e4d4cc4ff94725d58b3ac14153ff5859060bd062`, `2f075164c2af90a40454a74cbd466553e5125027`, `e7514d3da348b4e074cf6b2c0f639ef18ed45d63`, `9d6631ef35d390f30a6bd0d7b3d8f19e204d5f9f`, `cb4e626fd3fe78bd88d318bcdca5b09934af3ae3`.
+- Weryfikacja końcowego SHA kodu `cb4e626fd3fe78bd88d318bcdca5b09934af3ae3`: Unit Tests push run `45466353925` PASS i PR run `45466367743` PASS; oba raporty XML mają 1,418 testów, 0 failures, 0 errors, 0 skipped (132 pliki XML każdy). Gradle Wrapper Validation push `45466354116` PASS i PR `45466367541` PASS. Log Gradle potwierdza `BUILD SUCCESSFUL`.
+- Artefakty raportów: `14955038615` (push) oraz `14954584963` (PR); oba pobrane i policzone niezależnie.
+- Status: PAKIET 25 ZALICZONY — CI, testy, wrapper i artefakty zweryfikowane na końcowym SHA kodu.
 - Granica zakresu: planista jest teraz używany w rzeczywistym routingu wiadomości czatu, ale trwałe tworzenie i finalizacja rekordów kolejki dla każdego uruchomienia zespołu oraz automatyczne zastępstwa agentów pozostają osobnym etapem integracji. `assignPlanned` pozostaje atomowym API kolejki i nie jest jeszcze wywoływane przez przepływ czatu.
 - Nie zmieniono repozytorium, gałęzi, PR #3, base branch, numeru wersji ani ustawień workflow. Nie uruchomiono ręcznie CI ani budowy APK.
