@@ -121,4 +121,26 @@ class QueueExecutionResultFinalizerTest {
         assertEquals(listOf("agent-b"), outcome.failedAgentIds)
         assertEquals(listOf("agent-a", "agent-b", "agent-c"), attempted)
     }
+
+    @Test fun retryableProviderFailuresRemainBlockedInsteadOfTerminalFailures() {
+        val saved = mutableListOf<QueueExecutionResultFinalizer.AgentResult>()
+        val outcome = QueueExecutionResultFinalizer.persistAllowedResults(
+            allowedAgentIds = listOf("agent-a", "agent-b"),
+            results = listOf(
+                QueueExecutionResultFinalizer.AgentResult(
+                    "agent-a", QueueExecutionResultFinalizer.Status.BLOCKED, "SAFE_RETRY: RATE_LIMIT_QUOTA"
+                ),
+                QueueExecutionResultFinalizer.AgentResult(
+                    "agent-b", QueueExecutionResultFinalizer.Status.BLOCKED, "SAFE_RETRY: CONNECT_ERROR"
+                )
+            )
+        ) { result ->
+            saved += result
+            true
+        }
+        assertTrue(outcome.success)
+        assertEquals(2, saved.size)
+        assertTrue(saved.all { it.status == QueueExecutionResultFinalizer.Status.BLOCKED })
+        assertTrue(saved.all { it.detail.startsWith("SAFE_RETRY:") })
+    }
 }
