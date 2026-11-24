@@ -7858,6 +7858,9 @@ class MainActivity : Activity() {
                 }
                 if (task.status in setOf(pl.aimasterpro.app.core.MasterTaskQueueStore.Status.QUEUED,
                         pl.aimasterpro.app.core.MasterTaskQueueStore.Status.PAUSED)) {
+                    action("🧭 MASTER — DOBIERZ AGENTÓW", box) {
+                        proposeQueuedMasterAssignment(task.id)
+                    }
                     action("PRZYDZIEL AGENTÓW", box) {
                         val catalog = pl.aimasterpro.app.core.AgentManagerStore.enabledCatalog(this)
                         if (catalog.isEmpty()) { toast("Brak aktywnych agentów albo magazyn katalogu jest niedostępny."); return@action }
@@ -7984,6 +7987,86 @@ class MainActivity : Activity() {
             .setTitle("Pełny raport • $agentId")
             .setView(scroll)
             .setPositiveButton("Zamknij", null)
+            .show()
+    }
+
+    /**
+     * Proposes a provider-ready, workload-aware assignment and commits it only after
+     * explicit user approval. The queue store rechecks the exact snapshot atomically.
+     */
+    private fun proposeQueuedMasterAssignment(taskId: String) {
+        if (isThinking || activeQueueTaskId.isNotBlank() || store.isStorageUncertain() ||
+            !agentAssignmentsHealthy) {
+            toast("MASTER nie może teraz przygotować przydziału: trwa inne zadanie albo konfiguracja nie jest bezpiecznie uzgodniona.")
+            return
+        }
+        val queueStore = pl.aimasterpro.app.core.MasterTaskQueueStore
+        val queue = queueStore.snapshot(this)
+        if (queue.status != pl.aimasterpro.app.core.MasterTaskQueueStore.ReadStatus.AVAILABLE) {
+            toast("Kolejka jest niedostępna. MASTER nie przygotuje przydziału na niepełnych danych.")
+            return
+        }
+        val catalogState = pl.aimasterpro.app.core.AgentManagerStore.snapshot(this)
+        if (catalogState.status != pl.aimasterpro.app.core.AgentManagerStore.ReadStatus.AVAILABLE) {
+            toast("Katalog agentów jest niedostępny. Automatyczny przydział został wstrzymany.")
+            return
+        }
+        val catalog = pl.aimasterpro.app.core.AgentManagerStore.enabledCatalog(this)
+        if (catalog.isEmpty()) {
+            toast("Brak aktywnych agentów.")
+            return
+        }
+        val providerReadyIds = catalog.filter { spec ->
+            val role = pl.aimasterpro.app.agents.AgentProviderRouting.roleFor(spec)
+            val assignedId = agentProviders[role.name] ?: resolvedMasterProviderId().orEmpty()
+            val config = loadProvider(assignedId)
+            config != null && providerReady(config) && isProviderAllowedForRouting(config)
+        }.map { it.id }.toSet()
+        val decision = pl.aimasterpro.app.agents.MasterQueueAssignmentPlanner.plan(
+            queue = queue,
+            taskId = taskId,
+            enabledCatalog = catalog,
+            providerReadyAgentIds = providerReadyIds,
+            maxAgents = 4,
+            maxActiveTasksPerAgent = 1
+        )
+        if (!decision.isAssignable) {
+            val reason = decision.rejectionReason.ifBlank { decision.selection.reason }
+            val message = when (reason) {
+                "QUEUE_UNAVAILABLE" -> "Kolejka jest niedostępna."
+                "TASK_NOT_FOUND" -> "Zadanie nie istnieje w aktualnym snapshotcie."
+                "TASK_NOT_ASSIGNABLE" -> "Zadanie nie oczekuje na przydział."
+                "NO_ENABLED_AGENTS" -> "Brak aktywnych agentów."
+                "NO_SKILL_MATCH" -> "Nie znaleziono agenta z potwierdzonym dopasowaniem kompetencji."
+                "NO_PROVIDER_READY_AGENT" -> "Żaden dopasowany agent nie ma gotowego dostawcy dozwolonego przez politykę kosztów."
+                "ALL_MATCHING_AGENTS_AT_CAPACITY" -> "Wszyscy dopasowani agenci są już zajęci."
+                else -> "Brak bezpiecznego przydziału: $reason."
+            }
+            toast(message)
+            return
+        }
+        val names = decision.selection.selectedAgents.joinToString("\n") { "• ${it.name} — ${it.category}" }
+        AlertDialog.Builder(this)
+            .setTitle("MASTER proponuje przydział")
+            .setMessage("Zadanie: $taskId\n\n${decision.selection.reason}\n\n$names\n\nPrzydział zostanie zapisany tylko wtedy, gdy snapshot kolejki nadal będzie aktualny.")
+            .setNegativeButton("Anuluj", null)
+            .setPositiveButton("Zatwierdź przydział") { _, _ ->
+                val saved = queueStore.assignPlanned(
+                    this,
+                    decision.taskId,
+                    decision.selectedAgentIds,
+                    expectedUpdatedAt = decision.expectedUpdatedAt,
+                    expectedRunId = decision.expectedRunId,
+                    maxActiveTasksPerAgent = 1
+                )
+                if (saved) {
+                    toast("MASTER zapisał przydział: ${decision.selectedAgentIds.joinToString(", ")}.")
+                    showShell("Zadania")
+                    showTasksCenter()
+                } else {
+                    toast("Przydział odrzucony: kolejka zmieniła się, zadanie jest duplikatem albo agent osiągnął limit. Odśwież i przygotuj nowy plan.")
+                }
+            }
             .show()
     }
 
