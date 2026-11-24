@@ -2081,7 +2081,8 @@ class MainActivity : Activity() {
                             providerReadyAgentIds = coordinatorProviderReadyIds,
                             activeAssignments = activeQueueAssignments,
                             maxAgents = routing.agents.size.coerceIn(1, 4),
-                            maxActiveTasksPerAgent = 1
+                            maxActiveTasksPerAgent = 1,
+                            includeUnmatchedCandidates = true
                         )
                     val coordinatedMode = when {
                         routing.mode == pl.aimasterpro.app.agents.AgentRoutingPolicy.Mode.MASTER_ONLY ->
