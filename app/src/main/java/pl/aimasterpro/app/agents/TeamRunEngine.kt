@@ -151,7 +151,9 @@ class TeamRunEngine(
                         runCatching { onTaskState(task, "RUNNING", "", "", "", 0) }
                         val hasExplicitConfig = agentProvidersMap.containsKey(task.agentId) && agentProvidersMap[task.agentId] != null
                         val agentProvider = agentProvidersMap[task.agentId] ?: provider
-                        val candidates = listOf(agentProvider) + fallbackProviders.filter { it.id != agentProvider.id }
+                        val candidates = (listOf(agentProvider) + fallbackProviders).distinctBy {
+                            Triple(it.id, it.baseUrl.trimEnd('/'), it.model)
+                        }
                         val orderedProviders = rankProviders(candidates.filter(isProviderAllowed))
 
                         if (orderedProviders.isEmpty()) {
