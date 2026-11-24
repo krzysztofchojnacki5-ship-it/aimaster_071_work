@@ -222,4 +222,30 @@ class MasterOperationsOverviewTest {
         assertTrue(result.agentConflicts.isEmpty())
         assertFalse(result.isComplete)
     }
+
+    @Test fun workloadTelemetryIsBoundToTheExactAssignedTaskAndRun() {
+        val agent = pl.aimasterpro.app.agents.AgentSpec(
+            "reviewer", "Reviewer", "QA", "Review", listOf("review")
+        )
+        val result = MasterOperationsOverview.build(
+            queue(
+                tasks = listOf(
+                    task("task-running", MasterTaskQueueStore.Status.RUNNING)
+                        .copy(assignedAgentIds = listOf("reviewer"), runId = 3)
+                ),
+                events = listOf(
+                    event("current-run", "ANALYZING", 20L, taskId = "task-running", runId = 3),
+                    event("old-run", "FAILED", 99L, taskId = "task-running", runId = 2),
+                    event("other-task", "FAILED", 100L, taskId = "task-other", runId = 3)
+                )
+            ),
+            handoffs(),
+            agents = listOf(agent),
+            enabledAgentIds = setOf("reviewer")
+        )
+        val workload = result.agentWorkloads.single()
+        assertEquals("ANALYZING", workload.latestActivityStatus)
+        assertEquals("provider / model", workload.providerLabel)
+        assertEquals(20L, workload.lastActivityAt)
+    }
 }
