@@ -1444,4 +1444,42 @@ class MasterTaskQueueStoreTest {
         assertEquals(40L, reconciled.tasks.single { it.id == "task-activity-trigger" }.updatedAt)
     }
 
+
+    @Test fun plannedAssignmentRejectsDuplicateActiveObjectiveAndStaleSnapshot() {
+        val objective = "Review provider routing and failover behavior across the full application."
+        assertTrue(MasterTaskQueueStore.enqueue(context, "planned-001", "Pierwsze", objective, now = 10L))
+        val first = MasterTaskQueueStore.snapshot(context).tasks.single()
+        assertTrue(MasterTaskQueueStore.assignPlanned(
+            context, first.id, listOf("critical-reviewer"), first.updatedAt, first.runId, now = 11L
+        ))
+
+        assertTrue(MasterTaskQueueStore.enqueue(context, "planned-002", "Duplikat", objective, now = 12L))
+        val duplicate = MasterTaskQueueStore.snapshot(context).tasks.first { it.id == "planned-002" }
+        assertFalse(MasterTaskQueueStore.assignPlanned(
+            context, duplicate.id, listOf("unit-test-engineer"), duplicate.updatedAt, duplicate.runId, now = 13L
+        ))
+
+        assertTrue(MasterTaskQueueStore.enqueue(context, "planned-003", "Nieaktualny", "Inspect a distinct durable queue workflow and verify recovery.", now = 14L))
+        val stale = MasterTaskQueueStore.snapshot(context).tasks.first { it.id == "planned-003" }
+        assertTrue(MasterTaskQueueStore.assign(context, stale.id, listOf("unit-test-engineer"), now = 15L))
+        assertFalse(MasterTaskQueueStore.assignPlanned(
+            context, stale.id, listOf("critical-reviewer"), stale.updatedAt, stale.runId, now = 16L
+        ))
+    }
+
+    @Test fun plannedAssignmentRejectsAgentAtActiveTaskCapacity() {
+        assertTrue(MasterTaskQueueStore.enqueue(context, "capacity-001", "Pierwsze", "Inspect durable agent workload and prevent overcommitment.", now = 20L))
+        val first = MasterTaskQueueStore.snapshot(context).tasks.single()
+        assertTrue(MasterTaskQueueStore.assignPlanned(
+            context, first.id, listOf("critical-reviewer"), first.updatedAt, first.runId, now = 21L
+        ))
+
+        assertTrue(MasterTaskQueueStore.enqueue(context, "capacity-002", "Drugie", "Inspect a different durable agent workload and routing path.", now = 22L))
+        val second = MasterTaskQueueStore.snapshot(context).tasks.first { it.id == "capacity-002" }
+        assertFalse(MasterTaskQueueStore.assignPlanned(
+            context, second.id, listOf("critical-reviewer"), second.updatedAt, second.runId, now = 23L
+        ))
+        assertEquals(MasterTaskQueueStore.Status.QUEUED,
+            MasterTaskQueueStore.snapshot(context).tasks.first { it.id == second.id }.status)
+    }
 }
