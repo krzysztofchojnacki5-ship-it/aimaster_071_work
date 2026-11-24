@@ -6842,14 +6842,15 @@ class MainActivity : Activity() {
         action("🧠  PAMIĘĆ SYSTEMU", departmentsCard) { navigate("Pamięć") }
         card("Stan wykonania", "Status: ${if (isThinking) "PRACA W TOKU" else "GOTOWY"}\n${if (isThinking) thinkingLabel else "Brak aktywnego zadania."}\nAgenci z historią: ${agentStats.size} • katalog agentów: ${pl.aimasterpro.app.agents.AgentCatalog.all.size}\nZdarzenia dziennika: ${events.size} • ostatnie 5 awarii/blokad: ${recentFailures.size}\nCheckpointy zadań: ${taskStates.size} • przerwane/nieudane: ${interruptedTasks.size}")
         val operationsCard = card("OPERACYJNY STAN MASTER-A • KOLEJKA / AGENTY / PRZEKAZANIA", "Zestawienie z trwałych magazynów kolejki i przekazań. Odczyt lokalny — bez zapytań API.")
-        masterOperationsSummaryText = TextView(this).apply {
+        val operationsSummary = TextView(this).apply {
             textSize = 12.5f
             setTextColor(white)
             setLineSpacing(dp(3).toFloat(), 1f)
             setTextIsSelectable(true)
             text = buildMasterOperationsSummaryText()
         }
-        operationsCard.addView(masterOperationsSummaryText, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(7) })
+        masterOperationsSummaryText = operationsSummary
+        operationsCard.addView(operationsSummary, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(7) })
         val consoleLines = events.takeLast(5).asReversed().map { event ->
             "${event.agentId.ifBlank { "MASTER" }} • ${event.status} • ${event.category.ifBlank { "zdarzenie" }}\n${event.providerId}/${event.model} • zadanie: ${event.taskId.ifBlank { "—" }}"
         }
