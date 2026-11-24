@@ -114,4 +114,19 @@ class MasterAgentCoordinatorTest {
         assertFalse(plan.isAssignable)
         assertEquals("INVALID_WORKLOAD_SNAPSHOT", plan.reason)
     }
+
+    @Test fun preselectedExplicitTeamMemberSurvivesMissingKeywordOverlap() {
+        val helper = agent("requirements-helper", "requirements")
+        val plan = MasterAgentCoordinator.planFromSnapshots(
+            objective = "uruchom cały zespół",
+            catalog = listOf(helper),
+            enabledAgentIds = setOf(helper.id),
+            providerReadyAgentIds = setOf(helper.id),
+            activeAssignments = emptyList(),
+            maxAgents = 1,
+            includeUnmatchedCandidates = true
+        )
+        assertEquals(listOf(helper.id), plan.selectedAgents.map { it.id })
+        assertEquals("READY", plan.reason)
+    }
 }
