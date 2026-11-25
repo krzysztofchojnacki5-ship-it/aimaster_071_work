@@ -8197,7 +8197,9 @@ class MainActivity : Activity() {
                     agentId = agentId,
                     reportArchived = archive.getExecution(this, task.id, agentId, task.runId) != null,
                     checkpointStatus = checkpoint?.status.orEmpty(),
-                    queueResultStatus = resultByAgent[agentId]?.toStatus.orEmpty()
+                    queueResultStatus = resultByAgent[agentId]?.toStatus.orEmpty(),
+                    checkpointDetail = checkpoint?.detail.orEmpty(),
+                    queueResultDetail = resultByAgent[agentId]?.detail.orEmpty()
                 )
             }
             val plan = pl.aimasterpro.app.core.QueueResumePlanner.plan(evidence)
