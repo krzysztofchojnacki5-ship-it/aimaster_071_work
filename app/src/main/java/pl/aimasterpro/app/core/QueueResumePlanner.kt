@@ -6,7 +6,9 @@ object QueueResumePlanner {
         val agentId: String,
         val reportArchived: Boolean,
         val checkpointStatus: String = "",
-        val queueResultStatus: String = ""
+        val queueResultStatus: String = "",
+        val checkpointDetail: String = "",
+        val queueResultDetail: String = ""
     )
     data class Plan(
         val safe: Boolean,
@@ -32,8 +34,19 @@ object QueueResumePlanner {
         evidence.forEach { item ->
             val queueStatus = item.queueResultStatus.uppercase()
             val checkpoint = item.checkpointStatus.uppercase()
-            if (queueStatus in setOf("FAILED", "BLOCKED")) {
+            val safeRetry = queueStatus == "BLOCKED" &&
+                checkpoint == "BLOCKED" &&
+                item.checkpointDetail.trimStart().startsWith("SAFE_RETRY:") &&
+                item.queueResultDetail.trimStart().startsWith("BLOCKED: SAFE_RETRY:")
+            if (queueStatus in setOf("FAILED", "BLOCKED") && !safeRetry) {
                 return Plan(false, reason = "Agent ${item.agentId} zakończył przebieg błędem lub blokadą. Użyj ponowienia od początku.")
+            }
+            if (safeRetry) {
+                // The archive contains a diagnostic placeholder, not a completed agent report.
+                // Both durable stores must independently prove the failure happened before POST processing.
+                pendingStarted = true
+                pending += item.agentId
+                return@forEach
             }
             if (item.reportArchived) {
                 if (checkpoint in setOf(
