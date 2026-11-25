@@ -66,4 +66,54 @@ class QueueResumePlannerTest {
         assertTrue(plan.safe)
         assertEquals(listOf("agent-a"), plan.pendingAgentIds)
     }
+
+    @Test fun provenSafeRetryResumesOnlyTheUnfinishedSuffixAndIgnoresItsDiagnosticArchive() {
+        val plan = QueueResumePlanner.plan(listOf(
+            QueueResumePlanner.AgentEvidence("agent-a", true, "COMPLETED", "COMPLETED"),
+            QueueResumePlanner.AgentEvidence(
+                "agent-b", true, "BLOCKED", "BLOCKED",
+                checkpointDetail = "SAFE_RETRY: ProviderException: RATE_LIMIT_QUOTA (HTTP 429)",
+                queueResultDetail = "BLOCKED: SAFE_RETRY: RATE_LIMIT_QUOTA"
+            ),
+            QueueResumePlanner.AgentEvidence("agent-c", false, "QUEUED")
+        ))
+
+        assertTrue(plan.safe)
+        assertEquals(listOf("agent-a"), plan.completedAgentIds)
+        assertEquals(listOf("agent-b", "agent-c"), plan.pendingAgentIds)
+    }
+
+    @Test fun blockedResultWithoutBothIndependentSafeRetryMarkersRemainsUnsafe() {
+        val missingCheckpointProof = QueueResumePlanner.plan(listOf(
+            QueueResumePlanner.AgentEvidence(
+                "agent-a", true, "BLOCKED", "BLOCKED",
+                checkpointDetail = "ProviderException: RATE_LIMIT_QUOTA",
+                queueResultDetail = "BLOCKED: SAFE_RETRY: RATE_LIMIT_QUOTA"
+            )
+        ))
+        val missingQueueProof = QueueResumePlanner.plan(listOf(
+            QueueResumePlanner.AgentEvidence(
+                "agent-a", true, "BLOCKED", "BLOCKED",
+                checkpointDetail = "SAFE_RETRY: ProviderException: RATE_LIMIT_QUOTA",
+                queueResultDetail = "BLOCKED: ProviderException: RATE_LIMIT_QUOTA"
+            )
+        ))
+
+        assertFalse(missingCheckpointProof.safe)
+        assertFalse(missingQueueProof.safe)
+    }
+
+    @Test fun archivedReportAfterSafeRetryStillBreaksTheOrderedHandoffChain() {
+        val plan = QueueResumePlanner.plan(listOf(
+            QueueResumePlanner.AgentEvidence(
+                "agent-a", false, "BLOCKED", "BLOCKED",
+                checkpointDetail = "SAFE_RETRY: ProviderException: DNS_ERROR",
+                queueResultDetail = "BLOCKED: SAFE_RETRY: DNS_ERROR"
+            ),
+            QueueResumePlanner.AgentEvidence("agent-b", true, "COMPLETED", "COMPLETED")
+        ))
+
+        assertFalse(plan.safe)
+        assertTrue(plan.reason.contains("kolejności"))
+    }
 }
