@@ -1,0 +1,121 @@
+package pl.aimasterpro.app.core
+
+import android.content.Context
+import org.junit.Assert.*
+import org.junit.Before
+import org.junit.Test
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
+import org.robolectric.RuntimeEnvironment
+
+@RunWith(RobolectricTestRunner::class)
+class MasterTaskReconciliationReaderTest {
+    private lateinit var context: Context
+    private val taskId = "task-reconcile-001"
+    private val agentId = "critical-reviewer"
+
+    @Before fun setUp() {
+        context = RuntimeEnvironment.getApplication()
+        listOf(
+            "aiforteca_master_task_queue_v1",
+            "aiforteca_agent_manager_v1",
+            "task_result_archive_v1",
+            "task_checkpoints_v1"
+        ).forEach { name ->
+            context.getSharedPreferences(name, Context.MODE_PRIVATE).edit().clear().commit()
+            SharedPreferencesWriteHealth.resetForTests(name)
+        }
+        AgentManagerStore.resetStorageHealthForTests()
+        MasterTaskQueueStore.resetStorageHealthForTests()
+        TaskCheckpointStore.resetStorageHealthForTests()
+    }
+
+    private fun startSingleAgentTask(): Int {
+        assertTrue(MasterTaskQueueStore.enqueue(
+            context, taskId, "Reconciliation test", "Repair only a missing durable result event.", now = 10L
+        ))
+        assertTrue(MasterTaskQueueStore.assign(context, taskId, listOf(agentId), now = 11L))
+        val assigned = MasterTaskQueueStore.snapshot(context).tasks.single()
+        assertTrue(MasterTaskQueueStore.transition(
+            context, taskId, "MASTER", MasterTaskQueueStore.Status.RUNNING, "Start.", 12L,
+            expectedCurrentRunId = assigned.runId,
+            expectedAssignedAgentIds = assigned.assignedAgentIds
+        ))
+        return MasterTaskQueueStore.snapshot(context).tasks.single().runId
+    }
+
+    private fun persistReportAndCheckpoint(runId: Int) {
+        val executionId = TaskResultArchive.executionTaskId(taskId, agentId, runId)
+        assertTrue(TaskResultArchive.put(
+            context, executionId, agentId, "Durable specialist report.", "provider-test", "model-test"
+        ))
+        assertTrue(TaskCheckpointStore.record(
+            context,
+            TaskCheckpointStore.Event(
+                taskId = executionId, agentId = agentId, status = "COMPLETED",
+                detail = "Agent completed and report was persisted.",
+                timestamp = 20L, providerId = "provider-test", model = "model-test",
+                attempts = 1, runId = runId
+            )
+        ))
+    }
+
+    @Test fun repairsOnlyMissingResultEventFromMatchingReportAndCheckpoint() {
+        val runId = startSingleAgentTask()
+        persistReportAndCheckpoint(runId)
+
+        val before = MasterTaskReconciliationReader.assess(
+            context, MasterTaskQueueStore.snapshot(context), taskId
+        )
+        assertEquals(
+            MasterTaskReconciliationPolicy.Decision.REPORTS_NEED_RESULT_EVENT_REPAIR,
+            before.decision
+        )
+        assertEquals(mapOf(agentId to "COMPLETED"), before.repairStatuses)
+
+        assertTrue(MasterTaskReconciliationReader.repairMissingResultEvents(context, taskId))
+        val after = MasterTaskQueueStore.snapshot(context)
+        assertEquals(MasterTaskQueueStore.Status.COMPLETED, after.tasks.single().status)
+        assertTrue(after.events.any {
+            it.taskId == taskId && it.actor == "agent:$agentId" &&
+                it.operation == "AGENT_RESULT" && it.runId == runId && it.toStatus == "COMPLETED"
+        })
+        assertTrue(MasterTaskReconciliationReader.repairMissingResultEvents(context, taskId))
+        assertEquals(
+            MasterTaskReconciliationPolicy.Decision.TERMINAL_STATE_CONSISTENT,
+            MasterTaskReconciliationReader.assess(context, after, taskId).decision
+        )
+    }
+
+    @Test fun refusesRepairWhenCheckpointIsMissing() {
+        val runId = startSingleAgentTask()
+        val executionId = TaskResultArchive.executionTaskId(taskId, agentId, runId)
+        assertTrue(TaskResultArchive.put(
+            context, executionId, agentId, "Archived but unverified report.", "provider-test", "model-test"
+        ))
+
+        assertFalse(MasterTaskReconciliationReader.repairMissingResultEvents(context, taskId))
+        val snapshot = MasterTaskQueueStore.snapshot(context)
+        assertEquals(MasterTaskQueueStore.Status.RUNNING, snapshot.tasks.single().status)
+        assertFalse(snapshot.events.any { it.taskId == taskId && it.operation == "AGENT_RESULT" })
+    }
+
+    @Test fun refusesRepairWhenReportIsMissingEvenIfCheckpointIsTerminal() {
+        val runId = startSingleAgentTask()
+        val executionId = TaskResultArchive.executionTaskId(taskId, agentId, runId)
+        assertTrue(TaskCheckpointStore.record(
+            context,
+            TaskCheckpointStore.Event(
+                taskId = executionId, agentId = agentId, status = "COMPLETED",
+                detail = "Checkpoint exists but archive report is absent.",
+                timestamp = 20L, providerId = "provider-test", model = "model-test",
+                attempts = 1, runId = runId
+            )
+        ))
+
+        assertFalse(MasterTaskReconciliationReader.repairMissingResultEvents(context, taskId))
+        val snapshot = MasterTaskQueueStore.snapshot(context)
+        assertEquals(MasterTaskQueueStore.Status.RUNNING, snapshot.tasks.single().status)
+        assertFalse(snapshot.events.any { it.taskId == taskId && it.operation == "AGENT_RESULT" })
+    }
+}
