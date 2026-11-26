@@ -181,19 +181,15 @@ object MasterTaskReconciliationReader {
             )
         val archiveReadable = TaskResultArchive.isArchiveReadable(context)
         val checkpointReadable = TaskCheckpointStore.isJournalReadable(context)
-        val checkpoints = if (checkpointReadable) TaskCheckpointStore.latest(context)
-            .filter { it.runId == task.runId }
+        val checkpointRows = if (checkpointReadable) TaskCheckpointStore.latest(context) else emptyList()
+        val checkpoints = checkpointRows.filter { it.runId == task.runId }
             .map { MasterTaskReconciliationPolicy.Evidence(it.agentId, it.runId, checkpointStatus = it.status) }
-        else emptyList()
-        val checkpointByTaskId = if (checkpointReadable) TaskCheckpointStore.latest(context)
-            .filter { it.runId == task.runId }.associateBy { it.taskId }
-        else emptyMap()
+        val checkpointByTaskId = checkpointRows.filter { it.runId == task.runId }.associateBy { it.taskId }
         val reports = if (archiveReadable) task.assignedAgentIds.mapNotNull { agentId ->
-            TaskResultArchive.getExecution(context, task.id, agentId, task.runId)?.let {
-                val executionId = TaskResultArchive.executionTaskId(task.id, agentId, task.runId)
+            TaskResultArchive.getExecution(context, task.id, agentId, task.runId)?.let { archived ->
                 MasterTaskReconciliationPolicy.Evidence(
                     agentId, task.runId,
-                    checkpointStatus = checkpointByTaskId[executionId]?.status.orEmpty()
+                    checkpointStatus = checkpointByTaskId[archived.taskId]?.status.orEmpty()
                 )
             }
         } else emptyList()
@@ -250,9 +246,9 @@ object MasterTaskReconciliationReader {
                 !TaskResultArchive.isArchiveReadable(context) ||
                 TaskResultArchive.getExecution(context, taskId, agentId, task.runId) == null ||
                 !TaskCheckpointStore.isJournalReadable(context)) return false
-            val executionId = TaskResultArchive.executionTaskId(taskId, agentId, task.runId)
+            val archived = TaskResultArchive.getExecution(context, taskId, agentId, task.runId) ?: return false
             val checkpoint = TaskCheckpointStore.latest(context).firstOrNull {
-                it.taskId == executionId && it.agentId == agentId && it.runId == task.runId
+                it.taskId == archived.taskId && it.agentId == agentId && it.runId == task.runId
             } ?: return false
             if (checkpoint.status != expectedStatus ||
                 expectedStatus !in setOf("COMPLETED", "FAILED", "BLOCKED")) return false
