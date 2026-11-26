@@ -119,6 +119,30 @@ class TaskResultArchiveTest {
         assertEquals("task-1", entries.first().taskId)
     }
 
+    @Test fun queueExecutionArchiveSlotAcknowledgesExactRetryAndRejectsReplacement() {
+        val parentTaskId = "queue-archive-immutable"
+        val agentId = "critical-reviewer"
+        val runId = 2
+        val executionId = TaskResultArchive.executionTaskId(parentTaskId, agentId, runId)
+
+        assertTrue(TaskResultArchive.putExecution(
+            context, parentTaskId, runId, agentId, "Original durable report.",
+            "provider-a", "model-a", 2_000L, "chat-queue"
+        ))
+        assertTrue(TaskResultArchive.putExecution(
+            context, parentTaskId, runId, agentId, "Original durable report.",
+            "provider-a", "model-a", 2_000L, "chat-queue"
+        ))
+        assertFalse(TaskResultArchive.putExecution(
+            context, parentTaskId, runId, agentId, "Conflicting replacement.",
+            "provider-b", "model-b", 3_000L, "chat-queue"
+        ))
+        assertEquals(executionId, TaskResultArchive.get(context, executionId)?.taskId)
+        assertEquals("Original durable report.", TaskResultArchive.get(context, executionId)?.report)
+        assertEquals("provider-a", TaskResultArchive.get(context, executionId)?.providerId)
+        assertEquals(1, TaskResultArchive.latest(context).count { it.taskId == executionId })
+    }
+
     @Test fun archivedReportsRedactCommonProviderCredentials() {
         val report = "API key: sk-12345678901234567890 and Bearer abcdefghijklmnopqrstuvwxyz123456"
         assertTrue(TaskResultArchive.put(context, "secret-task", "developer", report, "provider-a", "model-a", 1_000L))
