@@ -182,7 +182,7 @@ class MainActivity : Activity() {
         }.getOrDefault(0)
         if (recoveredQueueTasks > 0) android.util.Log.w(
             "AiFORTecaQueue",
-            "Odzyskano $recoveredQueueTasks przerwanych zadań MASTER-a jako BLOCKED. Nie wznowiono automatycznie niepewnych żądań API."
+            "Odzyskano $recoveredQueueTasks przerwanych zadań MASTER-a: aktywne przebiegi jako BLOCKED, a przydziały sprzed startu jako PAUSED. Nie powtórzono niepewnych żądań API."
         )
         val pausedMasterWork = runCatching {
             pl.aimasterpro.app.core.MasterWorkJournalStore.pauseActive(this)
