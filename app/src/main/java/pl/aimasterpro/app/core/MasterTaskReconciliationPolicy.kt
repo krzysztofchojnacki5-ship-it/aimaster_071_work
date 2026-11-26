@@ -92,18 +92,24 @@ object MasterTaskReconciliationPolicy {
             )
         }
 
+        val aggregateFinalStatus = when {
+            relevantEvents.any { it.resultStatus == "FAILED" } -> "FAILED"
+            relevantEvents.any { it.resultStatus == "BLOCKED" } -> "BLOCKED"
+            else -> "COMPLETED"
+        }
         return when (taskStatus) {
-            "RUNNING", "BLOCKED" -> Assessment(
+            "RUNNING" -> Assessment(
                 Decision.READY_TO_FINALIZE,
-                finalStatus = when {
-                    relevantEvents.any { it.resultStatus == "FAILED" } -> "FAILED"
-                    relevantEvents.any { it.resultStatus == "BLOCKED" } -> "BLOCKED"
-                    else -> "COMPLETED"
-                }
+                finalStatus = aggregateFinalStatus
             )
-            "COMPLETED", "FAILED" -> Assessment(Decision.TERMINAL_STATE_CONSISTENT)
+            "BLOCKED", "COMPLETED", "FAILED" ->
+                if (taskStatus == aggregateFinalStatus) {
+                    Assessment(Decision.TERMINAL_STATE_CONSISTENT, finalStatus = aggregateFinalStatus)
+                } else {
+                    Assessment(Decision.TERMINAL_STATE_INCONSISTENT, finalStatus = aggregateFinalStatus)
+                }
             "QUEUED", "ASSIGNED", "PAUSED", "CANCELLED" ->
-                Assessment(Decision.TERMINAL_STATE_INCONSISTENT)
+                Assessment(Decision.TERMINAL_STATE_INCONSISTENT, finalStatus = aggregateFinalStatus)
             else -> Assessment(Decision.NO_RECONCILIATION_REQUIRED)
         }
     }
