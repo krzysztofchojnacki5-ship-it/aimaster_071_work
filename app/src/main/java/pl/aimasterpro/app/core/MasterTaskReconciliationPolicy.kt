@@ -52,7 +52,6 @@ object MasterTaskReconciliationPolicy {
         archiveReadable: Boolean,
         reports: List<Evidence>,
         resultEvents: List<Evidence>,
-        checkpoints: List<Evidence> = emptyList(),
         checkpointJournalReadable: Boolean = true
     ): Assessment {
         if (!archiveReadable) return Assessment(Decision.ARCHIVE_UNREADABLE)
@@ -65,8 +64,7 @@ object MasterTaskReconciliationPolicy {
         val assigned = assignedAgentIds.toSet()
         val relevantReports = reports.filter { it.agentId in assigned }
         val relevantEvents = resultEvents.filter { it.agentId in assigned }
-        val relevantCheckpoints = checkpoints.filter { it.agentId in assigned }
-        val unexpected = (relevantReports + relevantEvents + relevantCheckpoints)
+        val unexpected = (relevantReports + relevantEvents)
             .filter { it.runId != taskRunId }
             .map { it.agentId }.distinct().sorted()
         if (unexpected.isNotEmpty()) {
@@ -76,12 +74,9 @@ object MasterTaskReconciliationPolicy {
         if (relevantEvents.any { it.resultStatus !in setOf("COMPLETED", "FAILED", "BLOCKED") }) {
             return Assessment(Decision.INVALID_RESULT_EVENT)
         }
-        val checkpointByAgent = relevantCheckpoints.associateBy { it.agentId }
         val eventByAgent = relevantEvents.associateBy { it.agentId }
         val checkpointConflict = relevantReports.any { report ->
-            val checkpointStatus = report.checkpointStatus.ifBlank {
-                checkpointByAgent[report.agentId]?.checkpointStatus.orEmpty()
-            }
+            val checkpointStatus = report.checkpointStatus
             val eventStatus = eventByAgent[report.agentId]?.resultStatus.orEmpty()
             checkpointStatus in setOf("COMPLETED", "FAILED", "BLOCKED") &&
                 eventStatus.isNotBlank() && checkpointStatus != eventStatus
@@ -114,8 +109,6 @@ object MasterTaskReconciliationPolicy {
             val repairStatuses = missingEvents.mapNotNull { agentId ->
                 val status = relevantReports.firstOrNull { it.agentId == agentId }?.checkpointStatus
                     ?.takeIf { it in setOf("COMPLETED", "FAILED", "BLOCKED") }
-                    ?: checkpointByAgent[agentId]?.checkpointStatus
-                        ?.takeIf { it in setOf("COMPLETED", "FAILED", "BLOCKED") }
                 status?.let { agentId to it }
             }.toMap()
             val allRepairable = repairStatuses.keys.containsAll(missingEvents)
@@ -209,7 +202,6 @@ object MasterTaskReconciliationReader {
             archiveReadable = archiveReadable,
             reports = reports,
             resultEvents = resultEvents,
-            checkpoints = checkpoints,
             checkpointJournalReadable = checkpointReadable
         )
     }
