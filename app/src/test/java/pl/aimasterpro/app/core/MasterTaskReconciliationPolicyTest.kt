@@ -64,10 +64,26 @@ class MasterTaskReconciliationPolicyTest {
     }
 
     @Test fun allDurableEvidenceAllowsFinalizationButDoesNotPerformIt() {
-        assertEquals(MasterTaskReconciliationPolicy.Decision.READY_TO_FINALIZE, assess().decision)
+        val running = assess()
+        assertEquals(MasterTaskReconciliationPolicy.Decision.READY_TO_FINALIZE, running.decision)
+        assertEquals("COMPLETED", running.finalStatus)
+        val blocked = assess(status = "BLOCKED")
+        assertEquals(MasterTaskReconciliationPolicy.Decision.READY_TO_FINALIZE, blocked.decision)
+        assertEquals("COMPLETED", blocked.finalStatus)
+    }
+
+    @Test fun failedAgentResultKeepsAggregateTaskFailed() {
+        val failedEvents = listOf(events.first(), events.last().copy(resultStatus = "FAILED"))
+        val result = assess(eventEvidence = failedEvents)
+        assertEquals(MasterTaskReconciliationPolicy.Decision.READY_TO_FINALIZE, result.decision)
+        assertEquals("FAILED", result.finalStatus)
+    }
+
+    @Test fun unsupportedResultEventStatusFailsClosed() {
+        val invalidEvents = listOf(events.first(), events.last().copy(resultStatus = "RUNNING"))
         assertEquals(
-            MasterTaskReconciliationPolicy.Decision.READY_TO_FINALIZE,
-            assess(status = "BLOCKED").decision
+            MasterTaskReconciliationPolicy.Decision.INVALID_RESULT_EVENT,
+            assess(eventEvidence = invalidEvents).decision
         )
     }
 
