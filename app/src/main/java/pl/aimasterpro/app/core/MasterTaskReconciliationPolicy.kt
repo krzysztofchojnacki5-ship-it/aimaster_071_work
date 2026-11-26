@@ -193,9 +193,8 @@ object MasterTaskReconciliationReader {
         val archiveReadable = TaskResultArchive.isArchiveReadable(context)
         val checkpointReadable = TaskCheckpointStore.isJournalReadable(context)
         // Read the complete bounded journal, not latest(): latest() collapses duplicate task IDs and could hide conflicting agent identities before this reader can fail closed.
-        val checkpointRows = if (checkpointReadable) {
-            selectLatestCheckpointsForRun(TaskCheckpointStore.load(context), task.runId)
-        } else emptyList()
+        val checkpointJournalRows = if (checkpointReadable) TaskCheckpointStore.load(context) else emptyList()
+        val checkpointRows = selectLatestCheckpointsForRun(checkpointJournalRows, task.runId)
         val checkpointByTaskId = checkpointRows.associateBy { it.taskId }
         val reports = if (archiveReadable) task.assignedAgentIds.mapNotNull { agentId ->
             TaskResultArchive.getExecution(context, task.id, agentId, task.runId)?.let { archived ->
@@ -203,7 +202,10 @@ object MasterTaskReconciliationReader {
                     agentId, task.runId,
                     checkpointStatus = checkpointByTaskId[archived.taskId]
                         ?.takeIf { it.taskId == archived.taskId && it.agentId == agentId && it.runId == task.runId }
-                        ?.status.orEmpty()
+                        ?.status.orEmpty(),
+                    checkpointConflict = hasConflictingCheckpointEvidence(
+                        checkpointJournalRows, task.runId, archived.taskId, agentId
+                    )
                 )
             }
         } else emptyList()
@@ -243,6 +245,25 @@ object MasterTaskReconciliationReader {
         }
 
     /**
+     * Detects contradictory persisted checkpoint provenance for one exact execution.
+     * Non-terminal lifecycle rows may coexist with one terminal row; conflicting terminal
+     * outcomes or a different agent identity make the evidence ambiguous.
+     */
+    internal fun hasConflictingCheckpointEvidence(
+        rows: List<TaskCheckpointStore.Event>,
+        runId: Int,
+        executionTaskId: String,
+        expectedAgentId: String
+    ): Boolean {
+        val executionRows = rows.filter { it.taskId == executionTaskId && it.runId == runId }
+        if (executionRows.isEmpty()) return false
+        if (executionRows.any { it.agentId != expectedAgentId }) return true
+        return executionRows.map { it.status }
+            .filter { it in setOf("COMPLETED", "FAILED", "BLOCKED") }
+            .distinct().size > 1
+    }
+
+    /**
      * Repairs only missing AGENT_RESULT events when both the exact-epoch report and a terminal
      * checkpoint are already durable. It never calls a provider and is safe to retry after a
      * partial repair because each write is fenced by the queue runId and duplicate events are
@@ -280,7 +301,11 @@ object MasterTaskReconciliationReader {
                 TaskResultArchive.getExecution(context, taskId, agentId, task.runId) == null ||
                 !TaskCheckpointStore.isJournalReadable(context)) return false
             val archived = TaskResultArchive.getExecution(context, taskId, agentId, task.runId) ?: return false
-            val checkpoint = TaskCheckpointStore.latest(context).firstOrNull {
+            val checkpointJournal = TaskCheckpointStore.load(context)
+            if (hasConflictingCheckpointEvidence(
+                    checkpointJournal, task.runId, archived.taskId, agentId
+                )) return false
+            val checkpoint = selectLatestCheckpointsForRun(checkpointJournal, task.runId).firstOrNull {
                 it.taskId == archived.taskId && it.agentId == agentId && it.runId == task.runId
             } ?: return false
             if (checkpoint.status != expectedStatus ||
