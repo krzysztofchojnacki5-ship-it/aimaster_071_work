@@ -1,6 +1,8 @@
 package pl.aimasterpro.app.core
 
 import android.content.Context
+import org.json.JSONArray
+import org.json.JSONObject
 import org.junit.Assert.*
 import org.junit.Before
 import org.junit.Test
@@ -155,6 +157,36 @@ class MasterTaskReconciliationReaderTest {
         assertTrue(assessment.repairStatuses.isEmpty())
         assertNull(assessment.finalStatus)
         assertFalse(MasterTaskReconciliationReader.repairMissingResultEvents(context, taskId))
+    }
+
+    @Test fun conflictingTerminalCheckpointsForSameExecutionBlockAssessmentAndRepair() {
+        val runId = startSingleAgentTask()
+        persistReportAndCheckpoint(runId)
+
+        val prefs = context.getSharedPreferences("task_checkpoints_v1", Context.MODE_PRIVATE)
+        val originalRows = JSONArray(prefs.getString("events", "[]"))
+        val original = originalRows.getJSONObject(0)
+        val conflicting = JSONObject(original.toString())
+            .put("status", "FAILED")
+            .put("ts", original.optLong("ts") + 1L)
+        val conflictingRows = JSONArray().put(conflicting).put(original)
+        assertTrue(prefs.edit().putString("events", conflictingRows.toString()).commit())
+
+        val assessment = MasterTaskReconciliationReader.assess(
+            context, MasterTaskQueueStore.snapshot(context), taskId
+        )
+        assertEquals(
+            MasterTaskReconciliationPolicy.Decision.CHECKPOINT_EVIDENCE_CONFLICT,
+            assessment.decision
+        )
+        assertTrue(assessment.repairStatuses.isEmpty())
+        assertFalse(MasterTaskReconciliationReader.repairMissingResultEvents(context, taskId))
+
+        val after = MasterTaskQueueStore.snapshot(context)
+        assertEquals(MasterTaskQueueStore.Status.RUNNING, after.tasks.single().status)
+        assertFalse(after.events.any {
+            it.taskId == taskId && it.operation == "AGENT_RESULT" && it.runId == runId
+        })
     }
 
     @Test fun archiveEntryForDifferentAgentCannotBeReconciledIntoAssignedAgentsResult() {
