@@ -268,15 +268,23 @@ object MasterTaskQueueStore {
         expectedRunId: Int? = null
     ): Boolean = mutate(context) { tasks, events ->
         val current = tasks.firstOrNull { it.id == taskId } ?: return@mutate null
-        if (current.status != Status.RUNNING || (expectedRunId == null || current.runId != expectedRunId) ||
+        if ((expectedRunId == null || current.runId != expectedRunId) ||
             agentId !in current.assignedAgentIds ||
             result !in setOf(Status.COMPLETED, Status.FAILED, Status.BLOCKED) ||
             detail.length > 500 || now < 0L) return@mutate null
-        val alreadyReported = events.any {
+
+        // A caller may retry after a successful durable write but before it received the
+        // acknowledgement. Treat the exact same result as committed, without appending a
+        // second event; a different outcome for the same agent/run remains a hard conflict.
+        val existingResult = events.firstOrNull {
             it.taskId == taskId && it.actor == "agent:$agentId" &&
                 it.operation == "AGENT_RESULT" && it.runId == current.runId
         }
-        if (alreadyReported) return@mutate null
+        if (existingResult != null) {
+            val safeDetail = CommunicationLogSanitizer.sanitize(detail.trim()).take(500)
+            return@mutate (existingResult.toStatus == result.name && existingResult.detail == safeDetail)
+        }
+        if (current.status != Status.RUNNING) return@mutate null
         val activityAt = maxOf(now, current.updatedAt,
             events.asSequence().filter { it.taskId == taskId }.maxOfOrNull { it.timestamp } ?: 0L)
         val nextEvents = events + event(taskId, "agent:$agentId", "AGENT_RESULT", Status.RUNNING.name,
