@@ -1,5 +1,7 @@
 package pl.aimasterpro.app.core
 
+import android.content.Context
+
 /**
  * Pure consistency policy for reconciling a durable MASTER queue task with its execution reports.
  *
@@ -13,6 +15,9 @@ object MasterTaskReconciliationPolicy {
     )
 
     enum class Decision {
+        QUEUE_UNAVAILABLE,
+        QUEUE_CORRUPT,
+        TASK_NOT_FOUND,
         ARCHIVE_UNREADABLE,
         INVALID_TASK_EPOCH,
         NO_ASSIGNEES,
@@ -88,5 +93,51 @@ object MasterTaskReconciliationPolicy {
                 Assessment(Decision.TERMINAL_STATE_INCONSISTENT)
             else -> Assessment(Decision.NO_RECONCILIATION_REQUIRED)
         }
+    }
+}
+
+
+/**
+ * Reads the durable stores and feeds only persisted evidence into the pure policy above.
+ * This is inspection-only: it does not repair, finalize, resume, or replay any work.
+ */
+object MasterTaskReconciliationReader {
+    fun assess(context: Context, snapshot: MasterTaskQueueStore.Snapshot, taskId: String):
+        MasterTaskReconciliationPolicy.Assessment {
+        if (snapshot.status == MasterTaskQueueStore.ReadStatus.UNAVAILABLE) {
+            return MasterTaskReconciliationPolicy.Assessment(
+                MasterTaskReconciliationPolicy.Decision.QUEUE_UNAVAILABLE
+            )
+        }
+        if (snapshot.status != MasterTaskQueueStore.ReadStatus.AVAILABLE) {
+            return MasterTaskReconciliationPolicy.Assessment(
+                MasterTaskReconciliationPolicy.Decision.QUEUE_CORRUPT
+            )
+        }
+        val task = snapshot.tasks.firstOrNull { it.id == taskId }
+            ?: return MasterTaskReconciliationPolicy.Assessment(
+                MasterTaskReconciliationPolicy.Decision.TASK_NOT_FOUND
+            )
+        val archiveReadable = TaskResultArchive.isArchiveReadable(context)
+        val reports = if (archiveReadable) task.assignedAgentIds.mapNotNull { agentId ->
+            TaskResultArchive.getExecution(context, task.id, agentId, task.runId)?.let {
+                MasterTaskReconciliationPolicy.Evidence(agentId, task.runId)
+            }
+        } else emptyList()
+        val resultEvents = snapshot.events.asSequence()
+            .filter { it.taskId == task.id && it.operation == "AGENT_RESULT" }
+            .mapNotNull { event ->
+                val agentId = event.actor.removePrefix("agent:")
+                if (!event.actor.startsWith("agent:")) null
+                else MasterTaskReconciliationPolicy.Evidence(agentId, event.runId)
+            }.toList()
+        return MasterTaskReconciliationPolicy.assess(
+            taskStatus = task.status.name,
+            taskRunId = task.runId,
+            assignedAgentIds = task.assignedAgentIds,
+            archiveReadable = archiveReadable,
+            reports = reports,
+            resultEvents = resultEvents
+        )
     }
 }
