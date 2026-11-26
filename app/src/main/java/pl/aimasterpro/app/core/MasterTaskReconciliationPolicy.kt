@@ -181,7 +181,9 @@ object MasterTaskReconciliationReader {
             )
         val archiveReadable = TaskResultArchive.isArchiveReadable(context)
         val checkpointReadable = TaskCheckpointStore.isJournalReadable(context)
-        val checkpointRows = if (checkpointReadable) TaskCheckpointStore.latest(context) else emptyList()
+        // TaskCheckpointStore.latest is newest-first; distinctBy preserves the first/current epoch row.
+        val checkpointRows = if (checkpointReadable) TaskCheckpointStore.latest(context).distinctBy { it.taskId }
+            else emptyList()
         val checkpoints = checkpointRows.filter { it.runId == task.runId }
             .map { MasterTaskReconciliationPolicy.Evidence(it.agentId, it.runId, checkpointStatus = it.status) }
         val checkpointByTaskId = checkpointRows.filter { it.runId == task.runId }.associateBy { it.taskId }
