@@ -8604,8 +8604,8 @@ class MainActivity : Activity() {
                         },
                         onTaskResult = { result ->
                             queueStore.withActiveRun(this, taskId, executionRunId) {
-                                val archived = pl.aimasterpro.app.core.TaskResultArchive.put(
-                                    this, result.taskId, result.agentId, result.report,
+                                val archived = pl.aimasterpro.app.core.TaskResultArchive.putExecution(
+                                    this, taskId, executionRunId, result.agentId, result.report,
                                     result.providerId, result.model
                                 )
                                 if (!archived) {
