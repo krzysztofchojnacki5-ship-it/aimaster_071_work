@@ -42,11 +42,8 @@ class MasterTaskReconciliationPolicyTest {
     @Test fun missingQueueEventCanBeRepairedOnlyFromMatchingTerminalCheckpoint() {
         val result = MasterTaskReconciliationPolicy.assess(
             "RUNNING", 4, agents, true,
-            listOf(reports.first(), reports.last()),
-            listOf(events.first()),
-            checkpoints = listOf(
-                MasterTaskReconciliationPolicy.Evidence("developer", 4, checkpointStatus = "COMPLETED")
-            )
+            listOf(reports.first(), reports.last().copy(checkpointStatus = "COMPLETED")),
+            listOf(events.first())
         )
         assertEquals(
             MasterTaskReconciliationPolicy.Decision.REPORTS_NEED_RESULT_EVENT_REPAIR,
