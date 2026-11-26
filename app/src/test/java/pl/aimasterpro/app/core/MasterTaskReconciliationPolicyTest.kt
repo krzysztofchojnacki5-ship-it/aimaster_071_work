@@ -1,6 +1,6 @@
 package pl.aimasterpro.app.core
 
-import org.junit.Assert.assertEquals
+import org.junit.Assert.assertEquals\nimport org.junit.Assert.assertTrue
 import org.junit.Test
 
 class MasterTaskReconciliationPolicyTest {
@@ -37,6 +37,45 @@ class MasterTaskReconciliationPolicyTest {
             result.decision
         )
         assertEquals(listOf("developer"), result.missingResultEventAgentIds)
+    }
+
+    @Test fun missingQueueEventCanBeRepairedOnlyFromMatchingTerminalCheckpoint() {
+        val result = MasterTaskReconciliationPolicy.assess(
+            "RUNNING", 4, agents, true,
+            listOf(reports.first(), reports.last()),
+            listOf(events.first()),
+            checkpoints = listOf(
+                MasterTaskReconciliationPolicy.Evidence("developer", 4, checkpointStatus = "COMPLETED")
+            )
+        )
+        assertEquals(
+            MasterTaskReconciliationPolicy.Decision.REPORTS_NEED_RESULT_EVENT_REPAIR,
+            result.decision
+        )
+        assertEquals(mapOf("developer" to "COMPLETED"), result.repairStatuses)
+        assertEquals("COMPLETED", result.finalStatus)
+    }
+
+    @Test fun missingCheckpointJournalBlocksEventRepair() {
+        val result = MasterTaskReconciliationPolicy.assess(
+            "RUNNING", 4, agents, true,
+            reports, listOf(events.first()),
+            checkpointJournalReadable = false
+        )
+        assertEquals(MasterTaskReconciliationPolicy.Decision.CHECKPOINT_UNREADABLE, result.decision)
+        assertTrue(result.repairStatuses.isEmpty())
+    }
+
+    @Test fun checkpointAndExistingQueueResultMustAgree() {
+        val result = MasterTaskReconciliationPolicy.assess(
+            "RUNNING", 4, agents, true,
+            listOf(reports.first().copy(checkpointStatus = "FAILED"), reports.last()),
+            events
+        )
+        assertEquals(
+            MasterTaskReconciliationPolicy.Decision.CHECKPOINT_RESULT_MISMATCH,
+            result.decision
+        )
     }
 
     @Test fun queueResultWithoutArchivedReportIsInconsistent() {
