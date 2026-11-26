@@ -391,3 +391,6 @@ Dodano cztery testy regresyjne dla powyższych przypadków. **Testów nie urucha
   4. Ocena uzgadniania wiąże checkpoint z dokładnym `taskId`, `agentId` i `runId` raportu; obcy checkpoint nie może autoryzować naprawy ani wyznaczać statusu końcowego.
 - Dodano testy regresyjne archiwum i czytnika dla błędnej tożsamości agenta, kolizji skróconego klucza legacy i obcego checkpointu.
 - Testów nie uruchamiano w trakcie pojedynczych zmian. Pełne CI po domknięciu pakietu; APK/build Android pozostają osobnym statusem.
+
+
+- Korekta po pierwszym CI pakietu 35: `TaskCheckpointStore.latest()` celowo zwraca tylko najnowszy wpis na `taskId`, więc ukrywało konflikt tożsamości zanim reader mógł go wykryć. Reader korzysta teraz z pełnego, ograniczonego dziennika `load()`; dopiero potem filtruje `runId` i odrzuca sprzeczne identyfikatory agentów. Test regresyjny zapisuje oba wpisy w kolejności, która wcześniej maskowała konflikt. Pierwsze CI: 1463 testy, 1 niepowodzenie w tym teście; po poprawce pełne CI do ponowienia.

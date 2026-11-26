@@ -187,9 +187,9 @@ object MasterTaskReconciliationReader {
             )
         val archiveReadable = TaskResultArchive.isArchiveReadable(context)
         val checkpointReadable = TaskCheckpointStore.isJournalReadable(context)
-        // TaskCheckpointStore.latest is newest-first; distinctBy preserves the first/current epoch row.
+        // Read the complete bounded journal, not latest(): latest() collapses duplicate task IDs and could hide conflicting agent identities before this reader can fail closed.
         val checkpointRows = if (checkpointReadable) {
-            selectLatestCheckpointsForRun(TaskCheckpointStore.latest(context), task.runId)
+            selectLatestCheckpointsForRun(TaskCheckpointStore.load(context), task.runId)
         } else emptyList()
         val checkpointByTaskId = checkpointRows.associateBy { it.taskId }
         val reports = if (archiveReadable) task.assignedAgentIds.mapNotNull { agentId ->
