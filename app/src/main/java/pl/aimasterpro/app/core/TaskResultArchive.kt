@@ -121,6 +121,48 @@ object TaskResultArchive {
     }
 
     /**
+     * Stores a report under its exact queue execution identity. Once written, the
+     * taskId+agentId+runId slot is immutable: an exact retry is acknowledged, while
+     * a conflicting payload cannot replace the report that recovery already trusts.
+     */
+    @Synchronized
+    fun putExecution(
+        context: Context,
+        parentTaskId: String,
+        runId: Int,
+        agentId: String,
+        report: String,
+        providerId: String,
+        model: String,
+        createdAt: Long = System.currentTimeMillis(),
+        chatId: String = ""
+    ): Boolean {
+        if (runId <= 0 || agentId.isBlank() || report.isBlank() ||
+            providerId.isBlank() || model.isBlank() || createdAt < 0L ||
+            chatId.length > MAX_CHAT_ID_CHARS ||
+            CommunicationLogSanitizer.sanitize(chatId) != chatId) return false
+        val executionId = runCatching { executionTaskId(parentTaskId, agentId, runId) }
+            .getOrNull() ?: return false
+        val expected = Entry(
+            executionId,
+            CommunicationLogSanitizer.sanitize(agentId.trim()),
+            CommunicationLogSanitizer.sanitize(report),
+            CommunicationLogSanitizer.sanitize(providerId.trim()),
+            CommunicationLogSanitizer.sanitize(model.trim()),
+            createdAt,
+            chatId
+        )
+        if (expected.agentId.isBlank() || expected.report.isBlank() ||
+            expected.report.length > MAX_REPORT_CHARS || expected.providerId.isBlank() ||
+            expected.model.isBlank()) return false
+
+        val existing = get(context, executionId)
+        if (existing != null) return existing == expected
+        return put(context, executionId, agentId, report, providerId, model, createdAt, chatId) &&
+            get(context, executionId) == expected
+    }
+
+    /**
      * Stages every already-completed report into the next execution epoch before the queue
      * advances its runId. If the process dies during staging, the queue remains on the old
      * BLOCKED epoch and can safely repeat this idempotent operation without replaying agents.
