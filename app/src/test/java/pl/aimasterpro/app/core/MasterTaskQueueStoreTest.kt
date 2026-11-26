@@ -353,6 +353,37 @@ class MasterTaskQueueStoreTest {
         assertEquals("agent:critical-reviewer", state.events.first { it.operation == "AGENT_MESSAGE" }.actor)
     }
 
+    @Test fun exactAgentResultRetryIsIdempotentAfterDurableCompletion() {
+        val taskId = "task-result-idempotent"
+        val agent = "critical-reviewer"
+        assertTrue(MasterTaskQueueStore.enqueue(context, taskId, "Idempotent result", "Retry exact acknowledgement.", now = 66L))
+        assertTrue(MasterTaskQueueStore.assign(context, taskId, listOf(agent), now = 67L))
+        assertTrue(startTaskWithCurrentSnapshot(taskId, "Start.", 68L))
+
+        assertTrue(MasterTaskQueueStore.recordAgentResult(
+            context, taskId, agent, MasterTaskQueueStore.Status.COMPLETED,
+            "Durable report.", now = 69L, expectedRunId = 1
+        ))
+        val beforeRetry = MasterTaskQueueStore.snapshot(context)
+        assertEquals(MasterTaskQueueStore.Status.COMPLETED, beforeRetry.tasks.single().status)
+        assertEquals(1, beforeRetry.events.count { it.taskId == taskId && it.operation == "AGENT_RESULT" })
+
+        assertTrue(MasterTaskQueueStore.recordAgentResult(
+            context, taskId, agent, MasterTaskQueueStore.Status.COMPLETED,
+            "Durable report.", now = 70L, expectedRunId = 1
+        ))
+        val afterRetry = MasterTaskQueueStore.snapshot(context)
+        assertEquals(MasterTaskQueueStore.Status.COMPLETED, afterRetry.tasks.single().status)
+        assertEquals(1, afterRetry.events.count { it.taskId == taskId && it.operation == "AGENT_RESULT" })
+        assertFalse(MasterTaskQueueStore.recordAgentResult(
+            context, taskId, agent, MasterTaskQueueStore.Status.FAILED,
+            "Conflicting report.", now = 71L, expectedRunId = 1
+        ))
+        assertEquals(1, MasterTaskQueueStore.snapshot(context).events.count {
+            it.taskId == taskId && it.operation == "AGENT_RESULT"
+        })
+    }
+
     @Test fun failedAgentMakesMultiAgentTaskFailedAfterAllReports() {
         assertTrue(MasterTaskQueueStore.enqueue(context, "task-009", "Zespół", "Wspólny cel.", now = 70L))
         assertTrue(MasterTaskQueueStore.assign(context, "task-009",
