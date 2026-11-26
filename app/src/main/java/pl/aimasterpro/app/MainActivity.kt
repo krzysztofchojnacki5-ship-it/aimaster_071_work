@@ -8200,7 +8200,10 @@ class MainActivity : Activity() {
         if (!plan.isAssignable) { if (showToast) toast("MASTER nie może przydzielić zespołu: " + plan.rejectionReason.ifBlank { plan.selection.reason }); return false }
         if (!pl.aimasterpro.app.core.MasterTaskQueueStore.assignPlanned(this, taskId, plan.selectedAgentIds, plan.expectedUpdatedAt, plan.expectedRunId, 1)) { if (showToast) toast("Przydział nie został zapisany; nie wysłano żądań."); return false }
         executeQueuedMasterTask(taskId)
-        return true
+        // The assignment commit alone is not proof that execution started: the executor
+        // performs a second set of lifecycle, archive and provider guards before claiming
+        // the active slot. Report success only when that slot was actually acquired.
+        return activeQueueTaskId == taskId
     }
 
     /**
