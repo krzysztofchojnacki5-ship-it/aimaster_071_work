@@ -774,6 +774,28 @@ class MasterTaskQueueStoreTest {
         assertEquals(0, MasterTaskQueueStore.recoverInterruptedRuns(context, now = 91L))
     }
 
+    @Test fun assignedTasksRecoverAsPausedWithoutDiscardingTheirTeam() {
+        val taskId = "task-assigned-recovery"
+        val agents = listOf("critical-reviewer", "unit-test-engineer")
+        assertTrue(MasterTaskQueueStore.enqueue(context, taskId, "Przydział bez startu",
+            "Odzyskaj przydział, który nie wysłał żądań.", now = 90L))
+        assertTrue(MasterTaskQueueStore.assign(context, taskId, agents, now = 91L))
+
+        // ASSIGNED is committed before RUNNING; no provider request can have been dispatched.
+        assertEquals(1, MasterTaskQueueStore.recoverInterruptedRuns(context, now = 89L))
+        val state = MasterTaskQueueStore.snapshot(context)
+        val recovered = state.tasks.single()
+        assertEquals(MasterTaskQueueStore.Status.PAUSED, recovered.status)
+        assertEquals(agents, recovered.assignedAgentIds)
+        assertEquals(0, recovered.runId)
+        assertEquals(91L, recovered.updatedAt)
+        assertTrue(recovered.currentStep.contains("bez rozpoczęcia wysyłania żądań API"))
+        assertEquals("RECOVER_UNSTARTED_ASSIGNMENT", state.events.last().operation)
+        assertEquals("ASSIGNED", state.events.last().fromStatus)
+        assertEquals("PAUSED", state.events.last().toStatus)
+        assertEquals(0, MasterTaskQueueStore.recoverInterruptedRuns(context, now = 100L))
+    }
+
     @Test fun safeResumeAdvancesEpochPreservesCompletedReportAndRejectsLateCallbacks() {
         val taskId = "task-safe-resume-001"
         val agents = listOf("critical-reviewer", "unit-test-engineer")
