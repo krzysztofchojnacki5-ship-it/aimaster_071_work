@@ -514,23 +514,42 @@ object MasterTaskQueueStore {
         if (now < 0L) return 0
         var recovered = 0
         val saved = mutate(context) { tasks, events ->
-            val running = tasks.filter { it.status == Status.RUNNING }
-            if (running.isEmpty()) return@mutate null
+            // ASSIGNED is a pre-dispatch state: executeQueuedMasterTask commits RUNNING
+            // before TeamRunEngine can send provider requests. A process death in ASSIGNED
+            // can therefore be returned to PAUSED without replaying or losing the team.
+            val interrupted = tasks.filter {
+                it.status == Status.RUNNING || it.status == Status.ASSIGNED
+            }
+            if (interrupted.isEmpty()) return@mutate null
             val updated = tasks.map { task ->
-                if (task.status != Status.RUNNING) task else {
-                    recovered++
-                    task.copy(status = Status.BLOCKED,
-                        currentStep = "Przerwano działanie aplikacji. wynik żądań może być nieznany; sprawdź historię API przed ponownym uruchomieniem.",
-                        updatedAt = maxOf(now, task.updatedAt))
+                when (task.status) {
+                    Status.RUNNING -> {
+                        recovered++
+                        task.copy(status = Status.BLOCKED,
+                            currentStep = "Przerwano działanie aplikacji. wynik żądań może być nieznany; sprawdź historię API przed ponownym uruchomieniem.",
+                            updatedAt = maxOf(now, task.updatedAt))
+                    }
+                    Status.ASSIGNED -> {
+                        recovered++
+                        task.copy(status = Status.PAUSED,
+                            currentStep = "Odzyskano przydział bez rozpoczęcia wysyłania żądań API. Zadanie wymaga ponownego uruchomienia przez MASTER-a.",
+                            updatedAt = maxOf(now, task.updatedAt))
+                    }
+                    else -> task
                 }
             }
-            val recoveryEvents = running.map { task ->
+            val recoveryEvents = interrupted.map { task ->
                 // Recovery must not make the durable task timeline move backwards when the
                 // device clock was corrected or a caller supplied an older timestamp.
                 val recoveryAt = maxOf(now, task.updatedAt)
-                event(task.id, "MASTER_RECOVERY", "RECOVER_INTERRUPTED", Status.RUNNING.name,
-                    Status.BLOCKED.name,
-                    "Proces aplikacji zakończył się podczas pracy. Nie wznowiono automatycznie, aby uniknąć duplikowania żądań API.",
+                val target = if (task.status == Status.RUNNING) Status.BLOCKED else Status.PAUSED
+                event(task.id, "MASTER_RECOVERY",
+                    if (task.status == Status.RUNNING) "RECOVER_INTERRUPTED" else "RECOVER_UNSTARTED_ASSIGNMENT",
+                    task.status.name, target.name,
+                    if (task.status == Status.RUNNING)
+                        "Proces aplikacji zakończył się podczas pracy. Nie wznowiono automatycznie, aby uniknąć duplikowania żądań API."
+                    else
+                        "Proces aplikacji zakończył się po przydziale, ale przed trwałym rozpoczęciem przebiegu. Przydział zachowano; nie wysłano ponownie żądań API.",
                     recoveryAt, runId = task.runId)
             }
             Triple(updated, events + recoveryEvents, true)
