@@ -8172,29 +8172,35 @@ class MainActivity : Activity() {
         val candidates = pl.aimasterpro.app.agents.MasterQueueAutoStartPolicy
             .orderedRunnableTasks(snapshot)
         for (candidate in candidates) {
-            startQueuedTaskAutonomously(candidate.id)
+            val started = startQueuedTaskAutonomously(candidate.id, showToast = false)
             val latest = pl.aimasterpro.app.core.MasterTaskQueueStore.snapshot(this)
             val candidateNow = latest.tasks.firstOrNull { it.id == candidate.id }
             if (candidateNow?.status != pl.aimasterpro.app.core.MasterTaskQueueStore.Status.QUEUED) return
+            // A planning rejection may leave this task queued; try the next candidate.
+            // A global safety/availability guard means the whole pump must stop.
+            if (!started && (isFinishing || isThinking || activeQueueTaskId.isNotBlank() ||
+                activeChatTaskId.isNotBlank() || store.isStorageUncertain() || !agentAssignmentsHealthy ||
+                latest.status != pl.aimasterpro.app.core.MasterTaskQueueStore.ReadStatus.AVAILABLE)) return
         }
     }
 
     /** MASTER auto-plans and starts a durable queue task after a fenced assignment commit. */
-    private fun startQueuedTaskAutonomously(taskId: String) {
+    private fun startQueuedTaskAutonomously(taskId: String, showToast: Boolean = true): Boolean {
         if (isThinking || activeQueueTaskId.isNotBlank() || activeChatTaskId.isNotBlank() || store.isStorageUncertain() || !agentAssignmentsHealthy) {
-            toast("MASTER nie może teraz rozpocząć zadania: trwa inna praca albo konfiguracja nie jest bezpieczna.")
-            return
+            if (showToast) toast("MASTER nie może teraz rozpocząć zadania: trwa inna praca albo konfiguracja nie jest bezpieczna.")
+            return false
         }
         val queue = pl.aimasterpro.app.core.MasterTaskQueueStore.snapshot(this)
-        if (queue.status != pl.aimasterpro.app.core.MasterTaskQueueStore.ReadStatus.AVAILABLE) { toast("Kolejka niedostępna."); return }
+        if (queue.status != pl.aimasterpro.app.core.MasterTaskQueueStore.ReadStatus.AVAILABLE) { if (showToast) toast("Kolejka niedostępna."); return false }
         val catalogState = pl.aimasterpro.app.core.AgentManagerStore.snapshot(this)
-        if (catalogState.status != pl.aimasterpro.app.core.AgentManagerStore.ReadStatus.AVAILABLE) { toast("Katalog agentów niedostępny."); return }
+        if (catalogState.status != pl.aimasterpro.app.core.AgentManagerStore.ReadStatus.AVAILABLE) { if (showToast) toast("Katalog agentów niedostępny."); return false }
         val catalog = pl.aimasterpro.app.core.AgentManagerStore.enabledCatalog(this)
         val ready = catalog.filter { spec -> val role = pl.aimasterpro.app.agents.AgentProviderRouting.roleFor(spec); val cfg = loadProvider(agentProviders[role.name] ?: resolvedMasterProviderId().orEmpty()); cfg != null && providerReady(cfg) && isProviderAllowedForRouting(cfg) }.map { it.id }.toSet()
         val plan = pl.aimasterpro.app.agents.MasterQueueAssignmentPlanner.plan(queue, taskId, catalog, ready, 4, 1)
-        if (!plan.isAssignable) { toast("MASTER nie może przydzielić zespołu: " + plan.rejectionReason.ifBlank { plan.selection.reason }); return }
-        if (!pl.aimasterpro.app.core.MasterTaskQueueStore.assignPlanned(this, taskId, plan.selectedAgentIds, plan.expectedUpdatedAt, plan.expectedRunId, 1)) { toast("Przydział nie został zapisany; nie wysłano żądań."); return }
+        if (!plan.isAssignable) { if (showToast) toast("MASTER nie może przydzielić zespołu: " + plan.rejectionReason.ifBlank { plan.selection.reason }); return false }
+        if (!pl.aimasterpro.app.core.MasterTaskQueueStore.assignPlanned(this, taskId, plan.selectedAgentIds, plan.expectedUpdatedAt, plan.expectedRunId, 1)) { if (showToast) toast("Przydział nie został zapisany; nie wysłano żądań."); return false }
         executeQueuedMasterTask(taskId)
+        return true
     }
 
     /**
