@@ -25,6 +25,9 @@ object MasterTaskReconciliationPolicy {
         NO_ASSIGNEES,
         EPOCH_MISMATCH,
         INVALID_RESULT_EVENT,
+        UNASSIGNED_EVIDENCE,
+        DUPLICATE_REPORT_EVIDENCE,
+        DUPLICATE_RESULT_EVENT,
         CHECKPOINT_UNREADABLE,
         CHECKPOINT_RESULT_MISMATCH,
         MISSING_REPORTS,
@@ -62,13 +65,22 @@ object MasterTaskReconciliationPolicy {
         }
 
         val assigned = assignedAgentIds.toSet()
-        val relevantReports = reports.filter { it.agentId in assigned }
-        val relevantEvents = resultEvents.filter { it.agentId in assigned }
+        if ((reports + resultEvents).any { it.agentId !in assigned }) {
+            return Assessment(Decision.UNASSIGNED_EVIDENCE)
+        }
+        val relevantReports = reports
+        val relevantEvents = resultEvents
         val unexpected = (relevantReports + relevantEvents)
             .filter { it.runId != taskRunId }
             .map { it.agentId }.distinct().sorted()
         if (unexpected.isNotEmpty()) {
             return Assessment(Decision.EPOCH_MISMATCH, unexpectedEvidenceAgentIds = unexpected)
+        }
+        if (relevantReports.groupingBy { it.agentId }.eachCount().values.any { it > 1 }) {
+            return Assessment(Decision.DUPLICATE_REPORT_EVIDENCE)
+        }
+        if (relevantEvents.groupingBy { it.agentId }.eachCount().values.any { it > 1 }) {
+            return Assessment(Decision.DUPLICATE_RESULT_EVENT)
         }
 
         if (relevantEvents.any { it.resultStatus !in setOf("COMPLETED", "FAILED", "BLOCKED") }) {
@@ -175,9 +187,10 @@ object MasterTaskReconciliationReader {
         val archiveReadable = TaskResultArchive.isArchiveReadable(context)
         val checkpointReadable = TaskCheckpointStore.isJournalReadable(context)
         // TaskCheckpointStore.latest is newest-first; distinctBy preserves the first/current epoch row.
-        val checkpointRows = if (checkpointReadable) TaskCheckpointStore.latest(context).distinctBy { it.taskId }
-            else emptyList()
-        val checkpointByTaskId = checkpointRows.filter { it.runId == task.runId }.associateBy { it.taskId }
+        val checkpointRows = if (checkpointReadable) {
+            selectLatestCheckpointsForRun(TaskCheckpointStore.latest(context), task.runId)
+        } else emptyList()
+        val checkpointByTaskId = checkpointRows.associateBy { it.taskId }
         val reports = if (archiveReadable) task.assignedAgentIds.mapNotNull { agentId ->
             TaskResultArchive.getExecution(context, task.id, agentId, task.runId)?.let { archived ->
                 MasterTaskReconciliationPolicy.Evidence(
@@ -203,6 +216,15 @@ object MasterTaskReconciliationReader {
             checkpointJournalReadable = checkpointReadable
         )
     }
+
+    /**
+     * Selects the newest checkpoint per execution only after fencing rows to the requested run.
+     * Filtering after distinctBy would let a newer run hide the newest checkpoint from this run.
+     */
+    internal fun selectLatestCheckpointsForRun(
+        rows: List<TaskCheckpointStore.Event>,
+        runId: Int
+    ): List<TaskCheckpointStore.Event> = rows.filter { it.runId == runId }.distinctBy { it.taskId }
 
     /**
      * Repairs only missing AGENT_RESULT events when both the exact-epoch report and a terminal

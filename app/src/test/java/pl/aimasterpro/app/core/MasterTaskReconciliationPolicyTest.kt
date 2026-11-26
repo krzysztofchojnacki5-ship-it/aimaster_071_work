@@ -150,4 +150,39 @@ class MasterTaskReconciliationPolicyTest {
             MasterTaskReconciliationPolicy.assess("RUNNING", 4, emptyList(), true, reports, events).decision
         )
     }
+
+    @Test fun checkpointSelectionKeepsNewestRowFromRequestedRun() {
+        fun row(runId: Int, status: String) = TaskCheckpointStore.Event(
+            taskId = "execution-1",
+            agentId = "developer",
+            status = status,
+            detail = "",
+            timestamp = runId.toLong(),
+            providerId = "",
+            model = "",
+            attempts = 1,
+            runId = runId
+        )
+        val selected = MasterTaskReconciliationReader.selectLatestCheckpointsForRun(
+            listOf(row(5, "FAILED"), row(4, "COMPLETED"), row(4, "BLOCKED")),
+            runId = 4
+        )
+        assertEquals(1, selected.size)
+        assertEquals("COMPLETED", selected.single().status)
+    }
+
+    @Test fun evidenceFromUnassignedAgentFailsClosed() {
+        val result = assess(reportEvidence = reports + MasterTaskReconciliationPolicy.Evidence("intruder", 4))
+        assertEquals(MasterTaskReconciliationPolicy.Decision.UNASSIGNED_EVIDENCE, result.decision)
+    }
+
+    @Test fun duplicateArchivedReportsAreRejectedAsAmbiguous() {
+        val result = assess(reportEvidence = reports + reports.first())
+        assertEquals(MasterTaskReconciliationPolicy.Decision.DUPLICATE_REPORT_EVIDENCE, result.decision)
+    }
+
+    @Test fun duplicateResultEventsAreRejectedAsAmbiguous() {
+        val result = assess(eventEvidence = events + events.first())
+        assertEquals(MasterTaskReconciliationPolicy.Decision.DUPLICATE_RESULT_EVENT, result.decision)
+    }
 }

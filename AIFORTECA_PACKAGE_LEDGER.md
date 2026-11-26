@@ -364,3 +364,16 @@ Pakiet 32: wrócić do głównego celu produktu — rzeczywistego sterowania kol
 - Automatyczne workflow uruchomione przez GitHub po aktualizacji plików: AiFORTeca Unit Tests run #872 oraz Gradle Wrapper Validation run #1620 — w chwili checkpointu IN_PROGRESS. Nie deklarować PASS przed zakończeniem i sprawdzeniem raportów.
 - Android Build/APK i test urządzenia: NOT RUN / NOT VERIFIED.
 - Etap 34 pozostaje OTWARTY. Następny krok: po zakończeniu workflow przejrzeć wyniki; następnie rozszerzyć reconciliation o bezpieczne, idempotentne naprawienie wyłącznie brakującego zdarzenia `AGENT_RESULT` na podstawie istniejącego raportu i checkpointu, z fencingiem `runId`. Nigdy nie odtwarzać wywołań providera.
+
+
+## Etap 34 — uzupełnienie zabezpieczeń uzgadniania (2026-11-26, w toku)
+
+Baza kodowa: `61ec41c6a7bcbf4a70bc4e6cd61e5aefd5b1b2e2`.
+
+Cztery poprawki funkcjonalne:
+1. Wybór checkpointu najpierw ogranicza dane do dokładnego `runId`, a dopiero potem wybiera najnowszy wpis dla execution/task. Nowszy checkpoint z kolejnego retry nie ukryje już właściwego checkpointu starszego, nadal uzgadnianego uruchomienia.
+2. Polityka uzgadniania odrzuca dowody przypisane do agenta spoza listy przydzielonej do zadania; nie pomija już obcego źródła jako nieistotnego.
+3. Polityka fail-closed odrzuca wielokrotne raporty archiwalne dla tego samego agenta w jednym uzgadnianym wykonaniu, zamiast arbitralnie polegać na kolejności listy.
+4. Polityka fail-closed odrzuca wielokrotne zdarzenia `AGENT_RESULT` dla tego samego agenta; nie wybiera arbitralnie jednego z nich.
+
+Dodano cztery testy regresyjne dla powyższych przypadków. **Testów nie uruchamiano w ramach tej pracy**; zostaną objęte wspólnym CI po domknięciu pakietu. Nie zmieniono routingu providerów, budżetu tokenów, checkpointów źródłowych ani mechanizmu ponawiania wywołań API.
