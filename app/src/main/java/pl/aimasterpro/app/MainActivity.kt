@@ -8169,16 +8169,14 @@ class MainActivity : Activity() {
             store.isStorageUncertain() || !agentAssignmentsHealthy) return
         val snapshot = pl.aimasterpro.app.core.MasterTaskQueueStore.snapshot(this)
         if (snapshot.status != pl.aimasterpro.app.core.MasterTaskQueueStore.ReadStatus.AVAILABLE) return
-        val completedIds = snapshot.tasks.filter {
-            it.status == pl.aimasterpro.app.core.MasterTaskQueueStore.Status.COMPLETED
-        }.map { it.id }.toSet()
-        val next = snapshot.tasks.asSequence()
-            .filter { it.status == pl.aimasterpro.app.core.MasterTaskQueueStore.Status.QUEUED }
-            .filter { task -> task.dependencies.all { it in completedIds } }
-            .sortedWith(compareByDescending<pl.aimasterpro.app.core.MasterTaskQueueStore.Task> { it.priority }
-                .thenBy { it.createdAt }.thenBy { it.id })
-            .firstOrNull() ?: return
-        startQueuedTaskAutonomously(next.id)
+        val candidates = pl.aimasterpro.app.agents.MasterQueueAutoStartPolicy
+            .orderedRunnableTasks(snapshot)
+        for (candidate in candidates) {
+            startQueuedTaskAutonomously(candidate.id)
+            val latest = pl.aimasterpro.app.core.MasterTaskQueueStore.snapshot(this)
+            val candidateNow = latest.tasks.firstOrNull { it.id == candidate.id }
+            if (candidateNow?.status != pl.aimasterpro.app.core.MasterTaskQueueStore.Status.QUEUED) return
+        }
     }
 
     /** MASTER auto-plans and starts a durable queue task after a fenced assignment commit. */
