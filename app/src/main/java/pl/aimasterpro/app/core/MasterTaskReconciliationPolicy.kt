@@ -63,10 +63,11 @@ object MasterTaskReconciliationPolicy {
         val missingReports = assignedAgentIds.filter { it !in reportAgents }
         val missingEvents = assignedAgentIds.filter { it !in eventAgents }
 
-        if (missingReports.isNotEmpty() && missingEvents.any { it !in missingReports }) {
+        val orphanEventAgents = assignedAgentIds.filter { it in eventAgents && it !in reportAgents }
+        if (orphanEventAgents.isNotEmpty()) {
             return Assessment(
                 Decision.RESULT_EVENTS_WITHOUT_REPORTS,
-                missingReportAgentIds = missingReports,
+                missingReportAgentIds = orphanEventAgents,
                 missingResultEventAgentIds = missingEvents
             )
         }
