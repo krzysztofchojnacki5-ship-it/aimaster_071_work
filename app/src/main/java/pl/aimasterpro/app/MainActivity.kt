@@ -8173,14 +8173,21 @@ class MainActivity : Activity() {
             .orderedRunnableTasks(snapshot)
         for (candidate in candidates) {
             val started = startQueuedTaskAutonomously(candidate.id, showToast = false)
+            // Only one queue execution may own the MASTER slot at a time.
+            if (started) return
+
             val latest = pl.aimasterpro.app.core.MasterTaskQueueStore.snapshot(this)
             val candidateNow = latest.tasks.firstOrNull { it.id == candidate.id }
+            // ASSIGNED without an acquired execution slot is an uncertain hand-off.
+            // Keep it durable and stop; never skip past it or silently reassign it.
+            if (candidateNow?.status == pl.aimasterpro.app.core.MasterTaskQueueStore.Status.ASSIGNED) return
             if (candidateNow?.status != pl.aimasterpro.app.core.MasterTaskQueueStore.Status.QUEUED) return
-            // A planning rejection may leave this task queued; try the next candidate.
-            // A global safety/availability guard means the whole pump must stop.
-            if (!started && (isFinishing || isThinking || activeQueueTaskId.isNotBlank() ||
+
+            // A local planning rejection may leave this task QUEUED; try the next candidate.
+            // Global safety/storage guards stop the whole pump.
+            if (isFinishing || isThinking || activeQueueTaskId.isNotBlank() ||
                 activeChatTaskId.isNotBlank() || store.isStorageUncertain() || !agentAssignmentsHealthy ||
-                latest.status != pl.aimasterpro.app.core.MasterTaskQueueStore.ReadStatus.AVAILABLE)) return
+                latest.status != pl.aimasterpro.app.core.MasterTaskQueueStore.ReadStatus.AVAILABLE) return
         }
     }
 
