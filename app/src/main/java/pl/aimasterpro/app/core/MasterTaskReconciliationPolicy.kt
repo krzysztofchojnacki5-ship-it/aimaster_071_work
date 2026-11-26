@@ -222,9 +222,12 @@ object MasterTaskReconciliationReader {
      */
     fun repairMissingResultEvents(context: Context, taskId: String): Boolean {
         val initial = MasterTaskQueueStore.snapshot(context)
+        if (initial.status != MasterTaskQueueStore.ReadStatus.AVAILABLE) return false
         val initialTask = initial.tasks.firstOrNull { it.id == taskId } ?: return false
-        if (initial.status != MasterTaskQueueStore.ReadStatus.AVAILABLE ||
-            initialTask.status != MasterTaskQueueStore.Status.RUNNING) return false
+        if (initialTask.status != MasterTaskQueueStore.Status.RUNNING) {
+            return assess(context, initial, taskId).decision ==
+                MasterTaskReconciliationPolicy.Decision.TERMINAL_STATE_CONSISTENT
+        }
         val assessment = assess(context, initial, taskId)
         if (assessment.decision != MasterTaskReconciliationPolicy.Decision.REPORTS_NEED_RESULT_EVENT_REPAIR ||
             assessment.repairStatuses.isEmpty() ||
