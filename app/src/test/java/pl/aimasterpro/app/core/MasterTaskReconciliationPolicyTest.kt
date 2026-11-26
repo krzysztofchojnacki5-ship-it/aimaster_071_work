@@ -6,7 +6,7 @@ import org.junit.Test
 class MasterTaskReconciliationPolicyTest {
     private val agents = listOf("researcher", "developer")
     private val reports = agents.map { MasterTaskReconciliationPolicy.Evidence(it, 4) }
-    private val events = agents.map { MasterTaskReconciliationPolicy.Evidence(it, 4) }
+    private val events = agents.map { MasterTaskReconciliationPolicy.Evidence(it, 4, "COMPLETED") }
 
     private fun assess(
         status: String = "RUNNING",
