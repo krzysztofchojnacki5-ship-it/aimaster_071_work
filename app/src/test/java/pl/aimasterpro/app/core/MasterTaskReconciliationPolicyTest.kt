@@ -67,9 +67,10 @@ class MasterTaskReconciliationPolicyTest {
         val running = assess()
         assertEquals(MasterTaskReconciliationPolicy.Decision.READY_TO_FINALIZE, running.decision)
         assertEquals("COMPLETED", running.finalStatus)
-        val blocked = assess(status = "BLOCKED")
-        assertEquals(MasterTaskReconciliationPolicy.Decision.READY_TO_FINALIZE, blocked.decision)
-        assertEquals("COMPLETED", blocked.finalStatus)
+        val blockedEvents = events.map { it.copy(resultStatus = "BLOCKED") }
+        val blocked = assess(status = "BLOCKED", eventEvidence = blockedEvents)
+        assertEquals(MasterTaskReconciliationPolicy.Decision.TERMINAL_STATE_CONSISTENT, blocked.decision)
+        assertEquals("BLOCKED", blocked.finalStatus)
     }
 
     @Test fun failedAgentResultKeepsAggregateTaskFailed() {
@@ -92,6 +93,14 @@ class MasterTaskReconciliationPolicyTest {
             MasterTaskReconciliationPolicy.Decision.TERMINAL_STATE_CONSISTENT,
             assess(status = "COMPLETED").decision
         )
+    }
+
+    @Test fun terminalQueueStateMustMatchPersistedAgentOutcomes() {
+        val result = assess(status = "COMPLETED", eventEvidence = listOf(
+            events.first(), events.last().copy(resultStatus = "FAILED")
+        ))
+        assertEquals(MasterTaskReconciliationPolicy.Decision.TERMINAL_STATE_INCONSISTENT, result.decision)
+        assertEquals("FAILED", result.finalStatus)
     }
 
     @Test fun invalidEpochAndAssigneeSetAreRejected() {
