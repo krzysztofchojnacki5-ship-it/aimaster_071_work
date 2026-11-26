@@ -64,6 +64,20 @@ class MasterTaskReconciliationPolicyTest {
         assertTrue(result.repairStatuses.isEmpty())
     }
 
+    @Test fun conflictingTerminalCheckpointEvidenceIsRejectedBeforeRepair() {
+        val result = MasterTaskReconciliationPolicy.assess(
+            "RUNNING", 4, agents, true,
+            listOf(reports.first(), reports.last().copy(checkpointConflict = true)),
+            listOf(events.first())
+        )
+        assertEquals(
+            MasterTaskReconciliationPolicy.Decision.CHECKPOINT_EVIDENCE_CONFLICT,
+            result.decision
+        )
+        assertTrue(result.repairStatuses.isEmpty())
+        assertEquals(null, result.finalStatus)
+    }
+
     @Test fun checkpointAndExistingQueueResultMustAgree() {
         val result = MasterTaskReconciliationPolicy.assess(
             "RUNNING", 4, agents, true,
