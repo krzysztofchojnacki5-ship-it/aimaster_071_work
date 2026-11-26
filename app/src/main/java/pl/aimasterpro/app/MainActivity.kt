@@ -8164,6 +8164,10 @@ class MainActivity : Activity() {
 
     /** MASTER auto-plans and starts a durable queue task after a fenced assignment commit. */
     private fun startQueuedTaskAutonomously(taskId: String) {
+        if (isThinking || activeQueueTaskId.isNotBlank() || activeChatTaskId.isNotBlank() || store.isStorageUncertain() || !agentAssignmentsHealthy) {
+            toast("MASTER nie może teraz rozpocząć zadania: trwa inna praca albo konfiguracja nie jest bezpieczna.")
+            return
+        }
         val queue = pl.aimasterpro.app.core.MasterTaskQueueStore.snapshot(this)
         if (queue.status != pl.aimasterpro.app.core.MasterTaskQueueStore.ReadStatus.AVAILABLE) { toast("Kolejka niedostępna."); return }
         val catalogState = pl.aimasterpro.app.core.AgentManagerStore.snapshot(this)
