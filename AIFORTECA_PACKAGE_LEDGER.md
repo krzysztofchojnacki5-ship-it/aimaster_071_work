@@ -425,3 +425,15 @@ Dodano cztery testy regresyjne dla powyższych przypadków. **Testów nie urucha
 - Test regresyjny: zapis wyniku, ponowienie identycznego callbacku po terminalnym zakończeniu, potwierdzenie pojedynczego eventu oraz odrzucenie sprzecznego wyniku.
 - Pliki: `MasterTaskQueueStore.kt`, `MasterTaskQueueStoreTest.kt`, niniejszy rejestr.
 - Status: IMPLEMENTACJA ZAPISANA; CI monitorowane automatycznie. Testów nie uruchamiano ręcznie. APK nie budowano ani nie weryfikowano.
+
+
+## Implementation checkpoint — pakiet 38 / niezmienne archiwum wyników przebiegów kolejki (2026-11-26)
+
+- Baza: pakiet 37 na HEAD `f55b34e0e6b521441188e14095dede1f06a60951`; CI dla tego HEAD uruchomione automatycznie i pozostawione do monitorowania.
+- Problem: ogólne `TaskResultArchive.put` celowo pozwalało zastąpić rekord o tym samym taskId (zachowanie używane przez starsze przepływy). W ścieżce kolejki taskId jest jednak deterministycznym kluczem `parentTaskId + agentId + runId`; bez osobnego kontraktu drugi payload mógł zastąpić raport, który odzyskiwanie traktuje jako dowód wykonania.
+- Zmiana 1: dodano `putExecution`, związany z dokładną tożsamością nadrzędnego zadania, agenta i epoki.
+- Zmiana 2: dokładne ponowienie istniejącego wpisu jest potwierdzane bez zapisu; różniący się raport, provider/model, czas lub chatId nie może nadpisać istniejącego slotu.
+- Zmiana 3: przepływ wykonania z kolejki MASTER używa teraz `putExecution`; starsze, niezależne przepływy zachowują dotychczasowe API `put`.
+- Zmiana 4: test regresyjny sprawdza retry, konflikt zastąpienia, zachowanie pierwotnego raportu i brak duplikatów.
+- Pliki: `TaskResultArchive.kt`, `TaskResultArchiveTest.kt`, `MainActivity.kt`, niniejszy rejestr.
+- Status: IMPLEMENTACJA ZAPISANA; CI monitorowane automatycznie. Testów nie uruchamiano ręcznie. APK nie budowano ani nie weryfikowano.
