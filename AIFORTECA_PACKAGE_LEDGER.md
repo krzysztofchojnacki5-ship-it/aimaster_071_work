@@ -329,3 +329,38 @@ Pakiet 32: wrócić do głównego celu produktu — rzeczywistego sterowania kol
 - Gradle Wrapper Validation run #1456 (`45277535785`) na tym samym HEAD: SUCCESS.
 - Android Build/APK: NOT RUN / NOT REQUESTED. Test urządzenia: NOT RUN.
 - PR #3 pozostaje OPEN/DRAFT; bez merge. Pakiet 33 zamknięty w zakresie testów jednostkowych i walidacji wrappera.
+
+
+## Etap 34 — uzgadnianie trwałych raportów i stanu kolejki MASTER (2026-11-26, w toku)
+
+- Baza: HEAD po odzyskiwaniu ASSIGNED/RUNNING `b4b8aa61a2c49be780d10e3479f272e9939d6db1`.
+- Repo: `krzysztofchojnacki5-ship-it/aimaster_071_work`; branch: `work/aiforteca-0.2-master-agent-foundation`; PR #3 OPEN/DRAFT, mergeable.
+- Aktualny HEAD etapu: `e917d8e55489b48e8ea3393d8111a4e391e13d2b`.
+
+### Zmiany kodu
+
+1. Dodano czystą politykę `MasterTaskReconciliationPolicy`, która nie wykonuje side-effectów i podejmuje decyzje wyłącznie na podstawie dostarczonych dowodów z trwałych magazynów.
+2. Dodano `MasterTaskReconciliationReader`, który odczytuje snapshot kolejki, archiwum raportów i zdarzenia `AGENT_RESULT`; nie wznawia zadań, nie naprawia automatycznie stanu i nie wysyła ponownie żądań API.
+3. Polityka rozróżnia: niedostępny/uszkodzony magazyn kolejki, brak zadania, nieczytelne archiwum, niepoprawną epokę, brak raportów, raport bez zdarzenia wyniku, zdarzenie wyniku bez raportu oraz niezgodność statusu terminalnego z wynikami agentów.
+4. Gdy wszystkie raporty i zdarzenia są zgodne dla bieżącego `runId`, polityka wyznacza status końcowy na podstawie trwale zapisanych wyników: FAILED ma pierwszeństwo przed BLOCKED, a BLOCKED przed COMPLETED. Dla RUNNING zwraca `READY_TO_FINALIZE`; nie zmienia samodzielnie stanu kolejki.
+5. Dodano testy pure policy obejmujące brakujące/niezgodne dane, epoki, niedostępne archiwum, nieobsługiwane statusy wyników, agregację FAILED/BLOCKED i konflikt statusu kolejki z raportami.
+
+### Commity
+
+- `1b71bc5598783c8696604e8a99fd65d936f05cf0` — polityka uzgadniania.
+- `eada43cb58d08d365a297d95f79e74dce866a30b` — testy polityki.
+- `ac661ce3eb51a1199e81bb352d0cedbf735fee95` — korekta wykrywania osieroconych zdarzeń.
+- `f7eddfa5f3d28e606d792b0f02b4d09a80d85170` — czytnik trwałych dowodów.
+- `800b312e166c6a6252b4416b4b4d5e5c2ec5624b` — rozróżnienie brakującego raportu i osieroconego eventu.
+- `15a359054e515d909de31f83f229d01c2ef69b26` — agregacja statusu z zapisanych wyników.
+- `d2fcb005fd4bfdbfcf451de73446527b41279613` — testy agregacji statusu.
+- `fdec23e1d882e2928fea6c84b97a4d779594c8aa` — poprawione fixture testowe.
+- `ce23ddcba2453551e91eceeb5e0a066abf5055bc` — kontrola zgodności statusu terminalnego.
+- `e917d8e55489b48e8ea3393d8111a4e391e13d2b` — test niezgodności terminalnego statusu kolejki z wynikami agentów.
+
+### Weryfikacja
+
+- GitHub PR #3 wskazuje HEAD `e917d8e...`, branch i base zgodne z powyższym checkpointem; PR OPEN/DRAFT, mergeable.
+- Automatyczne workflow uruchomione przez GitHub po aktualizacji plików: AiFORTeca Unit Tests run #872 oraz Gradle Wrapper Validation run #1620 — w chwili checkpointu IN_PROGRESS. Nie deklarować PASS przed zakończeniem i sprawdzeniem raportów.
+- Android Build/APK i test urządzenia: NOT RUN / NOT VERIFIED.
+- Etap 34 pozostaje OTWARTY. Następny krok: po zakończeniu workflow przejrzeć wyniki; następnie rozszerzyć reconciliation o bezpieczne, idempotentne naprawienie wyłącznie brakującego zdarzenia `AGENT_RESULT` na podstawie istniejącego raportu i checkpointu, z fencingiem `runId`. Nigdy nie odtwarzać wywołań providera.
