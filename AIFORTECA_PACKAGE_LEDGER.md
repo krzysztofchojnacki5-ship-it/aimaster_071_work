@@ -394,3 +394,24 @@ Dodano cztery testy regresyjne dla powyższych przypadków. **Testów nie urucha
 
 
 - Korekta po pierwszym CI pakietu 35: `TaskCheckpointStore.latest()` celowo zwraca tylko najnowszy wpis na `taskId`, więc ukrywało konflikt tożsamości zanim reader mógł go wykryć. Reader korzysta teraz z pełnego, ograniczonego dziennika `load()`; dopiero potem filtruje `runId` i odrzuca sprzeczne identyfikatory agentów. Test regresyjny zapisuje oba wpisy w kolejności, która wcześniej maskowała konflikt. Pierwsze CI: 1463 testy, 1 niepowodzenie w tym teście; po poprawce pełne CI do ponowienia.
+
+
+## Pakiet 36 — spójność terminalnych checkpointów i bezpieczna naprawa zdarzeń MASTER (2026-11-26)
+
+- Baza: pakiet 35 na HEAD `fced0a0e778fe9e202a92d9cbebdfaea1d07763f`; Unit Tests #904 i Gradle Wrapper Validation #1652 zakończone SUCCESS. Raport XML poprzedniego HEAD: 1 463 testy, 0 failures, 0 errors, 0 skipped.
+- Zakres czterech poprawek:
+  1. Rozszerzono dowody uzgadniania o jawny znacznik sprzeczności checkpointów i decyzję `CHECKPOINT_EVIDENCE_CONFLICT`; sprzeczne dowody nie mogą zostać potraktowane jako brakujący, naprawialny event.
+  2. Czytnik analizuje pełny dziennik dla dokładnego `taskId + runId` i wykrywa sprzeczne terminalne statusy dla jednego wykonania; zwykłe wcześniejsze statusy nieterminalne mogą współistnieć z jednym terminalnym.
+  3. Ścieżka naprawy ponownie odczytuje pełny dziennik i odrzuca naprawę przy konflikcie, zamiast polegać na `latest()`, które celowo zwija historię do jednego wpisu na taskId.
+  4. Dodano regresje polityki i czytnika: konflikt dwóch terminalnych checkpointów dla tego samego agenta blokuje ocenę naprawy i nie pozwala zapisać `AGENT_RESULT` ani sfinalizować zadania.
+- Zmodyfikowane pliki:
+  - `app/src/main/java/pl/aimasterpro/app/core/MasterTaskReconciliationPolicy.kt`
+  - `app/src/test/java/pl/aimasterpro/app/core/MasterTaskReconciliationPolicyTest.kt`
+  - `app/src/test/java/pl/aimasterpro/app/core/MasterTaskReconciliationReaderTest.kt`
+- Commity:
+  - `dfc1330e83e661e546456cc3dbd64a31d8e84d15` — jawna decyzja konfliktu checkpointów.
+  - `67792e8cbe970618fe063eac778e0ee2f43c3b25` — pełny dziennik i ponowna walidacja przed naprawą.
+  - `766f2f7eda90c65752630ff543285d9d4c77100a` — test polityki.
+  - `6a28aaa78991d56777718faf6aad855f46abff2b` — test czytnika i ścieżki naprawy.
+- Status: IMPLEMENTACJA ZAPISANA / CI PENDING. Nie uruchamiano testów ręcznie ani nie deklaruje się PASS przed zakończeniem automatycznego CI i odczytem raportów XML.
+- Android Build/APK: NOT RUN / NOT VERIFIED. Nie zmieniono versionName/versionCode, base branch ani metadanych PR #3. Nie wykonano ręcznego restartu workflow.
