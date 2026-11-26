@@ -7816,10 +7816,11 @@ class MainActivity : Activity() {
                     .setPositiveButton("Dodaj do kolejki") { _, _ ->
                         val taskTitle = titleInput.text.toString().trim()
                         val objective = objectiveInput.text.toString().trim()
-                        if (queueStore.enqueue(this, "task-" + java.util.UUID.randomUUID().toString(),
-                                taskTitle, objective)) {
-                            toast("Zadanie zapisane. MASTER może teraz przydzielić agentów.")
+                        val taskId = "task-" + java.util.UUID.randomUUID().toString()
+                        if (queueStore.enqueue(this, taskId, taskTitle, objective)) {
+                            toast("Zadanie zapisane. MASTER rozpoczyna samodzielne planowanie i wykonanie.")
                             showShell("Zadania"); showTasksCenter()
+                            startQueuedTaskAutonomously(taskId)
                         } else toast("Nie zapisano zadania. Sprawdź nazwę, cel i stan magazynu.")
                     }.show()
             }
