@@ -25,7 +25,7 @@ class MasterTaskReconciliationPolicyTest {
     }
 
     @Test fun missingReportDoesNotBecomeCompletedFromQueueEventsAlone() {
-        val result = assess(reportEvidence = listOf(reports.first()))
+        val result = assess(reportEvidence = listOf(reports.first()), eventEvidence = listOf(events.first()))
         assertEquals(MasterTaskReconciliationPolicy.Decision.MISSING_REPORTS, result.decision)
         assertEquals(listOf("developer"), result.missingReportAgentIds)
     }
@@ -41,7 +41,7 @@ class MasterTaskReconciliationPolicyTest {
 
     @Test fun queueResultWithoutArchivedReportIsInconsistent() {
         val result = assess(reportEvidence = listOf(reports.first()))
-        assertEquals(MasterTaskReconciliationPolicy.Decision.MISSING_REPORTS, result.decision)
+        assertEquals(MasterTaskReconciliationPolicy.Decision.RESULT_EVENTS_WITHOUT_REPORTS, result.decision)
     }
 
     @Test fun mixedMissingReportAndOrphanResultEventIsDetected() {
