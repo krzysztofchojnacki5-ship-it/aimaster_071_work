@@ -133,6 +133,18 @@ class MasterTaskReconciliationReaderTest {
             )
         ))
 
+        // A later checkpoint with the expected agent must not hide the conflicting
+        // identity row for the same execution/run.
+        assertTrue(TaskCheckpointStore.record(
+            context,
+            TaskCheckpointStore.Event(
+                taskId = executionId, agentId = agentId, status = "COMPLETED",
+                detail = "Conflicting checkpoint identity must remain ambiguous.",
+                timestamp = 22L, providerId = "provider-test", model = "model-test",
+                attempts = 1, runId = runId
+            )
+        ))
+
         val assessment = MasterTaskReconciliationReader.assess(
             context, MasterTaskQueueStore.snapshot(context), taskId
         )
