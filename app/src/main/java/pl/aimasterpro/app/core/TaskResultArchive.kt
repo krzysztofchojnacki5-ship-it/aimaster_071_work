@@ -48,9 +48,19 @@ object TaskResultArchive {
     @Synchronized
     fun getExecution(context: Context, parentTaskId: String, agentId: String, runId: Int): Entry? {
         val currentId = executionTaskId(parentTaskId, agentId, runId)
-        get(context, currentId)?.let { return it }
-        val legacyId = "q-${parentTaskId.take(42)}-${agentId.take(32)}-r$runId"
-        return if (legacyId == currentId) null else get(context, legacyId)
+        get(context, currentId)?.let { entry ->
+            return entry.takeIf { it.taskId == currentId && it.agentId == agentId }
+        }
+
+        // The legacy key truncates both parentTaskId and agentId. Once either identifier
+        // exceeds that limit, another execution can share the same key; fail closed instead
+        // of attaching a different task's report to this run.
+        if (parentTaskId.length > 42 || agentId.length > 32) return null
+        val legacyId = "q-$parentTaskId-$agentId-r$runId"
+        if (legacyId == currentId) return null
+        return get(context, legacyId)?.takeIf {
+            it.taskId == legacyId && it.agentId == agentId
+        }
     }
 
     @Synchronized

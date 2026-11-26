@@ -42,8 +42,8 @@ class TaskResultArchiveTest {
         assertTrue(runCatching { TaskResultArchive.executionTaskId("task-parent", "researcher", 0) }.isFailure)
     }
 
-    @Test fun executionLookupReadsLegacyArchiveIdsAfterStableIdMigration() {
-        val parentTaskId = "legacy-parent-task-id-that-is-long-enough-to-test-truncation"
+    @Test fun executionLookupReadsUnambiguousLegacyArchiveIdsAfterStableIdMigration() {
+        val parentTaskId = "legacy-parent"
         val agentId = "researcher"
         val runId = 3
         val legacyId = "q-${parentTaskId.take(42)}-${agentId.take(32)}-r$runId"
@@ -54,6 +54,31 @@ class TaskResultArchiveTest {
         val restored = TaskResultArchive.getExecution(context, parentTaskId, agentId, runId)
         assertEquals(legacyId, restored?.taskId)
         assertEquals("Legacy archived report", restored?.report)
+    }
+
+    @Test fun executionLookupRejectsTruncatedLegacyKeyForLongIdentifiers() {
+        val parentTaskId = "legacy-parent-task-id-that-is-long-enough-to-test-truncation"
+        val agentId = "researcher"
+        val runId = 3
+        val truncatedLegacyId = "q-${parentTaskId.take(42)}-${agentId.take(32)}-r$runId"
+        assertTrue(TaskResultArchive.put(
+            context, truncatedLegacyId, agentId, "Potentially ambiguous legacy report",
+            "provider-old", "model-old", 3_000L
+        ))
+
+        assertNull(TaskResultArchive.getExecution(context, parentTaskId, agentId, runId))
+    }
+
+    @Test fun executionLookupRejectsArchiveEntryOwnedByDifferentAgent() {
+        val parentTaskId = "parent-provenance"
+        val requestedAgent = "researcher"
+        val executionId = TaskResultArchive.executionTaskId(parentTaskId, requestedAgent, 2)
+        assertTrue(TaskResultArchive.put(
+            context, executionId, "developer", "Wrong agent's report",
+            "provider-test", "model-test", 4_000L
+        ))
+
+        assertNull(TaskResultArchive.getExecution(context, parentTaskId, requestedAgent, 2))
     }
 
     @Test fun executionLookupPrefersStableArchiveIdOverLegacyEntry() {

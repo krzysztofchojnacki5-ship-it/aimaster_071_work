@@ -363,10 +363,12 @@ Pakiet 32: wrócić do głównego celu produktu — rzeczywistego sterowania kol
 - GitHub PR #3 wskazuje HEAD `e917d8e...`, branch i base zgodne z powyższym checkpointem; PR OPEN/DRAFT, mergeable.
 - Automatyczne workflow uruchomione przez GitHub po aktualizacji plików: AiFORTeca Unit Tests run #872 oraz Gradle Wrapper Validation run #1620 — w chwili checkpointu IN_PROGRESS. Nie deklarować PASS przed zakończeniem i sprawdzeniem raportów.
 - Android Build/APK i test urządzenia: NOT RUN / NOT VERIFIED.
-- Etap 34 pozostaje OTWARTY. Następny krok: po zakończeniu workflow przejrzeć wyniki; następnie rozszerzyć reconciliation o bezpieczne, idempotentne naprawienie wyłącznie brakującego zdarzenia `AGENT_RESULT` na podstawie istniejącego raportu i checkpointu, z fencingiem `runId`. Nigdy nie odtwarzać wywołań providera.
+- Etap 34 zamknięty w zakresie polityki i naprawy brakującego `AGENT_RESULT`: repair jest ograniczony do istniejącego raportu + terminalnego checkpointu + dokładnego `runId`; nie odtwarza wywołań providera.
+- CI na końcowym HEAD `0d427573022dcdb3c106c5010a8d0c830c7227f2`: AiFORTeca Unit Tests #898 — SUCCESS; Gradle Wrapper Validation #1646 — SUCCESS.
+- Pełny Android Build/APK: NOT RUN / NOT VERIFIED. PR #3 pozostaje OPEN/DRAFT.
 
 
-## Etap 34 — uzupełnienie zabezpieczeń uzgadniania (2026-11-26, w toku)
+## Uzupełnienie etapu 34 — zabezpieczenia uzgadniania (2026-11-26, CI PASS)
 
 Baza kodowa: `61ec41c6a7bcbf4a70bc4e6cd61e5aefd5b1b2e2`.
 
@@ -377,3 +379,15 @@ Cztery poprawki funkcjonalne:
 4. Polityka fail-closed odrzuca wielokrotne zdarzenia `AGENT_RESULT` dla tego samego agenta; nie wybiera arbitralnie jednego z nich.
 
 Dodano cztery testy regresyjne dla powyższych przypadków. **Testów nie uruchamiano w ramach tej pracy**; zostaną objęte wspólnym CI po domknięciu pakietu. Nie zmieniono routingu providerów, budżetu tokenów, checkpointów źródłowych ani mechanizmu ponawiania wywołań API.
+
+
+## Pakiet 35 — wiarygodność pochodzenia raportów i checkpointów (2026-11-26, w toku)
+
+- Baza: `0d427573022dcdb3c106c5010a8d0c830c7227f2`.
+- Zakres czterech poprawek:
+  1. Odczyt raportu wykonania wymaga zgodności `agentId` wpisu archiwum z agentem przypisanym do zadania.
+  2. Wyłączono fallback do starego klucza archiwum, gdy skracanie identyfikatorów rodzica/agenta mogłoby powodować kolizję; zachowano odczyt jednoznacznych krótkich kluczy legacy.
+  3. Wybór checkpointów odrzuca wykonanie, dla którego wpisy tego samego `taskId` i `runId` wskazują różne `agentId`; kolejność dziennika nie rozstrzyga konfliktu tożsamości.
+  4. Ocena uzgadniania wiąże checkpoint z dokładnym `taskId`, `agentId` i `runId` raportu; obcy checkpoint nie może autoryzować naprawy ani wyznaczać statusu końcowego.
+- Dodano testy regresyjne archiwum i czytnika dla błędnej tożsamości agenta, kolizji skróconego klucza legacy i obcego checkpointu.
+- Testów nie uruchamiano w trakcie pojedynczych zmian. Pełne CI po domknięciu pakietu; APK/build Android pozostają osobnym statusem.

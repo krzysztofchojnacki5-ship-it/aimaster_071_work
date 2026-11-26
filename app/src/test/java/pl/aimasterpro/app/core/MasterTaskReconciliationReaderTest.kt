@@ -117,4 +117,58 @@ class MasterTaskReconciliationReaderTest {
         assertEquals(MasterTaskQueueStore.Status.RUNNING, snapshot.tasks.single().status)
         assertFalse(snapshot.events.any { it.taskId == taskId && it.operation == "AGENT_RESULT" })
     }
+    @Test fun checkpointFromDifferentAgentCannotAuthorizeReportEventRepair() {
+        val runId = startSingleAgentTask()
+        val executionId = TaskResultArchive.executionTaskId(taskId, agentId, runId)
+        assertTrue(TaskResultArchive.put(
+            context, executionId, agentId, "Durable specialist report.", "provider-test", "model-test"
+        ))
+        assertTrue(TaskCheckpointStore.record(
+            context,
+            TaskCheckpointStore.Event(
+                taskId = executionId, agentId = "different-agent", status = "COMPLETED",
+                detail = "Checkpoint identity does not match the assigned agent.",
+                timestamp = 21L, providerId = "provider-test", model = "model-test",
+                attempts = 1, runId = runId
+            )
+        ))
+
+        val assessment = MasterTaskReconciliationReader.assess(
+            context, MasterTaskQueueStore.snapshot(context), taskId
+        )
+        assertEquals(
+            MasterTaskReconciliationPolicy.Decision.REPORTS_NEED_RESULT_EVENT_REPAIR,
+            assessment.decision
+        )
+        assertTrue(assessment.repairStatuses.isEmpty())
+        assertNull(assessment.finalStatus)
+        assertFalse(MasterTaskReconciliationReader.repairMissingResultEvents(context, taskId))
+    }
+
+    @Test fun archiveEntryForDifferentAgentCannotBeReconciledIntoAssignedAgentsResult() {
+        val runId = startSingleAgentTask()
+        val executionId = TaskResultArchive.executionTaskId(taskId, agentId, runId)
+        assertTrue(TaskResultArchive.put(
+            context, executionId, "different-agent", "Foreign archived report.",
+            "provider-test", "model-test"
+        ))
+        assertTrue(TaskCheckpointStore.record(
+            context,
+            TaskCheckpointStore.Event(
+                taskId = executionId, agentId = agentId, status = "COMPLETED",
+                detail = "Checkpoint for the assigned agent.",
+                timestamp = 22L, providerId = "provider-test", model = "model-test",
+                attempts = 1, runId = runId
+            )
+        ))
+
+        val assessment = MasterTaskReconciliationReader.assess(
+            context, MasterTaskQueueStore.snapshot(context), taskId
+        )
+        assertEquals(MasterTaskReconciliationPolicy.Decision.MISSING_REPORTS, assessment.decision)
+        assertFalse(MasterTaskReconciliationReader.repairMissingResultEvents(context, taskId))
+        assertEquals(MasterTaskQueueStore.Status.RUNNING, MasterTaskQueueStore.snapshot(context).tasks.single().status)
+    }
+
+
 }

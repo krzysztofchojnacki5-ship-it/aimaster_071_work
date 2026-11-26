@@ -164,8 +164,9 @@ object MasterTaskReconciliationPolicy {
 
 
 /**
- * Reads the durable stores and feeds only persisted evidence into the pure policy above.
- * This is inspection-only: it does not repair, finalize, resume, or replay any work.
+ * Reads durable stores and feeds only persisted evidence into the pure policy above.
+ * assess() is inspection-only. repairMissingResultEvents() is a separate, explicit,
+ * narrowly guarded repair path; neither path resumes work or replays provider requests.
  */
 object MasterTaskReconciliationReader {
     fun assess(context: Context, snapshot: MasterTaskQueueStore.Snapshot, taskId: String):
@@ -195,7 +196,9 @@ object MasterTaskReconciliationReader {
             TaskResultArchive.getExecution(context, task.id, agentId, task.runId)?.let { archived ->
                 MasterTaskReconciliationPolicy.Evidence(
                     agentId, task.runId,
-                    checkpointStatus = checkpointByTaskId[archived.taskId]?.status.orEmpty()
+                    checkpointStatus = checkpointByTaskId[archived.taskId]
+                        ?.takeIf { it.taskId == archived.taskId && it.agentId == agentId && it.runId == task.runId }
+                        ?.status.orEmpty()
                 )
             }
         } else emptyList()
@@ -224,7 +227,15 @@ object MasterTaskReconciliationReader {
     internal fun selectLatestCheckpointsForRun(
         rows: List<TaskCheckpointStore.Event>,
         runId: Int
-    ): List<TaskCheckpointStore.Event> = rows.filter { it.runId == runId }.distinctBy { it.taskId }
+    ): List<TaskCheckpointStore.Event> = rows.asSequence()
+        .filter { it.runId == runId }
+        .groupBy { it.taskId }
+        .values
+        .mapNotNull { executionRows ->
+            // A single execution ID cannot legitimately belong to multiple agents. Do not
+            // let journal order choose which identity wins when persisted evidence conflicts.
+            if (executionRows.map { it.agentId }.distinct().size == 1) executionRows.first() else null
+        }
 
     /**
      * Repairs only missing AGENT_RESULT events when both the exact-epoch report and a terminal
