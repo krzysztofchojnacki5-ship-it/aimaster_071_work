@@ -26,7 +26,6 @@ class MasterTaskReconciliationReaderTest {
             SharedPreferencesWriteHealth.resetForTests(name)
         }
         AgentManagerStore.resetStorageHealthForTests()
-        MasterTaskQueueStore.resetStorageHealthForTests()
         TaskCheckpointStore.resetStorageHealthForTests()
     }
 
