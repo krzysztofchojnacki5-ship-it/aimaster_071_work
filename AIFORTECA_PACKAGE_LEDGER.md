@@ -415,3 +415,13 @@ Dodano cztery testy regresyjne dla powyższych przypadków. **Testów nie urucha
   - `6a28aaa78991d56777718faf6aad855f46abff2b` — test czytnika i ścieżki naprawy.
 - Status: IMPLEMENTACJA ZAPISANA / CI PENDING. Nie uruchamiano testów ręcznie ani nie deklaruje się PASS przed zakończeniem automatycznego CI i odczytem raportów XML.
 - Android Build/APK: NOT RUN / NOT VERIFIED. Nie zmieniono versionName/versionCode, base branch ani metadanych PR #3. Nie wykonano ręcznego restartu workflow.
+
+
+## Implementation checkpoint — pakiet 37 / idempotentne potwierdzenie wyniku agenta (2026-11-26)
+
+- Baza: repozytorium `krzysztofchojnacki5-ship-it/aimaster_071_work`, gałąź `work/aiforteca-0.2-master-agent-foundation`, PR #3 pozostaje OPEN/DRAFT; bazowy HEAD `3088848594c5c144deae94343e43a9a1608d4c66`.
+- Problem: po trwałym zapisaniu `AGENT_RESULT` i utracie/nieodebraniu potwierdzenia ponowienie identycznego callbacku zwracało `false`. Finalizator mógł więc zgłosić niepowodzenie mimo że wynik agenta był już trwale zapisany. Dotyczyło to także jednego agenta, gdy pierwszy zapis zamykał zadanie.
+- Zmiana: `recordAgentResult` najpierw sprawdza istniejący wynik dla dokładnego `taskId + agentId + runId`. Identyczny status i zredagowany szczegół zwracają sukces bez dopisywania drugiego eventu; inny wynik dla tej samej tożsamości pozostaje konfliktem i jest odrzucany. Nowy wynik nadal wymaga aktywnego RUNNING i dokładnej epoki.
+- Test regresyjny: zapis wyniku, ponowienie identycznego callbacku po terminalnym zakończeniu, potwierdzenie pojedynczego eventu oraz odrzucenie sprzecznego wyniku.
+- Pliki: `MasterTaskQueueStore.kt`, `MasterTaskQueueStoreTest.kt`, niniejszy rejestr.
+- Status: IMPLEMENTACJA ZAPISANA; CI monitorowane automatycznie. Testów nie uruchamiano ręcznie. APK nie budowano ani nie weryfikowano.
