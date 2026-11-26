@@ -8176,7 +8176,7 @@ class MainActivity : Activity() {
         val catalog = pl.aimasterpro.app.core.AgentManagerStore.enabledCatalog(this)
         val ready = catalog.filter { spec -> val role = pl.aimasterpro.app.agents.AgentProviderRouting.roleFor(spec); val cfg = loadProvider(agentProviders[role.name] ?: resolvedMasterProviderId().orEmpty()); cfg != null && providerReady(cfg) && isProviderAllowedForRouting(cfg) }.map { it.id }.toSet()
         val plan = pl.aimasterpro.app.agents.MasterQueueAssignmentPlanner.plan(queue, taskId, catalog, ready, 4, 1)
-        if (!plan.isAssignable) { toast("MASTER nie może przydzielić zespołu: " + plan.rejectionReason); return }
+        if (!plan.isAssignable) { toast("MASTER nie może przydzielić zespołu: " + plan.rejectionReason.ifBlank { plan.selection.reason }); return }
         if (!pl.aimasterpro.app.core.MasterTaskQueueStore.assignPlanned(this, taskId, plan.selectedAgentIds, plan.expectedUpdatedAt, plan.expectedRunId, 1)) { toast("Przydział nie został zapisany; nie wysłano żądań."); return }
         executeQueuedMasterTask(taskId)
     }
