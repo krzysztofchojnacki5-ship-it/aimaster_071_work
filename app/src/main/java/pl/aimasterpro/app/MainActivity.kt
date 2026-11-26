@@ -7858,6 +7858,9 @@ class MainActivity : Activity() {
                 }
                 if (task.status in setOf(pl.aimasterpro.app.core.MasterTaskQueueStore.Status.QUEUED,
                         pl.aimasterpro.app.core.MasterTaskQueueStore.Status.PAUSED)) {
+                    action("MASTER AUTO — ZAPLANUJ I URUCHOM", box) {
+                        startQueuedTaskAutonomously(task.id)
+                    }
                     action("🧭 MASTER — DOBIERZ AGENTÓW", box) {
                         proposeQueuedMasterAssignment(task.id)
                     }
