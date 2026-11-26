@@ -13,7 +13,8 @@ object MasterTaskReconciliationPolicy {
         val agentId: String,
         val runId: Int,
         val resultStatus: String = "",
-        val checkpointStatus: String = ""
+        val checkpointStatus: String = "",
+        val checkpointConflict: Boolean = false
     )
 
     enum class Decision {
@@ -29,6 +30,7 @@ object MasterTaskReconciliationPolicy {
         DUPLICATE_REPORT_EVIDENCE,
         DUPLICATE_RESULT_EVENT,
         CHECKPOINT_UNREADABLE,
+        CHECKPOINT_EVIDENCE_CONFLICT,
         CHECKPOINT_RESULT_MISMATCH,
         MISSING_REPORTS,
         REPORTS_NEED_RESULT_EVENT_REPAIR,
@@ -85,6 +87,9 @@ object MasterTaskReconciliationPolicy {
 
         if (relevantEvents.any { it.resultStatus !in setOf("COMPLETED", "FAILED", "BLOCKED") }) {
             return Assessment(Decision.INVALID_RESULT_EVENT)
+        }
+        if (relevantReports.any { it.checkpointConflict }) {
+            return Assessment(Decision.CHECKPOINT_EVIDENCE_CONFLICT)
         }
         val eventByAgent = relevantEvents.associateBy { it.agentId }
         val checkpointConflict = relevantReports.any { report ->
