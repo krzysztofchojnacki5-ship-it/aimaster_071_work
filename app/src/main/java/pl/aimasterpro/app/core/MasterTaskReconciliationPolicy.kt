@@ -11,7 +11,8 @@ import android.content.Context
 object MasterTaskReconciliationPolicy {
     data class Evidence(
         val agentId: String,
-        val runId: Int
+        val runId: Int,
+        val resultStatus: String = ""
     )
 
     enum class Decision {
@@ -22,6 +23,7 @@ object MasterTaskReconciliationPolicy {
         INVALID_TASK_EPOCH,
         NO_ASSIGNEES,
         EPOCH_MISMATCH,
+        INVALID_RESULT_EVENT,
         MISSING_REPORTS,
         REPORTS_NEED_RESULT_EVENT_REPAIR,
         RESULT_EVENTS_WITHOUT_REPORTS,
@@ -35,7 +37,8 @@ object MasterTaskReconciliationPolicy {
         val decision: Decision,
         val missingReportAgentIds: List<String> = emptyList(),
         val missingResultEventAgentIds: List<String> = emptyList(),
-        val unexpectedEvidenceAgentIds: List<String> = emptyList()
+        val unexpectedEvidenceAgentIds: List<String> = emptyList(),
+        val finalStatus: String? = null
     )
 
     fun assess(
@@ -63,6 +66,9 @@ object MasterTaskReconciliationPolicy {
             return Assessment(Decision.EPOCH_MISMATCH, unexpectedEvidenceAgentIds = unexpected)
         }
 
+        if (relevantEvents.any { it.resultStatus !in setOf("COMPLETED", "FAILED", "BLOCKED") }) {
+            return Assessment(Decision.INVALID_RESULT_EVENT)
+        }
         val reportAgents = relevantReports.map { it.agentId }.toSet()
         val eventAgents = relevantEvents.map { it.agentId }.toSet()
         val missingReports = assignedAgentIds.filter { it !in reportAgents }
@@ -87,7 +93,14 @@ object MasterTaskReconciliationPolicy {
         }
 
         return when (taskStatus) {
-            "RUNNING", "BLOCKED" -> Assessment(Decision.READY_TO_FINALIZE)
+            "RUNNING", "BLOCKED" -> Assessment(
+                Decision.READY_TO_FINALIZE,
+                finalStatus = when {
+                    relevantEvents.any { it.resultStatus == "FAILED" } -> "FAILED"
+                    relevantEvents.any { it.resultStatus == "BLOCKED" } -> "BLOCKED"
+                    else -> "COMPLETED"
+                }
+            )
             "COMPLETED", "FAILED" -> Assessment(Decision.TERMINAL_STATE_CONSISTENT)
             "QUEUED", "ASSIGNED", "PAUSED", "CANCELLED" ->
                 Assessment(Decision.TERMINAL_STATE_INCONSISTENT)
@@ -129,7 +142,7 @@ object MasterTaskReconciliationReader {
             .mapNotNull { event ->
                 val agentId = event.actor.removePrefix("agent:")
                 if (!event.actor.startsWith("agent:")) null
-                else MasterTaskReconciliationPolicy.Evidence(agentId, event.runId)
+                else MasterTaskReconciliationPolicy.Evidence(agentId, event.runId, event.toStatus)
             }.toList()
         return MasterTaskReconciliationPolicy.assess(
             taskStatus = task.status.name,
