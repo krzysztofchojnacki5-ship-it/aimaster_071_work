@@ -134,6 +134,24 @@ class AgentProviderAssignmentStoreTest {
         assertEquals("gemini", prefs.getString("agent_provider_MASTER", null))
     }
 
+    @Test fun importReconciliationRejectsOversizedOrInvalidCatalogBeforeMutation() {
+        prefs.edit().putString("agent_provider_MASTER", "keep-me")
+            .putString("selected_provider", "keep-me").commit()
+
+        assertNull(AgentProviderAssignmentStore.reconcileAfterProviderImport(
+            context, defaults, setOf("P".repeat(161)), "P".repeat(161)
+        ))
+        assertNull(AgentProviderAssignmentStore.reconcileAfterProviderImport(
+            context, mapOf("R".repeat(81) to "groq"), setOf("groq"), "groq"
+        ))
+        assertNull(AgentProviderAssignmentStore.reconcileAfterProviderImport(
+            context, defaults, (1..501).map { "provider-$it" }.toSet(), "provider-1"
+        ))
+
+        assertEquals("keep-me", prefs.getString("agent_provider_MASTER", null))
+        assertEquals("keep-me", prefs.getString("selected_provider", null))
+    }
+
     @Test fun invalidEmptyProviderSetDoesNotModifyPersistedAssignments() {
         prefs.edit().putString("agent_provider_MASTER", "keep-me")
             .putString("selected_provider", "keep-me").commit()
