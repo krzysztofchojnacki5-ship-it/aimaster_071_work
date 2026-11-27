@@ -282,7 +282,11 @@ object MasterTaskQueueStore {
         }
         if (existingResult != null) {
             val safeDetail = CommunicationLogSanitizer.sanitize(detail.trim()).take(500)
-            return@mutate (existingResult.toStatus == result.name && existingResult.detail == safeDetail)
+            return@mutate if (existingResult.toStatus == result.name && existingResult.detail == safeDetail) {
+                Triple(tasks, events, true)
+            } else {
+                null
+            }
         }
         if (current.status != Status.RUNNING) return@mutate null
         val activityAt = maxOf(now, current.updatedAt,
