@@ -91,7 +91,10 @@ object AgentProviderAssignmentStore {
         validProviderIds: Set<String>,
         preferredMasterId: String
     ): Map<String, String>? {
-        if (validProviderIds.isEmpty() || validProviderIds.any { it.isBlank() } || SharedPreferencesWriteHealth.isUncertain(PREFS)) return null
+        if (!validRoleDefaults(roleDefaults) || validProviderIds.isEmpty() ||
+            validProviderIds.size > MAX_PROVIDER_IDS ||
+            validProviderIds.any { !validProviderId(it) } ||
+            SharedPreferencesWriteHealth.isUncertain(PREFS)) return null
         return runCatching {
             SharedPreferencesWriteHealth.withHealthyAccess(PREFS) {
             val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
