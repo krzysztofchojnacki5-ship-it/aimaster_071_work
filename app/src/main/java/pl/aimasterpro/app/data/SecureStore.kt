@@ -35,6 +35,8 @@ internal fun hasUnreadableExistingSecrets(existingSecretIds: Set<String>, readab
 internal fun canReplaceUnreadableSecret(aliasExists: Boolean, keyIsSecretKey: Boolean): Boolean =
     aliasExists && keyIsSecretKey
 
+private const val MAX_PROVIDER_CONFIGS = 500
+
 class SecureStore internal constructor(
     context: Context,
     private val secretDecryptorForTests: ((String) -> String?)? = null,
@@ -283,7 +285,7 @@ class SecureStore internal constructor(
     fun replaceAllConfigs(configs: List<JSONObject>): Boolean = synchronized(SecureStoreHealth.lock()) {
         if (SecureStoreHealth.isUncertain()) return@synchronized false
         try {
-            if (configs.isEmpty()) return@synchronized false
+            if (configs.isEmpty() || configs.size > MAX_PROVIDER_CONFIGS) return@synchronized false
             val copied = configs.map { JSONObject(it.toString()) }
             val newIds = copied.map { it.optString("id", "default") }
             require(newIds.all { it.isNotBlank() }) { "Id dostawcy nie może być pusty." }
