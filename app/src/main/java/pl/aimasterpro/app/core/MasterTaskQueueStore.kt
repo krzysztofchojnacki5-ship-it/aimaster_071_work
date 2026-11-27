@@ -329,6 +329,13 @@ object MasterTaskQueueStore {
             state !in progressStates || detail.length > 500 ||
             providerId.length > 120 || model.length > 180 || attempts !in 0..100 ||
             now < 0L) return@mutate null
+
+        // Once an agent has durably submitted its terminal result, delayed progress callbacks
+        // from that same run must not overwrite the task's current step or audit timeline.
+        if (events.any {
+            it.taskId == taskId && it.actor == "agent:$agentId" &&
+                it.operation == "AGENT_RESULT" && it.runId == current.runId
+        }) return@mutate null
         val safeDetail = CommunicationLogSanitizer.sanitize(detail).take(300)
         val safeProvider = CommunicationLogSanitizer.sanitize(providerId).take(80)
         val safeModel = CommunicationLogSanitizer.sanitize(model).take(120)
