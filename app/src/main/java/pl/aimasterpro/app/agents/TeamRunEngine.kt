@@ -172,7 +172,8 @@ class TeamRunEngine(
                         val orderedProviders = rankProviders(candidates.filter(isProviderAllowed))
 
                         if (orderedProviders.isEmpty()) {
-                            if (!hasExplicitConfig && fallbackProviders.isEmpty() && agentProvidersMap.isEmpty()) {
+                            if (!hasExplicitConfig && fallbackProviders.isEmpty() && agentProvidersMap.isEmpty() &&
+                                (provider.id.isBlank() || provider.baseUrl.isBlank() || provider.model.isBlank())) {
                                 val missingLog = """
                                     [CONFIG MISSING]
                                     Agent: ${agent.name} (${task.agentId})
