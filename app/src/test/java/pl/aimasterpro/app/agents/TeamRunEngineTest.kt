@@ -117,6 +117,31 @@ class TeamRunEngineTest {
         )
     }
 
+    @Test
+    fun missingProviderIsReportedBeforeTheFreeModelGuard() {
+        val engine = TeamRunEngine(ProviderClient())
+        val missing = ProviderConfig(
+            "", "Brak dostawcy", ProviderKind.OPENAI_COMPATIBLE,
+            "", "", ""
+        )
+        val logs = mutableListOf<String>()
+        val states = mutableListOf<String>()
+
+        val results = engine.runBatch(
+            tasks = listOf(TeamTask("missing-provider", "ai-engineer", "Test", "Nie wysyłaj żądania")),
+            provider = missing,
+            mode = WorkMode.PLANNING,
+            onLog = { _, _, message, status -> logs.add("$status $message") },
+            onTaskState = { _, state, _, _, _, _ -> states.add(state) }
+        )
+
+        assertEquals(TeamTaskResult.Status.BLOCKED, results.single().status)
+        assertTrue(results.single().report.contains("CONFIG_MISSING"))
+        assertTrue(logs.any { it.contains("CONFIG_MISSING") })
+        assertTrue(states.contains("BLOCKED"))
+        assertFalse(logs.any { it.contains("FREE FAILOVER GUARD") })
+    }
+
     private fun assertInvalidBatch(tasks: List<TeamTask>, mode: WorkMode) {
         val engine = TeamRunEngine(ProviderClient())
         val provider = ProviderConfig(
