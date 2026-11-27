@@ -384,6 +384,35 @@ class MasterTaskQueueStoreTest {
         })
     }
 
+    @Test fun terminalAgentCannotOverwriteTaskProgressWhileOtherAgentsAreRunning() {
+        val taskId = "task-terminal-agent-progress"
+        val firstAgent = "critical-reviewer"
+        val secondAgent = "unit-test-engineer"
+        assertTrue(MasterTaskQueueStore.enqueue(context, taskId, "Terminal progress fence", "Reject late progress.", now = 72L))
+        assertTrue(MasterTaskQueueStore.assign(context, taskId, listOf(firstAgent, secondAgent), now = 73L))
+        assertTrue(startTaskWithCurrentSnapshot(taskId, "Start.", 74L))
+
+        assertTrue(MasterTaskQueueStore.recordAgentResult(
+            context, taskId, firstAgent, MasterTaskQueueStore.Status.COMPLETED,
+            "First agent finished.", now = 75L, expectedRunId = 1
+        ))
+        val beforeLateCallback = MasterTaskQueueStore.snapshot(context)
+        assertEquals(MasterTaskQueueStore.Status.RUNNING, beforeLateCallback.tasks.single().status)
+        assertFalse(MasterTaskQueueStore.recordAgentProgress(
+            context, taskId, firstAgent, "RUNNING", "Late callback after completion.",
+            now = 76L, expectedRunId = 1
+        ))
+
+        val afterLateCallback = MasterTaskQueueStore.snapshot(context)
+        assertEquals(beforeLateCallback.tasks.single().currentStep, afterLateCallback.tasks.single().currentStep)
+        assertEquals(1, afterLateCallback.events.count {
+            it.taskId == taskId && it.actor == "agent:$firstAgent" && it.operation == "AGENT_RESULT"
+        })
+        assertFalse(afterLateCallback.events.any {
+            it.taskId == taskId && it.actor == "agent:$firstAgent" && it.operation == "AGENT_PROGRESS"
+        })
+    }
+
     @Test fun failedAgentMakesMultiAgentTaskFailedAfterAllReports() {
         assertTrue(MasterTaskQueueStore.enqueue(context, "task-009", "Zespół", "Wspólny cel.", now = 70L))
         assertTrue(MasterTaskQueueStore.assign(context, "task-009",
