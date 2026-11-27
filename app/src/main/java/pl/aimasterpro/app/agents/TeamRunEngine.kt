@@ -172,20 +172,19 @@ class TeamRunEngine(
                         val orderedProviders = rankProviders(candidates.filter(isProviderAllowed))
 
                         if (orderedProviders.isEmpty()) {
+                            if (!hasExplicitConfig && fallbackProviders.isEmpty() && agentProvidersMap.isEmpty()) {
+                                val missingLog = """
+                                    [CONFIG MISSING]
+                                    Agent: ${agent.name} (${task.agentId})
+                                    Diagnostic: CONFIG_MISSING: Brak skonfigurowanego dostawcy dla agenta oraz brak dostawców zapasowych.
+                                """.trimIndent()
+                                onLog("SYSTEM", agent.name, missingLog, "CONFIG_MISSING")
+                                runCatching { onTaskState(task, "BLOCKED", "Brak skonfigurowanego dostawcy.", "", "", 0) }
+                                return@Callable TeamTaskResult(task.id, task.agentId, TeamTaskResult.Status.BLOCKED, "CONFIG_MISSING: Agent nie posiada skonfigurowanego dostawcy.", System.currentTimeMillis() - taskStartedAt, reviewOfAgentId = task.reviewOfAgentId)
+                            }
                             onLog("SYSTEM", agent.name, "[FREE FAILOVER GUARD][COST POLICY GUARD] Zablokowano przełączenie na niedozwolony model. Brak zweryfikowanego darmowego lub jawnie zatwierdzonego modelu zapasowego.", "BLOCKED")
                             runCatching { onTaskState(task, "BLOCKED", "Brak dostępnego zweryfikowanego darmowego modelu.", "", "", 0) }
                             return@Callable TeamTaskResult(task.id, task.agentId, TeamTaskResult.Status.FAILED, "BRAK DOSTĘPNEGO DARMOWEGO MODELU ZAPASOWEGO / BRAK DOZWOLONEGO MODELU. Skonfiguruj zweryfikowany darmowy model lub jawnie zatwierdź model z nieznaną ceną.", System.currentTimeMillis() - taskStartedAt, reviewOfAgentId = task.reviewOfAgentId)
-                        }
-
-                        if (!hasExplicitConfig && fallbackProviders.isEmpty() && agentProvidersMap.isEmpty()) {
-                            val missingLog = """
-                                [CONFIG MISSING]
-                                Agent: ${agent.name} (${task.agentId})
-                                Diagnostic: CONFIG_MISSING: Brak skonfigurowanego dostawcy dla agenta oraz brak dostawców zapasowych.
-                            """.trimIndent()
-                            onLog("SYSTEM", agent.name, missingLog, "CONFIG_MISSING")
-                            runCatching { onTaskState(task, "BLOCKED", "Brak skonfigurowanego dostawcy.", "", "", 0) }
-                            return@Callable TeamTaskResult(task.id, task.agentId, TeamTaskResult.Status.FAILED, "CONFIG_MISSING: Agent nie posiada skonfigurowanego dostawcy.", System.currentTimeMillis() - taskStartedAt, reviewOfAgentId = task.reviewOfAgentId)
                         }
 
                         if (!hasExplicitConfig) {
