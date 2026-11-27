@@ -151,7 +151,7 @@ class MasterTaskReconciliationReaderTest {
             context, MasterTaskQueueStore.snapshot(context), taskId
         )
         assertEquals(
-            MasterTaskReconciliationPolicy.Decision.REPORTS_NEED_RESULT_EVENT_REPAIR,
+            MasterTaskReconciliationPolicy.Decision.CHECKPOINT_EVIDENCE_CONFLICT,
             assessment.decision
         )
         assertTrue(assessment.repairStatuses.isEmpty())
