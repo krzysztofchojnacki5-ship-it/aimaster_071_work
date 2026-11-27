@@ -385,12 +385,14 @@ object MasterTaskQueueStore {
         }
         val senderId = resolveAgentId(sender)
         val recipientId = resolveAgentId(recipient)
-        // A terminal result closes that agent's participation in this run. Late message
-        // callbacks must not append new conversation entries after its final acknowledgement.
-        if (senderId != null && events.any {
-            it.taskId == taskId && it.actor == "agent:$senderId" &&
+        // A terminal result closes that agent's participation in this run. Neither a
+        // completed sender nor a completed recipient may participate in later handoffs/messages.
+        fun hasTerminalResult(id: String): Boolean = events.any {
+            it.taskId == taskId && it.actor == "agent:$id" &&
                 it.operation == "AGENT_RESULT" && it.runId == current.runId
-        }) return@mutate null
+        }
+        if ((senderId != null && hasTerminalResult(senderId)) ||
+            (recipientId != null && hasTerminalResult(recipientId))) return@mutate null
         val senderAllowed = sender.equals("MASTER", true) || sender.equals("SYSTEM", true) ||
             (senderId != null && senderId in current.assignedAgentIds)
         val recipientAllowed = recipient.equals("MASTER", true) || recipient.equals("SYSTEM", true) ||
