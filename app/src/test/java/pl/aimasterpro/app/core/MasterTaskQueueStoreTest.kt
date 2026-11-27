@@ -426,7 +426,11 @@ class MasterTaskQueueStoreTest {
         ))
         val before = MasterTaskQueueStore.snapshot(context)
         assertFalse(MasterTaskQueueStore.recordAgentMessage(
-            context, taskId, firstAgent, "MASTER", "REPORT", "Late message.",
+            context, taskId, firstAgent, "MASTER", "REPORT", "Late message from completed agent.",
+            now = 81L, expectedRunId = 1
+        ))
+        assertFalse(MasterTaskQueueStore.recordAgentMessage(
+            context, taskId, secondAgent, firstAgent, "HANDOFF", "Handoff to completed agent.",
             now = 81L, expectedRunId = 1
         ))
         assertFalse(MasterTaskQueueStore.recordAgentTrace(
