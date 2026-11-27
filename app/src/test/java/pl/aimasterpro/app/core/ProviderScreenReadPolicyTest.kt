@@ -63,6 +63,28 @@ class ProviderScreenReadPolicyTest {
     }
 
     @Test
+    fun excludesNestedModelProfilesAndBlankIds() {
+        val base = ProviderScreenProfileRecord(
+            "base", "Base", "OPENAI_COMPATIBLE", "https://api.example/v1",
+            "", "secret", true, "", false, false
+        )
+        val intermediate = ProviderScreenProfileRecord(
+            "intermediate", "Intermediate", "OPENAI_COMPATIBLE", "", "model-a",
+            "", true, "base", false, false
+        )
+        val nested = ProviderScreenProfileRecord(
+            "nested", "Nested", "OPENAI_COMPATIBLE", "", "model-b",
+            "", true, "intermediate", false, false
+        )
+        val blankId = base.copy(id = "", name = "Invalid")
+        val resolved = ProviderScreenReadPolicy.resolveProfiles(
+            listOf(base, intermediate, nested, blankId)
+        )
+
+        assertEquals(listOf("base", "intermediate"), resolved.map { it.id })
+    }
+
+    @Test
     fun excludesProfileWhenItsOwnSecretIsUnavailable() {
         val profile = ProviderScreenProfileRecord("broken", "Broken", "OPENAI_COMPATIBLE", "https://api.example/v1", "model", "", true, "", false, true)
         assertTrue(ProviderScreenReadPolicy.resolveProfiles(listOf(profile)).isEmpty())
