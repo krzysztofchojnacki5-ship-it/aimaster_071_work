@@ -413,6 +413,35 @@ class MasterTaskQueueStoreTest {
         })
     }
 
+    @Test fun terminalAgentCannotAppendMessagesOrTracesWhileOtherAgentsAreRunning() {
+        val taskId = "task-terminal-agent-communication"
+        val firstAgent = "critical-reviewer"
+        val secondAgent = "unit-test-engineer"
+        assertTrue(MasterTaskQueueStore.enqueue(context, taskId, "Terminal communication fence", "Reject late events.", now = 77L))
+        assertTrue(MasterTaskQueueStore.assign(context, taskId, listOf(firstAgent, secondAgent), now = 78L))
+        assertTrue(startTaskWithCurrentSnapshot(taskId, "Start.", 79L))
+        assertTrue(MasterTaskQueueStore.recordAgentResult(
+            context, taskId, firstAgent, MasterTaskQueueStore.Status.COMPLETED,
+            "Final report.", now = 80L, expectedRunId = 1
+        ))
+        val before = MasterTaskQueueStore.snapshot(context)
+        assertFalse(MasterTaskQueueStore.recordAgentMessage(
+            context, taskId, firstAgent, "MASTER", "REPORT", "Late message.",
+            now = 81L, expectedRunId = 1
+        ))
+        assertFalse(MasterTaskQueueStore.recordAgentTrace(
+            context, taskId, "agent:$firstAgent", "provider:groq", "NETWORK_FAILOVER",
+            "Late trace.", now = 82L, expectedRunId = 1
+        ))
+        val after = MasterTaskQueueStore.snapshot(context)
+        assertEquals(before.events.size, after.events.size)
+        assertEquals(MasterTaskQueueStore.Status.RUNNING, after.tasks.single().status)
+        assertFalse(after.events.any {
+            it.taskId == taskId && it.actor == "agent:$firstAgent" &&
+                it.operation in setOf("AGENT_MESSAGE", "AGENT_TRACE")
+        })
+    }
+
     @Test fun failedAgentMakesMultiAgentTaskFailedAfterAllReports() {
         assertTrue(MasterTaskQueueStore.enqueue(context, "task-009", "Zespół", "Wspólny cel.", now = 70L))
         assertTrue(MasterTaskQueueStore.assign(context, "task-009",
