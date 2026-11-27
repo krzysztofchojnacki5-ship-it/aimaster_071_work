@@ -435,7 +435,11 @@ class MasterTaskQueueStoreTest {
         ))
         assertFalse(MasterTaskQueueStore.recordAgentTrace(
             context, taskId, "agent:$firstAgent", "provider:groq", "NETWORK_FAILOVER",
-            "Late trace.", now = 82L, expectedRunId = 1
+            "Late trace from completed agent.", now = 82L, expectedRunId = 1
+        ))
+        assertFalse(MasterTaskQueueStore.recordAgentTrace(
+            context, taskId, "provider:groq", "agent:$firstAgent", "NETWORK_FAILOVER",
+            "Trace addressed to completed agent.", now = 82L, expectedRunId = 1
         ))
         val after = MasterTaskQueueStore.snapshot(context)
         assertEquals(before.events.size, after.events.size)
