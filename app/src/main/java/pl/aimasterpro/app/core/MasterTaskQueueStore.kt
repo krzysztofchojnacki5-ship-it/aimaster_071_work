@@ -460,11 +460,14 @@ object MasterTaskQueueStore {
         }
         val sourceId = resolveAgentId(source)
         val targetId = resolveAgentId(target)
-        // Ignore delayed technical callbacks from an agent after its terminal result.
-        if (sourceId != null && events.any {
-            it.taskId == taskId && it.actor == "agent:$sourceId" &&
+        // A terminal result closes an agent's participation in this run. Reject late
+        // traces both from and to that agent so completed work cannot receive new handoffs.
+        fun hasTerminalResult(id: String): Boolean = events.any {
+            it.taskId == taskId && it.actor == "agent:$id" &&
                 it.operation == "AGENT_RESULT" && it.runId == current.runId
-        }) return@mutate null
+        }
+        if ((sourceId != null && hasTerminalResult(sourceId)) ||
+            (targetId != null && hasTerminalResult(targetId))) return@mutate null
         val sourceIsCoordinator = source.equals("MASTER", true) || source.equals("SYSTEM", true)
         val targetIsCoordinator = target.equals("MASTER", true) || target.equals("SYSTEM", true)
         val sourceIsProvider = source.startsWith("provider:", ignoreCase = true)
