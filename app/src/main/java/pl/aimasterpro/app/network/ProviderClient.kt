@@ -297,10 +297,10 @@ class ProviderClient(
             throw ProviderException(null, "CONNECT_ERROR dla ${parsedUrl.host}: $detail", category = "CONNECT_ERROR", phase = phase, requestMayHaveBeenProcessed = method.equals("POST", true) && phase != "CONNECT")
         } catch (e: BoundedResponseReader.ResponseTooLargeException) {
             if (isCancelled(scope)) throw cancelledException(phase, method)
-            throw ProviderException(null, e.message ?: "Odpowiedź dostawcy jest zbyt duża.", category = "RESPONSE_TOO_LARGE", phase = phase, requestMayHaveBeenProcessed = method.equals("POST", true))
+            throw ProviderException(null, ProviderHttpDiagnostics.safeFailureDetail(e.message ?: "Odpowiedź dostawcy jest zbyt duża."), category = "RESPONSE_TOO_LARGE", phase = phase, requestMayHaveBeenProcessed = method.equals("POST", true))
         } catch (e: BoundedResponseReader.InvalidUtf8Exception) {
             if (isCancelled(scope)) throw cancelledException(phase, method)
-            throw ProviderException(null, e.message ?: "Nieprawidłowe kodowanie odpowiedzi.", category = "INVALID_RESPONSE_ENCODING", phase = phase, requestMayHaveBeenProcessed = method.equals("POST", true))
+            throw ProviderException(null, ProviderHttpDiagnostics.safeFailureDetail(e.message ?: "Nieprawidłowe kodowanie odpowiedzi."), category = "INVALID_RESPONSE_ENCODING", phase = phase, requestMayHaveBeenProcessed = method.equals("POST", true))
         } catch (e: IOException) {
             if (isCancelled(scope)) throw cancelledException(phase, method)
             val detail = ProviderHttpDiagnostics.safeFailureDetail(e.message ?: "IOException")
