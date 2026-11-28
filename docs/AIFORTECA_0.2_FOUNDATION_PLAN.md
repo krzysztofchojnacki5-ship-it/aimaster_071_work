@@ -441,3 +441,18 @@ Cover unauthorized create/update/delete, scope escape, missing or forged approva
 - Artefakty: debug APK 2,301,576 B (ZIP); podpisany release APK 1,531,161 B (ZIP; APK 1,542,518 B); source archive 1,622,141 B; raport testów 383,951 B.
 - SHA-256 podpisanego APK: `26bf23ba264b1c7f5ab77d62f7c24dccda5c3d71fcdd301b3d132f4b190559f3`.
 - Status: PAKIET 47 ZALICZONY. Wszystkie trzy workflow i artefakty zweryfikowane na dokładnym SHA. PR #3 pozostaje otwarty i niescalony.
+
+
+## Implementation checkpoint — pakiet 48 / bezpieczeństwo kandydatów Gemini i rozpoznawanie uciętej odpowiedzi
+
+- Baza: pakiet 47 zaliczony na HEAD `ca122ff17985392fa1fba4974bb66ee029bb48fd`.
+- Cztery poprawki:
+  1. Kandydat Gemini z blokującym `finishReason` nie może ujawnić tekstu nawet wtedy, gdy payload zawiera części tekstowe.
+  2. Kandydaci z `safetyRatings[].blocked=true` są traktowani jako zablokowani również bez `finishReason`.
+  3. Wybór odpowiedzi pomija zablokowanych kandydatów i może przejść do następnego kandydata z bezpiecznym tekstem; gdy wszystkie są zablokowane, zwraca `CONTENT_BLOCKED`.
+  4. `finishReason=MAX_TOKENS` bez tekstu jest klasyfikowany jako `RESPONSE_TRUNCATED`, a nie ogólny `INVALID_RESPONSE`.
+- Dodano cztery testy regresyjne w `ProviderClientNetworkTest.kt`.
+- Zmodyfikowano `ProviderClient.kt`, `ProviderClientNetworkTest.kt` oraz niniejszy checkpoint.
+- Testów nie uruchamiano między poprawkami. Uruchomić jeden pełny CI po pakiecie.
+- Status: IMPLEMENTACJA ZAPISANA / CI PENDING.
+- Nie zmieniono `versionName=0.2`, `versionCode=3`, base branch ani PR #3.
