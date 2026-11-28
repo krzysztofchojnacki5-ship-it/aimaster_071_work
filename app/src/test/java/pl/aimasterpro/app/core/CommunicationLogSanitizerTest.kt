@@ -141,4 +141,12 @@ class CommunicationLogSanitizerTest {
         assertTrue(output.contains("[REDACTED HUGGING FACE TOKEN]"))
     }
 
+    @Test
+    fun redactsReplicateApiTokens() {
+        val token = "r8_1234567890abcdefghijklmnopqrstuv"
+        val output = CommunicationLogSanitizer.sanitize("replicate=$token")
+        assertFalse(output.contains(token))
+        assertTrue(output.contains("[REDACTED REPLICATE TOKEN]"))
+    }
+
 }
