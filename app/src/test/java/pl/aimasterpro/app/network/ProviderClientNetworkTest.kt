@@ -1005,4 +1005,71 @@ class ProviderClientNetworkTest {
     }
 
 
+    @Test
+    fun nativeGeminiSkipsTextFromBlockedCandidateAndUsesNextVisibleCandidate() {
+        val (server, _) = server { _, _ ->
+            200 to """{"candidates":[{"finishReason":"SAFETY","content":{"parts":[{"text":"blocked text"}]}},{"content":{"parts":[{"text":"safe answer"}]}}]}"""
+        }
+        try {
+            val cfg = ProviderConfig("gemini-blocked-fallback", "Gemini blocked fallback", ProviderKind.GEMINI,
+                "http://127.0.0.1:${server.address.port}/v1beta", "test-model", "")
+            val result = ProviderClient().chat(cfg, "system", "test")
+            assertEquals("safe answer", result.text)
+            assertFalse(result.text.contains("blocked text"))
+        } finally { server.stop(0) }
+    }
+
+    @Test
+    fun nativeGeminiNeverExposesTextWhenEveryCandidateIsSafetyBlocked() {
+        val (server, _) = server { _, _ ->
+            200 to """{"candidates":[{"finishReason":"SAFETY","content":{"parts":[{"text":"must stay hidden"}]}}]}"""
+        }
+        try {
+            val cfg = ProviderConfig("gemini-blocked-text", "Gemini blocked text", ProviderKind.GEMINI,
+                "http://127.0.0.1:${server.address.port}/v1beta", "test-model", "")
+            try {
+                ProviderClient().chat(cfg, "system", "test")
+                throw AssertionError("Expected Gemini content block")
+            } catch (e: ProviderException) {
+                assertEquals("CONTENT_BLOCKED", e.category)
+                assertFalse(e.message.orEmpty().contains("must stay hidden"))
+            }
+        } finally { server.stop(0) }
+    }
+
+    @Test
+    fun nativeGeminiRecognizesBlockedSafetyRatingWithoutFinishReason() {
+        val (server, _) = server { _, _ ->
+            200 to """{"candidates":[{"safetyRatings":[{"category":"HARM_CATEGORY_DANGEROUS_CONTENT","blocked":true}],"content":{"parts":[{"text":"blocked by rating"}]}}]}"""
+        }
+        try {
+            val cfg = ProviderConfig("gemini-safety-rating", "Gemini safety rating", ProviderKind.GEMINI,
+                "http://127.0.0.1:${server.address.port}/v1beta", "test-model", "")
+            try {
+                ProviderClient().chat(cfg, "system", "test")
+                throw AssertionError("Expected Gemini safety rating block")
+            } catch (e: ProviderException) {
+                assertEquals("CONTENT_BLOCKED", e.category)
+            }
+        } finally { server.stop(0) }
+    }
+
+    @Test
+    fun nativeGeminiClassifiesMaxTokenWithoutTextAsTruncatedResponse() {
+        val (server, _) = server { _, _ ->
+            200 to """{"candidates":[{"finishReason":"MAX_TOKENS","content":{"parts":[]}}]}"""
+        }
+        try {
+            val cfg = ProviderConfig("gemini-max-tokens", "Gemini max tokens", ProviderKind.GEMINI,
+                "http://127.0.0.1:${server.address.port}/v1beta", "test-model", "")
+            try {
+                ProviderClient().chat(cfg, "system", "test")
+                throw AssertionError("Expected truncated Gemini response")
+            } catch (e: ProviderException) {
+                assertEquals("RESPONSE_TRUNCATED", e.category)
+                assertTrue(e.message.orEmpty().contains("limit tokenów"))
+            }
+        } finally { server.stop(0) }
+    }
+
 }
