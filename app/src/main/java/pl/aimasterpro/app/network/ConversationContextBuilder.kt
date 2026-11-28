@@ -49,4 +49,14 @@ object ConversationContextBuilder {
         }
         return newestFirst.asReversed()
     }
+
+    /** Avoid emitting an isolated UTF-16 surrogate when a history budget cuts through an emoji. */
+    private fun takeLastWithoutSplittingSurrogatePair(value: String, maxChars: Int): String {
+        if (maxChars <= 0 || value.isEmpty()) return ""
+        var start = (value.length - maxChars).coerceAtLeast(0)
+        if (start > 0 && start < value.length && value[start].isLowSurrogate() && value[start - 1].isHighSurrogate()) {
+            start++
+        }
+        return value.substring(start)
+    }
 }
