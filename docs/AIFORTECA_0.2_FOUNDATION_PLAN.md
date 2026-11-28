@@ -431,3 +431,13 @@ Cover unauthorized create/update/delete, scope escape, missing or forged approva
 - Commity: `7717f0b4070ac6cc2cb5b3f5ea9f4f1a4dad9f0f` (implementacja), `d8ccf74a5d8c0a32e9c6f7a7d7dcd3a434129f0c` (testy).
 - Status: IMPLEMENTACJA ZAPISANA / CI PENDING. Nie uruchamiano testów między poprawkami; uruchomić jedno pełne CI po całym pakiecie.
 - Nie zmieniono `versionName=0.2`, `versionCode=3`, base branch ani PR #3.
+
+
+## Implementation checkpoint — pakiet 47 / weryfikacja końcowa (2026-11-28)
+
+- Końcowy HEAD CI: `ca122ff17985392fa1fba4974bb66ee029bb48fd`.
+- Android Build run `46113394316` PASS; Unit Tests run `46113394310` PASS; Gradle Wrapper Validation run `46113395095` PASS.
+- Raport XML: 136 zestawów, 1,502 testy, 0 failures, 0 errors, 0 skipped.
+- Artefakty: debug APK 2,301,576 B (ZIP); podpisany release APK 1,531,161 B (ZIP; APK 1,542,518 B); source archive 1,622,141 B; raport testów 383,951 B.
+- SHA-256 podpisanego APK: `26bf23ba264b1c7f5ab77d62f7c24dccda5c3d71fcdd301b3d132f4b190559f3`.
+- Status: PAKIET 47 ZALICZONY. Wszystkie trzy workflow i artefakty zweryfikowane na dokładnym SHA. PR #3 pozostaje otwarty i niescalony.
