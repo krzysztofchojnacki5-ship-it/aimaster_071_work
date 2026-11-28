@@ -29,8 +29,11 @@ object CommunicationLogSanitizer {
         .replace(sensitiveHeader) { match -> match.groupValues[1] + "[REDACTED]" }
         .replace(bearer, "Bearer [REDACTED]")
         .replace(google, "AIzaSy[REDACTED]")
+        .replace(googleOAuth, "[REDACTED GOOGLE OAUTH TOKEN]")
         .replace(openAiStyle, "sk-[REDACTED]")
         .replace(groq, "gsk_[REDACTED]")
+        .replace(huggingFace, "[REDACTED HUGGING FACE TOKEN]")
+        .replace(replicate, "[REDACTED REPLICATE TOKEN]")
         .replace(stripe, "[REDACTED STRIPE KEY]")
         .replace(awsAccessKey, "[REDACTED AWS ACCESS KEY]")
         .replace(jwt, "[REDACTED JWT]")
@@ -38,6 +41,7 @@ object CommunicationLogSanitizer {
         .replace(slack, "xox-[REDACTED]")
         .replace(urlUserInfo) { match -> match.groupValues[1] + "[REDACTED]" + match.groupValues[2] }
         .replace(privateKeyBlock, "[REDACTED PRIVATE KEY]")
+        .replace(signedUrlParameter) { match -> match.groupValues[1] + "[REDACTED]" }
         .replace(keyValue) { match -> match.groupValues[1] + "[REDACTED]" }
         .replace(jsonSecret) { match -> match.groupValues[1] + "[REDACTED]" + match.groupValues[2] }
 }
