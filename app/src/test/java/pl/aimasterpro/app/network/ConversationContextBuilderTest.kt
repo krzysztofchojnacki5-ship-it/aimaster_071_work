@@ -63,6 +63,23 @@ class ConversationContextBuilderTest {
         assertEquals(listOf("6789"), result.map { it.content })
     }
 
+    @Test fun truncationNeverSplitsUnicodeSurrogatePairs() {
+        val truncated = ConversationContextBuilder.build(
+            listOf(ConversationTurn("assistant", "X😀Y")),
+            currentUserText = "nowe",
+            maxHistoryChars = 2
+        )
+        assertEquals(listOf("Y"), truncated.map { it.content })
+        assertTrue(truncated.flatMap { it.content.toList() }.none { it.isHighSurrogate() || it.isLowSurrogate() })
+
+        val completePair = ConversationContextBuilder.build(
+            listOf(ConversationTurn("assistant", "X😀")),
+            currentUserText = "nowe",
+            maxHistoryChars = 2
+        )
+        assertEquals("😀", completePair.single().content)
+    }
+
     @Test fun emptyHistoryProducesNoContext() {
         assertTrue(ConversationContextBuilder.build(emptyList(), "hello").isEmpty())
     }
