@@ -149,4 +149,12 @@ class CommunicationLogSanitizerTest {
         assertTrue(output.contains("[REDACTED REPLICATE TOKEN]"))
     }
 
+    @Test
+    fun redactsGoogleOAuthAccessTokens() {
+        val token = "ya29.1234567890abcdefghijklmnopqrstuv"
+        val output = CommunicationLogSanitizer.sanitize("oauth=$token")
+        assertFalse(output.contains(token))
+        assertTrue(output.contains("[REDACTED GOOGLE OAUTH TOKEN]"))
+    }
+
 }
