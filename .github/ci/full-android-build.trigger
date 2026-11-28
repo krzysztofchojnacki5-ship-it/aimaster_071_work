@@ -6,3 +6,5 @@ Scope: four package 44 fixes: redact Hugging Face hf_ tokens; redact Replicate r
 Regression coverage: Hugging Face tokens, Replicate tokens, Google OAuth access tokens, signed URL query credentials.
 Required outputs: installable debug APK, release APK (signed only if signing secrets are configured and validated), and source project archive.
 Verification: run the complete unit-test suite, Gradle wrapper validation, assembleDebug and assembleRelease against the exact package 44 source revision. Do not mark the package complete until workflow results and artifacts are verified.
+
+Package 44 CI correction: preserve provider-specific redaction placeholders when generic key/value sanitization runs; execute one consolidated CI verification after this correction.
