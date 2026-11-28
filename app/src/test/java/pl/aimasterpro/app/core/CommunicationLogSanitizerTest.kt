@@ -157,4 +157,14 @@ class CommunicationLogSanitizerTest {
         assertTrue(output.contains("[REDACTED GOOGLE OAUTH TOKEN]"))
     }
 
+    @Test
+    fun redactsSignedUrlQueryCredentialsWithoutRemovingOtherParameters() {
+        val input = "https://storage.example/file?response-content-type=text%2Fplain&X-Amz-Signature=signed-url-secret&part=1&sig=azure-sas-secret"
+        val output = CommunicationLogSanitizer.sanitize(input)
+        assertFalse(output.contains("signed-url-secret"))
+        assertFalse(output.contains("azure-sas-secret"))
+        assertTrue(output.contains("response-content-type=text%2Fplain"))
+        assertTrue(output.contains("part=1"))
+    }
+
 }
