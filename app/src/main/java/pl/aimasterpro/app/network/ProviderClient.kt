@@ -609,7 +609,14 @@ class ProviderClient(
                 val contents = ProviderConversationPayloads.geminiContents(history, parts)
                 val requestBody = ProviderConversationPayloads.geminiNativeRequest(systemPrompt, contents)
                 val result = requestWithRetry(endpoint, "POST", "", requestBody)
-                val text = result.optJSONArray("candidates")?.optJSONObject(0)?.optJSONObject("content")?.optJSONArray("parts")?.optJSONObject(0)?.optString("text").orEmpty()
+                val candidates = result.optJSONArray("candidates")?.takeIf { it.length() > 0 }
+                    ?: throw ProviderException(null, "Gemini nie zwrócił żadnego kandydata odpowiedzi.", category = "INVALID_RESPONSE")
+                val parts = candidates.optJSONObject(0)?.optJSONObject("content")?.optJSONArray("parts")
+                    ?: throw ProviderException(null, "Gemini nie zwrócił tablicy parts w treści kandydata.", category = "INVALID_RESPONSE")
+                val text = (0 until parts.length()).mapNotNull { index ->
+                    parts.optJSONObject(index)?.opt("text") as? String
+                }.joinToString("\n").trim()
+                if (text.isBlank()) throw ProviderException(null, "Gemini nie zwrócił tekstowej treści odpowiedzi.", category = "INVALID_RESPONSE")
 
                 val meta = result.optJSONObject("usageMetadata")
                 val input = exactNonNegativeCount(meta, "promptTokenCount")
