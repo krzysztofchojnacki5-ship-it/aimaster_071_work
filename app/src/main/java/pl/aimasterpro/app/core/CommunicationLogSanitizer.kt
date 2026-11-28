@@ -7,6 +7,7 @@ object CommunicationLogSanitizer {
     private val openAiStyle = Regex("\\bsk-[A-Za-z0-9_-]{16,}\\b")
     private val groq = Regex("\\bgsk_[A-Za-z0-9_-]{16,}\\b")
     private val huggingFace = Regex("\\bhf_[A-Za-z0-9]{20,}\\b")
+    private val replicate = Regex("\\br8_[A-Za-z0-9]{20,}\\b")
     private val stripe = Regex("\\b(?:sk|rk)_(?:live|test)_[A-Za-z0-9]{16,}\\b")
     private val awsAccessKey = Regex("\\b(?:AKIA|ASIA)[A-Z0-9]{16}\\b")
     private val jwt = Regex("\\beyJ[A-Za-z0-9_-]{5,}\\.[A-Za-z0-9_-]{5,}\\.[A-Za-z0-9_-]{5,}\\b")
