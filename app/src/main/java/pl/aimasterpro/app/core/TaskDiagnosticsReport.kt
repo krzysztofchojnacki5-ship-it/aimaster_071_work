@@ -13,7 +13,8 @@ object TaskDiagnosticsReport {
         val providerId: String,
         val model: String,
         val createdAt: Long,
-        val content: String
+        val content: String,
+        val runId: Int
     )
 
     data class Result(val text: String, val isComplete: Boolean, val missing: List<String>)
@@ -22,6 +23,7 @@ object TaskDiagnosticsReport {
     private const val MAX_EVENTS = 240
     private const val MAX_HANDOFFS = 80
     private const val MAX_AGENT_REPORT_CHARS = 32_000
+    private const val MAX_AGENT_REPORTS = 32
 
     fun build(
         task: MasterTaskQueueStore.Task?,
@@ -38,20 +40,28 @@ object TaskDiagnosticsReport {
         if (task == null) missing += "ZADANIE: nie znaleziono w czytelnym dzienniku"
 
         val events = if (queue.status == MasterTaskQueueStore.ReadStatus.AVAILABLE && task != null) {
-            queue.events.filter { it.taskId == task.id }.sortedWith(
+            queue.events.filter { it.taskId == task.id && it.runId == task.runId }.sortedWith(
                 compareBy<MasterTaskQueueStore.Event> { it.timestamp }.thenBy { it.id }
             )
         } else emptyList()
         val taskHandoffs = if (handoffs.status == AgentHandoffStore.ReadStatus.AVAILABLE && task != null) {
-            handoffs.messages.filter { it.taskId == task.id }.sortedWith(
+            handoffs.messages.filter { it.taskId == task.id && it.runId == task.runId }.sortedWith(
                 compareBy<AgentHandoffStore.Handoff> { it.createdAt }.thenBy { it.id }
             )
         } else emptyList()
 
+        val taskReports = if (task != null && reportArchiveReadable) {
+            reports.filter { it.agentId in task.assignedAgentIds && it.runId == task.runId }
+                .sortedBy { it.createdAt }
+        } else emptyList()
+
         if (task != null && reportArchiveReadable) {
-            val present = reports.map { it.agentId }.toSet()
+            val present = taskReports.map { it.agentId }.toSet()
             task.assignedAgentIds.filter { it !in present }.forEach {
                 missing += "BRAK RAPORTU AGENTA: $it (przebieg #${task.runId})"
+            }
+            if (taskReports.size > MAX_AGENT_REPORTS) {
+                missing += "RAPORTY AGENTÓW: pokazano ostatnie $MAX_AGENT_REPORTS z ${taskReports.size}; pozostałe pominięto z powodu limitu."
             }
         }
 
@@ -104,10 +114,10 @@ object TaskDiagnosticsReport {
             }
             if (taskHandoffs.size > MAX_HANDOFFS) appendLine("UWAGA: pokazano ostatnie $MAX_HANDOFFS z ${taskHandoffs.size} przekazań.")
             appendLine()
-            appendLine("[PEŁNE RAPORTY AGENTÓW — ${reports.size}]")
+            appendLine("[PEŁNE RAPORTY AGENTÓW — ${taskReports.size}]")
             if (!reportArchiveReadable) appendLine("Archiwum raportów jest niedostępne; brak raportów nie oznacza pustych wyników.")
-            else if (reports.isEmpty()) appendLine("Nie znaleziono zapisanych raportów agentów dla bieżącego przebiegu.")
-            reports.forEach { report ->
+            else if (taskReports.isEmpty()) appendLine("Nie znaleziono zapisanych raportów agentów dla bieżącego przebiegu.")
+            taskReports.takeLast(MAX_AGENT_REPORTS).forEach { report ->
                 appendLine("--- ${safe(report.agentId, 160)} | ${safe(report.providerId, 200)}/${safe(report.model, 240)} | ${report.createdAt} ---")
                 appendLine(safe(report.content, MAX_AGENT_REPORT_CHARS))
             }
