@@ -822,4 +822,15 @@ class ProviderClientNetworkTest {
         } finally { server.stop(0) }
     }
 
+
+    @Test
+    fun providerErrorBodyRedactsStructuredSecretsEvenWhenTheyAreNotTheConfiguredKey() {
+        val raw = """{"error":"rejected","api_key":"echoed-api-key-value","password":"echoed-password-value","access_token":"echoed-access-token-value"}"""
+        val safe = ProviderHttpDiagnostics.redactErrorBody(raw, "different-configured-key")
+        listOf("echoed-api-key-value", "echoed-password-value", "echoed-access-token-value").forEach {
+            assertFalse("Provider error leaked structured credential: $it", safe.contains(it))
+        }
+        assertTrue(safe.contains("[REDACTED]"))
+        assertTrue(safe.contains("rejected"))
+    }
 }
