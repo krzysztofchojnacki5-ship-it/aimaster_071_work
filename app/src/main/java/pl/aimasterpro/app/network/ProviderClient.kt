@@ -378,6 +378,22 @@ class ProviderClient(
     private fun responseModel(result: JSONObject, configuredModel: String, field: String = "model"): String =
         (result.opt(field) as? String)?.trim()?.takeIf { it.isNotEmpty() } ?: configuredModel
 
+    /** Extracts text from OpenAI-compatible string or multimodal content and refusal payloads. */
+    private fun openAiResponseText(message: JSONObject): String? {
+        val content = message.opt("content")
+        val contentText = when (content) {
+            is String -> content.trim()
+            is JSONArray -> (0 until content.length()).mapNotNull { index ->
+                val part = content.optJSONObject(index) ?: return@mapNotNull null
+                if (part.optString("type") != "text") return@mapNotNull null
+                (part.opt("text") as? String)?.trim()?.takeIf { it.isNotEmpty() }
+            }.joinToString("\n").trim()
+            else -> ""
+        }
+        if (contentText.isNotEmpty()) return contentText
+        return (message.opt("refusal") as? String)?.trim()?.takeIf { it.isNotEmpty() }
+    }
+
     /** Reads JSON token counters without JSONObject's permissive numeric/string coercion. */
     private fun exactNonNegativeCount(obj: JSONObject?, key: String, defaultIfMissing: Long? = null): Long? {
         if (obj == null || !obj.has(key)) return defaultIfMissing
@@ -504,8 +520,8 @@ class ProviderClient(
                 ?: throw ProviderException(null, "Dostawca zwrócił pustą lub nieprawidłową tablicę choices.", category = "INVALID_RESPONSE")
             val message = choices.optJSONObject(0)?.optJSONObject("message")
                 ?: throw ProviderException(null, "Dostawca nie zwrócił obiektu message w pierwszym wyborze.", category = "INVALID_RESPONSE")
-            val text = (message.opt("content") as? String)?.trim()?.takeIf { it.isNotEmpty() }
-                ?: throw ProviderException(null, "Dostawca nie zwrócił tekstowej treści message.content.", category = "INVALID_RESPONSE")
+            val text = openAiResponseText(message)
+                ?: throw ProviderException(null, "Dostawca nie zwrócił tekstowej treści message.content ani message.refusal.", category = "INVALID_RESPONSE")
 
             val usageObj = result.optJSONObject("usage")
             val input = preferredUsageCount(usageObj, "prompt_tokens", result, "prompt_eval_count")
@@ -567,8 +583,8 @@ class ProviderClient(
                     ?: throw ProviderException(null, "Gemini OpenAI-compatible zwrócił pustą lub nieprawidłową tablicę choices.", category = "INVALID_RESPONSE")
                 val message = choices.optJSONObject(0)?.optJSONObject("message")
                     ?: throw ProviderException(null, "Gemini OpenAI-compatible nie zwrócił obiektu message.", category = "INVALID_RESPONSE")
-                val text = (message.opt("content") as? String)?.trim()?.takeIf { it.isNotEmpty() }
-                    ?: throw ProviderException(null, "Gemini OpenAI-compatible nie zwrócił tekstowej treści message.content.", category = "INVALID_RESPONSE")
+                val text = openAiResponseText(message)
+                    ?: throw ProviderException(null, "Gemini OpenAI-compatible nie zwrócił tekstowej treści message.content ani message.refusal.", category = "INVALID_RESPONSE")
 
                 val usageObj = result.optJSONObject("usage")
                 val input = exactNonNegativeCount(usageObj, "prompt_tokens")
