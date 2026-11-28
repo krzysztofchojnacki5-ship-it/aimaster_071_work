@@ -416,3 +416,18 @@ Cover unauthorized create/update/delete, scope escape, missing or forged approva
 - Raport XML: 136 zestawów, 1,498 testów, 0 failures, 0 errors, 0 skipped.
 - Artefakty Android Build: debug APK 2,299,219 B; podpisany release APK 1,530,082 B; source archive 1,620,596 B; raport testów 384,527 B.
 - Status: PAKIET 46 ZALICZONY — poprawka kompilacji, wszystkie testy i artefakty zweryfikowane na dokładnym SHA. PR #3 pozostaje otwarty i niescalony.
+
+
+## Implementation checkpoint — pakiet 47 / bezpieczne parsowanie odpowiedzi natywnego Gemini (2026-11-28)
+
+- Baza: pakiet 46 zaliczony na HEAD `f64102eed43affcadf6c8a94d852f2ffb135fafa`.
+- Cztery zmiany:
+  1. Parser natywnego Gemini pomija części oznaczone `thought=true`, aby wewnętrzne części rozumowania nie trafiały do widocznej odpowiedzi ani historii rozmowy.
+  2. Parser przeszukuje kandydatów po kolei i wybiera pierwszego z tekstową treścią widoczną dla użytkownika, zamiast odrzucać odpowiedź tylko dlatego, że pierwszy kandydat nie zawiera tekstu.
+  3. Zakończenia kandydata `SAFETY`, `RECITATION`, `BLOCKLIST`, `PROHIBITED_CONTENT`, `SPII` i `IMAGE_SAFETY` są mapowane na stabilny błąd `CONTENT_BLOCKED` z bezpiecznym opisem.
+  4. Blokada z `promptFeedback.blockReason` jest rozpoznawana również wtedy, gdy Gemini nie zwróci tablicy kandydatów.
+- Testy regresyjne dodane w `ProviderClientNetworkTest.kt`: filtrowanie thought parts, wybór kolejnego kandydata z widocznym tekstem, klasyfikacja finishReason SAFETY oraz klasyfikacja promptFeedback.blockReason.
+- Zmodyfikowane pliki: `ProviderClient.kt`, `ProviderClientNetworkTest.kt`, niniejszy checkpoint.
+- Commity: `7717f0b4070ac6cc2cb5b3f5ea9f4f1a4dad9f0f` (implementacja), `d8ccf74a5d8c0a32e9c6f7a7d7dcd3a434129f0c` (testy).
+- Status: IMPLEMENTACJA ZAPISANA / CI PENDING. Nie uruchamiano testów między poprawkami; uruchomić jedno pełne CI po całym pakiecie.
+- Nie zmieniono `versionName=0.2`, `versionCode=3`, base branch ani PR #3.
