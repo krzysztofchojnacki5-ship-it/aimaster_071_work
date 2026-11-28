@@ -394,6 +394,27 @@ class ProviderClient(
         return (message.opt("refusal") as? String)?.trim()?.takeIf { it.isNotEmpty() }
     }
 
+    /** Extracts only user-visible Gemini text; internal thought parts must never enter chat history. */
+    private fun geminiCandidateText(candidate: JSONObject): String? {
+        val parts = candidate.optJSONObject("content")?.optJSONArray("parts") ?: return null
+        return (0 until parts.length()).mapNotNull { index ->
+            val part = parts.optJSONObject(index) ?: return@mapNotNull null
+            if (part.opt("thought") == true) return@mapNotNull null
+            (part.opt("text") as? String)?.trim()?.takeIf { it.isNotEmpty() }
+        }.joinToString("\n").trim().takeIf { it.isNotEmpty() }
+    }
+
+    /** Maps documented Gemini block reasons to stable, non-provider-controlled diagnostics. */
+    private fun geminiBlockReason(reason: String?): String? = when (reason?.uppercase()) {
+        "SAFETY" -> "filtry bezpieczeństwa"
+        "RECITATION" -> "ochrona przed odtwarzaniem treści"
+        "BLOCKLIST" -> "lista blokowanych treści"
+        "PROHIBITED_CONTENT" -> "zasady dotyczące niedozwolonych treści"
+        "SPII" -> "ochrona danych osobowych"
+        "IMAGE_SAFETY" -> "filtry bezpieczeństwa obrazu"
+        else -> null
+    }
+
     /** Reads JSON token counters without JSONObject's permissive numeric/string coercion. */
     private fun exactNonNegativeCount(obj: JSONObject?, key: String, defaultIfMissing: Long? = null): Long? {
         if (obj == null || !obj.has(key)) return defaultIfMissing
@@ -626,13 +647,30 @@ class ProviderClient(
                 val requestBody = ProviderConversationPayloads.geminiNativeRequest(systemPrompt, contents)
                 val result = requestWithRetry(endpoint, "POST", "", requestBody)
                 val candidates = result.optJSONArray("candidates")?.takeIf { it.length() > 0 }
-                    ?: throw ProviderException(null, "Gemini nie zwrócił żadnego kandydata odpowiedzi.", category = "INVALID_RESPONSE")
-                val responseParts = candidates.optJSONObject(0)?.optJSONObject("content")?.optJSONArray("parts")
-                    ?: throw ProviderException(null, "Gemini nie zwrócił tablicy parts w treści kandydata.", category = "INVALID_RESPONSE")
-                val text = (0 until responseParts.length()).mapNotNull { index ->
-                    responseParts.optJSONObject(index)?.opt("text") as? String
-                }.joinToString("\n").trim()
-                if (text.isBlank()) throw ProviderException(null, "Gemini nie zwrócił tekstowej treści odpowiedzi.", category = "INVALID_RESPONSE")
+                if (candidates == null) {
+                    val blockReason = geminiBlockReason(
+                        result.optJSONObject("promptFeedback")?.optString("blockReason")
+                    )
+                    if (blockReason != null) {
+                        throw ProviderException(null, "Gemini zablokował odpowiedź: $blockReason.", category = "CONTENT_BLOCKED")
+                    }
+                    throw ProviderException(null, "Gemini nie zwrócił żadnego kandydata odpowiedzi.", category = "INVALID_RESPONSE")
+                }
+                val text = (0 until candidates.length()).mapNotNull { index ->
+                    candidates.optJSONObject(index)?.let(::geminiCandidateText)
+                }.firstOrNull()
+                if (text.isNullOrBlank()) {
+                    val candidateBlock = (0 until candidates.length()).mapNotNull { index ->
+                        geminiBlockReason(candidates.optJSONObject(index)?.optString("finishReason"))
+                    }.firstOrNull()
+                    val blockReason = candidateBlock ?: geminiBlockReason(
+                        result.optJSONObject("promptFeedback")?.optString("blockReason")
+                    )
+                    if (blockReason != null) {
+                        throw ProviderException(null, "Gemini zablokował odpowiedź: $blockReason.", category = "CONTENT_BLOCKED")
+                    }
+                    throw ProviderException(null, "Gemini nie zwrócił tekstowej treści odpowiedzi.", category = "INVALID_RESPONSE")
+                }
 
                 val meta = result.optJSONObject("usageMetadata")
                 val input = exactNonNegativeCount(meta, "promptTokenCount")
