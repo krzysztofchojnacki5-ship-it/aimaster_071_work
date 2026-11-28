@@ -133,4 +133,12 @@ class CommunicationLogSanitizerTest {
         assertTrue(output.contains("[REDACTED]"))
     }
 
+    @Test
+    fun redactsHuggingFaceAccessTokens() {
+        val token = "hf_1234567890abcdefghijklmnopqrstuv"
+        val output = CommunicationLogSanitizer.sanitize("model download token=$token")
+        assertFalse(output.contains(token))
+        assertTrue(output.contains("[REDACTED HUGGING FACE TOKEN]"))
+    }
+
 }
