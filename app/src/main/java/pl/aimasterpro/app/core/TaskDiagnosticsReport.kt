@@ -61,7 +61,8 @@ object TaskDiagnosticsReport {
         if (taskHandoffs.size > MAX_HANDOFFS) {
             missing += "PRZEKAZANIA: pokazano ostatnie $MAX_HANDOFFS z ${taskHandoffs.size}; starsze pominięto z powodu limitu."
         }
-\n        if (task != null && reportArchiveReadable) {
+
+        if (task != null && reportArchiveReadable) {
             val present = taskReports.map { it.agentId }.toSet()
             task.assignedAgentIds.filter { it !in present }.forEach {
                 missing += "BRAK RAPORTU AGENTA: $it (przebieg #${task.runId})"
