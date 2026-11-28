@@ -359,3 +359,27 @@ Cover unauthorized create/update/delete, scope escape, missing or forged approva
 - Zmodyfikowane pliki: `CommunicationLogSanitizer.kt`, `CommunicationLogSanitizerTest.kt`, niniejszy checkpoint.
 - Commity implementacji: `42b858359fa532dd654d4bbf7e3c499a6b057786`, `22ca4722bdf54e163c0024bdc4ba2bf0bbfdfbdf`, `b3fb4b68f00e04437ab8fd9507e0ab63ec50fd6e`, `1b09064f132b1d127cb46a6ef3ce4ec66e6ad234`, `809c4289bc6e22ee74dd6dc91c1b68f6207e77e1`, `4c9490d9f93fc8242132587bb99219b95c8e3e83`, `3dd4e56297111f3bb85ad7035f6dcd94afe2c30e`, `c82d4e80120eab4ce4712becfa380fed1e6add02`, `cbc92326c8a78f74d566ebfad469bb8d54a9351c`.
 - Status: IMPLEMENTACJA ZAPISANA / CI PENDING. Nie uruchamiano testów pomiędzy poprawkami. Pełne CI uruchomić po wszystkich czterech zmianach; pakiet nie jest zaliczony do czasu sprawdzenia raportów i artefaktów na dokładnym końcowym HEAD.
+
+
+## Implementation checkpoint — pakiet 44 / rozszerzona redakcja tokenów i podpisanych URL — WERYFIKACJA (2026-11-28)
+
+- Trigger/końcowy HEAD CI: `e1384643902c8c37246525001717206451620416`.
+- Unit Tests run `46100351608` PASS; Gradle Wrapper Validation run `46100351553` PASS; Android Build run `46100351515` PASS.
+- Dodatkowy duplikat Unit Tests run `46100355935` zakończył się błędem pobierania wtyczki `org.gradle.toolchains.foojay-resolver-convention:1.0.0` przed kompilacją i uruchomieniem testów. Nie zastępuje udanego przebiegu na tym samym SHA.
+- Raport z udanego buildu: 136 zestawów, 1,490 testów, 0 failures, 0 errors, 0 skipped.
+- Artefakty Android Build: debug APK 2,297,524 B; podpisany release APK 1,529,135 B; source archive 1,617,855 B; raport testów 383,893 B.
+- Status: PAKIET 44 ZALICZONY — pełne CI i artefakty zweryfikowane na dokładnym HEAD. PR #3 pozostaje otwarty i nie został scalony.
+
+## Implementation checkpoint — pakiet 45 / bezpieczne diagnostyki błędnych odpowiedzi dostawców (2026-11-28)
+
+- Baza: pakiet 44 zaliczony na HEAD `e1384643902c8c37246525001717206451620416`.
+- Cztery zmiany:
+  1. Scentralizowano sanitizację szczegółów błędów dostawców i ograniczenie ich długości przed użyciem w wyjątkach/logach.
+  2. Błędna odpowiedź JSON z HTTP 2xx jest teraz redagowana przed zapisaniem w `ProviderException.responseBody`; wcześniej surowa treść mogła zawierać echo klucza lub tokenu.
+  3. Szczegóły parsera JSON są sanitizowane i ograniczone; komunikat nie ujawnia surowego fragmentu dostarczonego przez provider.
+  4. Szczegóły DNS, timeoutów, połączeń, błędów I/O, nieprawidłowego UTF-8 i zbyt dużych odpowiedzi przechodzą przez wspólną sanitizację przed ujawnieniem.
+- Testy regresyjne dodane w `ProviderClientNetworkTest.kt`: błędna odpowiedź 2xx z echo sekretów, sanitizacja szczegółów parsera, redakcja sekretów w diagnostyce transportowej oraz limit długości po sanitizacji.
+- Zmodyfikowane pliki: `ProviderClient.kt`, `ProviderClientNetworkTest.kt`, niniejszy checkpoint.
+- Commity implementacji: `6f7592af5814031e720e28ac145c2bbc44088952`, `aeb74403cbbfb0f850db606d3d89ae39d3ef39b7`, `d96256f1a1bdde3b05b29a80ca532f295f1940cc`, `90895b868b23b2c2dee4d6f74be8939b862e63ee`, `9b5ea5268630426e8864555accad3f1d0bc14ab6`, `8c0e24c5314412715fa85edc9ba9c636708b7c13`, `f08a40361fdfc3e5365825b7e4fe55436b5ba360`.
+- Status: IMPLEMENTACJA ZAPISANA / CI PENDING. Nie uruchamiano testów między poprawkami. Uruchomić pełne CI dopiero po całym pakiecie; nie rozpoczynać pakietu 46 przed weryfikacją raportów i artefaktów na końcowym SHA.
+- Nie zmieniono `versionName=0.2`, `versionCode=3`, base branch ani PR #3.
