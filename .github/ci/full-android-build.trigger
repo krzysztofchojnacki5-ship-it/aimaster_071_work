@@ -10,3 +10,5 @@ Verification: run the complete unit-test suite, Gradle wrapper validation, assem
 Package 44 CI correction: preserve provider-specific redaction placeholders when generic key/value sanitization runs; execute one consolidated CI verification after this correction.
 
 Package 44 CI follow-up: align TokenTracker sanitizer regression assertion with provider-specific redaction markers.
+
+Package 45: provider error diagnostics sanitization; run consolidated unit tests, Gradle wrapper validation, assembleDebug and assembleRelease against the exact package 45 source revision.
