@@ -129,7 +129,14 @@ object TaskDiagnosticsReport {
             appendLine("Prywatność: raport zawiera treść celu, zdarzeń, przekazań i raportów agentów. Typowe sekrety API są redagowane. Sprawdź treść przed udostępnieniem.")
         }.let { raw ->
             if (raw.length <= MAX_REPORT_CHARS) raw
-            else raw.take(MAX_REPORT_CHARS - 120) + "\n\n[OBCIĘTO: raport przekroczył limit ${MAX_REPORT_CHARS} znaków.]"
+            else {
+                missing += "RAPORT: całość przekroczyła limit ${MAX_REPORT_CHARS} znaków i została obcięta."
+                raw.take(MAX_REPORT_CHARS - 180)
+                    .replace(
+                        "Status kompletności: KOMPLETNY W ZAKRESIE DOSTĘPNYCH ŹRÓDEŁ",
+                        "Status kompletności: NIEKOMPLETNY"
+                    ) + "\n\n[OBCIĘTO: raport przekroczył limit ${MAX_REPORT_CHARS} znaków.]"
+            }
         }
 
         return Result(output, missing.isEmpty(), missing.toList())
