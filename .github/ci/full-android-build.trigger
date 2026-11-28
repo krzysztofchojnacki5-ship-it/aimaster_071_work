@@ -16,3 +16,5 @@ Package 45: provider error diagnostics sanitization; run consolidated unit tests
 Package 46: strict provider response schema validation across Anthropic, OpenAI-compatible and Gemini adapters; run consolidated unit tests, Gradle wrapper validation and full Android debug/release build against exact package 46 source revision.
 
 Package 46 compile correction: rename native Gemini response parts variable to avoid collision with request parts; rerun consolidated CI against corrected source.
+
+Package 47 complete: native Gemini thought-part filtering, candidate fallback, and explicit prompt/candidate content-block classification. Run consolidated full CI.
