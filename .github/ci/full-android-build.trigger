@@ -8,3 +8,5 @@ Required outputs: installable debug APK, release APK (signed only if signing sec
 Verification: run the complete unit-test suite, Gradle wrapper validation, assembleDebug and assembleRelease against the exact package 44 source revision. Do not mark the package complete until workflow results and artifacts are verified.
 
 Package 44 CI correction: preserve provider-specific redaction placeholders when generic key/value sanitization runs; execute one consolidated CI verification after this correction.
+
+Package 44 CI follow-up: align TokenTracker sanitizer regression assertion with provider-specific redaction markers.
