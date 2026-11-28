@@ -406,3 +406,13 @@ Cover unauthorized create/update/delete, scope escape, missing or forged approva
 - Commity implementacji: `045f065d4e97b393a4ffd76122ed6d583dc23f1e`, `b646346217b96fd5bd02044e35c9e24bbd921707`, `151784d784a47517bfc302489d79d9d185102f0a`, `fcc2b7e8515a89c33f16bbac2e4dbc19ac4e10d6`, `d0153289fac96174abb4227d0aea1c60f097ec81`.
 - Status: IMPLEMENTACJA ZAPISANA / CI PENDING. Testy nie były uruchamiane między poprawkami. Uruchomić jeden pełny CI po pakiecie; nie rozpoczynać pakietu 47 przed weryfikacją raportów i artefaktów na końcowym SHA.
 - Nie zmieniono `versionName=0.2`, `versionCode=3`, base branch ani PR #3.
+
+
+## Implementation checkpoint — pakiet 46 / ścisła walidacja treści odpowiedzi dostawców — WERYFIKACJA (2026-11-28)
+
+- Końcowy HEAD CI: `f64102eed43affcadf6c8a94d852f2ffb135fafa`.
+- Pierwsze CI na HEAD `bd5ab1a1ed90ec7c22ba41d4baf62b4d2ec20801` wykryło konflikt nazw lokalnych zmiennych `parts` w parserze natywnego Gemini. Poprawiono nazwę tablicy odpowiedzi na `responseParts`; ponowne pełne CI uruchomiono na nowym, dokładnym HEAD.
+- Unit Tests run `46108938748` PASS; Gradle Wrapper Validation run `46108938805` PASS; Android Build run `46108938743` PASS.
+- Raport XML: 136 zestawów, 1,498 testów, 0 failures, 0 errors, 0 skipped.
+- Artefakty Android Build: debug APK 2,299,219 B; podpisany release APK 1,530,082 B; source archive 1,620,596 B; raport testów 384,527 B.
+- Status: PAKIET 46 ZALICZONY — poprawka kompilacji, wszystkie testy i artefakty zweryfikowane na dokładnym SHA. PR #3 pozostaje otwarty i niescalony.
