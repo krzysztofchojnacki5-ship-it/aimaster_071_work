@@ -40,7 +40,7 @@ object ConversationContextBuilder {
             val boundedContent = if (turn.content.length <= remaining) {
                 turn.content
             } else {
-                turn.content.takeLast(remaining)
+                takeLastWithoutSplittingSurrogatePair(turn.content, remaining)
             }
             if (boundedContent.isNotBlank()) {
                 newestFirst += ConversationTurn(turn.role, boundedContent)
