@@ -7630,7 +7630,8 @@ class MainActivity : Activity() {
                                     providerId = entry.providerId,
                                     model = entry.model,
                                     createdAt = entry.createdAt,
-                                    content = entry.report
+                                    content = entry.report,
+                                    runId = selected.runId
                                 )
                             }
                         } else emptyList()
