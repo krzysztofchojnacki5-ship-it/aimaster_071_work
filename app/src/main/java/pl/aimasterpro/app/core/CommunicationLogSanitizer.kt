@@ -16,7 +16,8 @@ object CommunicationLogSanitizer {
     private val jsonSecret = Regex("(?i)(\\\"(?:x-goog-api-key|xGoogApiKey|x-auth-token|xAuthToken|x-amz-security-token|cookie|set-cookie|apiKey|api_key|access_token|refresh_token|id_token|session_token|token|authorization|proxy-authorization|auth|client_secret|aws_secret_access_key|aws_session_token|private_key|signing_key|secret_key|password|secret)\\\"\\s*:\\s*\\\")[^\\\"]*(\\\")")
 
     fun sanitize(value: String): String = value
-        .replace(authorizationHeader) { match -> match.groupValues[1] + "[REDACTED]" }\n        .replace(sensitiveHeader) { match -> match.groupValues[1] + "[REDACTED]" }
+        .replace(authorizationHeader) { match -> match.groupValues[1] + "[REDACTED]" }
+        .replace(sensitiveHeader) { match -> match.groupValues[1] + "[REDACTED]" }
         .replace(bearer, "Bearer [REDACTED]")
         .replace(google, "AIzaSy[REDACTED]")
         .replace(openAiStyle, "sk-[REDACTED]")
