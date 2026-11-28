@@ -940,4 +940,69 @@ class ProviderClientNetworkTest {
     }
 
 
+
+    @Test
+    fun nativeGeminiDoesNotExposeThoughtPartsInVisibleResponse() {
+        val (server, _) = server { _, _ ->
+            200 to """{"candidates":[{"content":{"parts":[{"text":"internal thought","thought":true},{"text":"user-visible answer"}]}}]}"""
+        }
+        try {
+            val cfg = ProviderConfig("gemini-thought-filter", "Gemini thought filter", ProviderKind.GEMINI,
+                "http://127.0.0.1:${server.address.port}/v1beta", "test-model", "")
+            val result = ProviderClient().chat(cfg, "system", "test")
+            assertEquals("user-visible answer", result.text)
+            assertFalse(result.text.contains("internal thought"))
+        } finally { server.stop(0) }
+    }
+
+    @Test
+    fun nativeGeminiSelectsFirstCandidateWithVisibleText() {
+        val (server, _) = server { _, _ ->
+            200 to """{"candidates":[{"content":{"parts":[{"text":"hidden reasoning","thought":true}]}},{"content":{"parts":[{"text":"second candidate answer"}]}}]}"""
+        }
+        try {
+            val cfg = ProviderConfig("gemini-candidate-fallback", "Gemini candidate fallback", ProviderKind.GEMINI,
+                "http://127.0.0.1:${server.address.port}/v1beta", "test-model", "")
+            val result = ProviderClient().chat(cfg, "system", "test")
+            assertEquals("second candidate answer", result.text)
+        } finally { server.stop(0) }
+    }
+
+    @Test
+    fun nativeGeminiClassifiesSafetyFinishReasonAsContentBlocked() {
+        val (server, _) = server { _, _ ->
+            200 to """{"candidates":[{"finishReason":"SAFETY","content":{"parts":[]}}]}"""
+        }
+        try {
+            val cfg = ProviderConfig("gemini-safety-block", "Gemini safety block", ProviderKind.GEMINI,
+                "http://127.0.0.1:${server.address.port}/v1beta", "test-model", "")
+            try {
+                ProviderClient().chat(cfg, "system", "test")
+                throw AssertionError("Expected Gemini content block")
+            } catch (e: ProviderException) {
+                assertEquals("CONTENT_BLOCKED", e.category)
+                assertTrue(e.message.orEmpty().contains("filtry bezpieczeństwa"))
+            }
+        } finally { server.stop(0) }
+    }
+
+    @Test
+    fun nativeGeminiClassifiesPromptFeedbackBlockReason() {
+        val (server, _) = server { _, _ ->
+            200 to """{"promptFeedback":{"blockReason":"SAFETY"}}"""
+        }
+        try {
+            val cfg = ProviderConfig("gemini-prompt-safety-block", "Gemini prompt safety block", ProviderKind.GEMINI,
+                "http://127.0.0.1:${server.address.port}/v1beta", "test-model", "")
+            try {
+                ProviderClient().chat(cfg, "system", "test")
+                throw AssertionError("Expected Gemini prompt block")
+            } catch (e: ProviderException) {
+                assertEquals("CONTENT_BLOCKED", e.category)
+                assertTrue(e.message.orEmpty().contains("filtry bezpieczeństwa"))
+            }
+        } finally { server.stop(0) }
+    }
+
+
 }
