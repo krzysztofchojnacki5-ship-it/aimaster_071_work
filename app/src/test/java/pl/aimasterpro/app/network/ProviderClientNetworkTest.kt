@@ -25,6 +25,17 @@ class ProviderClientNetworkTest {
         base, "test-model", ""
     )
 
+
+    private fun assertInvalidProviderResponse(config: ProviderConfig) {
+        try {
+            ProviderClient().chat(config, "system", "test")
+            throw AssertionError("Expected invalid provider response")
+        } catch (e: ProviderException) {
+            assertEquals("INVALID_RESPONSE", e.category)
+            assertTrue("A malformed successful POST must retain its processing ambiguity", e.requestMayHaveBeenProcessed)
+        }
+    }
+
     private fun assertAnthropicEstimatedUsage(usageJson: String) {
         val (server, _) = server { _, _ ->
             200 to """{"content":[{"type":"text","text":"response"}],"usage":$usageJson}"""
@@ -885,5 +896,48 @@ class ProviderClientNetworkTest {
         assertFalse(safe.contains("bounded-secret"))
         assertTrue(safe.length <= 120)
     }
+
+
+    @Test
+    fun anthropicRejectsMissingOrEmptyTextContent() {
+        val (server, _) = server { _, _ -> 200 to """{"content":[]}""" }
+        try {
+            assertInvalidProviderResponse(
+                ProviderConfig("anthropic-empty-content", "Anthropic empty content", ProviderKind.ANTHROPIC,
+                    "http://127.0.0.1:${server.address.port}/v1", "test-model", "")
+            )
+        } finally { server.stop(0) }
+    }
+
+    @Test
+    fun openAiCompatibleRejectsEmptyChoicesAndMissingMessageContent() {
+        val (server, _) = server { _, _ -> 200 to """{"choices":[]}""" }
+        try {
+            assertInvalidProviderResponse(config("http://127.0.0.1:${server.address.port}/v1"))
+        } finally { server.stop(0) }
+    }
+
+    @Test
+    fun geminiOpenAiCompatibleRejectsMalformedChoiceSchema() {
+        val (server, _) = server { _, _ -> 200 to """{"choices":[{"message":{"content":42}}]}""" }
+        try {
+            assertInvalidProviderResponse(
+                ProviderConfig("gemini-openai-invalid-content", "Gemini OpenAI invalid content", ProviderKind.GEMINI,
+                    "http://127.0.0.1:${server.address.port}/v1beta/openai", "test-model", "")
+            )
+        } finally { server.stop(0) }
+    }
+
+    @Test
+    fun nativeGeminiRejectsEmptyCandidatesAndDoesNotReturnBlankSuccess() {
+        val (server, _) = server { _, _ -> 200 to """{"candidates":[]}""" }
+        try {
+            assertInvalidProviderResponse(
+                ProviderConfig("gemini-native-empty-candidates", "Gemini native empty candidates", ProviderKind.GEMINI,
+                    "http://127.0.0.1:${server.address.port}/v1beta", "test-model", "")
+            )
+        } finally { server.stop(0) }
+    }
+
 
 }
