@@ -429,4 +429,158 @@ class ChatHistoryStoreTest {
         assertEquals("new-user-chat", ChatHistoryStore.readRoot(context)!!.getString("currentId"))
     }
 
+
+    @Test fun lastUserChatIdReadReturnsStoredIdAndTreatsMissingMirrorAsEmpty() {
+        assertEquals("", ChatHistoryStore.readLastUserChatId(context))
+        assertTrue(prefs.edit().putString("last_user_chat_id", "saved-chat").commit())
+        assertEquals("saved-chat", ChatHistoryStore.readLastUserChatId(context))
+    }
+
+    @Test fun lastUserChatIdReadFailsClosedWhenPreferenceAccessThrows() {
+        val failingContext = object : android.content.ContextWrapper(context) {
+            override fun getSharedPreferences(name: String, mode: Int): android.content.SharedPreferences {
+                throw IllegalStateException("controlled navigation mirror read failure")
+            }
+        }
+        assertNull(ChatHistoryStore.readLastUserChatId(failingContext))
+    }
+
+    @Test fun lastUserChatIdReadFailsClosedWhenHistoryStoreIsQuarantined() {
+        assertFalse(ChatHistoryStore.writeRoot(AmbiguousCommitContext(context, "chat_state"), JSONObject().put("chats", JSONObject())))
+        assertTrue(SharedPreferencesWriteHealth.isUncertain("chat_state"))
+        assertNull(ChatHistoryStore.readLastUserChatId(context))
+    }
+
+
+    @Test fun selectingChatCommitsCanonicalAndUserNavigationTogether() {
+        val first = "first-chat"
+        val second = "second-chat"
+        assertTrue(ChatHistoryStore.selectChat(context, first))
+        assertTrue(ChatHistoryStore.selectChat(context, second))
+
+        val root = ChatHistoryStore.readRoot(context)!!
+        assertEquals(second, root.optString("currentId"))
+        assertEquals(second, ChatHistoryStore.readLastUserChatId(context))
+        assertTrue(root.getJSONObject("chats").has(first))
+        assertTrue(root.getJSONObject("chats").has(second))
+    }
+
+    @Test fun selectingAssistantChatDoesNotOverwriteLastUserNavigation() {
+        assertTrue(ChatHistoryStore.selectChat(context, "user-chat"))
+        assertTrue(ChatHistoryStore.selectChat(context, "assistant-dedicated"))
+        val root = ChatHistoryStore.readRoot(context)!!
+        assertEquals("assistant-dedicated", root.optString("currentId"))
+        assertEquals("user-chat", ChatHistoryStore.readLastUserChatId(context))
+    }
+
+    @Test fun failedChatSelectionDoesNotChangeEitherNavigationPointer() {
+        assertTrue(ChatHistoryStore.selectChat(context, "before"))
+        val corrupt = """{"chats":{"broken":""".trimIndent()
+        assertTrue(prefs.edit().putString("chats_v2", corrupt).commit())
+        assertFalse(ChatHistoryStore.selectChat(context, "after"))
+        assertEquals(corrupt, prefs.getString("chats_v2", null))
+        assertEquals("before", prefs.getString("last_user_chat_id", null))
+    }
+
+
+    @Test fun selectingAssistantChatUpdatesDedicatedPointerInSameStore() {
+        assertTrue(ChatHistoryStore.selectChat(context, "assistant-old"))
+        assertEquals("assistant-old", ChatHistoryStore.readAssistantChatId(context))
+        assertEquals("assistant-old", ChatHistoryStore.readRoot(context)?.optString("currentId"))
+    }
+
+    @Test fun selectingUserChatDoesNotOverwriteAssistantPointer() {
+        assertTrue(ChatHistoryStore.selectChat(context, "assistant-kept"))
+        assertTrue(ChatHistoryStore.selectChat(context, "ordinary-user-chat"))
+        assertEquals("assistant-kept", ChatHistoryStore.readAssistantChatId(context))
+        assertEquals("ordinary-user-chat", ChatHistoryStore.readLastUserChatId(context))
+    }
+
+    @Test fun assistantPointerReadFailsClosedWhenPreferencesAreUnavailable() {
+        val failingContext = object : android.content.ContextWrapper(context) {
+            override fun getSharedPreferences(name: String, mode: Int): android.content.SharedPreferences {
+                throw IllegalStateException("controlled preferences read failure")
+            }
+        }
+        assertNull(ChatHistoryStore.readAssistantChatId(failingContext))
+    }
+
+
+    @Test fun duplicateNonBlankAssistantTaskIdsRejectReadAndWriteWithoutOverwritingHistory() {
+        val duplicateChat = JSONObject()
+            .put("messages", JSONArray()
+                .put(JSONObject().put("role", "assistant").put("text", "First"))
+                .put(JSONObject().put("role", "assistant").put("text", "Second")))
+            .put("assistantTaskIds", JSONArray().put("same-task").put("same-task"))
+        val candidate = JSONObject().put("chats", JSONObject().put("duplicate-chat", duplicateChat))
+        assertFalse(ChatHistoryStore.writeRoot(context, candidate))
+        assertNull(prefs.getString("chats_v2", null))
+
+        val corrupt = candidate.toString()
+        assertTrue(prefs.edit().putString("chats_v2", corrupt).commit())
+        assertNull(ChatHistoryStore.readRoot(context))
+        assertEquals(corrupt, prefs.getString("chats_v2", null))
+    }
+
+
+    @Test fun oversizedChatMessageCollectionsFieldsAndIdsFailClosedOnReadAndWrite() {
+        val tooManyMessages = JSONArray()
+        repeat(5_001) { tooManyMessages.put(JSONObject().put("role", "user").put("text", "x")) }
+        val oversizedMessages = JSONObject().put("chats", JSONObject().put("chat-1",
+            JSONObject().put("messages", tooManyMessages)))
+        assertFalse(ChatHistoryStore.writeRoot(context, oversizedMessages))
+        assertNull(prefs.getString("chats_v2", null))
+        assertTrue(prefs.edit().putString("chats_v2", oversizedMessages.toString()).commit())
+        assertNull(ChatHistoryStore.readRoot(context))
+        assertEquals(oversizedMessages.toString(), prefs.getString("chats_v2", null))
+
+        prefs.edit().clear().commit()
+        val oversizedText = JSONObject().put("chats", JSONObject().put("chat-1",
+            JSONObject().put("messages", JSONArray().put(JSONObject()
+                .put("role", "user").put("text", "x".repeat(32_001))))))
+        assertFalse(ChatHistoryStore.writeRoot(context, oversizedText))
+        val oversizedChatId = JSONObject().put("chats", JSONObject().put("c".repeat(201),
+            JSONObject().put("messages", JSONArray())))
+        assertFalse(ChatHistoryStore.writeRoot(context, oversizedChatId))
+    }
+
+    @Test fun oversizedAssistantTaskIdCollectionsFailClosedOnReadAndWrite() {
+        val ids = JSONArray()
+        repeat(5_001) { ids.put("task-$it") }
+        val candidate = JSONObject().put("chats", JSONObject().put("chat-1",
+            JSONObject().put("messages", JSONArray()).put("assistantTaskIds", ids)))
+        assertFalse(ChatHistoryStore.writeRoot(context, candidate))
+        assertNull(prefs.getString("chats_v2", null))
+        assertTrue(prefs.edit().putString("chats_v2", candidate.toString()).commit())
+        assertNull(ChatHistoryStore.readRoot(context))
+        assertEquals(candidate.toString(), prefs.getString("chats_v2", null))
+    }
+
+    @Test fun oversizedAgentActivityCollectionsAndRowsFailClosedOnReadAndWrite() {
+        val rows = JSONArray()
+        repeat(151) { rows.put("activity-$it") }
+        val tooMany = JSONObject().put("chats", JSONObject().put("chat-1",
+            JSONObject().put("messages", JSONArray()).put("agentActivity", rows)))
+        assertFalse(ChatHistoryStore.writeRoot(context, tooMany))
+        assertNull(prefs.getString("chats_v2", null))
+        assertTrue(prefs.edit().putString("chats_v2", tooMany.toString()).commit())
+        assertNull(ChatHistoryStore.readRoot(context))
+        assertEquals(tooMany.toString(), prefs.getString("chats_v2", null))
+
+        prefs.edit().clear().commit()
+        val oversizedRow = JSONObject().put("chats", JSONObject().put("chat-1",
+            JSONObject().put("messages", JSONArray())
+                .put("agentActivity", JSONArray().put("a".repeat(32_001)))))
+        assertFalse(ChatHistoryStore.writeRoot(context, oversizedRow))
+    }
+
+    @Test fun oversizedRawHistoryIsRejectedBeforeJsonParsingAndPreserved() {
+        val oversized = " ".repeat(16_000_001)
+        assertTrue(prefs.edit().putString("chats_v2", oversized).commit())
+        assertNull(ChatHistoryStore.readRoot(context))
+        assertEquals(oversized, prefs.getString("chats_v2", null))
+        assertFalse(ChatHistoryStore.writeRoot(context, JSONObject().put("chats", JSONObject())))
+        assertEquals(oversized, prefs.getString("chats_v2", null))
+    }
+
 }

@@ -91,4 +91,20 @@ class TaskResultCacheFingerprintTest {
         assertNotEquals(base, TaskResultCache.fingerprint("dev", "goal", "prompt", "project", "", "", "provider-b", "https://api.example/v1", "model"))
         assertNotEquals(base, TaskResultCache.fingerprint("dev", "goal", "prompt", "project", "", "", "provider-a", "https://other.example/v1", "model"))
     }
+    @Test fun oversizedRawCacheIsRejectedAndPreserved() {
+        val prefs = context.getSharedPreferences("task_result_cache_v1", Context.MODE_PRIVATE)
+        val oversized = " ".repeat(4_000_001)
+        assertTrue(prefs.edit().putString("entries", oversized).commit())
+        assertNull(TaskResultCache.get(context, "new", 1_500L))
+        assertFalse(TaskResultCache.put(context, "new", "new report", 1_500L))
+        assertEquals(oversized, prefs.getString("entries", null))
+    }
+
+    @Test fun cacheRejectsOversizedFingerprintAndReportWithoutMutation() {
+        assertFalse(TaskResultCache.put(context, "f".repeat(129), "report", 1_000L))
+        assertFalse(TaskResultCache.put(context, "valid-fingerprint", "r".repeat(50_001), 1_000L))
+        assertNull(context.getSharedPreferences("task_result_cache_v1", Context.MODE_PRIVATE)
+            .getString("entries", null))
+    }
+
 }

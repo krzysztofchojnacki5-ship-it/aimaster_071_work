@@ -3,6 +3,7 @@ package pl.aimasterpro.app.network
 import org.json.JSONArray
 import org.json.JSONObject
 import pl.aimasterpro.app.core.ChatResponse
+import pl.aimasterpro.app.core.CommunicationLogSanitizer
 import pl.aimasterpro.app.core.ProviderEndpointPolicy
 import pl.aimasterpro.app.core.ProviderConfig
 import pl.aimasterpro.app.core.ProviderKind
@@ -28,6 +29,56 @@ class ProviderException(
     val requestMayHaveBeenProcessed: Boolean = false
 ) : Exception(message)
 
+internal object ProviderHttpAuth {
+    fun normalizeApiKey(raw: String): String {
+        var value = raw.trim()
+        while (value.startsWith("Bearer ", ignoreCase = true)) value = value.substringAfter(' ').trim()
+        return value
+    }
+
+    fun authorizationHeaderValue(headerName: String, rawApiKey: String): String? {
+        val key = normalizeApiKey(rawApiKey)
+        if (key.isBlank()) return null
+        return if (headerName.equals("Authorization", ignoreCase = true)) "Bearer $key" else key
+    }
+}
+
+internal object ProviderHttpDiagnostics {
+    fun redactErrorBody(rawBody: String, rawApiKey: String): String {
+        var safe = rawBody
+        val key = ProviderHttpAuth.normalizeApiKey(rawApiKey)
+        if (key.isNotBlank()) {
+            safe = safe.replace(key, "[REDACTED]")
+            val encodedKey = java.net.URLEncoder.encode(key, "UTF-8")
+            if (encodedKey != key) safe = safe.replace(encodedKey, "[REDACTED]")
+        }
+        var searchFrom = 0
+        while (true) {
+            val start = safe.indexOf("Bearer ", searchFrom, ignoreCase = true)
+            if (start < 0) break
+            val tokenStart = start + 7
+            val tokenEndCandidate = safe.indexOfAny(charArrayOf(' ', '"', '\'', '<', '>'), tokenStart)
+            val tokenEnd = if (tokenEndCandidate < 0) safe.length else tokenEndCandidate
+            if (tokenEnd > tokenStart) {
+                safe = safe.replaceRange(tokenStart, tokenEnd, "[REDACTED]")
+                searchFrom = tokenStart + 10
+            } else searchFrom = tokenEnd
+        }
+        return safeFailureDetail(safe, 2500)
+    }
+
+    /** Sanitizes provider-controlled diagnostics before they enter exceptions or local logs. */
+    fun safeFailureDetail(raw: String, maxLength: Int = 500): String =
+        CommunicationLogSanitizer.sanitize(raw).take(maxLength.coerceIn(0, 2500))
+
+    fun httpFailureHint(code: Int, category: String): String = when (code) {
+        400 -> "HTTP 400: dostawca odrzucił żądanie. Sprawdź ID modelu, endpoint i format payloadu; wymagane pola zależą od dostawcy."
+        401 -> "HTTP 401: dostawca odrzucił autoryzację. Sprawdź klucz API, jego uprawnienia i wymagany typ nagłówka."
+        403 -> "HTTP 403: klucz został rozpoznany, ale dostawca odmawia dostępu. Sprawdź uprawnienia i dostęp do modelu."
+        404 -> "HTTP 404: nie znaleziono endpointu lub modelu. Sprawdź Base URL i identyfikator modelu."
+        else -> "Dostawca zwrócił HTTP $code ($category)."
+    }
+}
 /** Synchronous transport with strict error classification, retry, and token usage extraction. */
 data class ProviderModelInfo(
     val id: String,
@@ -172,7 +223,7 @@ class ProviderClient(
             readTimeout = readTimeoutMs.coerceAtLeast(1)
             setRequestProperty("Accept", "application/json")
             setRequestProperty("Connection", "close")
-            if (apiKey.isNotBlank()) setRequestProperty(authHeader, if (authHeader == "Authorization") "Bearer $apiKey" else apiKey)
+            ProviderHttpAuth.authorizationHeaderValue(authHeader, apiKey)?.let { setRequestProperty(authHeader, it) }
             extraHeaders.forEach { (name, value) -> setRequestProperty(name, value) }
             if (body != null) { doOutput = true; setRequestProperty("Content-Type", "application/json; charset=utf-8") }
         }
@@ -209,22 +260,28 @@ class ProviderClient(
                     else -> "HTTP_ERROR"
                 }
                 val ambiguousServerOutcome = method.equals("POST", true) && (code == 408 || code in 500..599)
+                val safeBody = ProviderHttpDiagnostics.redactErrorBody(text, apiKey)
+                val diagnostic = ProviderHttpDiagnostics.httpFailureHint(code, category)
                 throw ProviderException(
-                    code, "Dostawca zwrócił HTTP $code (${category}): ${text.take(200)}",
-                    text.take(2500), category = category, phase = phase,
+                    code, "$diagnostic ${safeBody.take(200)}".trim(),
+                    safeBody, category = category, phase = phase,
                     requestMayHaveBeenProcessed = ambiguousServerOutcome
                 )
             }
             if (text.isBlank()) throw ProviderException(code, "Dostawca zwrócił pustą odpowiedź HTTP $code.", category = "EMPTY_RESPONSE", phase = phase, requestMayHaveBeenProcessed = method.equals("POST", true))
             return try { JSONObject(text) } catch (e: Exception) {
-                throw ProviderException(code, "Nieprawidłowy JSON od dostawcy: ${e.message}", text.take(2500), category = "INVALID_RESPONSE", phase = phase, requestMayHaveBeenProcessed = method.equals("POST", true))
+                val safeBody = ProviderHttpDiagnostics.redactErrorBody(text, apiKey)
+                val safeParserDetail = ProviderHttpDiagnostics.safeFailureDetail(e.message.orEmpty(), 300)
+                val hint = if (safeParserDetail.isBlank()) "Nieprawidłowy JSON od dostawcy." else "Nieprawidłowy JSON od dostawcy ($safeParserDetail)."
+                throw ProviderException(code, hint, safeBody, category = "INVALID_RESPONSE", phase = phase, requestMayHaveBeenProcessed = method.equals("POST", true))
             }
         } catch (e: ProviderException) {
             if (isCancelled(scope)) throw cancelledException(phase, method)
             throw e
         } catch (e: UnknownHostException) {
             if (isCancelled(scope)) throw cancelledException(phase, method)
-            throw ProviderException(null, "DNS_ERROR podczas $phase dla hosta ${parsedUrl.host}: ${e.message ?: "UnknownHostException"}", category = "DNS_ERROR", phase = phase)
+            val detail = ProviderHttpDiagnostics.safeFailureDetail(e.message ?: "UnknownHostException")
+            throw ProviderException(null, "DNS_ERROR podczas $phase dla hosta ${parsedUrl.host}: $detail", category = "DNS_ERROR", phase = phase)
         } catch (e: SocketTimeoutException) {
             if (isCancelled(scope)) throw cancelledException(phase, method)
             val category = when (phase) {
@@ -232,22 +289,26 @@ class ProviderClient(
                 "WAIT_RESPONSE" -> "RESPONSE_TIMEOUT"
                 else -> "READ_TIMEOUT"
             }
-            throw ProviderException(null, "$category podczas $phase dla ${parsedUrl.host}: ${e.message ?: "SocketTimeoutException"}", category = category, phase = phase, requestMayHaveBeenProcessed = method.equals("POST", true) && phase != "CONNECT")
+            val detail = ProviderHttpDiagnostics.safeFailureDetail(e.message ?: "SocketTimeoutException")
+            throw ProviderException(null, "$category podczas $phase dla ${parsedUrl.host}: $detail", category = category, phase = phase, requestMayHaveBeenProcessed = method.equals("POST", true) && phase != "CONNECT")
         } catch (e: ConnectException) {
             if (isCancelled(scope)) throw cancelledException(phase, method)
-            throw ProviderException(null, "CONNECT_ERROR dla ${parsedUrl.host}: ${e.message ?: "ConnectException"}", category = "CONNECT_ERROR", phase = phase, requestMayHaveBeenProcessed = method.equals("POST", true) && phase != "CONNECT")
+            val detail = ProviderHttpDiagnostics.safeFailureDetail(e.message ?: "ConnectException")
+            throw ProviderException(null, "CONNECT_ERROR dla ${parsedUrl.host}: $detail", category = "CONNECT_ERROR", phase = phase, requestMayHaveBeenProcessed = method.equals("POST", true) && phase != "CONNECT")
         } catch (e: BoundedResponseReader.ResponseTooLargeException) {
             if (isCancelled(scope)) throw cancelledException(phase, method)
-            throw ProviderException(null, e.message ?: "Odpowiedź dostawcy jest zbyt duża.", category = "RESPONSE_TOO_LARGE", phase = phase, requestMayHaveBeenProcessed = method.equals("POST", true))
+            throw ProviderException(null, ProviderHttpDiagnostics.safeFailureDetail(e.message ?: "Odpowiedź dostawcy jest zbyt duża."), category = "RESPONSE_TOO_LARGE", phase = phase, requestMayHaveBeenProcessed = method.equals("POST", true))
         } catch (e: BoundedResponseReader.InvalidUtf8Exception) {
             if (isCancelled(scope)) throw cancelledException(phase, method)
-            throw ProviderException(null, e.message ?: "Nieprawidłowe kodowanie odpowiedzi.", category = "INVALID_RESPONSE_ENCODING", phase = phase, requestMayHaveBeenProcessed = method.equals("POST", true))
+            throw ProviderException(null, ProviderHttpDiagnostics.safeFailureDetail(e.message ?: "Nieprawidłowe kodowanie odpowiedzi."), category = "INVALID_RESPONSE_ENCODING", phase = phase, requestMayHaveBeenProcessed = method.equals("POST", true))
         } catch (e: IOException) {
             if (isCancelled(scope)) throw cancelledException(phase, method)
-            throw ProviderException(null, "NETWORK_IO podczas $phase dla ${parsedUrl.host}: ${e.message ?: "IOException"}", category = "NETWORK_IO", phase = phase, requestMayHaveBeenProcessed = method.equals("POST", true) && phase != "CONNECT")
+            val detail = ProviderHttpDiagnostics.safeFailureDetail(e.message ?: "IOException")
+            throw ProviderException(null, "NETWORK_IO podczas $phase dla ${parsedUrl.host}: $detail", category = "NETWORK_IO", phase = phase, requestMayHaveBeenProcessed = method.equals("POST", true) && phase != "CONNECT")
         } catch (e: Exception) {
             if (isCancelled(scope)) throw cancelledException(phase, method)
-            throw ProviderException(null, "NETWORK_ERROR podczas $phase dla ${parsedUrl.host}: ${e.message ?: e.javaClass.simpleName}", category = "NETWORK_ERROR", phase = phase, requestMayHaveBeenProcessed = method.equals("POST", true) && phase != "CONNECT")
+            val detail = ProviderHttpDiagnostics.safeFailureDetail(e.message ?: e.javaClass.simpleName)
+            throw ProviderException(null, "NETWORK_ERROR podczas $phase dla ${parsedUrl.host}: $detail", category = "NETWORK_ERROR", phase = phase, requestMayHaveBeenProcessed = method.equals("POST", true) && phase != "CONNECT")
         } finally {
             activeConnections.remove(conn)
             conn.disconnect()
@@ -281,7 +342,7 @@ class ProviderClient(
                 if (isCancelled(scope)) throw cancelledException()
                 try { Thread.sleep(exponential + jitter) } catch (interrupted: InterruptedException) {
                     Thread.currentThread().interrupt()
-                    throw ProviderException(null, "Przerwano oczekiwanie przed ponowieniem: ${e.message}", category = "INTERRUPTED")
+                    throw ProviderException(null, "Przerwano oczekiwanie przed ponowieniem: ${ProviderHttpDiagnostics.safeFailureDetail(e.message.orEmpty())}", category = "INTERRUPTED")
                 }
             }
         }
@@ -289,14 +350,15 @@ class ProviderClient(
     }
 
     fun chat(config: ProviderConfig, systemPrompt: String, userText: String, attachmentMime: String = "", attachmentBase64: String = "",
-             scope: RequestScope? = null): ChatResponse {
+             scope: RequestScope? = null, conversationHistory: List<ConversationTurn> = emptyList()): ChatResponse {
         val requestScope = scope
         if (isCancelled(requestScope)) throw cancelledException()
         requestScopeLocal.set(requestScope)
         allowInsecureLanOllamaLocal.set(config.allowInsecureLanOllama)
         return try {
             if (isCancelled(scope)) throw cancelledException()
-            chatInternal(config, systemPrompt, userText, attachmentMime, attachmentBase64)
+            val boundedHistory = ConversationContextBuilder.build(conversationHistory, userText)
+            chatInternal(config, systemPrompt, userText, attachmentMime, attachmentBase64, boundedHistory)
         } catch (e: ProviderException) {
             // Schema/shape validation happens after a successful HTTP response; that POST may
             // already be billable even though the provider payload cannot be consumed.
@@ -315,6 +377,56 @@ class ProviderClient(
 
     private fun responseModel(result: JSONObject, configuredModel: String, field: String = "model"): String =
         (result.opt(field) as? String)?.trim()?.takeIf { it.isNotEmpty() } ?: configuredModel
+
+    /** Extracts text from OpenAI-compatible string or multimodal content and refusal payloads. */
+    private fun openAiResponseText(message: JSONObject): String? {
+        val content = message.opt("content")
+        val contentText = when (content) {
+            is String -> content.trim()
+            is JSONArray -> (0 until content.length()).mapNotNull { index ->
+                val part = content.optJSONObject(index) ?: return@mapNotNull null
+                if (part.optString("type") != "text") return@mapNotNull null
+                (part.opt("text") as? String)?.trim()?.takeIf { it.isNotEmpty() }
+            }.joinToString("\n").trim()
+            else -> ""
+        }
+        if (contentText.isNotEmpty()) return contentText
+        return (message.opt("refusal") as? String)?.trim()?.takeIf { it.isNotEmpty() }
+    }
+
+    /** Maps documented Gemini block reasons to stable, non-provider-controlled diagnostics. */
+    private fun geminiBlockReason(reason: String?): String? = when (reason?.uppercase()) {
+        "SAFETY" -> "filtry bezpieczeństwa"
+        "RECITATION" -> "ochrona przed odtwarzaniem treści"
+        "BLOCKLIST" -> "lista blokowanych treści"
+        "PROHIBITED_CONTENT" -> "zasady dotyczące niedozwolonych treści"
+        "SPII" -> "ochrona danych osobowych"
+        "IMAGE_SAFETY" -> "filtry bezpieczeństwa obrazu"
+        else -> null
+    }
+
+    /** A candidate can carry text alongside a blocking finish reason; never expose that text. */
+    private fun geminiCandidateBlockReason(candidate: JSONObject): String? {
+        geminiBlockReason(candidate.optString("finishReason"))?.let { return it }
+        val ratings = candidate.optJSONArray("safetyRatings") ?: return null
+        return (0 until ratings.length()).firstNotNullOfOrNull { index ->
+            val rating = ratings.optJSONObject(index) ?: return@firstNotNullOfOrNull null
+            if (rating.opt("blocked") == true) "filtry bezpieczeństwa" else null
+        }
+    }
+
+    private fun geminiCandidateText(candidate: JSONObject): String? {
+        if (geminiCandidateBlockReason(candidate) != null) return null
+        val parts = candidate.optJSONObject("content")?.optJSONArray("parts") ?: return null
+        return (0 until parts.length()).mapNotNull { index ->
+            val part = parts.optJSONObject(index) ?: return@mapNotNull null
+            if (part.opt("thought") == true) return@mapNotNull null
+            (part.opt("text") as? String)?.trim()?.takeIf { it.isNotEmpty() }
+        }.joinToString("\n").trim().takeIf { it.isNotEmpty() }
+    }
+
+    private fun geminiCandidateWasTruncated(candidate: JSONObject): Boolean =
+        candidate.optString("finishReason").equals("MAX_TOKENS", ignoreCase = true)
 
     /** Reads JSON token counters without JSONObject's permissive numeric/string coercion. */
     private fun exactNonNegativeCount(obj: JSONObject?, key: String, defaultIfMissing: Long? = null): Long? {
@@ -356,7 +468,8 @@ class ProviderClient(
         return reportedTotal == null || reportedTotal == sum
     }
 
-    private fun chatInternal(config: ProviderConfig, systemPrompt: String, userText: String, attachmentMime: String, attachmentBase64: String): ChatResponse = when (config.kind) {
+    private fun chatInternal(config: ProviderConfig, systemPrompt: String, userText: String, attachmentMime: String, attachmentBase64: String,
+                             history: List<ConversationTurn>): ChatResponse = when (config.kind) {
         ProviderKind.ANTHROPIC -> {
             val root = config.baseUrl.trimEnd('/').ifBlank { "https://api.anthropic.com/v1" }
             val endpoint = if (root.endsWith("/messages")) root else "$root/messages"
@@ -368,12 +481,17 @@ class ProviderClient(
                     else -> throw ProviderException(null, "Ten typ załącznika nie jest obsługiwany przez Anthropic.", category = "UNSUPPORTED_ATTACHMENT")
                 }
             }
-            val messages = JSONArray().put(JSONObject().put("role", "user").put("content", contentBlocks))
+            val messages = ProviderConversationPayloads.anthropic(history, contentBlocks)
             val result = requestWithRetry(endpoint, "POST", config.apiKey,
                 JSONObject().put("model", config.model).put("max_tokens", 4096).put("system", systemPrompt).put("messages", messages),
                 authHeader = "x-api-key", extraHeaders = mapOf("anthropic-version" to "2023-06-01"))
-            val content = result.optJSONArray("content") ?: JSONArray()
-            val text = (0 until content.length()).mapNotNull { content.optJSONObject(it)?.takeIf { o -> o.optString("type") == "text" }?.optString("text") }.joinToString("\n")
+            val content = result.optJSONArray("content")
+                ?: throw ProviderException(null, "Anthropic zwrócił odpowiedź bez tablicy content.", category = "INVALID_RESPONSE")
+            val text = (0 until content.length()).mapNotNull { index ->
+                content.optJSONObject(index)?.takeIf { it.optString("type") == "text" }
+                    ?.opt("text") as? String
+            }.joinToString("\n").trim()
+            if (text.isBlank()) throw ProviderException(null, "Anthropic nie zwrócił tekstowej treści odpowiedzi.", category = "INVALID_RESPONSE")
 
             val usageObj = result.optJSONObject("usage")
             // Anthropic reports uncached input, cache reads, and cache writes separately.
@@ -408,7 +526,7 @@ class ProviderClient(
             val realUsage = metadataObjectsValid && cacheBreakdownValid && validUsageBreakdown(
                 input, output, null, cached, reasoning, cacheWrite = cacheWrite, cacheWrite1h = cacheWrite1h
             )
-            val finalInput = if (realUsage) input!! else (systemPrompt.length + userText.length) / 4.toLong()
+            val finalInput = if (realUsage) input!! else (systemPrompt.length.toLong() + history.sumOf { it.content.length.toLong() } + userText.length.toLong()) / 4L
             val finalOutput = if (realUsage) output!! else text.length / 4.toLong()
             val finalTotal = if (realUsage) Math.addExact(finalInput, finalOutput) else finalInput + finalOutput
             val finalCached = if (realUsage) cached!! else 0L
@@ -428,14 +546,16 @@ class ProviderClient(
                 JSONArray().put(JSONObject().put("type", "text").put("text", userText))
                     .put(JSONObject().put("type", "image_url").put("image_url", JSONObject().put("url", "data:$attachmentMime;base64,$attachmentBase64")))
             }
-            val messages = JSONArray()
-                .put(JSONObject().put("role", "system").put("content", systemPrompt))
-                .put(JSONObject().put("role", "user").put("content", userContent))
+            val messages = ProviderConversationPayloads.openAi(systemPrompt, history, userContent)
             val result = requestWithRetry(endpoint, "POST", config.apiKey,
                 JSONObject().put("model", config.model).put("messages", messages))
 
-            val choices = result.optJSONArray("choices") ?: throw ProviderException(null, "Dostawca zwrócił odpowiedź bez pola choices.", category = "INVALID_RESPONSE")
-            val text = choices.optJSONObject(0)?.optJSONObject("message")?.optString("content").orEmpty()
+            val choices = result.optJSONArray("choices")?.takeIf { it.length() > 0 }
+                ?: throw ProviderException(null, "Dostawca zwrócił pustą lub nieprawidłową tablicę choices.", category = "INVALID_RESPONSE")
+            val message = choices.optJSONObject(0)?.optJSONObject("message")
+                ?: throw ProviderException(null, "Dostawca nie zwrócił obiektu message w pierwszym wyborze.", category = "INVALID_RESPONSE")
+            val text = openAiResponseText(message)
+                ?: throw ProviderException(null, "Dostawca nie zwrócił tekstowej treści message.content ani message.refusal.", category = "INVALID_RESPONSE")
 
             val usageObj = result.optJSONObject("usage")
             val input = preferredUsageCount(usageObj, "prompt_tokens", result, "prompt_eval_count")
@@ -473,7 +593,7 @@ class ProviderClient(
                     optionalJsonObjectFieldIsValid(usageObj, "completion_tokens_details")
             val realUsage = metadataObjectsValid && validUsageBreakdown(input, output, reportedTotal, cached, reasoning, reportedTotalFieldValid, cacheWrite, cacheWrite1h)
 
-            val finalInput = if (realUsage) input!! else (systemPrompt.length + userText.length) / 4.toLong()
+            val finalInput = if (realUsage) input!! else (systemPrompt.length.toLong() + history.sumOf { it.content.length.toLong() } + userText.length.toLong()) / 4L
             val finalOutput = if (realUsage) output!! else text.length / 4.toLong()
             val finalTotal = if (realUsage) Math.addExact(finalInput, finalOutput) else finalInput + finalOutput
             val finalCached = if (realUsage) cached!! else 0L
@@ -489,14 +609,16 @@ class ProviderClient(
             if (root.contains("/openai")) {
                 // Official Google Gemini OpenAI-compatible endpoint: https://generativelanguage.googleapis.com/v1beta/openai/
                 val endpoint = if (root.endsWith("/chat/completions")) root else "$root/chat/completions"
-                val messages = JSONArray()
-                    .put(JSONObject().put("role", "system").put("content", systemPrompt))
-                    .put(JSONObject().put("role", "user").put("content", userText))
+                val messages = ProviderConversationPayloads.openAi(systemPrompt, history, userText)
                 val result = requestWithRetry(endpoint, "POST", config.apiKey,
                     JSONObject().put("model", config.model).put("messages", messages),
                     authHeader = "Authorization")
-                val choices = result.optJSONArray("choices") ?: throw ProviderException(null, "Gemini OpenAI-compatible zwrócił brak pola choices.", category = "INVALID_RESPONSE")
-                val text = choices.optJSONObject(0)?.optJSONObject("message")?.optString("content").orEmpty()
+                val choices = result.optJSONArray("choices")?.takeIf { it.length() > 0 }
+                    ?: throw ProviderException(null, "Gemini OpenAI-compatible zwrócił pustą lub nieprawidłową tablicę choices.", category = "INVALID_RESPONSE")
+                val message = choices.optJSONObject(0)?.optJSONObject("message")
+                    ?: throw ProviderException(null, "Gemini OpenAI-compatible nie zwrócił obiektu message.", category = "INVALID_RESPONSE")
+                val text = openAiResponseText(message)
+                    ?: throw ProviderException(null, "Gemini OpenAI-compatible nie zwrócił tekstowej treści message.content ani message.refusal.", category = "INVALID_RESPONSE")
 
                 val usageObj = result.optJSONObject("usage")
                 val input = exactNonNegativeCount(usageObj, "prompt_tokens")
@@ -514,7 +636,7 @@ class ProviderClient(
                     optionalJsonObjectFieldIsValid(usageObj, "prompt_tokens_details") &&
                         optionalJsonObjectFieldIsValid(usageObj, "completion_tokens_details")
                 val realUsage = metadataObjectsValid && validUsageBreakdown(input, output, reportedTotal, cached, reasoning, reportedTotalFieldValid, cacheWrite, cacheWrite1h)
-                val finalInput = if (realUsage) input!! else (systemPrompt.length + userText.length) / 4L
+                val finalInput = if (realUsage) input!! else (systemPrompt.length.toLong() + history.sumOf { it.content.length.toLong() } + userText.length.toLong()) / 4L
                 val finalOutput = if (realUsage) output!! else text.length / 4L
                 val finalTotal = if (realUsage) Math.addExact(finalInput, finalOutput) else finalInput + finalOutput
                 val finalCached = if (realUsage) cached!! else 0L
@@ -524,17 +646,50 @@ class ProviderClient(
                 ChatResponse(text, TokenUsageResult(finalInput, finalOutput, finalTotal, if (realUsage) reasoning!! else 0L, finalCached, status, finalCacheWrite, finalCacheWrite1h, realUsage && reasoningKnown), providerId = config.id, model = responseModel(result, config.model))
             } else {
                 // Native Gemini REST API
-                val keyQuery = if (config.apiKey.isNotBlank()) {
-                    "?key=${java.net.URLEncoder.encode(config.apiKey, "UTF-8")}"
+                val normalizedKey = ProviderHttpAuth.normalizeApiKey(config.apiKey)
+                val keyQuery = if (normalizedKey.isNotBlank()) {
+                    "?key=${java.net.URLEncoder.encode(normalizedKey, "UTF-8")}"
                 } else ""
                 val endpoint = "$root/models/${config.model}:generateContent$keyQuery"
-                val parts = JSONArray().put(JSONObject().put("text", "$systemPrompt\n\nUżytkownik: $userText"))
+                val parts = JSONArray().put(JSONObject().put("text", userText))
                 if (attachmentBase64.isNotBlank()) {
                     if (!(attachmentMime.startsWith("image/") || attachmentMime == "application/pdf")) throw ProviderException(null, "Gemini: obsługiwane załączniki to obrazy i PDF.", category = "UNSUPPORTED_ATTACHMENT")
                     parts.put(JSONObject().put("inlineData", JSONObject().put("mimeType", attachmentMime).put("data", attachmentBase64)))
                 }
-                val result = requestWithRetry(endpoint, "POST", "", JSONObject().put("contents", JSONArray().put(JSONObject().put("parts", parts))))
-                val text = result.optJSONArray("candidates")?.optJSONObject(0)?.optJSONObject("content")?.optJSONArray("parts")?.optJSONObject(0)?.optString("text").orEmpty()
+                val contents = ProviderConversationPayloads.geminiContents(history, parts)
+                val requestBody = ProviderConversationPayloads.geminiNativeRequest(systemPrompt, contents)
+                val result = requestWithRetry(endpoint, "POST", "", requestBody)
+                val candidates = result.optJSONArray("candidates")?.takeIf { it.length() > 0 }
+                if (candidates == null) {
+                    val blockReason = geminiBlockReason(
+                        result.optJSONObject("promptFeedback")?.optString("blockReason")
+                    )
+                    if (blockReason != null) {
+                        throw ProviderException(null, "Gemini zablokował odpowiedź: $blockReason.", category = "CONTENT_BLOCKED")
+                    }
+                    throw ProviderException(null, "Gemini nie zwrócił żadnego kandydata odpowiedzi.", category = "INVALID_RESPONSE")
+                }
+                val text = (0 until candidates.length()).mapNotNull { index ->
+                    candidates.optJSONObject(index)?.let(::geminiCandidateText)
+                }.firstOrNull()
+                if (text.isNullOrBlank()) {
+                    val candidateBlock = (0 until candidates.length()).mapNotNull { index ->
+                        candidates.optJSONObject(index)?.let(::geminiCandidateBlockReason)
+                    }.firstOrNull()
+                    val blockReason = candidateBlock ?: geminiBlockReason(
+                        result.optJSONObject("promptFeedback")?.optString("blockReason")
+                    )
+                    if (blockReason != null) {
+                        throw ProviderException(null, "Gemini zablokował odpowiedź: $blockReason.", category = "CONTENT_BLOCKED")
+                    }
+                    val wasTruncated = (0 until candidates.length()).any { index ->
+                        candidates.optJSONObject(index)?.let(::geminiCandidateWasTruncated) == true
+                    }
+                    if (wasTruncated) {
+                        throw ProviderException(null, "Gemini zakończył generowanie przed zwróceniem tekstu (limit tokenów).", category = "RESPONSE_TRUNCATED")
+                    }
+                    throw ProviderException(null, "Gemini nie zwrócił tekstowej treści odpowiedzi.", category = "INVALID_RESPONSE")
+                }
 
                 val meta = result.optJSONObject("usageMetadata")
                 val input = exactNonNegativeCount(meta, "promptTokenCount")
@@ -547,7 +702,7 @@ class ProviderClient(
                     meta?.isNull("thoughtsTokenCount") == false && reasoning != null
                 val realUsage = validUsageBreakdown(input, output, total, cached, reasoning, totalFieldValid)
 
-                val finalInput = if (realUsage) input!! else (systemPrompt.length + userText.length) / 4.toLong()
+                val finalInput = if (realUsage) input!! else (systemPrompt.length.toLong() + history.sumOf { it.content.length.toLong() } + userText.length.toLong()) / 4L
                 val finalOutput = if (realUsage) output!! else text.length / 4.toLong()
                 val finalTotal = if (realUsage) Math.addExact(finalInput, finalOutput) else finalInput + finalOutput
                 val finalCached = if (realUsage) cached!! else 0L
@@ -652,8 +807,9 @@ class ProviderClient(
                             ProviderModelInfo(id, o.optString("name", id), o.optLong("context_length", -1L).takeIf { it > 0 })
                         }.sortedBy { it.id }
                     } else {
-                        val keyQuery = if (config.apiKey.isNotBlank()) {
-                            "?key=${java.net.URLEncoder.encode(config.apiKey, "UTF-8")}"
+                        val normalizedKey = ProviderHttpAuth.normalizeApiKey(config.apiKey)
+                        val keyQuery = if (normalizedKey.isNotBlank()) {
+                            "?key=${java.net.URLEncoder.encode(normalizedKey, "UTF-8")}"
                         } else ""
                         val json = requestWithRetry("$root/models$keyQuery", "GET", "")
                         val arr = json.optJSONArray("models") ?: JSONArray()

@@ -1,5 +1,6 @@
 package pl.aimasterpro.app.agents
 
+import java.util.Locale
 import java.util.UUID
 
 /**
@@ -10,38 +11,50 @@ import java.util.UUID
  */
 object PatchPeerReviewPlanner {
     data class Assignment(val agent: AgentSpec, val providerFingerprint: String)
-    data class ReviewTask(
-        val id: String,
-        val agentId: String,
-        val goal: String,
-        val prompt: String,
-        val providerFingerprint: String
-    )
+    data class ReviewTask(val id: String, val agentId: String, val goal: String, val prompt: String, val providerFingerprint: String)
+
+    fun qualityCategoryForPath(path: String): String {
+        val fileName = path.substringAfterLast('/').substringAfterLast('\\')
+        val extension = fileName.substringAfterLast('.', "").lowercase(Locale.ROOT)
+        val safeExtension = extension.takeIf { it.matches(Regex("[a-z0-9]{1,12}")) } ?: "unknown"
+        return "patch:$safeExtension"
+    }
 
     fun createTasks(
         reviewerPrompt: String,
         path: String,
         assignments: List<Assignment>,
         requestId: String = UUID.randomUUID().toString(),
-        maxReviewers: Int = 2
+        maxReviewers: Int = 2,
+        reviewerQualityScore: (String) -> Double? = { _ -> null },
+        reviewerQualityScoreForCategory: ((String, String) -> Double?)? = null
     ): List<ReviewTask> {
         require(maxReviewers in 1..3) { "maxReviewers musi należeć do zakresu 1..3" }
         if (reviewerPrompt.isBlank() || path.isBlank()) return emptyList()
-
+        val qualityCategory = qualityCategoryForPath(path)
+        val rankedAssignments = assignments.withIndex().map { indexed ->
+            val categoryScore = runCatching { reviewerQualityScoreForCategory?.invoke(indexed.value.agent.id, qualityCategory) }.getOrNull()
+            val score = (categoryScore ?: runCatching { reviewerQualityScore(indexed.value.agent.id) }.getOrNull())
+                ?.takeIf { it.isFinite() && it in 0.0..1.0 } ?: 0.5
+            Triple(indexed.index, indexed.value, score)
+        }.sortedWith(compareByDescending<Triple<Int, Assignment, Double>> { it.third }.thenBy { it.first })
+            .map { it.second }
         val chosen = mutableListOf<Assignment>()
         val agentIds = mutableSetOf<String>()
         val providerIds = mutableSetOf<String>()
-        assignments.forEach { assignment ->
+        for (assignment in rankedAssignments) {
             val agentId = assignment.agent.id.trim()
-            val providerId = assignment.providerFingerprint.trim().lowercase()
-            if (agentId.isBlank() || providerId.isBlank()) return@forEach
-            if (!agentIds.add(agentId)) return@forEach
-            if (!providerIds.add(providerId)) return@forEach
+            val providerId = assignment.providerFingerprint.trim().lowercase(Locale.ROOT)
+            if (agentId.isBlank() || providerId.isBlank()) continue
+            if (agentId in agentIds || providerId in providerIds) continue
+            agentIds += agentId
+            providerIds += providerId
             chosen += assignment.copy(providerFingerprint = providerId)
-            if (chosen.size == maxReviewers) return@forEach
+            // forEach's return@forEach only skips the current item; break is required
+            // to enforce the configured reviewer budget and avoid excess review calls.
+            if (chosen.size >= maxReviewers) break
         }
         if (chosen.size < 2) return emptyList()
-
         return chosen.mapIndexed { index, assignment ->
             ReviewTask(
                 id = "patch-review-$requestId-${index + 1}-${assignment.agent.id}",
@@ -50,6 +63,7 @@ object PatchPeerReviewPlanner {
                 prompt = buildString {
                     appendLine("Wykonaj niezależny audyt poniższej poprawki. Nie zakładaj, że autor ma rację.")
                     appendLine("Recenzent: ${assignment.agent.name} (${assignment.agent.id})")
+                    appendLine("Kategoria jakości: $qualityCategory")
                     appendLine("Wymagane: dowody, konkretne problemy, brakujące testy i jeden ścisły werdykt.")
                     appendLine("Nie uruchamiaj, nie stosuj ani nie zatwierdzaj patcha.")
                     appendLine()

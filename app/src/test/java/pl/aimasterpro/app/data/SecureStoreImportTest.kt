@@ -366,6 +366,21 @@ class SecureStoreImportTest {
         .put("baseUrl", "").put("model", "").put("apiKey", "")
         .put("enabled", false).put("parentProviderId", "")
 
+    @Test fun oversizedProviderCatalogIsRejectedBeforeReplacingExistingConfig() {
+        val context = org.robolectric.RuntimeEnvironment.getApplication()
+        seedExistingConfig(context)
+        val before = context.getSharedPreferences("secure_provider_store", Context.MODE_PRIVATE)
+            .getString("config_existing", null)
+
+        val oversized = (1..501).map { validConfig("provider_$it") }
+        assertFalse(SecureStore(context).replaceAllConfigs(oversized))
+
+        val prefs = context.getSharedPreferences("secure_provider_store", Context.MODE_PRIVATE)
+        assertEquals(setOf("existing"), prefs.getStringSet("provider_ids", emptySet()))
+        assertEquals(before, prefs.getString("config_existing", null))
+        assertTrue(prefs.contains("key_existing"))
+    }
+
     @Test fun malformedProviderSchemaIsRejectedWithoutChangingExistingConfig() {
         val context = org.robolectric.RuntimeEnvironment.getApplication()
         seedExistingConfig(context)

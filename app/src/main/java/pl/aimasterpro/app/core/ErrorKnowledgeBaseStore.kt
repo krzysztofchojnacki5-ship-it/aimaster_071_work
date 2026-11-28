@@ -17,6 +17,7 @@ object ErrorKnowledgeBaseStore {
     private const val KEY = "records"
     private const val MAX_RECORDS = 2_000
     private const val MAX_LIST = 40
+    private const val MAX_RAW_CHARS = 8_000_000
 
     enum class ReadStatus { AVAILABLE, UNAVAILABLE, CORRUPT }
     enum class CaseStatus {
@@ -78,10 +79,12 @@ object ErrorKnowledgeBaseStore {
                 }
 
                 val next = (listOf(record) + current).take(MAX_RECORDS)
+                val serialized = encode(next).toString()
+                if (serialized.length > MAX_RAW_CHARS) return@withHealthyAccess false
                 SharedPreferencesWriteHealth.commit(
                     PREFS,
                     context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
-                        .putString(KEY, encode(next).toString())
+                        .putString(KEY, serialized)
                 )
             }
         }.getOrDefault(false)
@@ -183,6 +186,7 @@ object ErrorKnowledgeBaseStore {
     private fun readStrict(context: Context): List<Record>? = runCatching {
         val raw = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
             .getString(KEY, null) ?: "[]"
+        require(raw.length <= MAX_RAW_CHARS) { "Error knowledge base exceeds its supported raw size." }
         val array = JSONArray(raw)
         require(array.length() <= MAX_RECORDS)
         val recordIds = hashSetOf<String>()

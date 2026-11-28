@@ -25,6 +25,17 @@ class ProviderClientNetworkTest {
         base, "test-model", ""
     )
 
+
+    private fun assertInvalidProviderResponse(config: ProviderConfig) {
+        try {
+            ProviderClient().chat(config, "system", "test")
+            throw AssertionError("Expected invalid provider response")
+        } catch (e: ProviderException) {
+            assertEquals("INVALID_RESPONSE", e.category)
+            assertTrue("A malformed successful POST must retain its processing ambiguity", e.requestMayHaveBeenProcessed)
+        }
+    }
+
     private fun assertAnthropicEstimatedUsage(usageJson: String) {
         val (server, _) = server { _, _ ->
             200 to """{"content":[{"type":"text","text":"response"}],"usage":$usageJson}"""
@@ -84,6 +95,55 @@ class ProviderClientNetworkTest {
             assertEquals(2L, result.usage.outputTokens)
             assertEquals(1, count.get())
         } finally { server.stop(0) }
+    }
+
+
+    @Test
+    fun providerAuthHeaderPolicyNormalizesKeysAndUsesProviderSpecificSchemes() {
+        assertEquals("test-openai-key", ProviderHttpAuth.normalizeApiKey("Bearer Bearer test-openai-key"))
+        assertEquals("Bearer test-openai-key", ProviderHttpAuth.authorizationHeaderValue("Authorization", "Bearer Bearer test-openai-key"))
+        assertEquals("test-anthropic-key", ProviderHttpAuth.authorizationHeaderValue("x-api-key", "Bearer test-anthropic-key"))
+        assertEquals("Bearer test-gemini-key", ProviderHttpAuth.authorizationHeaderValue("Authorization", "test-gemini-key"))
+        assertEquals(null, ProviderHttpAuth.authorizationHeaderValue("Authorization", "  "))
+    }
+
+    @Test
+    fun http401And400IncludeActionableHintsAndRedactApiKey() {
+        val secret = "secret-provider-key"
+        val (unauthorized, unauthorizedCount) = server { _, _ -> 401 to """{"error":"invalid key"}""" }
+        try {
+            val cfg = config("http://127.0.0.1:${unauthorized.address.port}/v1")
+            try {
+                ProviderClient().chat(cfg, "system", "test")
+                throw AssertionError("Expected HTTP 401")
+            } catch (e: ProviderException) {
+                assertEquals("AUTH_UNAUTHORIZED", e.category)
+                assertTrue(e.message.orEmpty().contains("Sprawdź klucz API"))
+                assertTrue(e.responseBody.contains("invalid key"))
+            }
+            assertEquals(1, unauthorizedCount.get())
+        } finally { unauthorized.stop(0) }
+
+        val redacted = ProviderHttpDiagnostics.redactErrorBody(
+            """invalid key $secret; echoed Authorization: Bearer bearer-token-value""",
+            secret
+        )
+        assertFalse(redacted.contains(secret))
+        assertFalse(redacted.contains("bearer-token-value"))
+        assertTrue(redacted.contains("[REDACTED]"))
+        val (badRequest, badRequestCount) = server { _, _ -> 400 to """{"error":"unknown model"}""" }
+        try {
+            val cfg = config("http://127.0.0.1:${badRequest.address.port}/v1")
+            try {
+                ProviderClient().chat(cfg, "system", "test")
+                throw AssertionError("Expected HTTP 400")
+            } catch (e: ProviderException) {
+                assertEquals("BAD_REQUEST", e.category)
+                assertTrue(e.message.orEmpty().contains("Sprawdź ID modelu"))
+                assertTrue(e.responseBody.contains("unknown model"))
+            }
+            assertEquals(1, badRequestCount.get())
+        } finally { badRequest.stop(0) }
     }
 
     @Test
@@ -770,6 +830,245 @@ class ProviderClientNetworkTest {
             assertEquals(30L, result.usage.cacheWrite1hTokens)
             assertEquals(2L, result.usage.reasoningTokens)
             assertTrue(result.usage.reasoningTokensKnown)
+        } finally { server.stop(0) }
+    }
+
+
+    @Test
+    fun providerErrorBodyRedactsStructuredSecretsEvenWhenTheyAreNotTheConfiguredKey() {
+        val raw = """{"error":"rejected","api_key":"echoed-api-key-value","password":"echoed-password-value","access_token":"echoed-access-token-value"}"""
+        val safe = ProviderHttpDiagnostics.redactErrorBody(raw, "different-configured-key")
+        listOf("echoed-api-key-value", "echoed-password-value", "echoed-access-token-value").forEach {
+            assertFalse("Provider error leaked structured credential: $it", safe.contains(it))
+        }
+        assertTrue(safe.contains("[REDACTED]"))
+        assertTrue(safe.contains("rejected"))
+    }
+    @Test
+    fun successfulMalformedJsonResponseRedactsEchoedCredentials() {
+        val secret = "provider-echo-secret-value"
+        val bearer = "echoed-bearer-secret-value"
+        val (server, _) = server { _, _ ->
+            200 to """not-json {"api_key":"$secret","access_token":"echoed-access-secret"} Authorization: Bearer $bearer"""
+        }
+        try {
+            try {
+                ProviderClient().chat(
+                    config("http://127.0.0.1:${server.address.port}/v1"),
+                    "system",
+                    "test"
+                )
+                throw AssertionError("Expected malformed provider response")
+            } catch (e: ProviderException) {
+                assertEquals("INVALID_RESPONSE", e.category)
+                listOf(secret, "echoed-access-secret", bearer).forEach {
+                    assertFalse("Malformed provider response leaked credential: $it", e.responseBody.contains(it))
+                    assertFalse("Malformed provider message leaked credential: $it", e.message.orEmpty().contains(it))
+                }
+                assertTrue(e.responseBody.contains("[REDACTED]"))
+            }
+        } finally { server.stop(0) }
+    }
+
+    @Test
+    fun parserDiagnosticsAreSanitizedBeforeExposure() {
+        val raw = """Unexpected token api_key=parser-secret-value and Bearer parser-bearer-secret"""
+        val safe = ProviderHttpDiagnostics.safeFailureDetail(raw)
+        assertFalse(safe.contains("parser-secret-value"))
+        assertFalse(safe.contains("parser-bearer-secret"))
+        assertTrue(safe.contains("[REDACTED]"))
+    }
+
+    @Test
+    fun transportDiagnosticsRedactUrlAndHeaderCredentials() {
+        val raw = "failed https://provider.example/v1?access_token=url-access-secret&sig=url-signature-secret; Authorization: Bearer transport-bearer-secret"
+        val safe = ProviderHttpDiagnostics.safeFailureDetail(raw)
+        listOf("url-access-secret", "url-signature-secret", "transport-bearer-secret").forEach {
+            assertFalse("Transport diagnostic leaked credential: $it", safe.contains(it))
+        }
+        assertTrue(safe.contains("[REDACTED]"))
+    }
+
+    @Test
+    fun providerFailureDetailsAreBoundedAfterSanitization() {
+        val raw = "api_key=bounded-secret " + "x".repeat(900)
+        val safe = ProviderHttpDiagnostics.safeFailureDetail(raw, 120)
+        assertFalse(safe.contains("bounded-secret"))
+        assertTrue(safe.length <= 120)
+    }
+
+
+    @Test
+    fun anthropicRejectsMissingOrEmptyTextContent() {
+        val (server, _) = server { _, _ -> 200 to """{"content":[]}""" }
+        try {
+            assertInvalidProviderResponse(
+                ProviderConfig("anthropic-empty-content", "Anthropic empty content", ProviderKind.ANTHROPIC,
+                    "http://127.0.0.1:${server.address.port}/v1", "test-model", "")
+            )
+        } finally { server.stop(0) }
+    }
+
+    @Test
+    fun openAiCompatibleRejectsEmptyChoicesAndMissingMessageContent() {
+        val (server, _) = server { _, _ -> 200 to """{"choices":[]}""" }
+        try {
+            assertInvalidProviderResponse(config("http://127.0.0.1:${server.address.port}/v1"))
+        } finally { server.stop(0) }
+    }
+
+    @Test
+    fun geminiOpenAiCompatibleRejectsMalformedChoiceSchema() {
+        val (server, _) = server { _, _ -> 200 to """{"choices":[{"message":{"content":42}}]}""" }
+        try {
+            assertInvalidProviderResponse(
+                ProviderConfig("gemini-openai-invalid-content", "Gemini OpenAI invalid content", ProviderKind.GEMINI,
+                    "http://127.0.0.1:${server.address.port}/v1beta/openai", "test-model", "")
+            )
+        } finally { server.stop(0) }
+    }
+
+    @Test
+    fun nativeGeminiRejectsEmptyCandidatesAndDoesNotReturnBlankSuccess() {
+        val (server, _) = server { _, _ -> 200 to """{"candidates":[]}""" }
+        try {
+            assertInvalidProviderResponse(
+                ProviderConfig("gemini-native-empty-candidates", "Gemini native empty candidates", ProviderKind.GEMINI,
+                    "http://127.0.0.1:${server.address.port}/v1beta", "test-model", "")
+            )
+        } finally { server.stop(0) }
+    }
+
+
+
+    @Test
+    fun nativeGeminiDoesNotExposeThoughtPartsInVisibleResponse() {
+        val (server, _) = server { _, _ ->
+            200 to """{"candidates":[{"content":{"parts":[{"text":"internal thought","thought":true},{"text":"user-visible answer"}]}}]}"""
+        }
+        try {
+            val cfg = ProviderConfig("gemini-thought-filter", "Gemini thought filter", ProviderKind.GEMINI,
+                "http://127.0.0.1:${server.address.port}/v1beta", "test-model", "")
+            val result = ProviderClient().chat(cfg, "system", "test")
+            assertEquals("user-visible answer", result.text)
+            assertFalse(result.text.contains("internal thought"))
+        } finally { server.stop(0) }
+    }
+
+    @Test
+    fun nativeGeminiSelectsFirstCandidateWithVisibleText() {
+        val (server, _) = server { _, _ ->
+            200 to """{"candidates":[{"content":{"parts":[{"text":"hidden reasoning","thought":true}]}},{"content":{"parts":[{"text":"second candidate answer"}]}}]}"""
+        }
+        try {
+            val cfg = ProviderConfig("gemini-candidate-fallback", "Gemini candidate fallback", ProviderKind.GEMINI,
+                "http://127.0.0.1:${server.address.port}/v1beta", "test-model", "")
+            val result = ProviderClient().chat(cfg, "system", "test")
+            assertEquals("second candidate answer", result.text)
+        } finally { server.stop(0) }
+    }
+
+    @Test
+    fun nativeGeminiClassifiesSafetyFinishReasonAsContentBlocked() {
+        val (server, _) = server { _, _ ->
+            200 to """{"candidates":[{"finishReason":"SAFETY","content":{"parts":[]}}]}"""
+        }
+        try {
+            val cfg = ProviderConfig("gemini-safety-block", "Gemini safety block", ProviderKind.GEMINI,
+                "http://127.0.0.1:${server.address.port}/v1beta", "test-model", "")
+            try {
+                ProviderClient().chat(cfg, "system", "test")
+                throw AssertionError("Expected Gemini content block")
+            } catch (e: ProviderException) {
+                assertEquals("CONTENT_BLOCKED", e.category)
+                assertTrue(e.message.orEmpty().contains("filtry bezpieczeństwa"))
+            }
+        } finally { server.stop(0) }
+    }
+
+    @Test
+    fun nativeGeminiClassifiesPromptFeedbackBlockReason() {
+        val (server, _) = server { _, _ ->
+            200 to """{"promptFeedback":{"blockReason":"SAFETY"}}"""
+        }
+        try {
+            val cfg = ProviderConfig("gemini-prompt-safety-block", "Gemini prompt safety block", ProviderKind.GEMINI,
+                "http://127.0.0.1:${server.address.port}/v1beta", "test-model", "")
+            try {
+                ProviderClient().chat(cfg, "system", "test")
+                throw AssertionError("Expected Gemini prompt block")
+            } catch (e: ProviderException) {
+                assertEquals("CONTENT_BLOCKED", e.category)
+                assertTrue(e.message.orEmpty().contains("filtry bezpieczeństwa"))
+            }
+        } finally { server.stop(0) }
+    }
+
+
+    @Test
+    fun nativeGeminiSkipsTextFromBlockedCandidateAndUsesNextVisibleCandidate() {
+        val (server, _) = server { _, _ ->
+            200 to """{"candidates":[{"finishReason":"SAFETY","content":{"parts":[{"text":"blocked text"}]}},{"content":{"parts":[{"text":"safe answer"}]}}]}"""
+        }
+        try {
+            val cfg = ProviderConfig("gemini-blocked-fallback", "Gemini blocked fallback", ProviderKind.GEMINI,
+                "http://127.0.0.1:${server.address.port}/v1beta", "test-model", "")
+            val result = ProviderClient().chat(cfg, "system", "test")
+            assertEquals("safe answer", result.text)
+            assertFalse(result.text.contains("blocked text"))
+        } finally { server.stop(0) }
+    }
+
+    @Test
+    fun nativeGeminiNeverExposesTextWhenEveryCandidateIsSafetyBlocked() {
+        val (server, _) = server { _, _ ->
+            200 to """{"candidates":[{"finishReason":"SAFETY","content":{"parts":[{"text":"must stay hidden"}]}}]}"""
+        }
+        try {
+            val cfg = ProviderConfig("gemini-blocked-text", "Gemini blocked text", ProviderKind.GEMINI,
+                "http://127.0.0.1:${server.address.port}/v1beta", "test-model", "")
+            try {
+                ProviderClient().chat(cfg, "system", "test")
+                throw AssertionError("Expected Gemini content block")
+            } catch (e: ProviderException) {
+                assertEquals("CONTENT_BLOCKED", e.category)
+                assertFalse(e.message.orEmpty().contains("must stay hidden"))
+            }
+        } finally { server.stop(0) }
+    }
+
+    @Test
+    fun nativeGeminiRecognizesBlockedSafetyRatingWithoutFinishReason() {
+        val (server, _) = server { _, _ ->
+            200 to """{"candidates":[{"safetyRatings":[{"category":"HARM_CATEGORY_DANGEROUS_CONTENT","blocked":true}],"content":{"parts":[{"text":"blocked by rating"}]}}]}"""
+        }
+        try {
+            val cfg = ProviderConfig("gemini-safety-rating", "Gemini safety rating", ProviderKind.GEMINI,
+                "http://127.0.0.1:${server.address.port}/v1beta", "test-model", "")
+            try {
+                ProviderClient().chat(cfg, "system", "test")
+                throw AssertionError("Expected Gemini safety rating block")
+            } catch (e: ProviderException) {
+                assertEquals("CONTENT_BLOCKED", e.category)
+            }
+        } finally { server.stop(0) }
+    }
+
+    @Test
+    fun nativeGeminiClassifiesMaxTokenWithoutTextAsTruncatedResponse() {
+        val (server, _) = server { _, _ ->
+            200 to """{"candidates":[{"finishReason":"MAX_TOKENS","content":{"parts":[]}}]}"""
+        }
+        try {
+            val cfg = ProviderConfig("gemini-max-tokens", "Gemini max tokens", ProviderKind.GEMINI,
+                "http://127.0.0.1:${server.address.port}/v1beta", "test-model", "")
+            try {
+                ProviderClient().chat(cfg, "system", "test")
+                throw AssertionError("Expected truncated Gemini response")
+            } catch (e: ProviderException) {
+                assertEquals("RESPONSE_TRUNCATED", e.category)
+                assertTrue(e.message.orEmpty().contains("limit tokenów"))
+            }
         } finally { server.stop(0) }
     }
 

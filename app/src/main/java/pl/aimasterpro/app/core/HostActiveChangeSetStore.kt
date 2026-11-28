@@ -8,6 +8,12 @@ import java.util.concurrent.ConcurrentHashMap
 object HostActiveChangeSetStore {
     private const val PREFS = "ai_host_active_change_set_v1"
     private const val KEY = "active"
+    private const val MAX_RAW_CHARS = 16_000
+    private const val MAX_CHAT_ID_CHARS = 200
+    private const val MAX_WORKSPACE_ID_CHARS = 128
+    private const val MAX_CHANGE_SET_ID_CHARS = 120
+    private const val MAX_TASK_ID_CHARS = 120
+    private const val MAX_SNAPSHOT_ID_CHARS = 100
 
     data class Active(
         val chatId: String,
@@ -31,7 +37,8 @@ object HostActiveChangeSetStore {
     fun setActive(context: Context, chatId: String, workspaceIdentity: String, changeSetId: String,
         storage: StringPreferenceStore = AndroidStringPreferenceStore(context, PREFS),
         ledgerStorage: StringPreferenceStore = AndroidStringPreferenceStore(context, ChangeSetStore.PREFERENCES_NAME)): Boolean {
-        require(chatId.isNotBlank() && workspaceIdentity.isNotBlank() && changeSetId.isNotBlank())
+        require(validText(chatId, MAX_CHAT_ID_CHARS) && validText(workspaceIdentity, MAX_WORKSPACE_ID_CHARS) &&
+            validText(changeSetId, MAX_CHANGE_SET_ID_CHARS))
         if (SharedPreferencesWriteHealth.isUncertain(PREFS)) return false
         val ledger = ChangeSetStore.readResult(context, ledgerStorage)
         if (ledger.status != ChangeSetStore.LedgerStatus.VALID) return false
@@ -39,7 +46,9 @@ object HostActiveChangeSetStore {
         if (change.chatId != chatId || change.taskId.isBlank() || change.snapshotId.isBlank() ||
             change.status !in ELIGIBLE_STATUSES) return false
         val record = Active(chatId, workspaceIdentity, change.id, change.taskId, change.snapshotId, change.status, System.currentTimeMillis())
-        val committed = runCatching { storage.write(KEY, encode(record).toString()) }.getOrDefault(false)
+        val serialized = encode(record).toString()
+        if (serialized.length > MAX_RAW_CHARS) return false
+        val committed = runCatching { storage.write(KEY, serialized) }.getOrDefault(false)
         if (committed) {
             ambiguousRecords.remove(quarantineKey(record))
         } else {
@@ -58,7 +67,7 @@ object HostActiveChangeSetStore {
     fun readActive(context: Context, chatId: String, workspaceIdentity: String,
         storage: StringPreferenceStore = AndroidStringPreferenceStore(context, PREFS),
         ledgerStorage: StringPreferenceStore = AndroidStringPreferenceStore(context, ChangeSetStore.PREFERENCES_NAME)): ReadResult {
-        if (chatId.isBlank() || workspaceIdentity.isBlank()) return ReadResult(ReadStatus.INVALID, reason = "Brak chatId/workspaceIdentity")
+        if (!validText(chatId, MAX_CHAT_ID_CHARS) || !validText(workspaceIdentity, MAX_WORKSPACE_ID_CHARS)) return ReadResult(ReadStatus.INVALID, reason = "Brak lub nieprawidłowy chatId/workspaceIdentity")
         if (SharedPreferencesWriteHealth.isUncertain(PREFS)) {
             return ReadResult(ReadStatus.INVALID, reason = "Magazyn aktywnego zakresu ma niejednoznaczny wynik zapisu; wymagany restart procesu i uzgodnienie stanu.")
         }
@@ -67,6 +76,7 @@ object HostActiveChangeSetStore {
         }
         if (rawResult.isFailure) return ReadResult(ReadStatus.INVALID, reason = "Nie można odczytać aktywnego zakresu")
         val raw = rawResult.getOrNull() ?: return ReadResult(ReadStatus.NONE)
+        if (raw.length > MAX_RAW_CHARS) return ReadResult(ReadStatus.INVALID, reason = "Aktywny zakres przekracza obsługiwany rozmiar")
         val record = runCatching { decode(JSONObject(raw)) }.getOrElse {
             return ReadResult(ReadStatus.INVALID, reason = "Uszkodzony zapis aktywnego zakresu")
         }
@@ -131,12 +141,18 @@ object HostActiveChangeSetStore {
         .put("taskId", a.taskId).put("snapshotId", a.snapshotId).put("changeStatus", a.changeStatus)
         .put("selectedAt", a.selectedAt)
 
+    private fun validText(value: String, max: Int): Boolean = value.isNotBlank() && value.length <= max
+
     private fun decode(o: JSONObject): Active {
         val result = Active(o.getString("chatId"), o.getString("workspaceIdentity"),
             o.getString("changeSetId"), o.getString("taskId"), o.getString("snapshotId"),
             o.getString("changeStatus"), o.getLong("selectedAt"))
-        require(result.chatId.isNotBlank() && result.workspaceIdentity.isNotBlank() && result.changeSetId.isNotBlank() &&
-            result.taskId.isNotBlank() && result.snapshotId.isNotBlank() && result.changeStatus in ELIGIBLE_STATUSES && result.selectedAt > 0)
+        require(validText(result.chatId, MAX_CHAT_ID_CHARS) &&
+            validText(result.workspaceIdentity, MAX_WORKSPACE_ID_CHARS) &&
+            validText(result.changeSetId, MAX_CHANGE_SET_ID_CHARS) &&
+            validText(result.taskId, MAX_TASK_ID_CHARS) &&
+            validText(result.snapshotId, MAX_SNAPSHOT_ID_CHARS) &&
+            result.changeStatus in ELIGIBLE_STATUSES && result.selectedAt > 0)
         return result
     }
 

@@ -32,6 +32,73 @@ class TaskResultArchiveTest {
         assertTrue(ChatHistoryStore.writeRoot(context, root))
     }
 
+    @Test fun queueExecutionArchiveIdsAreStableAndIsolatedByAgentAndRun() {
+        val first = TaskResultArchive.executionTaskId("task-parent-123", "researcher", 1)
+        assertEquals("${StableIdentifier.create("queue", "task-parent-123", "researcher")}-r1", first)
+        assertEquals(first, TaskResultArchive.executionTaskId("task-parent-123", "researcher", 1))
+        assertNotEquals(first, TaskResultArchive.executionTaskId("task-parent-123", "developer", 1))
+        assertNotEquals(first, TaskResultArchive.executionTaskId("task-parent-123", "researcher", 2))
+        assertTrue(runCatching { TaskResultArchive.executionTaskId("", "researcher", 1) }.isFailure)
+        assertTrue(runCatching { TaskResultArchive.executionTaskId("task-parent", "researcher", 0) }.isFailure)
+    }
+
+    @Test fun executionLookupReadsUnambiguousLegacyArchiveIdsAfterStableIdMigration() {
+        val parentTaskId = "legacy-parent"
+        val agentId = "researcher"
+        val runId = 3
+        val legacyId = "q-${parentTaskId.take(42)}-${agentId.take(32)}-r$runId"
+        assertTrue(TaskResultArchive.put(
+            context, legacyId, agentId, "Legacy archived report", "provider-old", "model-old", 3_000L
+        ))
+
+        val restored = TaskResultArchive.getExecution(context, parentTaskId, agentId, runId)
+        assertEquals(legacyId, restored?.taskId)
+        assertEquals("Legacy archived report", restored?.report)
+    }
+
+    @Test fun executionLookupRejectsTruncatedLegacyKeyForLongIdentifiers() {
+        val parentTaskId = "legacy-parent-task-id-that-is-long-enough-to-test-truncation"
+        val agentId = "researcher"
+        val runId = 3
+        val truncatedLegacyId = "q-${parentTaskId.take(42)}-${agentId.take(32)}-r$runId"
+        assertTrue(TaskResultArchive.put(
+            context, truncatedLegacyId, agentId, "Potentially ambiguous legacy report",
+            "provider-old", "model-old", 3_000L
+        ))
+
+        assertNull(TaskResultArchive.getExecution(context, parentTaskId, agentId, runId))
+    }
+
+    @Test fun executionLookupRejectsArchiveEntryOwnedByDifferentAgent() {
+        val parentTaskId = "parent-provenance"
+        val requestedAgent = "researcher"
+        val executionId = TaskResultArchive.executionTaskId(parentTaskId, requestedAgent, 2)
+        assertTrue(TaskResultArchive.put(
+            context, executionId, "developer", "Wrong agent's report",
+            "provider-test", "model-test", 4_000L
+        ))
+
+        assertNull(TaskResultArchive.getExecution(context, parentTaskId, requestedAgent, 2))
+    }
+
+    @Test fun executionLookupPrefersStableArchiveIdOverLegacyEntry() {
+        val parentTaskId = "same-parent-task"
+        val agentId = "researcher"
+        val runId = 4
+        val legacyId = "q-${parentTaskId.take(42)}-${agentId.take(32)}-r$runId"
+        val stableId = TaskResultArchive.executionTaskId(parentTaskId, agentId, runId)
+        assertTrue(TaskResultArchive.put(
+            context, legacyId, agentId, "Old report", "provider-old", "model-old", 4_000L
+        ))
+        assertTrue(TaskResultArchive.put(
+            context, stableId, agentId, "Current report", "provider-new", "model-new", 5_000L
+        ))
+
+        val restored = TaskResultArchive.getExecution(context, parentTaskId, agentId, runId)
+        assertEquals(stableId, restored?.taskId)
+        assertEquals("Current report", restored?.report)
+    }
+
     @Test fun successfulReportIsDurableAndAddressableByTaskId() {
         assertTrue(TaskResultArchive.put(
             context, "task-1", "developer", "Pełny raport agenta.", "provider-a", "model-a", 1_000L
@@ -52,6 +119,30 @@ class TaskResultArchiveTest {
         assertEquals("task-1", entries.first().taskId)
     }
 
+    @Test fun queueExecutionArchiveSlotAcknowledgesExactRetryAndRejectsReplacement() {
+        val parentTaskId = "queue-archive-immutable"
+        val agentId = "critical-reviewer"
+        val runId = 2
+        val executionId = TaskResultArchive.executionTaskId(parentTaskId, agentId, runId)
+
+        assertTrue(TaskResultArchive.putExecution(
+            context, parentTaskId, runId, agentId, "Original durable report.",
+            "provider-a", "model-a", 2_000L, "chat-queue"
+        ))
+        assertTrue(TaskResultArchive.putExecution(
+            context, parentTaskId, runId, agentId, "Original durable report.",
+            "provider-a", "model-a", 2_000L, "chat-queue"
+        ))
+        assertFalse(TaskResultArchive.putExecution(
+            context, parentTaskId, runId, agentId, "Conflicting replacement.",
+            "provider-b", "model-b", 3_000L, "chat-queue"
+        ))
+        assertEquals(executionId, TaskResultArchive.get(context, executionId)?.taskId)
+        assertEquals("Original durable report.", TaskResultArchive.get(context, executionId)?.report)
+        assertEquals("provider-a", TaskResultArchive.get(context, executionId)?.providerId)
+        assertEquals(1, TaskResultArchive.latest(context).count { it.taskId == executionId })
+    }
+
     @Test fun archivedReportsRedactCommonProviderCredentials() {
         val report = "API key: sk-12345678901234567890 and Bearer abcdefghijklmnopqrstuvwxyz123456"
         assertTrue(TaskResultArchive.put(context, "secret-task", "developer", report, "provider-a", "model-a", 1_000L))
@@ -59,6 +150,87 @@ class TaskResultArchiveTest {
         assertFalse(stored.contains("sk-12345678901234567890"))
         assertFalse(stored.contains("abcdefghijklmnopqrstuvwxyz123456"))
         assertTrue(TaskResultArchive.get(context, "secret-task")?.report?.contains("[REDACTED]") == true)
+    }
+
+    @Test fun archivedAgentAndProviderMetadataRedactCredentialsBeforePersistence() {
+        val rawAgent = "developer api_key=sk_live_1234567890"
+        val rawProvider = "provider token=Bearer abcdefghijklmnopqrstuvwxyz123456"
+        val rawModel = "model secret=sk-proj-12345678901234567890"
+        assertTrue(TaskResultArchive.put(
+            context, "metadata-secret-task", rawAgent, "Raport bez sekretów.",
+            rawProvider, rawModel, 1_500L
+        ))
+
+        val entry = TaskResultArchive.get(context, "metadata-secret-task")!!
+        val stored = prefs.getString("entries", null).orEmpty()
+        assertFalse(stored.contains("sk_live_1234567890"))
+        assertFalse(stored.contains("abcdefghijklmnopqrstuvwxyz123456"))
+        assertFalse(stored.contains("sk-proj-12345678901234567890"))
+        assertTrue(entry.agentId.contains("[REDACTED]"))
+        assertTrue(entry.providerId.contains("[REDACTED]"))
+        assertTrue(entry.model.contains("[REDACTED]"))
+    }
+
+    @Test fun archiveRejectsChatLookupKeyThatWouldChangeUnderSecretRedaction() {
+        val unsafeChatId = "chat-api_key=sk_live_1234567890"
+        assertFalse(TaskResultArchive.put(
+            context, "unsafe-chat-key-task", "developer", "Raport.",
+            "provider-a", "model-a", 1_600L, unsafeChatId
+        ))
+        assertNull(TaskResultArchive.get(context, "unsafe-chat-key-task"))
+        assertTrue(TaskResultArchive.latest(context).isEmpty())
+    }
+
+    @Test fun restoredLegacyMetadataIsRedactedBeforeEnteringChatTimeline() {
+        val chatId = "chat-legacy-metadata"
+        createChat(chatId)
+        val legacy = JSONArray().put(JSONObject()
+            .put("taskId", "legacy-metadata-task")
+            .put("agentId", "developer api_key=sk_live_1234567890")
+            .put("report", "Legacy report.")
+            .put("providerId", "provider token=Bearer abcdefghijklmnopqrstuvwxyz123456")
+            .put("model", "model secret=sk-proj-12345678901234567890")
+            .put("createdAt", 1_700L)
+            .put("chatId", chatId))
+        assertTrue(prefs.edit().putString("entries", legacy.toString()).commit())
+
+        assertEquals(1, TaskResultArchive.restoreArchivedReports(context))
+        val activity = ChatHistoryStore.readRoot(context)!!
+            .getJSONObject("chats").getJSONObject(chatId).getJSONArray("agentActivity")
+        val restored = activity.optString(0)
+        assertFalse(restored.contains("sk_live_1234567890"))
+        assertFalse(restored.contains("abcdefghijklmnopqrstuvwxyz123456"))
+        assertFalse(restored.contains("sk-proj-12345678901234567890"))
+        assertTrue(restored.contains("[REDACTED]"))
+        assertTrue(restored.contains("Legacy report."))
+    }
+
+    @Test fun metadataRedactionDoesNotAlterTaskOrChatIdentityKeys() {
+        val chatId = "chat-stable-identity"
+        createChat(chatId)
+        assertTrue(TaskResultArchive.put(
+            context, "task-stable-identity", "unit-test-engineer",
+            "Stable report.", "provider-a", "model-a", 1_800L, chatId
+        ))
+        val entry = TaskResultArchive.get(context, "task-stable-identity")!!
+        assertEquals("task-stable-identity", entry.taskId)
+        assertEquals("chat-stable-identity", entry.chatId)
+        assertEquals("unit-test-engineer", entry.agentId)
+        assertEquals("provider-a", entry.providerId)
+        assertEquals("model-a", entry.model)
+    }
+
+    @Test fun metadataSanitizationRunsBeforeArchiveCapacityAndSerializationChecks() {
+        val rawProvider = "provider api_key=sk_live_1234567890"
+        val rawModel = "model bearer=Bearer abcdefghijklmnopqrstuvwxyz123456"
+        assertTrue(TaskResultArchive.put(
+            context, "metadata-order-task", "developer", "Report.",
+            rawProvider, rawModel, 1_900L
+        ))
+        val serialized = prefs.getString("entries", null).orEmpty()
+        assertTrue(serialized.contains("[REDACTED]"))
+        assertFalse(serialized.contains("sk_live_1234567890"))
+        assertFalse(serialized.contains("abcdefghijklmnopqrstuvwxyz123456"))
     }
 
     @Test fun emptyArchiveIsReadableAndDistinguishedFromCorruption() {
@@ -331,6 +503,171 @@ class TaskResultArchiveTest {
         val rows = ChatHistoryStore.readRoot(context)!!.getJSONObject("chats")
             .getJSONObject(chatId).getJSONArray("agentActivity")
         assertEquals(1, (0 until rows.length()).count { rows.getString(it).contains("[TASK_REPORT_ID:report-after-apply]") })
+    }
+
+
+    @Test fun archiveReaderRejectsRowsBeyondCapacityWithoutRewritingData() {
+        val rows = JSONArray()
+        repeat(81) { index ->
+            rows.put(JSONObject()
+                .put("taskId", "overflow-task-$index")
+                .put("agentId", "RESEARCHER")
+                .put("report", "Report $index")
+                .put("providerId", "provider-a")
+                .put("model", "model-a")
+                .put("createdAt", 40_000L + index))
+        }
+        val corrupt = rows.toString()
+        assertTrue(prefs.edit().putString("entries", corrupt).commit())
+
+        assertFalse(TaskResultArchive.isArchiveReadable(context))
+        assertFalse(TaskResultArchive.put(
+            context, "new-task", "RESEARCHER", "New report", "provider-a", "model-a", 50_000L
+        ))
+        assertEquals(corrupt, prefs.getString("entries", null))
+    }
+
+    @Test fun putRejectsOversizedArchiveMetadataAndChatIdsBeforeWriting() {
+        assertFalse(TaskResultArchive.put(context, "t".repeat(513), "RESEARCHER", "Report", "p", "m", 1_000L))
+        assertFalse(TaskResultArchive.put(context, "task-agent", "a".repeat(121), "Report", "p", "m", 1_000L))
+        assertFalse(TaskResultArchive.put(context, "task-provider", "RESEARCHER", "Report", "p".repeat(201), "m", 1_000L))
+        assertFalse(TaskResultArchive.put(context, "task-model", "RESEARCHER", "Report", "p", "m".repeat(241), 1_000L))
+        assertFalse(TaskResultArchive.put(context, "task-chat", "RESEARCHER", "Report", "p", "m", 1_000L, "c".repeat(201)))
+        assertTrue(TaskResultArchive.latest(context).isEmpty())
+    }
+
+    @Test fun archiveReaderRejectsOversizedMetadataAndChatIdWithoutRewritingData() {
+        val corrupt = JSONArray().put(JSONObject()
+            .put("taskId", "task-metadata")
+            .put("agentId", "RESEARCHER")
+            .put("report", "Saved report")
+            .put("providerId", "provider-a")
+            .put("model", "m".repeat(241))
+            .put("createdAt", 1_000L)
+            .put("chatId", "chat")).toString()
+        assertTrue(prefs.edit().putString("entries", corrupt).commit())
+
+        assertFalse(TaskResultArchive.isArchiveReadable(context))
+        assertEquals(corrupt, prefs.getString("entries", null))
+    }
+
+    @Test fun archiveReaderRejectsOversizedRawPayloadBeforeParsingAndPreservesIt() {
+        val oversized = " ".repeat(3_000_001)
+        assertTrue(prefs.edit().putString("entries", oversized).commit())
+
+        assertFalse(TaskResultArchive.isArchiveReadable(context))
+        assertFalse(TaskResultArchive.put(
+            context, "new-task", "RESEARCHER", "New report", "provider-a", "model-a", 50_000L
+        ))
+        assertEquals(oversized, prefs.getString("entries", null))
+    }
+
+    @Test fun archiveCapacityRejectsNewReportWithoutEvictingOlderReportsButAllowsReplacement() {
+        repeat(80) { index ->
+            assertTrue(TaskResultArchive.put(
+                context, "capacity-task-$index", "RESEARCHER", "Report $index",
+                "provider-a", "model-a", 60_000L + index
+            ))
+        }
+        val before = TaskResultArchive.latest(context).map { it.taskId }
+        assertEquals(80, before.size)
+        assertFalse(TaskResultArchive.put(
+            context, "capacity-overflow", "RESEARCHER", "Must not evict data",
+            "provider-a", "model-a", 70_000L
+        ))
+        assertEquals(before, TaskResultArchive.latest(context).map { it.taskId })
+        assertNotNull(TaskResultArchive.get(context, "capacity-task-79"))
+        assertTrue(TaskResultArchive.put(
+            context, "capacity-task-79", "RESEARCHER", "Updated in place",
+            "provider-b", "model-b", 71_000L
+        ))
+        assertEquals(80, TaskResultArchive.latest(context).size)
+        assertEquals("Updated in place", TaskResultArchive.get(context, "capacity-task-79")?.report)
+    }
+    @Test fun executionTaskIdDoesNotCollideWhenLongParentIdsSharePrefix() {
+        val sharedPrefix = "p".repeat(60)
+        val first = TaskResultArchive.executionTaskId("${sharedPrefix}-first", "agent-a", 1)
+        val second = TaskResultArchive.executionTaskId("${sharedPrefix}-second", "agent-a", 1)
+
+        assertNotEquals(first, second)
+        assertTrue(first.length < 100)
+        assertTrue(second.length < 100)
+    }
+
+    @Test fun stagingCopiesAllCompletedReportsBeforeTheQueueEpochCanAdvance() {
+        val parent = "task-stage-reports"
+        val first = "critical-reviewer"
+        val second = "unit-test-engineer"
+        assertTrue(TaskResultArchive.put(context,
+            TaskResultArchive.executionTaskId(parent, first, 4), first,
+            "Review completed", "provider-a", "model-a", 4_100L, "chat-a"))
+        assertTrue(TaskResultArchive.put(context,
+            TaskResultArchive.executionTaskId(parent, second, 4), second,
+            "Tests completed", "provider-b", "model-b", 4_200L, "chat-b"))
+
+        assertTrue(TaskResultArchive.stageExecutionCopies(context, parent, 4, 5, listOf(first, second)))
+
+        assertEquals("Review completed",
+            TaskResultArchive.getExecution(context, parent, first, 5)?.report)
+        assertEquals("Tests completed",
+            TaskResultArchive.getExecution(context, parent, second, 5)?.report)
+        assertEquals("Review completed",
+            TaskResultArchive.getExecution(context, parent, first, 4)?.report)
+        assertEquals("chat-b",
+            TaskResultArchive.getExecution(context, parent, second, 5)?.chatId)
+    }
+
+    @Test fun stagingValidatesEverySourceBeforeWritingAnyNextEpochCopy() {
+        val parent = "task-stage-missing-source"
+        val first = "critical-reviewer"
+        val second = "unit-test-engineer"
+        assertTrue(TaskResultArchive.put(context,
+            TaskResultArchive.executionTaskId(parent, first, 7), first,
+            "Existing report", "provider-a", "model-a", 7_100L))
+
+        assertFalse(TaskResultArchive.stageExecutionCopies(context, parent, 7, 8, listOf(first, second)))
+
+        assertNull(TaskResultArchive.getExecution(context, parent, first, 8))
+        assertNull(TaskResultArchive.getExecution(context, parent, second, 8))
+        assertNotNull(TaskResultArchive.getExecution(context, parent, first, 7))
+    }
+
+    @Test fun stagingIsIdempotentWhenAnIdenticalNextEpochCopyAlreadyExists() {
+        val parent = "task-stage-idempotent"
+        val agent = "critical-reviewer"
+        val sourceId = TaskResultArchive.executionTaskId(parent, agent, 2)
+        val targetId = TaskResultArchive.executionTaskId(parent, agent, 3)
+        assertTrue(TaskResultArchive.put(context, sourceId, agent,
+            "Durable report", "provider-a", "model-a", 2_100L, "chat-1"))
+
+        assertTrue(TaskResultArchive.stageExecutionCopies(context, parent, 2, 3, listOf(agent)))
+        assertTrue(TaskResultArchive.stageExecutionCopies(context, parent, 2, 3, listOf(agent)))
+
+        assertEquals(TaskResultArchive.get(context, sourceId)?.copy(taskId = targetId),
+            TaskResultArchive.get(context, targetId))
+        assertEquals(2, TaskResultArchive.latest(context).size)
+    }
+
+    @Test fun conflictingNextEpochCopyBlocksStagingWithoutOverwritingOrPartialWrites() {
+        val parent = "task-stage-conflict"
+        val first = "critical-reviewer"
+        val second = "unit-test-engineer"
+        val firstSource = TaskResultArchive.executionTaskId(parent, first, 9)
+        val secondSource = TaskResultArchive.executionTaskId(parent, second, 9)
+        val firstTarget = TaskResultArchive.executionTaskId(parent, first, 10)
+        val secondTarget = TaskResultArchive.executionTaskId(parent, second, 10)
+        assertTrue(TaskResultArchive.put(context, firstSource, first,
+            "Original first report", "provider-a", "model-a", 9_100L))
+        assertTrue(TaskResultArchive.put(context, secondSource, second,
+            "Original second report", "provider-b", "model-b", 9_200L))
+        assertTrue(TaskResultArchive.put(context, firstTarget, first,
+            "Conflicting report", "provider-x", "model-x", 9_300L))
+
+        assertFalse(TaskResultArchive.stageExecutionCopies(context, parent, 9, 10, listOf(first, second)))
+
+        assertEquals("Conflicting report", TaskResultArchive.get(context, firstTarget)?.report)
+        assertNull(TaskResultArchive.get(context, secondTarget))
+        assertEquals("Original second report", TaskResultArchive.get(context, secondSource)?.report)
     }
 
 }

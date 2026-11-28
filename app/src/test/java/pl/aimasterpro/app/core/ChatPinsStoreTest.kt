@@ -47,4 +47,26 @@ class ChatPinsStoreTest {
         assertFalse(ChatPinsStore.toggle(AmbiguousCommitContext(context, "chat_state"), "chat-2"))
         assertNull(ChatPinsStore.read(context))
     }
+    @Test fun toggleRejectsOversizedIdsAndCapacityWithoutDroppingExistingPins() {
+        assertFalse(ChatPinsStore.toggle(context, "x".repeat(201)))
+        val pins = (1..100).map { "chat-$it" }.toSet()
+        assertTrue(prefs.edit().putStringSet("pinned_chats", pins).commit())
+        assertFalse(ChatPinsStore.toggle(context, "chat-new"))
+        assertEquals(pins, ChatPinsStore.read(context))
+        assertTrue(ChatPinsStore.toggle(context, "chat-1"))
+        assertEquals(99, ChatPinsStore.read(context)?.size)
+    }
+
+    @Test fun malformedPersistedPinSetsFailClosedAndRemainUnchanged() {
+        val oversizedId = "x".repeat(201)
+        assertTrue(prefs.edit().putStringSet("pinned_chats", setOf(oversizedId)).commit())
+        assertNull(ChatPinsStore.read(context))
+        assertFalse(ChatPinsStore.toggle(context, "another-chat"))
+        assertEquals(setOf(oversizedId), prefs.getStringSet("pinned_chats", emptySet()))
+        val tooMany = (1..101).map { "chat-$it" }.toSet()
+        assertTrue(prefs.edit().putStringSet("pinned_chats", tooMany).commit())
+        assertNull(ChatPinsStore.read(context))
+        assertFalse(ChatPinsStore.remove(context, "chat-1"))
+        assertEquals(tooMany, prefs.getStringSet("pinned_chats", emptySet()))
+    }
 }

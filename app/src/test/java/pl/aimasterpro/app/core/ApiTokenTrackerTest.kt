@@ -23,6 +23,7 @@ class ApiTokenTrackerTest {
         SharedPreferencesWriteHealth.resetForTests("api_token_tracker_records_v1")
         ApiTokenTracker.clearRecords(context)
         context.getSharedPreferences("api_token_pricing_v1", Context.MODE_PRIVATE).edit().clear().commit()
+        context.getSharedPreferences("api_model_token_limits_v1", Context.MODE_PRIVATE).edit().clear().commit()
         ApiTokenTracker.setLimits(context, 100_000L, 50.0, 50_000L)
     }
 
@@ -255,7 +256,7 @@ class ApiTokenTrackerTest {
         assertEquals("A fallback must not consume another provider's reservation", 200L, ApiTokenTracker.activeReservationStats().tokens)
 
         ApiTokenTracker.recordQuery(
-            context, "provider-a", "different-model", "RESEARCHER", "fallback-task",
+            context, "provider-a", "gpt-different-model", "RESEARCHER", "fallback-task",
             inputTokens = 10, outputTokens = 5, status = "REAL",
             baseUrl = "https://a.invalid/v1", reservationId = plan.reservationId
         )
@@ -480,6 +481,8 @@ class ApiTokenTrackerTest {
             try {
                 while (writerDone.count > 0L) {
                     ApiTokenTracker.loadAllRecordsFromStorage(context)
+                    // Avoid monopolizing the ApiTokenTracker monitor and starving the writer.
+                    Thread.sleep(1L)
                 }
             } catch (error: Throwable) {
                 failure.compareAndSet(null, error)
@@ -660,6 +663,33 @@ class ApiTokenTrackerTest {
         )
         assertEquals(0.23, profile.inputPer1MUsd, 0.0000001)
         assertEquals(0.91, profile.outputPer1MUsd, 0.0000001)
+    }
+
+    @Test fun pricingCatalogSnapshotIsReusedAndInvalidatedWhenStoredCatalogChanges() {
+        val prefs = context.getSharedPreferences("api_token_pricing_v1", Context.MODE_PRIVATE)
+        val first = """[{"providerId":"cache-provider","modelName":"vendor/cache-model","baseUrl":"https://cache.example/v1","inputPer1MUsd":0.11,"outputPer1MUsd":0.22,"explicitlyFree":false}]"""
+        assertTrue(prefs.edit().putString("catalog_model_prices", first).commit())
+
+        val firstRead = ApiTokenTracker.getPricing(
+            context, "vendor/cache-model", "cache-provider", "https://cache.example/v1"
+        )
+        val secondRead = ApiTokenTracker.getPricing(
+            context, "vendor/cache-model", "cache-provider", "https://cache.example/v1"
+        )
+        assertEquals(0.11, firstRead.inputPer1MUsd, 0.0000001)
+        assertEquals(0.11, secondRead.inputPer1MUsd, 0.0000001)
+        assertEquals("Repeated lookups must reuse one validated index", 1,
+            ApiTokenTracker.pricingCatalogSnapshotBuildCountForTests())
+
+        val updated = first.replace("0.11", "0.33").replace("0.22", "0.44")
+        assertTrue(prefs.edit().putString("catalog_model_prices", updated).commit())
+        val refreshed = ApiTokenTracker.getPricing(
+            context, "vendor/cache-model", "cache-provider", "https://cache.example/v1"
+        )
+        assertEquals(0.33, refreshed.inputPer1MUsd, 0.0000001)
+        assertEquals(0.44, refreshed.outputPer1MUsd, 0.0000001)
+        assertEquals("A changed persisted catalog must rebuild the index", 2,
+            ApiTokenTracker.pricingCatalogSnapshotBuildCountForTests())
     }
 
     @Test fun usageLedgerChargesUsingDiscoveredCatalogPrices() {
@@ -963,10 +993,13 @@ class ApiTokenTrackerTest {
     }
 
     @Test fun staleUnavailableRecoveryCannotDowngradeCanonicalRealUsage() {
+        ApiTokenTracker.replaceCatalogPricingForProvider(
+            context, "gateway", "https://gateway.example/v1", listOf(CatalogModelPrice("canonical-model-v2", 0.2, 0.4))
+        )
         val key = "team:task-canonical-replay:gateway"
         val actual = ApiTokenTracker.recordQuery(
             context, "gateway", "canonical-model-v2", "RESEARCHER", "task-canonical-replay",
-            310L, 145L, status = "REAL", idempotencyKey = key
+            310L, 145L, status = "REAL", baseUrl = "https://gateway.example/v1", idempotencyKey = key
         )
         val replayed = ApiTokenTracker.recordQuery(
             context, "gateway", "requested-alias", "RESEARCHER", "task-canonical-replay",
@@ -1198,12 +1231,15 @@ class ApiTokenTrackerTest {
     }
 
     @Test fun ambiguousUsageLedgerCommitQuarantinesBudgetAndFurtherWrites() {
+        ApiTokenTracker.replaceCatalogPricingForProvider(
+            context, "provider", "https://provider.invalid/v1", listOf(CatalogModelPrice("model", 0.2, 0.4))
+        )
         val failing = AmbiguousCommitContext(context, "api_token_tracker_records_v1")
         val result = runCatching {
             ApiTokenTracker.recordQuery(
                 failing, "provider", "model", "MASTER", "ambiguous-usage",
                 inputTokens = 40L, outputTokens = 20L, status = "REAL",
-                idempotencyKey = "ambiguous-usage-key"
+                baseUrl = "https://provider.invalid/v1", idempotencyKey = "ambiguous-usage-key"
             )
         }
         assertTrue("An ambiguous durable usage write must be reported", result.isFailure)
@@ -1224,4 +1260,498 @@ class ApiTokenTrackerTest {
         }.isFailure)
     }
 
+
+    @Test fun modelWithoutCatalogOrKnownFamilyPriceDoesNotReceiveGenericDefaultPrice() {
+        val error = runCatching {
+            ApiTokenTracker.getPricing(
+                context, "vendor/new-unpriced-model", "new-provider", "https://new-provider.example/v1"
+            )
+        }.exceptionOrNull()
+        assertTrue("An arbitrary model must remain unknown instead of inheriting a fabricated generic rate",
+            error is UnknownModelPricingException)
+    }
+
+    @Test fun approvedUnknownPriceConsentResolvesChildModelProfileToParentProvider() {
+        val provider = "parent-provider"
+        val profile = "parent-provider-model-profile"
+        val endpoint = "https://parent-provider.example/v1"
+        val model = "vendor/parent-unpriced-model"
+        val incomplete = """[{"providerId":"parent-provider","modelName":"vendor/parent-unpriced-model","baseUrl":"https://parent-provider.example/v1","inputPer1MUsd":null,"outputPer1MUsd":0.8,"explicitlyFree":false}]"""
+        assertTrue(context.getSharedPreferences("api_token_pricing_v1", Context.MODE_PRIVATE)
+            .edit().putString("catalog_model_prices", incomplete).commit())
+        assertTrue(UnknownPriceApprovalStore.setApproved(context, provider, endpoint, model, true))
+        ApiTokenTracker.setLimits(context, daily = 10_000L, monthly = 0.0, perAgent = 5_000L)
+
+        val plan = ApiTokenTracker.planBatch(context, listOf(
+            BudgetRequest("parent-profile-task", "MASTER", profile, endpoint, model, 60L, 40L)
+        ))
+        assertEquals(setOf("parent-profile-task"), plan.allowedTaskIds)
+        val usage = ApiTokenTracker.recordQuery(
+            context, profile, model, "MASTER", "parent-profile-task",
+            inputTokens = 30L, outputTokens = 20L, status = "REAL",
+            baseUrl = endpoint, reservationId = plan.reservationId,
+            idempotencyKey = "parent-profile-usage"
+        )
+        assertFalse(usage.costKnown)
+        assertEquals(50L, usage.totalTokens)
+        ApiTokenTracker.releaseBatchReservation(plan.reservationId)
+    }
+
+    @Test fun explicitlyApprovedUnknownPricingStillPersistsTokenUsageWithoutInventingZeroCost() {
+        val provider = "unknown-price-provider"
+        val endpoint = "https://unknown-price.example/v1"
+        val model = "vendor/unpriced-model"
+        val pricingPrefs = context.getSharedPreferences("api_token_pricing_v1", Context.MODE_PRIVATE)
+        val incomplete = """[{"providerId":"unknown-price-provider","modelName":"vendor/unpriced-model","baseUrl":"https://unknown-price.example/v1","inputPer1MUsd":null,"outputPer1MUsd":0.8,"explicitlyFree":false}]"""
+        assertTrue(pricingPrefs.edit().putString("catalog_model_prices", incomplete).commit())
+
+        val blockedByDefault = ApiTokenTracker.planBatch(context, listOf(
+            BudgetRequest("unknown-price-default", "MASTER", provider, endpoint, model, 120L, 80L)
+        ))
+        assertTrue("Unknown pricing must remain blocked unless explicitly approved", blockedByDefault.allowedTaskIds.isEmpty())
+        assertTrue(ApiTokenTracker.loadAllRecordsFromStorage(context).isEmpty())
+
+        assertTrue(UnknownPriceApprovalStore.setApproved(context, provider, endpoint, model, true))
+        val unknownWhileMoneyLimitActive = ApiTokenTracker.planBatch(context, listOf(
+            BudgetRequest("unknown-price-money-limit", "MASTER", provider, endpoint, model, 10L, 10L)
+        ))
+        assertTrue("Unknown cost must not bypass an active monthly money limit",
+            unknownWhileMoneyLimitActive.allowedTaskIds.isEmpty())
+        ApiTokenTracker.setLimits(context, daily = 100_000L, monthly = 0.0, perAgent = 50_000L)
+
+        val approvedPlan = ApiTokenTracker.planBatch(context, listOf(
+            BudgetRequest("unknown-price-approved", "MASTER", provider, endpoint, model, 120L, 80L)
+        ))
+        assertTrue(approvedPlan.allowedTaskIds.contains("unknown-price-approved"))
+        val approved = ApiTokenTracker.recordQuery(
+            context, provider, model, "MASTER", "unknown-price-approved",
+            inputTokens = 120L, outputTokens = 80L, status = "REAL",
+            baseUrl = endpoint, reservationId = approvedPlan.reservationId,
+            idempotencyKey = "unknown-price-approved"
+        )
+        assertEquals(200L, approved.totalTokens)
+        assertFalse(approved.costKnown)
+        assertEquals(0.0, approved.costPln, 0.0)
+
+        val summary = ApiTokenTracker.calculateSummary(ApiTokenTracker.loadAllRecordsFromStorage(context))
+        assertEquals(200L, summary.totalTokens)
+        assertEquals("Unknown cost must not be presented as a verified zero price", 0.0, summary.costPln, 0.0)
+
+        ApiTokenTracker.releaseBatchReservation(approvedPlan.reservationId)
+        ApiTokenTracker.resetInMemoryStateForTests()
+        val restored = ApiTokenTracker.loadAllRecordsFromStorage(context).single()
+        assertFalse("Unknown-cost state must survive process restart", restored.costKnown)
+        assertEquals(200L, restored.totalTokens)
+    }
+
+
+    @Test fun tokenBudgetReservationsDoNotRequirePricingWhenFinancialLimitIsDisabled() {
+        val provider = "unknown-price-budget-provider"
+        val endpoint = "https://unknown-budget.example/v1"
+        val model = "vendor/unpriced-budget-model"
+        val pricingPrefs = context.getSharedPreferences("api_token_pricing_v1", Context.MODE_PRIVATE)
+        val incomplete = """[{"providerId":"unknown-price-budget-provider","modelName":"vendor/unpriced-budget-model","baseUrl":"https://unknown-budget.example/v1","inputPer1MUsd":null,"outputPer1MUsd":0.8,"explicitlyFree":false}]"""
+        assertTrue(pricingPrefs.edit().putString("catalog_model_prices", incomplete).commit())
+        assertTrue(ApiTokenTracker.setModelTokenLimit(
+            context, ModelTokenLimitConfig(provider, endpoint, model, 250L, 90)
+        ))
+
+        ApiTokenTracker.setLimits(context, daily = 100_000L, monthly = 50.0, perAgent = 50_000L)
+        val financialCapPlan = ApiTokenTracker.planBatch(context, listOf(
+            BudgetRequest("unknown-price-money-cap", "MASTER", provider, endpoint, model, 150L, 100L)
+        ))
+        assertTrue("An unknown price must remain blocked while the monthly financial cap is active",
+            financialCapPlan.allowedTaskIds.isEmpty())
+        assertTrue(financialCapPlan.blockedReasons["unknown-price-money-cap"]?.contains("cena modelu jest nieznana") == true)
+
+        ApiTokenTracker.setLimits(context, daily = 100_000L, monthly = 0.0, perAgent = 50_000L)
+        val unapprovedTokenOnlyPlan = ApiTokenTracker.planBatch(context, listOf(
+            BudgetRequest("unknown-price-token-cap-unapproved", "MASTER", provider, endpoint, model, 150L, 100L)
+        ))
+        assertTrue("Token-only budget still requires explicit unknown-price consent",
+            unapprovedTokenOnlyPlan.allowedTaskIds.isEmpty())
+        assertTrue(UnknownPriceApprovalStore.setApproved(context, provider, endpoint, model, true))
+        val tokenOnlyPlan = ApiTokenTracker.planBatch(context, listOf(
+            BudgetRequest("unknown-price-token-cap", "MASTER", provider, endpoint, model, 150L, 100L)
+        ))
+        assertEquals(setOf("unknown-price-token-cap"), tokenOnlyPlan.allowedTaskIds)
+        assertEquals(250L, tokenOnlyPlan.estimatedReservedTokens)
+        assertTrue(tokenOnlyPlan.reservationId.isNotBlank())
+        // Revocation stops future reservations/fallbacks, but must not lose accounting for
+        // a request whose explicitly approved reservation is already active.
+        assertTrue(UnknownPriceApprovalStore.setApproved(context, provider, endpoint, model, false))
+
+        val usage = ApiTokenTracker.recordQuery(
+            context, provider, model, "MASTER", "unknown-price-token-cap",
+            inputTokens = 140L, outputTokens = 60L, status = "REAL",
+            baseUrl = endpoint, reservationId = tokenOnlyPlan.reservationId,
+            idempotencyKey = "unknown-price-token-cap-usage"
+        )
+        assertEquals(200L, usage.totalTokens)
+        assertFalse("Unknown pricing must never be persisted as a verified zero price", usage.costKnown)
+        val modelUsage = ApiTokenTracker.getModelTokenUsage(context, provider, endpoint, model)
+        assertEquals(200L, modelUsage.usedTokens)
+        assertEquals(50L, modelUsage.reservedTokens)
+
+        ApiTokenTracker.releaseBatchReservation(tokenOnlyPlan.reservationId)
+        assertEquals(0L, ApiTokenTracker.getModelTokenUsage(context, provider, endpoint, model).reservedTokens)
+    }
+
+    @Test fun legacyUsageRowsWithoutCostKnownFlagRemainKnownCostRows() {
+        val prefs = context.getSharedPreferences("api_token_tracker_records_v1", Context.MODE_PRIVATE)
+        val legacy = """[{"qId":"legacy-known-cost","ts":1,"prov":"p","model":"m","agent":"MASTER","task":"legacy","in":10,"out":2,"tot":12,"reas":0,"cache":0,"status":"REAL","usd":0.01,"pln":0.04}]"""
+        assertTrue(prefs.edit().putString("records", legacy).commit())
+        val row = ApiTokenTracker.loadAllRecordsFromStorage(context).single()
+        assertTrue("Legacy rows must retain their historical known-cost interpretation", row.costKnown)
+        assertEquals(0.04, ApiTokenTracker.calculateSummary(listOf(row)).costPln, 0.000001)
+    }
+
+
+    @Test fun perModelDailyLimitWarnsAtNinetyPercentAndPersistsAcrossRestart() {
+        val provider = "model-budget-provider"
+        val endpoint = "https://model-budget.example/v1"
+        val model = "vendor/budget-model"
+        ApiTokenTracker.replaceCatalogPricingForProvider(
+            context, provider, endpoint,
+            listOf(CatalogModelPrice(model, 0.0, 0.0, explicitlyFree = true))
+        )
+        val config = ModelTokenLimitConfig(provider, endpoint, model, 100L, warningPercent = 90)
+        assertTrue(ApiTokenTracker.setModelTokenLimit(context, config))
+        ApiTokenTracker.recordQuery(
+            context, provider, model, "MASTER", "model-budget-90",
+            inputTokens = 55L, outputTokens = 36L, status = "REAL",
+            baseUrl = endpoint, idempotencyKey = "model-budget-90"
+        )
+        val usage = ApiTokenTracker.getModelTokenUsage(context, provider, endpoint, model)
+        assertEquals(91L, usage.usedTokens)
+        assertEquals(100L, usage.limitTokens)
+        assertEquals(9L, usage.remainingTokens)
+        assertEquals(91, usage.usagePercent)
+        assertTrue("90% threshold must be surfaced by the usage snapshot", usage.warningReached)
+        assertFalse(usage.limitReached)
+
+        ApiTokenTracker.resetInMemoryStateForTests()
+        val restoredConfig = ApiTokenTracker.getModelTokenLimit(context, provider, endpoint, model)
+        assertEquals(config, restoredConfig)
+        val restoredUsage = ApiTokenTracker.getModelTokenUsage(context, provider, endpoint, model)
+        assertEquals(91L, restoredUsage.usedTokens)
+        assertTrue(restoredUsage.warningReached)
+    }
+
+    @Test fun perModelWarningStartsAtExactlyNinetyPercentNotBelowIt() {
+        val provider = "model-warning-boundary"
+        val endpoint = "https://model-warning.example/v1"
+        val belowModel = "vendor/model-89"
+        val warningModel = "vendor/model-90"
+        ApiTokenTracker.replaceCatalogPricingForProvider(
+            context, provider, endpoint,
+            listOf(
+                CatalogModelPrice(belowModel, 0.0, 0.0, explicitlyFree = true),
+                CatalogModelPrice(warningModel, 0.0, 0.0, explicitlyFree = true)
+            )
+        )
+        assertTrue(ApiTokenTracker.setModelTokenLimit(
+            context, ModelTokenLimitConfig(provider, endpoint, belowModel, 100L, warningPercent = 90)
+        ))
+        assertTrue(ApiTokenTracker.setModelTokenLimit(
+            context, ModelTokenLimitConfig(provider, endpoint, warningModel, 100L, warningPercent = 90)
+        ))
+        ApiTokenTracker.recordQuery(
+            context, provider, belowModel, "MASTER", "model-warning-89",
+            inputTokens = 45L, outputTokens = 44L, status = "REAL",
+            baseUrl = endpoint, idempotencyKey = "model-warning-89"
+        )
+        ApiTokenTracker.recordQuery(
+            context, provider, warningModel, "MASTER", "model-warning-90",
+            inputTokens = 45L, outputTokens = 45L, status = "REAL",
+            baseUrl = endpoint, idempotencyKey = "model-warning-90"
+        )
+
+        val below = ApiTokenTracker.getModelTokenUsage(context, provider, endpoint, belowModel)
+        val atThreshold = ApiTokenTracker.getModelTokenUsage(context, provider, endpoint, warningModel)
+        assertEquals(89, below.usagePercent)
+        assertFalse(below.warningReached)
+        assertEquals(90, atThreshold.usagePercent)
+        assertTrue(atThreshold.warningReached)
+        assertFalse(atThreshold.limitReached)
+    }
+
+    @Test fun perModelLimitBlocksReservationsAndIsolatedByProviderEndpointAndModel() {
+        val provider = "model-cap-provider"
+        val endpoint = "https://model-cap.example/v1"
+        val model = "vendor/capped-model"
+        ApiTokenTracker.replaceCatalogPricingForProvider(
+            context, provider, endpoint,
+            listOf(CatalogModelPrice(model, 0.0, 0.0, explicitlyFree = true))
+        )
+        assertTrue(ApiTokenTracker.setModelTokenLimit(
+            context, ModelTokenLimitConfig(provider, endpoint, model, 100L, 90)
+        ))
+        ApiTokenTracker.recordQuery(
+            context, provider, model, "MASTER", "model-cap-used",
+            inputTokens = 40L, outputTokens = 40L, status = "REAL",
+            baseUrl = endpoint, idempotencyKey = "model-cap-used"
+        )
+        val plan = ApiTokenTracker.planBatch(context, listOf(
+            BudgetRequest("model-cap-over", "MASTER", provider, endpoint, model, 15L, 10L)
+        ))
+        assertTrue("A request exceeding this model's remaining daily budget must be blocked",
+            plan.allowedTaskIds.isEmpty())
+        assertTrue(plan.blockedReasons["model-cap-over"]?.contains("limit tokenów") == true)
+
+        val otherEndpointUsage = ApiTokenTracker.getModelTokenUsage(
+            context, provider, "https://other-endpoint.example/v1", model
+        )
+        assertEquals(0L, otherEndpointUsage.usedTokens)
+        assertEquals(0L, otherEndpointUsage.limitTokens)
+    }
+
+
+    @Test fun perModelLimitCountsReservationsAcrossBatchesAndAllowsExactBoundary() {
+        val provider = "model-reservation-provider"
+        val endpoint = "https://model-reservation.example/v1"
+        val model = "vendor/reservation-model"
+        ApiTokenTracker.replaceCatalogPricingForProvider(
+            context, provider, endpoint,
+            listOf(CatalogModelPrice(model, 0.0, 0.0, explicitlyFree = true))
+        )
+        assertTrue(ApiTokenTracker.setModelTokenLimit(
+            context, ModelTokenLimitConfig(provider, endpoint, model, 100L, 90)
+        ))
+
+        val first = ApiTokenTracker.planBatch(context, listOf(
+            BudgetRequest("reservation-exact", "MASTER", provider, endpoint, model, 60L, 40L)
+        ))
+        assertEquals("A reservation that lands exactly on the cap is allowed",
+            setOf("reservation-exact"), first.allowedTaskIds)
+        assertTrue(first.reservationId.isNotBlank())
+
+        val whileReserved = ApiTokenTracker.getModelTokenUsage(context, provider, endpoint, model)
+        assertEquals(100L, whileReserved.reservedTokens)
+        assertEquals(0L, whileReserved.remainingTokens)
+        assertTrue(whileReserved.limitReached)
+        assertTrue(whileReserved.warningReached)
+
+        val second = ApiTokenTracker.planBatch(context, listOf(
+            BudgetRequest("reservation-over", "SPECIALIST", provider, endpoint, model, 1L, 0L)
+        ))
+        assertTrue("A second batch must see the first batch's active model reservation",
+            second.allowedTaskIds.isEmpty())
+        assertTrue(second.blockedReasons["reservation-over"]?.contains("limit tokenów") == true)
+
+        ApiTokenTracker.releaseBatchReservation(first.reservationId)
+        val afterRelease = ApiTokenTracker.getModelTokenUsage(context, provider, endpoint, model)
+        assertEquals(0L, afterRelease.reservedTokens)
+        assertEquals(100L, afterRelease.remainingTokens)
+
+        val retry = ApiTokenTracker.planBatch(context, listOf(
+            BudgetRequest("reservation-after-release", "MASTER", provider, endpoint, model, 100L, 0L)
+        ))
+        assertEquals(setOf("reservation-after-release"), retry.allowedTaskIds)
+        ApiTokenTracker.releaseBatchReservation(retry.reservationId)
+    }
+
+
+    @Test fun actualUsageReconcilesModelReservationAndReleasedBudgetCanBeReused() {
+        val provider = "model-reconcile-provider"
+        val endpoint = "https://model-reconcile.example/v1"
+        val model = "vendor/reconcile-model"
+        ApiTokenTracker.replaceCatalogPricingForProvider(
+            context, provider, endpoint,
+            listOf(CatalogModelPrice(model, 0.0, 0.0, explicitlyFree = true))
+        )
+        assertTrue(ApiTokenTracker.setModelTokenLimit(
+            context, ModelTokenLimitConfig(provider, endpoint, model, 100L, 90)
+        ))
+
+        val plan = ApiTokenTracker.planBatch(context, listOf(
+            BudgetRequest("reconcile-task", "MASTER", provider, endpoint, model, 50L, 30L)
+        ))
+        assertEquals(setOf("reconcile-task"), plan.allowedTaskIds)
+        assertTrue(plan.reservationId.isNotBlank())
+        assertEquals(80L, ApiTokenTracker.getModelTokenUsage(context, provider, endpoint, model).reservedTokens)
+
+        ApiTokenTracker.recordQuery(
+            context, provider, model, "MASTER", "reconcile-task",
+            inputTokens = 20L, outputTokens = 15L, status = "REAL",
+            baseUrl = endpoint, reservationId = plan.reservationId,
+            idempotencyKey = "model-reconcile-real-usage"
+        )
+        val during = ApiTokenTracker.getModelTokenUsage(context, provider, endpoint, model)
+        assertEquals("Actual usage must be booked in the ledger", 35L, during.usedTokens)
+        assertEquals("Only the unused part of the estimate remains reserved", 45L, during.reservedTokens)
+        assertEquals(20L, during.remainingTokens)
+
+        ApiTokenTracker.completeReservationTask(plan.reservationId, "reconcile-task")
+        ApiTokenTracker.requestBatchReservationRelease(plan.reservationId)
+        val after = ApiTokenTracker.getModelTokenUsage(context, provider, endpoint, model)
+        assertEquals(35L, after.usedTokens)
+        assertEquals(0L, after.reservedTokens)
+        assertEquals(65L, after.remainingTokens)
+
+        val exactRemainder = ApiTokenTracker.planBatch(context, listOf(
+            BudgetRequest("reconcile-exact-remainder", "MASTER", provider, endpoint, model, 65L, 0L)
+        ))
+        assertEquals(setOf("reconcile-exact-remainder"), exactRemainder.allowedTaskIds)
+        ApiTokenTracker.releaseBatchReservation(exactRemainder.reservationId)
+    }
+
+
+
+    @Test fun fallbackRetargetToUnknownPriceRequiresFinancialCapToBeDisabled() {
+        val primaryProvider = "known-price-primary"
+        val primaryEndpoint = "https://known-price-primary.example/v1"
+        val primaryModel = "primary-free"
+        val fallbackProvider = "unknown-price-fallback"
+        val fallbackEndpoint = "https://unknown-price-fallback.example/v1"
+        val fallbackModel = "vendor/unpriced-fallback"
+        ApiTokenTracker.replaceCatalogPricingForProvider(
+            context, primaryProvider, primaryEndpoint,
+            listOf(CatalogModelPrice(primaryModel, 0.0, 0.0, explicitlyFree = true))
+        )
+        val pricingPrefs = context.getSharedPreferences("api_token_pricing_v1", Context.MODE_PRIVATE)
+        val incomplete = """[{"providerId":"known-price-primary","modelName":"primary-free","baseUrl":"https://known-price-primary.example/v1","inputPer1MUsd":0.0,"outputPer1MUsd":0.0,"explicitlyFree":true},{"providerId":"unknown-price-fallback","modelName":"vendor/unpriced-fallback","baseUrl":"https://unknown-price-fallback.example/v1","inputPer1MUsd":null,"outputPer1MUsd":0.8,"explicitlyFree":false}]"""
+        assertTrue(pricingPrefs.edit().putString("catalog_model_prices", incomplete).commit())
+        assertTrue(ApiTokenTracker.setModelTokenLimit(
+            context, ModelTokenLimitConfig(primaryProvider, primaryEndpoint, primaryModel, 300L, 90)
+        ))
+        assertTrue(ApiTokenTracker.setModelTokenLimit(
+            context, ModelTokenLimitConfig(fallbackProvider, fallbackEndpoint, fallbackModel, 300L, 90)
+        ))
+        ApiTokenTracker.setLimits(context, daily = 10_000L, monthly = 25.0, perAgent = 5_000L)
+        val plan = ApiTokenTracker.planBatch(context, listOf(
+            BudgetRequest("unknown-price-fallback-task", "MASTER", primaryProvider, primaryEndpoint, primaryModel, 60L, 40L)
+        ))
+        assertEquals(setOf("unknown-price-fallback-task"), plan.allowedTaskIds)
+
+        assertFalse("Unknown-price fallback must be blocked while a financial cap is active",
+            ApiTokenTracker.retargetReservationTask(
+                context, plan.reservationId, "unknown-price-fallback-task", "MASTER",
+                fallbackProvider, fallbackEndpoint, fallbackModel
+            ))
+        assertEquals(100L, ApiTokenTracker.getModelTokenUsage(context, primaryProvider, primaryEndpoint, primaryModel).reservedTokens)
+
+        ApiTokenTracker.setLimits(context, daily = 10_000L, monthly = 0.0, perAgent = 5_000L)
+        assertFalse("Unknown-price fallback also requires explicit consent",
+            ApiTokenTracker.retargetReservationTask(
+                context, plan.reservationId, "unknown-price-fallback-task", "MASTER",
+                fallbackProvider, fallbackEndpoint, fallbackModel
+            ))
+        assertTrue(UnknownPriceApprovalStore.setApproved(
+            context, fallbackProvider, fallbackEndpoint, fallbackModel, true
+        ))
+        assertTrue("Approved token-only fallback must work without a price catalogue entry",
+            ApiTokenTracker.retargetReservationTask(
+                context, plan.reservationId, "unknown-price-fallback-task", "MASTER",
+                fallbackProvider, fallbackEndpoint, fallbackModel
+            ))
+        assertEquals(0L, ApiTokenTracker.getModelTokenUsage(context, primaryProvider, primaryEndpoint, primaryModel).reservedTokens)
+        assertEquals(100L, ApiTokenTracker.getModelTokenUsage(context, fallbackProvider, fallbackEndpoint, fallbackModel).reservedTokens)
+        assertTrue("A caller-supplied reservation ID must not authorize unknown-price usage",
+            runCatching {
+                ApiTokenTracker.recordQuery(
+                    context, fallbackProvider, fallbackModel, "MASTER", "forged-reservation-task",
+                    inputTokens = 5L, outputTokens = 5L, status = "REAL",
+                    baseUrl = fallbackEndpoint, reservationId = "not-an-active-reservation",
+                    idempotencyKey = "forged-unknown-price-usage"
+                )
+            }.isFailure)
+
+        val usage = ApiTokenTracker.recordQuery(
+            context, fallbackProvider, fallbackModel, "MASTER", "unknown-price-fallback-task",
+            inputTokens = 30L, outputTokens = 20L, status = "REAL",
+            baseUrl = fallbackEndpoint, reservationId = plan.reservationId,
+            idempotencyKey = "unknown-price-fallback-usage"
+        )
+        assertFalse(usage.costKnown)
+        assertEquals(50L, usage.totalTokens)
+        assertEquals(50L, ApiTokenTracker.getModelTokenUsage(context, fallbackProvider, fallbackEndpoint, fallbackModel).usedTokens)
+        ApiTokenTracker.releaseBatchReservation(plan.reservationId)
+        assertEquals(0L, ApiTokenTracker.getModelTokenUsage(context, fallbackProvider, fallbackEndpoint, fallbackModel).reservedTokens)
+    }
+
+    @Test fun fallbackRetargetChecksTargetModelLimitAndMovesReservationWithoutDoubleGlobalCharge() {
+        val primaryProvider = "fallback-primary"
+        val primaryEndpoint = "https://primary-fallback.example/v1"
+        val primaryModel = "primary-free"
+        val backupProvider = "fallback-backup"
+        val backupEndpoint = "https://backup-fallback.example/v1"
+        val backupModel = "backup-free"
+        ApiTokenTracker.replaceCatalogPricingForProvider(
+            context, primaryProvider, primaryEndpoint,
+            listOf(CatalogModelPrice(primaryModel, 0.0, 0.0, explicitlyFree = true))
+        )
+        ApiTokenTracker.replaceCatalogPricingForProvider(
+            context, backupProvider, backupEndpoint,
+            listOf(CatalogModelPrice(backupModel, 0.0, 0.0, explicitlyFree = true))
+        )
+        assertTrue(ApiTokenTracker.setModelTokenLimit(
+            context, ModelTokenLimitConfig(primaryProvider, primaryEndpoint, primaryModel, 200L, 90)
+        ))
+        assertTrue(ApiTokenTracker.setModelTokenLimit(
+            context, ModelTokenLimitConfig(backupProvider, backupEndpoint, backupModel, 99L, 90)
+        ))
+        val plan = ApiTokenTracker.planBatch(context, listOf(
+            BudgetRequest("fallback-task", "MASTER", primaryProvider, primaryEndpoint, primaryModel, 60L, 40L)
+        ))
+        assertEquals(setOf("fallback-task"), plan.allowedTaskIds)
+        val beforeGlobal = ApiTokenTracker.budgetUsageSnapshot(context).activeReservedTokens
+        assertEquals(100L, ApiTokenTracker.getModelTokenUsage(context, primaryProvider, primaryEndpoint, primaryModel).reservedTokens)
+
+        assertFalse(ApiTokenTracker.retargetReservationTask(
+            context, plan.reservationId, "fallback-task", "MASTER",
+            backupProvider, backupEndpoint, backupModel
+        ))
+        assertEquals(100L, ApiTokenTracker.getModelTokenUsage(context, primaryProvider, primaryEndpoint, primaryModel).reservedTokens)
+
+        assertTrue(ApiTokenTracker.setModelTokenLimit(
+            context, ModelTokenLimitConfig(backupProvider, backupEndpoint, backupModel, 100L, 90)
+        ))
+        assertTrue(ApiTokenTracker.retargetReservationTask(
+            context, plan.reservationId, "fallback-task", "MASTER",
+            backupProvider, backupEndpoint, backupModel
+        ))
+        assertEquals(0L, ApiTokenTracker.getModelTokenUsage(context, primaryProvider, primaryEndpoint, primaryModel).reservedTokens)
+        assertEquals(100L, ApiTokenTracker.getModelTokenUsage(context, backupProvider, backupEndpoint, backupModel).reservedTokens)
+        assertEquals(beforeGlobal, ApiTokenTracker.budgetUsageSnapshot(context).activeReservedTokens)
+
+        ApiTokenTracker.recordQuery(
+            context, backupProvider, backupModel, "MASTER", "fallback-task",
+            inputTokens = 20L, outputTokens = 10L, status = "REAL",
+            baseUrl = backupEndpoint, reservationId = plan.reservationId,
+            idempotencyKey = "fallback-retarget-actual-usage"
+        )
+        assertEquals(30L, ApiTokenTracker.getModelTokenUsage(context, backupProvider, backupEndpoint, backupModel).usedTokens)
+        assertEquals(70L, ApiTokenTracker.getModelTokenUsage(context, backupProvider, backupEndpoint, backupModel).reservedTokens)
+        ApiTokenTracker.releaseBatchReservation(plan.reservationId)
+        assertEquals(0L, ApiTokenTracker.getModelTokenUsage(context, backupProvider, backupEndpoint, backupModel).reservedTokens)
+    }
+
+
+    @Test fun unavailableUsageRecoveryPersistsUnknownPriceEvenWithFinancialCapEnabled() {
+        val provider = "recovery-unpriced-provider"
+        val endpoint = "https://recovery-unpriced.example/v1"
+        val model = "vendor/model-with-unknown-price"
+        val pricingPrefs = context.getSharedPreferences("api_token_pricing_v1", Context.MODE_PRIVATE)
+        val incomplete = """[{"providerId":"recovery-unpriced-provider","modelName":"vendor/model-with-unknown-price","baseUrl":"https://recovery-unpriced.example/v1","inputPer1MUsd":null,"outputPer1MUsd":0.8,"explicitlyFree":false}]"""
+        check(pricingPrefs.edit().putString("catalog_model_prices", incomplete).commit())
+        ApiTokenTracker.setLimits(context, daily = 10_000L, monthly = 50.0, perAgent = 5_000L)
+
+        val recovered = ApiTokenTracker.recordQuery(
+            context, provider, model, "MASTER", "recovered-unknown-price-task",
+            inputTokens = 120L, outputTokens = 80L, status = "UNAVAILABLE",
+            baseUrl = endpoint, idempotencyKey = "recovery-unpriced-usage"
+        )
+
+        assertFalse(recovered.costKnown)
+        assertEquals("UNAVAILABLE", recovered.status)
+        assertEquals(200L, recovered.totalTokens)
+        assertEquals(1, ApiTokenTracker.loadAllRecordsFromStorage(context).count {
+            it.queryId == "recovery-unpriced-usage"
+        })
+        assertEquals(1, ApiTokenTracker.budgetUsageSnapshot(context).unknownCostRecords)
+        assertFalse("Unknown-cost usage must make an active financial cap fail closed",
+            ApiTokenTracker.checkLimits(context, "MASTER", 1L).allowed)
+        assertEquals(50.0, ApiTokenTracker.getLimits(context).monthlyCostPlnLimit, 0.0)
+    }
 }

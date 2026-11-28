@@ -11,6 +11,7 @@ object LearningJournalStore {
     private const val PREFS = "ai_learning_journal_v1"
     private const val KEY = "events"
     private const val MAX_EVENTS = 500
+    private const val MAX_RAW_CHARS = 500_000
 
     data class Event(
         val timestamp: Long,
@@ -24,7 +25,8 @@ object LearningJournalStore {
         val category: String,
         val taskId: String = "",
         val inputTokens: Long = 0L,
-        val outputTokens: Long = 0L
+        val outputTokens: Long = 0L,
+        val reviewedAgentId: String = ""
     )
 
     @Synchronized
@@ -42,7 +44,8 @@ object LearningJournalStore {
         all.add(0, event.copy(
             kind = event.kind.take(40), agentId = event.agentId.take(80),
             providerId = event.providerId.take(80), model = event.model.take(120),
-            status = event.status.take(40), category = event.category.take(80)
+            status = event.status.take(40), category = event.category.take(80),
+            reviewedAgentId = CommunicationLogSanitizer.sanitize(event.reviewedAgentId.take(80))
         ))
         val json = JSONArray()
         all.take(MAX_EVENTS).forEach { e ->
@@ -51,13 +54,19 @@ object LearningJournalStore {
                 .put("provider", e.providerId).put("model", e.model).put("status", e.status)
                 .put("duration", e.durationMs).put("attempts", e.attempts)
                 .put("category", e.category).put("taskId", e.taskId)
-                .put("inputTokens", e.inputTokens).put("outputTokens", e.outputTokens))
+                .put("inputTokens", e.inputTokens).put("outputTokens", e.outputTokens)
+                .put("reviewedAgent", e.reviewedAgentId))
+        }
+        val serialized = json.toString()
+        if (serialized.length > MAX_RAW_CHARS) {
+            android.util.Log.e("AIMasterLearning", "Nie zapisano zdarzenia: dziennik przekracza limit rozmiaru.")
+            return
         }
         val saved = runCatching {
             if (SharedPreferencesWriteHealth.isUncertain(PREFS)) return@runCatching false
             SharedPreferencesWriteHealth.commit(
                 PREFS, context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
-                    .putString(KEY, json.toString())
+                    .putString(KEY, serialized)
             )
         }.getOrDefault(false)
         if (!saved) android.util.Log.e("AIMasterLearning", "Nie udało się trwale zapisać dziennika operacyjnego.")
@@ -74,6 +83,7 @@ object LearningJournalStore {
         val raw = SharedPreferencesWriteHealth.withHealthyAccess(PREFS) {
             context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString(KEY, null)
         } ?: return@runCatching emptyList()
+        require(raw.length <= MAX_RAW_CHARS) { "Learning journal exceeds its supported raw size." }
         runCatching {
             val arr = JSONArray(raw)
             require(arr.length() <= MAX_EVENTS) { "Learning journal exceeds its supported size." }
@@ -108,11 +118,15 @@ object LearningJournalStore {
                 val status = requiredText("status")
                 val category = requiredText("category")
                 val taskId = if (o.has("taskId")) requiredText("taskId") else ""
+                val reviewedAgent = if (o.has("reviewedAgent")) requiredText("reviewedAgent") else ""
+                require(reviewedAgent.length <= 80 && CommunicationLogSanitizer.sanitize(reviewedAgent) == reviewedAgent) {
+                    "Learning journal reviewer provenance is invalid."
+                }
                 require(kind.isNotBlank() && agent.isNotBlank() && status.isNotBlank()) {
                     "Learning journal row is missing its event identity."
                 }
                 Event(timestamp, kind, agent, provider, model, status, duration, attemptsLong.toInt(), category,
-                    taskId, input, output)
+                    taskId, input, output, reviewedAgent)
             }
         }.getOrNull()
     }.getOrNull()

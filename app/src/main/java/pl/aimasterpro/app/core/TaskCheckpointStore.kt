@@ -9,7 +9,19 @@ object TaskCheckpointStore {
     private const val PREFS = "task_checkpoints_v1"
     private const val KEY = "events"
     private const val MAX_EVENTS = 800
+    private const val MAX_RAW_CHARS = 2_000_000
     private val TERMINAL_STATUSES = setOf("COMPLETED", "FAILED", "BLOCKED", "TIMED_OUT", "CANCELLED", "INTERRUPTED")
+    private val VALID_STATUSES = setOf(
+        "QUEUED", "RUNNING", "REQUESTING", "USAGE_RECORDED", "USAGE_PENDING",
+        "RESULT_PERSIST_PENDING", "INTERRUPTED_USAGE_PENDING", "COMPLETED",
+        "FAILED", "BLOCKED", "TIMED_OUT", "CANCELLED", "INTERRUPTED"
+    )
+    private val PERSISTED_FIELDS = setOf(
+        "task", "agent", "status", "detail", "ts", "provider", "model", "attempts",
+        "processId", "estimatedInputTokens", "estimatedOutputTokens", "idempotencyKey",
+        "baseUrl", "runId"
+    )
+    private val REQUIRED_FIELDS = setOf("task", "agent", "status", "ts")
     private val processId = java.util.UUID.randomUUID().toString()
 
     private fun hasArchivedResult(context: Context, taskId: String): Boolean =
@@ -37,7 +49,8 @@ object TaskCheckpointStore {
         val estimatedInputTokens: Long = 0L,
         val estimatedOutputTokens: Long = 0L,
         val idempotencyKey: String = "",
-        val baseUrl: String = ""
+        val baseUrl: String = "",
+        val runId: Int = 0
     )
 
     /**
@@ -47,69 +60,93 @@ object TaskCheckpointStore {
     @Synchronized
     fun record(context: Context, event: Event): Boolean {
         if (SharedPreferencesWriteHealth.isUncertain(PREFS)) return false
-        if (event.taskId.isBlank() || event.agentId.isBlank() || event.status.isBlank() ||
-            event.timestamp < 0L || event.attempts < 0 ||
+        if (event.taskId.isBlank() || event.taskId.length > 512 ||
+            event.agentId.isBlank() || event.agentId.length > 100 ||
+            event.status !in VALID_STATUSES || event.status.length > 30 ||
+            event.detail.length > 500 || event.providerId.length > 100 ||
+            event.model.length > 160 || event.processId.length > 128 ||
+            event.idempotencyKey.length > 240 || event.baseUrl.length > 300 ||
+            event.timestamp < 0L || event.attempts < 0 || event.runId < 0 ||
             event.estimatedInputTokens < 0L || event.estimatedOutputTokens < 0L) return false
+
+        // Identifiers participate in recovery/idempotency decisions and must never be
+        // rewritten by redaction. Display/diagnostic metadata is redacted before persistence.
+        if (listOf(event.taskId, event.agentId, event.status, event.processId, event.idempotencyKey)
+                .any { CommunicationLogSanitizer.sanitize(it) != it }) return false
+        val safeBaseUrl = if (event.baseUrl.isBlank()) "" else safeBaseUrlForCheckpoint(event.baseUrl)
+        if (event.baseUrl.isNotBlank() && safeBaseUrl.isBlank()) return false
+        val safeEvent = event.copy(
+            detail = CommunicationLogSanitizer.sanitize(event.detail),
+            providerId = CommunicationLogSanitizer.sanitize(event.providerId),
+            model = CommunicationLogSanitizer.sanitize(event.model),
+            baseUrl = safeBaseUrl
+        )
+        if (safeEvent.detail.length > 500 || safeEvent.providerId.length > 100 ||
+            safeEvent.model.length > 160) return false
+
         val rows = readEvents(context)?.toMutableList() ?: return false
         // A late worker callback must not overwrite a terminal result already recorded by
         // the coordinator (for example TIMED_OUT followed by the worker's CANCELLED callback).
-        val current = rows.firstOrNull { it.taskId == event.taskId }
+        val current = rows.firstOrNull { it.taskId == safeEvent.taskId }
+        // Old worker callbacks must not overwrite a checkpoint from a newer queue retry.
+        if (current != null && safeEvent.runId < current.runId) return true
+        val sameRun = current?.runId == safeEvent.runId
         // REQUESTING means the provider may already have processed and billed the POST.
         // Do not let UI/worker finalization hide a failed USAGE_RECORDED/USAGE_PENDING write
         // behind a terminal state. Startup recovery is the only path allowed to close it.
-        if (current?.status == "REQUESTING" &&
-            event.status in setOf("COMPLETED", "FAILED", "BLOCKED")) {
-            val isRecoveryTransition = current.processId != processId && event.processId == processId
+        if (sameRun && current?.status == "REQUESTING" &&
+            safeEvent.status in setOf("COMPLETED", "FAILED", "BLOCKED")) {
+            val isRecoveryTransition = current.processId != processId && safeEvent.processId == processId
             if (!isRecoveryTransition) return true
         }
-        if (current?.status?.let { it in TERMINAL_STATUSES } == true) {
+        if (sameRun && current?.status?.let { it in TERMINAL_STATUSES } == true) {
             // A timeout/cancellation can race with a worker that has already committed its report.
             // Permit only archive-backed reconciliation for that exact task; never trust a late
             // callback alone to rewrite a terminal checkpoint.
             val archivedResultExists = runCatching {
-                hasArchivedResult(context, event.taskId)
+                hasArchivedResult(context, safeEvent.taskId)
             }.getOrDefault(false)
-            val mergedUsageMetadata = event.copy(
-                providerId = event.providerId.ifBlank { current.providerId },
-                model = event.model.ifBlank { current.model },
-                estimatedInputTokens = event.estimatedInputTokens.takeIf { it > 0L }
+            val mergedUsageMetadata = safeEvent.copy(
+                providerId = safeEvent.providerId.ifBlank { current.providerId },
+                model = safeEvent.model.ifBlank { current.model },
+                estimatedInputTokens = safeEvent.estimatedInputTokens.takeIf { it > 0L }
                     ?: current.estimatedInputTokens,
-                estimatedOutputTokens = event.estimatedOutputTokens.takeIf { it > 0L }
+                estimatedOutputTokens = safeEvent.estimatedOutputTokens.takeIf { it > 0L }
                     ?: current.estimatedOutputTokens,
-                idempotencyKey = event.idempotencyKey.ifBlank { current.idempotencyKey }
+                idempotencyKey = safeEvent.idempotencyKey.ifBlank { current.idempotencyKey }
             )
-            val usagePendingCanBeRecovered = event.status in setOf(
+            val usagePendingCanBeRecovered = safeEvent.status in setOf(
                 "USAGE_PENDING", "INTERRUPTED_USAGE_PENDING"
             ) && hasRecoverableUsageMetadata(mergedUsageMetadata)
             val usageRecoveryCompleted = current.status in setOf("TIMED_OUT", "CANCELLED") &&
-                event.status == "INTERRUPTED" && hasRecoverableUsageMetadata(mergedUsageMetadata)
+                safeEvent.status == "INTERRUPTED" && hasRecoverableUsageMetadata(mergedUsageMetadata)
             val isArchiveBackedReconciliation = archivedResultExists &&
-                event.status in setOf("COMPLETED", "INTERRUPTED_USAGE_PENDING")
+                safeEvent.status in setOf("COMPLETED", "INTERRUPTED_USAGE_PENDING")
             if (!isArchiveBackedReconciliation && !usagePendingCanBeRecovered && !usageRecoveryCompleted) return true
         }
         // Later lifecycle states often omit request-only metadata. Preserve the latest
         // REQUESTING details so a USAGE_PENDING checkpoint can still be reconciled after restart.
         rows.add(
             0,
-            event.copy(
-                agentId = event.agentId.take(100),
-                status = event.status.take(30),
-                detail = event.detail.take(500),
-                providerId = event.providerId.ifBlank { current?.providerId.orEmpty() }.take(100),
-                model = event.model.ifBlank { current?.model.orEmpty() }.take(160),
-                attempts = event.attempts.coerceAtLeast(0),
-                processId = event.processId.ifBlank { processId },
-                estimatedInputTokens = event.estimatedInputTokens.coerceAtLeast(0L)
-                    .takeIf { it > 0L } ?: current?.estimatedInputTokens ?: 0L,
-                estimatedOutputTokens = event.estimatedOutputTokens.coerceAtLeast(0L)
-                    .takeIf { it > 0L } ?: current?.estimatedOutputTokens ?: 0L,
-                idempotencyKey = event.idempotencyKey.ifBlank { current?.idempotencyKey.orEmpty() }.take(240),
-                baseUrl = event.baseUrl.ifBlank { current?.baseUrl.orEmpty() }.take(300)
+            safeEvent.copy(
+                agentId = safeEvent.agentId,
+                status = safeEvent.status,
+                detail = safeEvent.detail,
+                providerId = safeEvent.providerId.ifBlank { current?.takeIf { sameRun }?.providerId.orEmpty() },
+                model = safeEvent.model.ifBlank { current?.takeIf { sameRun }?.model.orEmpty() },
+                attempts = safeEvent.attempts.coerceAtLeast(0),
+                processId = safeEvent.processId.ifBlank { processId },
+                estimatedInputTokens = safeEvent.estimatedInputTokens.coerceAtLeast(0L)
+                    .takeIf { it > 0L } ?: current?.takeIf { sameRun }?.estimatedInputTokens ?: 0L,
+                estimatedOutputTokens = safeEvent.estimatedOutputTokens.coerceAtLeast(0L)
+                    .takeIf { it > 0L } ?: current?.takeIf { sameRun }?.estimatedOutputTokens ?: 0L,
+                idempotencyKey = safeEvent.idempotencyKey.ifBlank { current?.takeIf { sameRun }?.idempotencyKey.orEmpty() },
+                baseUrl = safeEvent.baseUrl.ifBlank { current?.takeIf { sameRun }?.baseUrl.orEmpty() },
+                runId = safeEvent.runId
             )
         )
         return save(context, rows.take(MAX_EVENTS))
     }
-
     @Synchronized
     fun load(context: Context): List<Event> = if (SharedPreferencesWriteHealth.isUncertain(PREFS)) emptyList() else readEvents(context) ?: emptyList()
 
@@ -125,11 +162,19 @@ object TaskCheckpointStore {
         if (SharedPreferencesWriteHealth.isUncertain(PREFS)) return null
         return runCatching {
             SharedPreferencesWriteHealth.withHealthyAccess(PREFS) {
-                val array = JSONArray(
-                    context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString(KEY, "[]") ?: "[]"
-                )
+                val raw = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString(KEY, "[]") ?: "[]"
+                require(raw.length <= MAX_RAW_CHARS) { "Checkpoint journal exceeds its raw size limit." }
+                val array = JSONArray(raw)
+                require(array.length() <= MAX_EVENTS) { "Checkpoint journal exceeds its event capacity." }
                 (0 until array.length()).map { index ->
                     val row = array.getJSONObject(index)
+                    val persistedFields = row.keys().asSequence().toSet()
+                    require(persistedFields.all { it in PERSISTED_FIELDS }) {
+                        "Checkpoint row contains an unknown persisted field."
+                    }
+                    require(REQUIRED_FIELDS.all { row.has(it) }) {
+                        "Checkpoint row is missing a required identity or lifecycle field."
+                    }
                     fun exactString(key: String, default: String = ""): String {
                         if (!row.has(key)) return default
                         val value = row.opt(key)
@@ -143,34 +188,55 @@ object TaskCheckpointStore {
                         return (value as Number).toLong()
                     }
                     val id = exactString("task")
-                    require(id.isNotBlank()) { "Checkpoint row has no task id." }
+                    require(id.isNotBlank() && id.length <= 512 &&
+                        CommunicationLogSanitizer.sanitize(id) == id) {
+                        "Checkpoint row has an invalid or unsafe task id."
+                    }
                     val estimatedInput = exactLong("estimatedInputTokens")
                     val estimatedOutput = exactLong("estimatedOutputTokens")
                     val attempts = exactLong("attempts")
                     val timestamp = exactLong("ts")
-                    require(estimatedInput >= 0L && estimatedOutput >= 0L &&
+                    val runId = exactLong("runId")
+                    require(estimatedInput >= 0L && estimatedOutput >= 0L && runId in 0L..Int.MAX_VALUE.toLong() &&
                         attempts in 0L..Int.MAX_VALUE.toLong() && timestamp >= 0L) {
                         "Checkpoint row has invalid token estimates, timestamp or attempt count."
                     }
                     val agentId = exactString("agent")
                     val status = exactString("status")
-                    require(agentId.isNotBlank() && status.isNotBlank()) {
-                        "Checkpoint row has no agent or lifecycle status."
+                    require(agentId.isNotBlank() && agentId.length <= 100 && status in VALID_STATUSES) {
+                        "Checkpoint row has no agent or a supported lifecycle status."
                     }
                     Event(
                         taskId = id,
-                        agentId = agentId,
-                        status = status,
-                        detail = exactString("detail"),
+                        agentId = agentId.also {
+                            require(CommunicationLogSanitizer.sanitize(it) == it)
+                        },
+                        status = status.also {
+                            require(CommunicationLogSanitizer.sanitize(it) == it)
+                        },
+                        detail = exactString("detail").also {
+                            require(it.length <= 500 && CommunicationLogSanitizer.sanitize(it) == it)
+                        },
                         timestamp = timestamp,
-                        providerId = exactString("provider"),
-                        model = exactString("model"),
+                        providerId = exactString("provider").also {
+                            require(it.length <= 100 && CommunicationLogSanitizer.sanitize(it) == it)
+                        },
+                        model = exactString("model").also {
+                            require(it.length <= 160 && CommunicationLogSanitizer.sanitize(it) == it)
+                        },
                         attempts = attempts.toInt(),
-                        processId = exactString("processId"),
+                        processId = exactString("processId").also {
+                            require(it.length <= 128 && CommunicationLogSanitizer.sanitize(it) == it)
+                        },
                         estimatedInputTokens = estimatedInput,
                         estimatedOutputTokens = estimatedOutput,
-                        idempotencyKey = exactString("idempotencyKey"),
-                        baseUrl = exactString("baseUrl")
+                        idempotencyKey = exactString("idempotencyKey").also {
+                            require(it.length <= 240 && CommunicationLogSanitizer.sanitize(it) == it)
+                        },
+                        baseUrl = exactString("baseUrl").also {
+                            require(it.length <= 300 && (it.isEmpty() || safeBaseUrlForCheckpoint(it) == it))
+                        },
+                        runId = runId.toInt()
                     )
                 }
             }
@@ -309,10 +375,13 @@ object TaskCheckpointStore {
                     .put("estimatedOutputTokens", e.estimatedOutputTokens)
                     .put("idempotencyKey", e.idempotencyKey)
                     .put("baseUrl", e.baseUrl)
+                    .put("runId", e.runId)
             )
         }
+        val serialized = a.toString()
+        if (serialized.length > MAX_RAW_CHARS) return false
         val editor = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
-            .putString(KEY, a.toString())
+            .putString(KEY, serialized)
         return SharedPreferencesWriteHealth.commit(PREFS, editor)
     }
 }

@@ -75,4 +75,14 @@ class ProviderCooldownStoreTest {
         assertTrue(runCatching { ProviderCooldownStore.states(context) }.isFailure)
         assertEquals(original, prefs.getString("states", null))
     }
+    @Test fun oversizedRawCooldownJournalIsRejectedAndPreserved() {
+        val prefs = context.getSharedPreferences("provider_cooldowns_v1", Context.MODE_PRIVATE)
+        val oversized = " ".repeat(64_001)
+        assertTrue(prefs.edit().putString("states", oversized).commit())
+        assertEquals(900_000L, ProviderCooldownStore.remainingMs(context, config, 1_000_000L))
+        assertEquals(900_000L, ProviderCooldownStore.markRateLimited(context, config, 1_000_000L))
+        assertEquals(oversized, prefs.getString("states", null))
+        assertTrue(runCatching { ProviderCooldownStore.states(context) }.isFailure)
+    }
+
 }

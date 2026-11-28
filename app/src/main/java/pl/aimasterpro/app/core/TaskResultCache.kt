@@ -12,6 +12,9 @@ object TaskResultCache {
     private const val KEY = "entries"
     private const val TTL_MS = 72L * 60L * 60L * 1000L
     private const val MAX_ENTRIES = 60
+    private const val MAX_RAW_CHARS = 4_000_000
+    private const val MAX_FINGERPRINT_CHARS = 128
+    private const val MAX_REPORT_CHARS = 50_000
 
     /** Length-prefix every field so embedded separators cannot create ambiguous fingerprints.
      * Provider identity is part of the key: equal model aliases on different APIs are not equivalent.
@@ -44,7 +47,8 @@ object TaskResultCache {
     @Synchronized fun put(context: Context, fingerprint: String, report: String, now: Long = System.currentTimeMillis()): Boolean =
         runCatching {
             SharedPreferencesWriteHealth.withHealthyAccess(PREFS) {
-                if (fingerprint.isBlank() || report.isBlank() || now < 0L) return@withHealthyAccess false
+                if (fingerprint.isBlank() || fingerprint.length > MAX_FINGERPRINT_CHARS ||
+                    report.isBlank() || report.length > MAX_REPORT_CHARS || now < 0L) return@withHealthyAccess false
                 val safeReport = CommunicationLogSanitizer.sanitize(report)
                 if (safeReport.isBlank()) return@withHealthyAccess false
                 val old = read(context, now) ?: run {
@@ -60,9 +64,11 @@ object TaskResultCache {
                 val trimmed = JSONArray()
                 val start = (next.length() - MAX_ENTRIES).coerceAtLeast(0)
                 for (i in start until next.length()) trimmed.put(next.getJSONObject(i))
+                val serialized = trimmed.toString()
+                if (serialized.length > MAX_RAW_CHARS) return@withHealthyAccess false
                 SharedPreferencesWriteHealth.commit(
                     PREFS, context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
-                        .putString(KEY, trimmed.toString())
+                        .putString(KEY, serialized)
                 )
             }
         }.getOrDefault(false)
@@ -72,6 +78,7 @@ object TaskResultCache {
         SharedPreferencesWriteHealth.withHealthyAccess(PREFS) {
             val raw = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString(KEY, null)
                 ?: return@withHealthyAccess JSONArray()
+            require(raw.length <= MAX_RAW_CHARS) { "Task result cache exceeds its supported raw size." }
             val source = JSONArray(raw)
             val valid = JSONArray()
             val seenFingerprints = hashSetOf<String>()
@@ -80,9 +87,10 @@ object TaskResultCache {
                 val fingerprintValue = row.opt("fingerprint")
                 val reportValue = row.opt("report")
                 val createdAtValue = row.opt("createdAt")
-                require(fingerprintValue is String && fingerprintValue.isNotBlank())
+                require(fingerprintValue is String && fingerprintValue.isNotBlank() &&
+                    fingerprintValue.length <= MAX_FINGERPRINT_CHARS)
                 require(seenFingerprints.add(fingerprintValue))
-                require(reportValue is String && reportValue.isNotBlank())
+                require(reportValue is String && reportValue.isNotBlank() && reportValue.length <= MAX_REPORT_CHARS)
                 require(createdAtValue is Int || createdAtValue is Long)
                 val createdAt = (createdAtValue as Number).toLong()
                 require(createdAt >= 0L)

@@ -91,6 +91,102 @@ class ChatResponseArchiveTest {
         assertEquals(corrupt, archivePrefs.getString("responses", null))
     }
 
+    @Test fun responseBodyIsRedactedBeforeWriteAheadPersistenceAndReplay() {
+        val chatId = "chat-secret-response"
+        createChat(chatId)
+        val secret = "sk-12345678901234567890"
+        val response = "Odpowiedź zawiera przypadkowo api_key=$secret i dalsze wyjaśnienie."
+        assertTrue(ChatResponseArchive.put(
+            context, "secret-response-task", chatId, "MASTER", response,
+            "provider-a", "model-a", 2_500L
+        ))
+        val stored = archivePrefs.getString("responses", null).orEmpty()
+        assertFalse(stored.contains(secret))
+        assertTrue(stored.contains("[REDACTED]"))
+        assertFalse(ChatResponseArchive.get(context, "secret-response-task")!!.response.contains(secret))
+
+        assertEquals(1, ChatResponseArchive.restoreArchivedResponses(context))
+        val restored = ChatHistoryStore.readRoot(context)!!.getJSONObject("chats")
+            .getJSONObject(chatId).getJSONArray("messages").getJSONObject(1).getString("text")
+        assertFalse(restored.contains(secret))
+        assertTrue(restored.contains("[REDACTED]"))
+    }
+
+    @Test fun archiveMetadataIsRedactedBeforePersistenceAndReadback() {
+        val secret = "abcdefghijklmnopqrstuvwxyz123456"
+        assertTrue(ChatResponseArchive.put(
+            context, "metadata-secret-task", "chat-metadata-safe",
+            "MASTER api_key=sk_live_1234567890", "Answer",
+            "provider token=Bearer $secret", "model secret=sk-proj-12345678901234567890", 2_600L
+        ))
+        val entry = ChatResponseArchive.get(context, "metadata-secret-task")!!
+        val stored = archivePrefs.getString("responses", null).orEmpty()
+        assertFalse(stored.contains("sk_live_1234567890"))
+        assertFalse(stored.contains(secret))
+        assertFalse(stored.contains("sk-proj-12345678901234567890"))
+        assertTrue(entry.agentId.contains("[REDACTED]"))
+        assertTrue(entry.providerId.contains("[REDACTED]"))
+        assertTrue(entry.model.contains("[REDACTED]"))
+    }
+
+    @Test fun taskAndChatArchiveKeysThatWouldChangeUnderRedactionAreRejected() {
+        val taskId = "task-api_key=sk_live_1234567890"
+        val chatId = "chat-api_key=sk_live_1234567890"
+        assertFalse(ChatResponseArchive.put(
+            context, taskId, "chat-safe", "MASTER", "Answer", "provider-a", "model-a", 2_700L
+        ))
+        assertFalse(ChatResponseArchive.put(
+            context, "task-safe", chatId, "MASTER", "Answer", "provider-a", "model-a", 2_700L
+        ))
+        assertTrue(ChatResponseArchive.latest(context).isEmpty())
+    }
+
+    @Test fun legacySecretBearingArchiveContentIsRedactedOnReadAndReplay() {
+        val chatId = "chat-legacy-secret-response"
+        createChat(chatId)
+        val responseSecret = "sk-12345678901234567890"
+        val providerSecret = "abcdefghijklmnopqrstuvwxyz123456"
+        val legacy = JSONArray().put(JSONObject()
+            .put("taskId", "legacy-safe-task").put("chatId", chatId)
+            .put("agentId", "MASTER api_key=sk_live_1234567890")
+            .put("response", "Legacy answer api_key=$responseSecret")
+            .put("providerId", "provider Bearer $providerSecret")
+            .put("model", "model secret=sk-proj-12345678901234567890")
+            .put("createdAt", 2_800L)).toString()
+        assertTrue(archivePrefs.edit().putString("responses", legacy).commit())
+
+        val entry = ChatResponseArchive.get(context, "legacy-safe-task")!!
+        assertFalse(entry.response.contains(responseSecret))
+        assertFalse(entry.providerId.contains(providerSecret))
+        assertTrue(entry.response.contains("[REDACTED]"))
+        // A read sanitizes the decoded entry without rewriting legacy source bytes.
+        assertEquals(legacy, archivePrefs.getString("responses", null))
+        assertEquals(1, ChatResponseArchive.restoreArchivedResponses(context))
+        val restored = ChatHistoryStore.readRoot(context)!!.getJSONObject("chats")
+            .getJSONObject(chatId).getJSONArray("messages").getJSONObject(1).getString("text")
+        assertFalse(restored.contains(responseSecret))
+        assertTrue(restored.contains("[REDACTED]"))
+        // Successful replay acknowledges the entry; the original legacy bytes were
+        // verified unchanged immediately after read, before replay committed the chat.
+        assertEquals("[]", archivePrefs.getString("responses", null))
+    }
+
+    @Test fun legacySecretBearingTaskOrChatIdentityFailsClosedWithoutRewritingArchive() {
+        val secret = "sk_live_1234567890"
+        val corrupt = JSONArray().put(JSONObject()
+            .put("taskId", "task-api_key=$secret").put("chatId", "chat-safe")
+            .put("agentId", "MASTER").put("response", "Saved answer")
+            .put("providerId", "provider-a").put("model", "model-a")
+            .put("createdAt", 2_900L)).toString()
+        assertTrue(archivePrefs.edit().putString("responses", corrupt).commit())
+
+        assertFalse(ChatResponseArchive.isArchiveReadable(context))
+        assertFalse(ChatResponseArchive.put(
+            context, "new-safe-task", "chat-safe", "MASTER", "New answer", "provider-a", "model-a", 3_000L
+        ))
+        assertEquals(corrupt, archivePrefs.getString("responses", null))
+    }
+
     @Test fun blankAndOversizedAnswersAreRejected() {
         assertFalse(ChatResponseArchive.put(context, "blank", "chat", "MASTER", " ", "p", "m", 1_000L))
         assertFalse(ChatResponseArchive.put(context, "large", "chat", "MASTER", "x".repeat(32_001), "p", "m", 1_000L))
@@ -195,18 +291,26 @@ class ChatResponseArchiveTest {
         assertEquals(12, entries.map { it.taskId }.toSet().size)
     }
 
-    @Test fun archiveCapacityIsBoundedAndNewestEntriesAreRetained() {
-        repeat(30) { index ->
+    @Test fun archiveCapacityIsBoundedAndNeverEvictsUnacknowledgedEntries() {
+        repeat(25) { index ->
             assertTrue(ChatResponseArchive.put(
                 context, "bounded-task-$index", "bounded-chat", "MASTER",
                 "Answer $index", "provider-a", "model-a", 30_000L + index
             ))
         }
-        val entries = ChatResponseArchive.latest(context)
-        assertEquals(25, entries.size)
-        assertEquals("bounded-task-29", entries.first().taskId)
-        assertEquals("bounded-task-5", entries.last().taskId)
-        assertNull(ChatResponseArchive.get(context, "bounded-task-4"))
+        val beforeOverflow = ChatResponseArchive.latest(context).map { it.taskId }
+        assertEquals(25, beforeOverflow.size)
+        // put() prepends new entries, so latest() is newest-first.
+        assertEquals("bounded-task-24", beforeOverflow.first())
+        assertEquals("bounded-task-0", beforeOverflow.last())
+
+        assertFalse(ChatResponseArchive.put(
+            context, "bounded-task-25", "bounded-chat", "MASTER",
+            "Answer 25", "provider-a", "model-a", 30_025L
+        ))
+        assertEquals(beforeOverflow, ChatResponseArchive.latest(context).map { it.taskId })
+        assertNotNull(ChatResponseArchive.get(context, "bounded-task-0"))
+        assertNull(ChatResponseArchive.get(context, "bounded-task-25"))
     }
 
 
@@ -308,4 +412,168 @@ class ChatResponseArchiveTest {
         assertEquals("task-locked-response", ChatResponseArchive.latest(context).single().taskId)
     }
 
+ 
+    @Test fun archiveReaderRejectsRowsBeyondCapacityWithoutRewritingData() {
+        val rows = JSONArray()
+        repeat(26) { index ->
+            rows.put(JSONObject()
+                .put("taskId", "overflow-task-$index")
+                .put("chatId", "chat-overflow")
+                .put("agentId", "MASTER")
+                .put("response", "Answer $index")
+                .put("providerId", "provider-a")
+                .put("model", "model-a")
+                .put("createdAt", 40_000L + index))
+        }
+        val corrupt = rows.toString()
+        assertTrue(archivePrefs.edit().putString("responses", corrupt).commit())
+
+        assertFalse(ChatResponseArchive.isArchiveReadable(context))
+        assertFalse(ChatResponseArchive.put(
+            context, "new-task", "chat-overflow", "MASTER", "New answer", "provider-a", "model-a", 50_000L
+        ))
+        assertEquals(corrupt, archivePrefs.getString("responses", null))
+    }
+
+    @Test fun acknowledgementRemovesOnlyThePersistedTaskAndIsIdempotent() {
+        val chatId = "chat-ack"
+        createChat(chatId)
+        assertTrue(ChatHistoryStore.updateRoot(context) { root ->
+            val chat = root.getJSONObject("chats").getJSONObject(chatId)
+            chat.getJSONArray("messages").put(JSONObject().put("role", "assistant").put("text", "First answer"))
+            chat.getJSONArray("assistantTaskIds").put("ack-task-1")
+            true
+        })
+        assertTrue(ChatResponseArchive.put(
+            context, "ack-task-1", chatId, "MASTER", "First answer",
+            "provider-a", "model-a", 70_001L
+        ))
+        assertTrue(ChatResponseArchive.put(
+            context, "ack-task-2", chatId, "MASTER", "Second answer",
+            "provider-a", "model-a", 70_002L
+        ))
+
+        assertTrue(ChatResponseArchive.acknowledgePersisted(context, "ack-task-1"))
+        assertEquals(listOf("ack-task-2"), ChatResponseArchive.latest(context).map { it.taskId })
+        assertTrue(ChatResponseArchive.acknowledgePersisted(context, "ack-task-1"))
+        assertEquals(listOf("ack-task-2"), ChatResponseArchive.latest(context).map { it.taskId })
+    }
+
+    @Test fun acknowledgementCannotDiscardAnAnswerWithoutItsDurableHistoryMarker() {
+        val chatId = "chat-ack-without-marker"
+        createChat(chatId)
+        assertTrue(ChatResponseArchive.put(
+            context, "uncommitted-ack-task", chatId, "MASTER", "Not yet persisted",
+            "provider-a", "model-a", 70_150L
+        ))
+
+        assertFalse(ChatResponseArchive.acknowledgePersisted(context, "uncommitted-ack-task"))
+        assertNotNull(ChatResponseArchive.get(context, "uncommitted-ack-task"))
+    }
+
+    @Test fun successfulReplayAcknowledgesCommittedAnswersButRetainsOrphanedEntries() {
+        val chatId = "chat-response-ack-replay"
+        createChat(chatId)
+        assertTrue(ChatResponseArchive.put(
+            context, "ack-replay-task", chatId, "MASTER", "Committed answer",
+            "provider-a", "model-a", 70_100L
+        ))
+        assertTrue(ChatResponseArchive.put(
+            context, "orphan-after-replay", "deleted-chat", "MASTER", "Orphan answer",
+            "provider-a", "model-a", 70_101L
+        ))
+
+        assertEquals(1, ChatResponseArchive.restoreArchivedResponses(context))
+        assertNull(ChatResponseArchive.get(context, "ack-replay-task"))
+        assertNotNull(ChatResponseArchive.get(context, "orphan-after-replay"))
+        assertEquals(0, ChatResponseArchive.restoreArchivedResponses(context))
+    }
+
+    @Test fun ambiguousAcknowledgementKeepsArchiveQuarantinedForRestartReconciliation() {
+        val chatId = "chat-ack-ambiguous"
+        createChat(chatId)
+        assertTrue(ChatHistoryStore.updateRoot(context) { root ->
+            val chat = root.getJSONObject("chats").getJSONObject(chatId)
+            chat.getJSONArray("messages").put(JSONObject().put("role", "assistant").put("text", "Durable answer"))
+            chat.getJSONArray("assistantTaskIds").put("ack-ambiguous-task")
+            true
+        })
+        assertTrue(ChatResponseArchive.put(
+            context, "ack-ambiguous-task", chatId, "MASTER", "Durable answer",
+            "provider-a", "model-a", 70_200L
+        ))
+        val failing = AmbiguousCommitContext(
+            context, "chat_response_archive_v1", applyBeforeFailure = false
+        )
+        assertFalse(ChatResponseArchive.acknowledgePersisted(failing, "ack-ambiguous-task"))
+        assertFalse(ChatResponseArchive.isArchiveReadable(context))
+
+        SharedPreferencesWriteHealth.resetForTests("chat_response_archive_v1")
+        assertNotNull(ChatResponseArchive.get(context, "ack-ambiguous-task"))
+        assertTrue(ChatResponseArchive.acknowledgePersisted(context, "ack-ambiguous-task"))
+        assertNull(ChatResponseArchive.get(context, "ack-ambiguous-task"))
+    }
+
+    @Test fun putRejectsOversizedArchiveMetadataBeforeWriting() {
+        assertFalse(ChatResponseArchive.put(
+            context, "t".repeat(513), "chat", "MASTER", "Answer", "provider-a", "model-a", 1_000L
+        ))
+        assertFalse(ChatResponseArchive.put(
+            context, "task-agent-long", "chat", "a".repeat(121), "Answer", "provider-a", "model-a", 1_000L
+        ))
+        assertFalse(ChatResponseArchive.put(
+            context, "task-provider-long", "chat", "MASTER", "Answer", "p".repeat(201), "model-a", 1_000L
+        ))
+        assertFalse(ChatResponseArchive.put(
+            context, "task-model-long", "chat", "MASTER", "Answer", "provider-a", "m".repeat(241), 1_000L
+        ))
+        assertTrue(ChatResponseArchive.latest(context).isEmpty())
+    }
+
+    @Test fun archiveReaderRejectsOversizedMetadataWithoutRewritingData() {
+        val corrupt = JSONArray().put(JSONObject()
+            .put("taskId", "task-metadata")
+            .put("chatId", "chat")
+            .put("agentId", "MASTER")
+            .put("response", "Answer")
+            .put("providerId", "provider-a")
+            .put("model", "m".repeat(241))
+            .put("createdAt", 1_000L)).toString()
+        assertTrue(archivePrefs.edit().putString("responses", corrupt).commit())
+
+        assertFalse(ChatResponseArchive.isArchiveReadable(context))
+        assertEquals(corrupt, archivePrefs.getString("responses", null))
+    }
+
+    @Test fun archiveReaderRejectsOversizedRawPayloadWithoutRewritingIt() {
+        val oversized = " ".repeat(1_000_001)
+        assertTrue(archivePrefs.edit().putString("responses", oversized).commit())
+        assertFalse(ChatResponseArchive.isArchiveReadable(context))
+        assertFalse(ChatResponseArchive.put(
+            context, "new-task", "chat", "MASTER", "New answer", "provider-a", "model-a", 60_000L
+        ))
+        assertEquals(oversized, archivePrefs.getString("responses", null))
+    }
+
+    @Test fun capacityRejectsNewUnacknowledgedAnswerWithoutEvictingOlderAnswersButAllowsReplacement() {
+        repeat(25) { index ->
+            assertTrue(ChatResponseArchive.put(
+                context, "capacity-answer-$index", "capacity-chat", "MASTER", "Answer $index",
+                "provider-a", "model-a", 80_000L + index
+            ))
+        }
+        val before = ChatResponseArchive.latest(context).map { it.taskId }
+        assertEquals(25, before.size)
+        assertFalse(ChatResponseArchive.put(
+            context, "capacity-overflow-answer", "capacity-chat", "MASTER", "Must remain retryable",
+            "provider-a", "model-a", 81_000L
+        ))
+        assertEquals(before, ChatResponseArchive.latest(context).map { it.taskId })
+        assertTrue(ChatResponseArchive.put(
+            context, "capacity-answer-24", "capacity-chat", "MASTER", "Updated answer",
+            "provider-b", "model-b", 82_000L
+        ))
+        assertEquals(25, ChatResponseArchive.latest(context).size)
+        assertEquals("Updated answer", ChatResponseArchive.get(context, "capacity-answer-24")?.response)
+    }
 }
