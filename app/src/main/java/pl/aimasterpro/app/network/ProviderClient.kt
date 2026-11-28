@@ -563,8 +563,12 @@ class ProviderClient(
                 val result = requestWithRetry(endpoint, "POST", config.apiKey,
                     JSONObject().put("model", config.model).put("messages", messages),
                     authHeader = "Authorization")
-                val choices = result.optJSONArray("choices") ?: throw ProviderException(null, "Gemini OpenAI-compatible zwrócił brak pola choices.", category = "INVALID_RESPONSE")
-                val text = choices.optJSONObject(0)?.optJSONObject("message")?.optString("content").orEmpty()
+                val choices = result.optJSONArray("choices")?.takeIf { it.length() > 0 }
+                    ?: throw ProviderException(null, "Gemini OpenAI-compatible zwrócił pustą lub nieprawidłową tablicę choices.", category = "INVALID_RESPONSE")
+                val message = choices.optJSONObject(0)?.optJSONObject("message")
+                    ?: throw ProviderException(null, "Gemini OpenAI-compatible nie zwrócił obiektu message.", category = "INVALID_RESPONSE")
+                val text = (message.opt("content") as? String)?.trim()?.takeIf { it.isNotEmpty() }
+                    ?: throw ProviderException(null, "Gemini OpenAI-compatible nie zwrócił tekstowej treści message.content.", category = "INVALID_RESPONSE")
 
                 val usageObj = result.optJSONObject("usage")
                 val input = exactNonNegativeCount(usageObj, "prompt_tokens")
