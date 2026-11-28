@@ -280,7 +280,8 @@ class ProviderClient(
             throw e
         } catch (e: UnknownHostException) {
             if (isCancelled(scope)) throw cancelledException(phase, method)
-            throw ProviderException(null, "DNS_ERROR podczas $phase dla hosta ${parsedUrl.host}: ${e.message ?: "UnknownHostException"}", category = "DNS_ERROR", phase = phase)
+            val detail = ProviderHttpDiagnostics.safeFailureDetail(e.message ?: "UnknownHostException")
+            throw ProviderException(null, "DNS_ERROR podczas $phase dla hosta ${parsedUrl.host}: $detail", category = "DNS_ERROR", phase = phase)
         } catch (e: SocketTimeoutException) {
             if (isCancelled(scope)) throw cancelledException(phase, method)
             val category = when (phase) {
