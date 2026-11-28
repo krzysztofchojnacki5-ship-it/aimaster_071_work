@@ -136,4 +136,17 @@ class TaskDiagnosticsReportTest {
         assertFalse(result.text.contains("REPORT-0"))
         assertTrue(result.text.contains("REPORT-32"))
     }
+
+    @Test fun overallReportTruncationCannotBeReportedAsComplete() {
+        val assigned = (1..6).map { "large-agent-$it" }
+        val expandedTask = task().copy(assignedAgentIds = assigned)
+        val reports = assigned.mapIndexed { index, agentId ->
+            TaskDiagnosticsReport.AgentReport(agentId, "provider", "model", index.toLong(), "x".repeat(32_000), 2)
+        }
+        val result = TaskDiagnosticsReport.build(expandedTask, queue(), handoffs(), reports, true, 100L)
+        assertFalse(result.isComplete)
+        assertTrue(result.missing.any { it.contains("całość przekroczyła limit") })
+        assertTrue(result.text.contains("Status kompletności: NIEKOMPLETNY"))
+        assertTrue(result.text.contains("[OBCIĘTO: raport przekroczył limit"))
+    }
 }
