@@ -4,6 +4,7 @@ package pl.aimasterpro.app.core
 object CommunicationLogSanitizer {
     private val bearer = Regex("(?i)\\bBearer\\s+[A-Za-z0-9._~+/=-]+")
     private val google = Regex("\\bAIzaSy[A-Za-z0-9_-]{20,}\\b")
+    private val googleOAuth = Regex("\\bya29\\.[A-Za-z0-9_-]{20,}\\b")
     private val openAiStyle = Regex("\\bsk-[A-Za-z0-9_-]{16,}\\b")
     private val groq = Regex("\\bgsk_[A-Za-z0-9_-]{16,}\\b")
     private val huggingFace = Regex("\\bhf_[A-Za-z0-9]{20,}\\b")
