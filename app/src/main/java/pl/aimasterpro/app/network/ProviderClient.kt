@@ -3,6 +3,7 @@ package pl.aimasterpro.app.network
 import org.json.JSONArray
 import org.json.JSONObject
 import pl.aimasterpro.app.core.ChatResponse
+import pl.aimasterpro.app.core.CommunicationLogSanitizer
 import pl.aimasterpro.app.core.ProviderEndpointPolicy
 import pl.aimasterpro.app.core.ProviderConfig
 import pl.aimasterpro.app.core.ProviderKind
@@ -63,7 +64,7 @@ internal object ProviderHttpDiagnostics {
                 searchFrom = tokenStart + 10
             } else searchFrom = tokenEnd
         }
-        return safe.take(2500)
+        return CommunicationLogSanitizer.sanitize(safe).take(2500)
     }
 
     fun httpFailureHint(code: Int, category: String): String = when (code) {
