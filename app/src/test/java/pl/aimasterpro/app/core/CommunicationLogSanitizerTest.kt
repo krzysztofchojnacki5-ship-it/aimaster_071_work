@@ -95,4 +95,42 @@ class CommunicationLogSanitizerTest {
         ).forEach { assertFalse("Secret leaked: $it", output.contains(it)) }
         assertTrue(output.contains("[REDACTED]"))
     }
+
+    @Test
+    fun redactsStripeSecretAndRestrictedKeys() {
+        val secret = "sk_live_1234567890abcdefghijkl"
+        val restricted = "rk_test_1234567890abcdefghijkl"
+        val output = CommunicationLogSanitizer.sanitize("stripe=$secret restricted=$restricted")
+        assertFalse(output.contains(secret))
+        assertFalse(output.contains(restricted))
+        assertTrue(output.contains("[REDACTED STRIPE KEY]"))
+    }
+
+    @Test
+    fun redactsJwtCredentialValues() {
+        val token = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.signaturepayload123456"
+        val output = CommunicationLogSanitizer.sanitize("Authorization payload: $token")
+        assertFalse(output.contains(token))
+        assertTrue(output.contains("[REDACTED JWT]"))
+    }
+
+    @Test
+    fun redactsAwsAccessKeyIdentifiers() {
+        val access = "AKIAIOSFODNN7EXAMPLE"
+        val session = "ASIA1234567890ABCDEF"
+        val output = CommunicationLogSanitizer.sanitize("access=$access session=$session")
+        assertFalse(output.contains(access))
+        assertFalse(output.contains(session))
+        assertTrue(output.contains("[REDACTED AWS ACCESS KEY]"))
+    }
+
+    @Test
+    fun redactsJsonSecretValuesContainingEscapedQuotes() {
+        val secret = "escaped-json-secret"
+        val input = """{"apiKey":"prefix\"$secret"}"""
+        val output = CommunicationLogSanitizer.sanitize(input)
+        assertFalse("Secret after escaped quote leaked", output.contains(secret))
+        assertTrue(output.contains("[REDACTED]"))
+    }
+
 }
