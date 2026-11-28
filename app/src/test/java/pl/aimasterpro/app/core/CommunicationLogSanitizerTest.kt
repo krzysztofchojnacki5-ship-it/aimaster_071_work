@@ -43,6 +43,23 @@ class CommunicationLogSanitizerTest {
     }
 
     @Test
+    fun redactsAdditionalProviderAndCookieHeadersAndJsonFields() {
+        val input = """
+            X-Goog-Api-Key: google-header-secret
+            x-auth-token=auth-header-secret
+            Cookie: session-cookie-secret; theme=dark
+            Set-Cookie: session=set-cookie-secret; HttpOnly
+            {"x-goog-api-key":"google-json-secret","cookie":"json-cookie-secret"}
+        """.trimIndent()
+        val output = CommunicationLogSanitizer.sanitize(input)
+        listOf(
+            "google-header-secret", "auth-header-secret", "session-cookie-secret",
+            "set-cookie-secret", "google-json-secret", "json-cookie-secret"
+        ).forEach { assertFalse("Credential leaked: $it", output.contains(it)) }
+        assertTrue(output.contains("[REDACTED]"))
+    }
+
+    @Test
     fun redactsPasswordsEmbeddedInUrlUserInfo() {
         val input = "Endpoint: https://service-user:url-password-secret@example.invalid/v1"
         val output = CommunicationLogSanitizer.sanitize(input)
