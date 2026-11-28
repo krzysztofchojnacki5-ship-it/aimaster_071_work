@@ -833,4 +833,57 @@ class ProviderClientNetworkTest {
         assertTrue(safe.contains("[REDACTED]"))
         assertTrue(safe.contains("rejected"))
     }
+    @Test
+    fun successfulMalformedJsonResponseRedactsEchoedCredentials() {
+        val secret = "provider-echo-secret-value"
+        val bearer = "echoed-bearer-secret-value"
+        val (server, _) = server { _, _ ->
+            200 to """not-json {"api_key":"$secret","access_token":"echoed-access-secret"} Authorization: Bearer $bearer"""
+        }
+        try {
+            try {
+                ProviderClient().chat(
+                    config("http://127.0.0.1:${server.address.port}/v1"),
+                    "system",
+                    "test"
+                )
+                throw AssertionError("Expected malformed provider response")
+            } catch (e: ProviderException) {
+                assertEquals("INVALID_RESPONSE", e.category)
+                listOf(secret, "echoed-access-secret", bearer).forEach {
+                    assertFalse("Malformed provider response leaked credential: $it", e.responseBody.contains(it))
+                    assertFalse("Malformed provider message leaked credential: $it", e.message.orEmpty().contains(it))
+                }
+                assertTrue(e.responseBody.contains("[REDACTED]"))
+            }
+        } finally { server.stop(0) }
+    }
+
+    @Test
+    fun parserDiagnosticsAreSanitizedBeforeExposure() {
+        val raw = """Unexpected token api_key=parser-secret-value and Bearer parser-bearer-secret"""
+        val safe = ProviderHttpDiagnostics.safeFailureDetail(raw)
+        assertFalse(safe.contains("parser-secret-value"))
+        assertFalse(safe.contains("parser-bearer-secret"))
+        assertTrue(safe.contains("[REDACTED]"))
+    }
+
+    @Test
+    fun transportDiagnosticsRedactUrlAndHeaderCredentials() {
+        val raw = "failed https://provider.example/v1?access_token=url-access-secret&sig=url-signature-secret; Authorization: Bearer transport-bearer-secret"
+        val safe = ProviderHttpDiagnostics.safeFailureDetail(raw)
+        listOf("url-access-secret", "url-signature-secret", "transport-bearer-secret").forEach {
+            assertFalse("Transport diagnostic leaked credential: $it", safe.contains(it))
+        }
+        assertTrue(safe.contains("[REDACTED]"))
+    }
+
+    @Test
+    fun providerFailureDetailsAreBoundedAfterSanitization() {
+        val raw = "api_key=bounded-secret " + "x".repeat(900)
+        val safe = ProviderHttpDiagnostics.safeFailureDetail(raw, 120)
+        assertFalse(safe.contains("bounded-secret"))
+        assertTrue(safe.length <= 120)
+    }
+
 }
