@@ -435,8 +435,13 @@ class ProviderClient(
             val result = requestWithRetry(endpoint, "POST", config.apiKey,
                 JSONObject().put("model", config.model).put("max_tokens", 4096).put("system", systemPrompt).put("messages", messages),
                 authHeader = "x-api-key", extraHeaders = mapOf("anthropic-version" to "2023-06-01"))
-            val content = result.optJSONArray("content") ?: JSONArray()
-            val text = (0 until content.length()).mapNotNull { content.optJSONObject(it)?.takeIf { o -> o.optString("type") == "text" }?.optString("text") }.joinToString("\n")
+            val content = result.optJSONArray("content")
+                ?: throw ProviderException(null, "Anthropic zwrócił odpowiedź bez tablicy content.", category = "INVALID_RESPONSE")
+            val text = (0 until content.length()).mapNotNull { index ->
+                content.optJSONObject(index)?.takeIf { it.optString("type") == "text" }
+                    ?.opt("text") as? String
+            }.joinToString("\n").trim()
+            if (text.isBlank()) throw ProviderException(null, "Anthropic nie zwrócił tekstowej treści odpowiedzi.", category = "INVALID_RESPONSE")
 
             val usageObj = result.optJSONObject("usage")
             // Anthropic reports uncached input, cache reads, and cache writes separately.
