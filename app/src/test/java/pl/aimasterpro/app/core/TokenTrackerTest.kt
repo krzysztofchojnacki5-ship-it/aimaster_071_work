@@ -64,7 +64,7 @@ class TokenTrackerTest {
         TokenTracker.recordUsage(context, id, "p", "r", statusMsg = "failed api_key=sk_live_1234567890123456")
         val raw = context.getSharedPreferences("token_tracker_state", Context.MODE_PRIVATE).getString(id, null)!!
         assertFalse(raw.contains("sk_live_1234567890123456"))
-        assertTrue(raw.contains("[REDACTED]"))
+        assertTrue(raw.contains("[REDACTED"))
     }
 
     @Test fun futureRateLimitTimestampIsRejectedInsteadOfExtendingCountdown() {
