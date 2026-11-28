@@ -343,4 +343,19 @@ Cover unauthorized create/update/delete, scope escape, missing or forged approva
   4. Poprawa redakcji sekretów JSON, aby wartość zawierająca escapowane cudzysłowy nie pozostawiała końcówki sekretu w logu.
 - Dodano cztery testy regresyjne dla powyższych klas danych. Nie uruchamiano testów pomiędzy poprawkami.
 - Końcowy kod i testy pakietu: `733c3ba77bf7cbb79bb287e23eb8e7aef4f4caed`.
-- Status: IMPLEMENTACJA ZAPISANA / CI PENDING. Pełne CI uruchamiane po domknięciu czterech zmian; pakiet nie jest zaliczony do czasu sprawdzenia raportów i artefaktów na dokładnym końcowym HEAD.
+- Trigger CI: `70f44a9a5c0820b3f119f779db90112479f4f912`. Unit Tests run `46092544602` PASS; Gradle Wrapper run `46092544575` PASS; Android Build run `46092540815` PASS po ponowieniu joba (attempt 2). Raport XML z builda: 136 zestawów, 1,486 testów, 0 failures, 0 errors, 0 skipped. Artefakty: debug APK 2,297,431 B; signed release APK 1,529,011 B; source archive 1,616,655 B; test reports 382,765 B.
+- Status: PAKIET 43 ZALICZONY — wszystkie cztery poprawki, testy, wrapper, Android build i artefakty zweryfikowane.
+
+
+## Implementation checkpoint — pakiet 44 / rozszerzona redakcja tokenów i podpisanych URL (2026-11-28)
+
+- Baza: pakiet 43 zaliczony na trigger HEAD `70f44a9a5c0820b3f119f779db90112479f4f912`.
+- Cztery zmiany:
+  1. Rozpoznawanie i redakcja tokenów Hugging Face `hf_`.
+  2. Rozpoznawanie i redakcja tokenów Replicate `r8_`.
+  3. Rozpoznawanie i redakcja tokenów dostępu Google OAuth `ya29.`.
+  4. Redakcja sekretów podpisanych URL w parametrach `sig`, `signature`, `X-Amz-Signature`, `X-Goog-Signature`, `X-Amz-Credential` i `X-Goog-Credential`, bez usuwania sąsiednich niesekretnych parametrów.
+- Dodano cztery testy regresyjne: Hugging Face, Replicate, Google OAuth oraz podpisane URL.
+- Zmodyfikowane pliki: `CommunicationLogSanitizer.kt`, `CommunicationLogSanitizerTest.kt`, niniejszy checkpoint.
+- Commity implementacji: `42b858359fa532dd654d4bbf7e3c499a6b057786`, `22ca4722bdf54e163c0024bdc4ba2bf0bbfdfbdf`, `b3fb4b68f00e04437ab8fd9507e0ab63ec50fd6e`, `1b09064f132b1d127cb46a6ef3ce4ec66e6ad234`, `809c4289bc6e22ee74dd6dc91c1b68f6207e77e1`, `4c9490d9f93fc8242132587bb99219b95c8e3e83`, `3dd4e56297111f3bb85ad7035f6dcd94afe2c30e`, `c82d4e80120eab4ce4712becfa380fed1e6add02`, `cbc92326c8a78f74d566ebfad469bb8d54a9351c`.
+- Status: IMPLEMENTACJA ZAPISANA / CI PENDING. Nie uruchamiano testów pomiędzy poprawkami. Pełne CI uruchomić po wszystkich czterech zmianach; pakiet nie jest zaliczony do czasu sprawdzenia raportów i artefaktów na dokładnym końcowym HEAD.
