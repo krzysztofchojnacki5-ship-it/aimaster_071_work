@@ -18,3 +18,5 @@ Package 46: strict provider response schema validation across Anthropic, OpenAI-
 Package 46 compile correction: rename native Gemini response parts variable to avoid collision with request parts; rerun consolidated CI against corrected source.
 
 Package 47 complete: native Gemini thought-part filtering, candidate fallback, and explicit prompt/candidate content-block classification. Run consolidated full CI.
+
+Package 48 full Android CI requested after Gemini blocked-candidate and truncation handling.
