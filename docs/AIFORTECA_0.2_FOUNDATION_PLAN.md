@@ -383,3 +383,26 @@ Cover unauthorized create/update/delete, scope escape, missing or forged approva
 - Commity implementacji: `6f7592af5814031e720e28ac145c2bbc44088952`, `aeb74403cbbfb0f850db606d3d89ae39d3ef39b7`, `d96256f1a1bdde3b05b29a80ca532f295f1940cc`, `90895b868b23b2c2dee4d6f74be8939b862e63ee`, `9b5ea5268630426e8864555accad3f1d0bc14ab6`, `8c0e24c5314412715fa85edc9ba9c636708b7c13`, `f08a40361fdfc3e5365825b7e4fe55436b5ba360`.
 - Status: IMPLEMENTACJA ZAPISANA / CI PENDING. Nie uruchamiano testów między poprawkami. Uruchomić pełne CI dopiero po całym pakiecie; nie rozpoczynać pakietu 46 przed weryfikacją raportów i artefaktów na końcowym SHA.
 - Nie zmieniono `versionName=0.2`, `versionCode=3`, base branch ani PR #3.
+
+
+## Implementation checkpoint — pakiet 45 / bezpieczne diagnostyki błędnych odpowiedzi dostawców — WERYFIKACJA (2026-11-28)
+
+- Końcowy HEAD CI: `4219769191decfd4cfeb2a4f3cc81579303c754c`.
+- Gradle Wrapper Validation run `46105173559` PASS; Android Build run `46105173455` PASS; Unit Tests run `46105173431` PASS.
+- Raport XML: 136 zestawów, 1,494 testy, 0 failures, 0 errors, 0 skipped.
+- Artefakty: debug APK 2,298,083 B; podpisany release APK 1,529,236 B; source archive 1,619,424 B; raport testów 383,131 B.
+- Status: PAKIET 45 ZALICZONY. Wszystkie wyniki i artefakty zweryfikowane na dokładnym SHA.
+
+## Implementation checkpoint — pakiet 46 / ścisła walidacja treści odpowiedzi dostawców (2026-11-28)
+
+- Baza: pakiet 45 zaliczony na HEAD `4219769191decfd4cfeb2a4f3cc81579303c754c`.
+- Cztery zmiany:
+  1. Anthropic: brak tablicy `content`, pusta tablica lub brak tekstowych bloków nie jest już traktowany jako poprawna pusta odpowiedź.
+  2. OpenAI-compatible: walidacja niepustej tablicy `choices`, obiektu `message` i niepustego tekstowego `message.content`.
+  3. Gemini OpenAI-compatible: analogiczna ścisła walidacja schematu `choices/message/content`.
+  4. Natywne Gemini: walidacja `candidates/content/parts`, łączenie wszystkich tekstowych części odpowiedzi i odrzucanie pustego wyniku.
+- Testy regresyjne dodane w `ProviderClientNetworkTest.kt`: puste content Anthropic, puste choices OpenAI, nieprawidłowy content Gemini OpenAI-compatible, puste candidates natywnego Gemini. Wspólny asercyjny helper sprawdza kategorię `INVALID_RESPONSE` oraz zachowanie informacji, że żądanie POST mogło zostać przetworzone.
+- Zmodyfikowane pliki: `ProviderClient.kt`, `ProviderClientNetworkTest.kt`, niniejszy checkpoint.
+- Commity implementacji: `045f065d4e97b393a4ffd76122ed6d583dc23f1e`, `b646346217b96fd5bd02044e35c9e24bbd921707`, `151784d784a47517bfc302489d79d9d185102f0a`, `fcc2b7e8515a89c33f16bbac2e4dbc19ac4e10d6`, `d0153289fac96174abb4227d0aea1c60f097ec81`.
+- Status: IMPLEMENTACJA ZAPISANA / CI PENDING. Testy nie były uruchamiane między poprawkami. Uruchomić jeden pełny CI po pakiecie; nie rozpoczynać pakietu 47 przed weryfikacją raportów i artefaktów na końcowym SHA.
+- Nie zmieniono `versionName=0.2`, `versionCode=3`, base branch ani PR #3.
