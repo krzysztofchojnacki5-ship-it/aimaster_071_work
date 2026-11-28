@@ -321,3 +321,26 @@ Cover unauthorized create/update/delete, scope escape, missing or forged approva
 - Commity kodu pakietu: `f0cdd1888d308d9831eb5a1075d4f05909fb6f5c`, `d83cf4eff21925dfd98f3aa7b6b2bf2e30f26ae4`, `6689fc6c664efa134cab5fd0a8359c8892c67b77`.
 - Status: IMPLEMENTACJA ZAPISANA / CI PENDING. Nie rozpoczynać pakietu 29 przed zakończeniem testów, walidacji wrappera i kontroli raportów na końcowym SHA.
 - Nie zmieniono repozytorium, gałęzi, PR #3, base branch, numeru wersji ani ustawień workflow. Nie uruchomiono ręcznie CI ani budowy APK.
+
+
+## Implementation checkpoint — pakiet 42 / kompletność i integralność diagnostyki (2026-11-28)
+
+- Końcowy kod: `06555b4fcfadb3e5ef38e87eadafbbdc59939077`; trigger CI: `00de9c702fb66b4cf578ce14037c9beeb2f753a2`.
+- Cztery zmiany: izolacja zdarzeń i przekazań do dokładnego taskId/runId; raporty agentów ograniczone do przypisanych agentów i bieżącego przebiegu z limitem liczby; status NIEKOMPLETNY przy obcięciu całości raportu; dodatkowa redakcja nagłówków i pól sekretów w odpowiedziach providerów oraz bezpieczne obcinanie par surogatowych UTF-16.
+- Testy regresyjne pokrywają izolację przebiegów, obce raporty agentów, limity i kompletność diagnostyki, redakcję nagłówków oraz granice Unicode.
+- Weryfikacja dokładnego trigger HEAD: Unit Tests run `46088173984` PASS; Android Build run `46088169874` PASS; Gradle Wrapper Validation run `46088173992` PASS.
+- Raport XML: 136 zestawów, 1,482 testy, 0 failures, 0 errors, 0 skipped.
+- Artefakty Android Build: debug APK 2,297,052 B; podpisany release APK 1,529,114 B; source archive 1,615,608 B. Raport testów 382,968 B.
+- Status: PAKIET 42 ZALICZONY. PR #3 pozostaje otwarty i nie został scalony.
+
+## Implementation checkpoint — pakiet 43 / rozszerzona redakcja sekretów providerów (2026-11-28)
+
+- Baza: pakiet 42 zaliczony na trigger HEAD `00de9c702fb66b4cf578ce14037c9beeb2f753a2`.
+- Cztery zmiany:
+  1. Redakcja kluczy Stripe secret/restricted w formatach `sk_live_`, `sk_test_`, `rk_live_`, `rk_test_`.
+  2. Redakcja tokenów JWT rozpoznawanych po strukturze trzech segmentów Base64URL.
+  3. Redakcja identyfikatorów kluczy AWS `AKIA` i `ASIA`.
+  4. Poprawa redakcji sekretów JSON, aby wartość zawierająca escapowane cudzysłowy nie pozostawiała końcówki sekretu w logu.
+- Dodano cztery testy regresyjne dla powyższych klas danych. Nie uruchamiano testów pomiędzy poprawkami.
+- Końcowy kod i testy pakietu: `733c3ba77bf7cbb79bb287e23eb8e7aef4f4caed`.
+- Status: IMPLEMENTACJA ZAPISANA / CI PENDING. Pełne CI uruchamiane po domknięciu czterech zmian; pakiet nie jest zaliczony do czasu sprawdzenia raportów i artefaktów na dokładnym końcowym HEAD.
