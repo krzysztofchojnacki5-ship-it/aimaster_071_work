@@ -289,10 +289,12 @@ class ProviderClient(
                 "WAIT_RESPONSE" -> "RESPONSE_TIMEOUT"
                 else -> "READ_TIMEOUT"
             }
-            throw ProviderException(null, "$category podczas $phase dla ${parsedUrl.host}: ${e.message ?: "SocketTimeoutException"}", category = category, phase = phase, requestMayHaveBeenProcessed = method.equals("POST", true) && phase != "CONNECT")
+            val detail = ProviderHttpDiagnostics.safeFailureDetail(e.message ?: "SocketTimeoutException")
+            throw ProviderException(null, "$category podczas $phase dla ${parsedUrl.host}: $detail", category = category, phase = phase, requestMayHaveBeenProcessed = method.equals("POST", true) && phase != "CONNECT")
         } catch (e: ConnectException) {
             if (isCancelled(scope)) throw cancelledException(phase, method)
-            throw ProviderException(null, "CONNECT_ERROR dla ${parsedUrl.host}: ${e.message ?: "ConnectException"}", category = "CONNECT_ERROR", phase = phase, requestMayHaveBeenProcessed = method.equals("POST", true) && phase != "CONNECT")
+            val detail = ProviderHttpDiagnostics.safeFailureDetail(e.message ?: "ConnectException")
+            throw ProviderException(null, "CONNECT_ERROR dla ${parsedUrl.host}: $detail", category = "CONNECT_ERROR", phase = phase, requestMayHaveBeenProcessed = method.equals("POST", true) && phase != "CONNECT")
         } catch (e: BoundedResponseReader.ResponseTooLargeException) {
             if (isCancelled(scope)) throw cancelledException(phase, method)
             throw ProviderException(null, e.message ?: "Odpowiedź dostawcy jest zbyt duża.", category = "RESPONSE_TOO_LARGE", phase = phase, requestMayHaveBeenProcessed = method.equals("POST", true))
@@ -301,10 +303,12 @@ class ProviderClient(
             throw ProviderException(null, e.message ?: "Nieprawidłowe kodowanie odpowiedzi.", category = "INVALID_RESPONSE_ENCODING", phase = phase, requestMayHaveBeenProcessed = method.equals("POST", true))
         } catch (e: IOException) {
             if (isCancelled(scope)) throw cancelledException(phase, method)
-            throw ProviderException(null, "NETWORK_IO podczas $phase dla ${parsedUrl.host}: ${e.message ?: "IOException"}", category = "NETWORK_IO", phase = phase, requestMayHaveBeenProcessed = method.equals("POST", true) && phase != "CONNECT")
+            val detail = ProviderHttpDiagnostics.safeFailureDetail(e.message ?: "IOException")
+            throw ProviderException(null, "NETWORK_IO podczas $phase dla ${parsedUrl.host}: $detail", category = "NETWORK_IO", phase = phase, requestMayHaveBeenProcessed = method.equals("POST", true) && phase != "CONNECT")
         } catch (e: Exception) {
             if (isCancelled(scope)) throw cancelledException(phase, method)
-            throw ProviderException(null, "NETWORK_ERROR podczas $phase dla ${parsedUrl.host}: ${e.message ?: e.javaClass.simpleName}", category = "NETWORK_ERROR", phase = phase, requestMayHaveBeenProcessed = method.equals("POST", true) && phase != "CONNECT")
+            val detail = ProviderHttpDiagnostics.safeFailureDetail(e.message ?: e.javaClass.simpleName)
+            throw ProviderException(null, "NETWORK_ERROR podczas $phase dla ${parsedUrl.host}: $detail", category = "NETWORK_ERROR", phase = phase, requestMayHaveBeenProcessed = method.equals("POST", true) && phase != "CONNECT")
         } finally {
             activeConnections.remove(conn)
             conn.disconnect()
@@ -338,7 +342,7 @@ class ProviderClient(
                 if (isCancelled(scope)) throw cancelledException()
                 try { Thread.sleep(exponential + jitter) } catch (interrupted: InterruptedException) {
                     Thread.currentThread().interrupt()
-                    throw ProviderException(null, "Przerwano oczekiwanie przed ponowieniem: ${e.message}", category = "INTERRUPTED")
+                    throw ProviderException(null, "Przerwano oczekiwanie przed ponowieniem: ${ProviderHttpDiagnostics.safeFailureDetail(e.message.orEmpty())}", category = "INTERRUPTED")
                 }
             }
         }
