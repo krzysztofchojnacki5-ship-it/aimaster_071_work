@@ -611,10 +611,10 @@ class ProviderClient(
                 val result = requestWithRetry(endpoint, "POST", "", requestBody)
                 val candidates = result.optJSONArray("candidates")?.takeIf { it.length() > 0 }
                     ?: throw ProviderException(null, "Gemini nie zwrócił żadnego kandydata odpowiedzi.", category = "INVALID_RESPONSE")
-                val parts = candidates.optJSONObject(0)?.optJSONObject("content")?.optJSONArray("parts")
+                val responseParts = candidates.optJSONObject(0)?.optJSONObject("content")?.optJSONArray("parts")
                     ?: throw ProviderException(null, "Gemini nie zwrócił tablicy parts w treści kandydata.", category = "INVALID_RESPONSE")
-                val text = (0 until parts.length()).mapNotNull { index ->
-                    parts.optJSONObject(index)?.opt("text") as? String
+                val text = (0 until responseParts.length()).mapNotNull { index ->
+                    responseParts.optJSONObject(index)?.opt("text") as? String
                 }.joinToString("\n").trim()
                 if (text.isBlank()) throw ProviderException(null, "Gemini nie zwrócił tekstowej treści odpowiedzi.", category = "INVALID_RESPONSE")
 
