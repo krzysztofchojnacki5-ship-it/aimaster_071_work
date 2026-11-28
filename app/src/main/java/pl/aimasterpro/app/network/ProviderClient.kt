@@ -500,8 +500,12 @@ class ProviderClient(
             val result = requestWithRetry(endpoint, "POST", config.apiKey,
                 JSONObject().put("model", config.model).put("messages", messages))
 
-            val choices = result.optJSONArray("choices") ?: throw ProviderException(null, "Dostawca zwrócił odpowiedź bez pola choices.", category = "INVALID_RESPONSE")
-            val text = choices.optJSONObject(0)?.optJSONObject("message")?.optString("content").orEmpty()
+            val choices = result.optJSONArray("choices")?.takeIf { it.length() > 0 }
+                ?: throw ProviderException(null, "Dostawca zwrócił pustą lub nieprawidłową tablicę choices.", category = "INVALID_RESPONSE")
+            val message = choices.optJSONObject(0)?.optJSONObject("message")
+                ?: throw ProviderException(null, "Dostawca nie zwrócił obiektu message w pierwszym wyborze.", category = "INVALID_RESPONSE")
+            val text = (message.opt("content") as? String)?.trim()?.takeIf { it.isNotEmpty() }
+                ?: throw ProviderException(null, "Dostawca nie zwrócił tekstowej treści message.content.", category = "INVALID_RESPONSE")
 
             val usageObj = result.optJSONObject("usage")
             val input = preferredUsageCount(usageObj, "prompt_tokens", result, "prompt_eval_count")
