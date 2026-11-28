@@ -394,16 +394,6 @@ class ProviderClient(
         return (message.opt("refusal") as? String)?.trim()?.takeIf { it.isNotEmpty() }
     }
 
-    /** Extracts only user-visible Gemini text; internal thought parts must never enter chat history. */
-    private fun geminiCandidateText(candidate: JSONObject): String? {
-        val parts = candidate.optJSONObject("content")?.optJSONArray("parts") ?: return null
-        return (0 until parts.length()).mapNotNull { index ->
-            val part = parts.optJSONObject(index) ?: return@mapNotNull null
-            if (part.opt("thought") == true) return@mapNotNull null
-            (part.opt("text") as? String)?.trim()?.takeIf { it.isNotEmpty() }
-        }.joinToString("\n").trim().takeIf { it.isNotEmpty() }
-    }
-
     /** Maps documented Gemini block reasons to stable, non-provider-controlled diagnostics. */
     private fun geminiBlockReason(reason: String?): String? = when (reason?.uppercase()) {
         "SAFETY" -> "filtry bezpieczeństwa"
@@ -414,6 +404,29 @@ class ProviderClient(
         "IMAGE_SAFETY" -> "filtry bezpieczeństwa obrazu"
         else -> null
     }
+
+    /** A candidate can carry text alongside a blocking finish reason; never expose that text. */
+    private fun geminiCandidateBlockReason(candidate: JSONObject): String? {
+        geminiBlockReason(candidate.optString("finishReason"))?.let { return it }
+        val ratings = candidate.optJSONArray("safetyRatings") ?: return null
+        return (0 until ratings.length()).firstNotNullOfOrNull { index ->
+            val rating = ratings.optJSONObject(index) ?: return@firstNotNullOfOrNull null
+            if (rating.opt("blocked") == true) "filtry bezpieczeństwa" else null
+        }
+    }
+
+    private fun geminiCandidateText(candidate: JSONObject): String? {
+        if (geminiCandidateBlockReason(candidate) != null) return null
+        val parts = candidate.optJSONObject("content")?.optJSONArray("parts") ?: return null
+        return (0 until parts.length()).mapNotNull { index ->
+            val part = parts.optJSONObject(index) ?: return@mapNotNull null
+            if (part.opt("thought") == true) return@mapNotNull null
+            (part.opt("text") as? String)?.trim()?.takeIf { it.isNotEmpty() }
+        }.joinToString("\n").trim().takeIf { it.isNotEmpty() }
+    }
+
+    private fun geminiCandidateWasTruncated(candidate: JSONObject): Boolean =
+        candidate.optString("finishReason").equals("MAX_TOKENS", ignoreCase = true)
 
     /** Reads JSON token counters without JSONObject's permissive numeric/string coercion. */
     private fun exactNonNegativeCount(obj: JSONObject?, key: String, defaultIfMissing: Long? = null): Long? {
@@ -661,13 +674,19 @@ class ProviderClient(
                 }.firstOrNull()
                 if (text.isNullOrBlank()) {
                     val candidateBlock = (0 until candidates.length()).mapNotNull { index ->
-                        geminiBlockReason(candidates.optJSONObject(index)?.optString("finishReason"))
+                        candidates.optJSONObject(index)?.let(::geminiCandidateBlockReason)
                     }.firstOrNull()
                     val blockReason = candidateBlock ?: geminiBlockReason(
                         result.optJSONObject("promptFeedback")?.optString("blockReason")
                     )
                     if (blockReason != null) {
                         throw ProviderException(null, "Gemini zablokował odpowiedź: $blockReason.", category = "CONTENT_BLOCKED")
+                    }
+                    val wasTruncated = (0 until candidates.length()).any { index ->
+                        candidates.optJSONObject(index)?.let(::geminiCandidateWasTruncated) == true
+                    }
+                    if (wasTruncated) {
+                        throw ProviderException(null, "Gemini zakończył generowanie przed zwróceniem tekstu (limit tokenów).", category = "RESPONSE_TRUNCATED")
                     }
                     throw ProviderException(null, "Gemini nie zwrócił tekstowej treści odpowiedzi.", category = "INVALID_RESPONSE")
                 }
