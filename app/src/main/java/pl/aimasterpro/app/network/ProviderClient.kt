@@ -271,7 +271,9 @@ class ProviderClient(
             if (text.isBlank()) throw ProviderException(code, "Dostawca zwrócił pustą odpowiedź HTTP $code.", category = "EMPTY_RESPONSE", phase = phase, requestMayHaveBeenProcessed = method.equals("POST", true))
             return try { JSONObject(text) } catch (e: Exception) {
                 val safeBody = ProviderHttpDiagnostics.redactErrorBody(text, apiKey)
-                throw ProviderException(code, "Nieprawidłowy JSON od dostawcy.", safeBody, category = "INVALID_RESPONSE", phase = phase, requestMayHaveBeenProcessed = method.equals("POST", true))
+                val safeParserDetail = ProviderHttpDiagnostics.safeFailureDetail(e.message.orEmpty(), 300)
+                val hint = if (safeParserDetail.isBlank()) "Nieprawidłowy JSON od dostawcy." else "Nieprawidłowy JSON od dostawcy ($safeParserDetail)."
+                throw ProviderException(code, hint, safeBody, category = "INVALID_RESPONSE", phase = phase, requestMayHaveBeenProcessed = method.equals("POST", true))
             }
         } catch (e: ProviderException) {
             if (isCancelled(scope)) throw cancelledException(phase, method)
