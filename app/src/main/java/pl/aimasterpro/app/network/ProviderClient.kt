@@ -64,8 +64,12 @@ internal object ProviderHttpDiagnostics {
                 searchFrom = tokenStart + 10
             } else searchFrom = tokenEnd
         }
-        return CommunicationLogSanitizer.sanitize(safe).take(2500)
+        return safeFailureDetail(safe, 2500)
     }
+
+    /** Sanitizes provider-controlled diagnostics before they enter exceptions or local logs. */
+    fun safeFailureDetail(raw: String, maxLength: Int = 500): String =
+        CommunicationLogSanitizer.sanitize(raw).take(maxLength.coerceIn(0, 2500))
 
     fun httpFailureHint(code: Int, category: String): String = when (code) {
         400 -> "HTTP 400: dostawca odrzucił żądanie. Sprawdź ID modelu, endpoint i format payloadu; wymagane pola zależą od dostawcy."
