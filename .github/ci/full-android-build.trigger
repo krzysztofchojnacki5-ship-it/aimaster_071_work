@@ -12,3 +12,5 @@ Package 44 CI correction: preserve provider-specific redaction placeholders when
 Package 44 CI follow-up: align TokenTracker sanitizer regression assertion with provider-specific redaction markers.
 
 Package 45: provider error diagnostics sanitization; run consolidated unit tests, Gradle wrapper validation, assembleDebug and assembleRelease against the exact package 45 source revision.
+
+Package 46: strict provider response schema validation across Anthropic, OpenAI-compatible and Gemini adapters; run consolidated unit tests, Gradle wrapper validation and full Android debug/release build against exact package 46 source revision.
