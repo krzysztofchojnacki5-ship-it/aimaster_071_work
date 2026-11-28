@@ -41,8 +41,8 @@ class TaskDiagnosticsReportTest {
 
     @Test fun buildsOneTaskReportWithTimelineHandoffAndFullAgentReports() {
         val reports = listOf(
-            TaskDiagnosticsReport.AgentReport("lead-coordinator", "groq", "model-a", 35L, "Raport pierwszego agenta."),
-            TaskDiagnosticsReport.AgentReport("planning-lead", "openai", "model-b", 36L, "Odebrany kod: ABCD1234.")
+            TaskDiagnosticsReport.AgentReport("lead-coordinator", "groq", "model-a", 35L, "Raport pierwszego agenta.", 2),
+            TaskDiagnosticsReport.AgentReport("planning-lead", "openai", "model-b", 36L, "Odebrany kod: ABCD1234.", 2)
         )
         val result = TaskDiagnosticsReport.build(task(), queue(), handoffs(), reports, true, 100L)
         assertTrue(result.isComplete)
@@ -75,10 +75,65 @@ class TaskDiagnosticsReportTest {
     @Test fun redactsApiCredentialsFromCopiedContext() {
         val secret = "gsk_123456789012345678901234"
         val reports = listOf(
-            TaskDiagnosticsReport.AgentReport("lead-coordinator", "groq", "model-a", 35L, "api_key=$secret")
+            TaskDiagnosticsReport.AgentReport("lead-coordinator", "groq", "model-a", 35L, "api_key=$secret", 2)
         )
         val result = TaskDiagnosticsReport.build(task(), queue(), handoffs(), reports, true, 100L)
         assertFalse(result.text.contains(secret))
         assertTrue(result.text.contains("[REDACTED]"))
+    }
+
+    @Test fun excludesQueueEventsAndHandoffsFromEarlierRuns() {
+        val oldEvent = MasterTaskQueueStore.Event(
+            id = "event-old-run", taskId = "task-diag-001", actor = "agent:lead-coordinator",
+            operation = "OLD_RUN_SECRET_EVENT", fromStatus = "RUNNING", toStatus = "FAILED",
+            detail = "old-run-event-detail", timestamp = 15L, runId = 1
+        )
+        val oldHandoff = AgentHandoffStore.Handoff(
+            id = "handoff-old-run", taskId = "task-diag-001", runId = 1,
+            senderAgentId = "lead-coordinator", recipientAgentId = "planning-lead",
+            payload = "old-run-handoff-secret", state = AgentHandoffStore.State.ACKNOWLEDGED,
+            createdAt = 12L, updatedAt = 14L, claimedAt = 13L
+        )
+        val result = TaskDiagnosticsReport.build(
+            task(), queue().copy(events = queue().events + oldEvent),
+            handoffs().copy(messages = handoffs().messages + oldHandoff),
+            listOf(
+                TaskDiagnosticsReport.AgentReport("lead-coordinator", "groq", "model-a", 35L, "Raport A", 2),
+                TaskDiagnosticsReport.AgentReport("planning-lead", "openai", "model-b", 36L, "Raport B", 2)
+            ), true, 100L
+        )
+        assertTrue(result.isComplete)
+        assertFalse(result.text.contains("OLD_RUN_SECRET_EVENT"))
+        assertFalse(result.text.contains("old-run-event-detail"))
+        assertFalse(result.text.contains("old-run-handoff-secret"))
+    }
+
+    @Test fun reportsMustMatchAssignedAgentAndCurrentRun() {
+        val result = TaskDiagnosticsReport.build(
+            task(), queue(), handoffs(),
+            listOf(
+                TaskDiagnosticsReport.AgentReport("lead-coordinator", "groq", "model-a", 35L, "Raport aktualny", 2),
+                TaskDiagnosticsReport.AgentReport("planning-lead", "openai", "model-old", 20L, "STARY RAPORT", 1),
+                TaskDiagnosticsReport.AgentReport("unassigned-agent", "openai", "model-x", 21L, "NIEPRZYPISANY RAPORT", 2)
+            ), true, 100L
+        )
+        assertFalse(result.isComplete)
+        assertTrue(result.missing.any { it.contains("BRAK RAPORTU AGENTA: planning-lead") })
+        assertTrue(result.text.contains("Raport aktualny"))
+        assertFalse(result.text.contains("STARY RAPORT"))
+        assertFalse(result.text.contains("NIEPRZYPISANY RAPORT"))
+    }
+
+    @Test fun reportCountIsBoundedAndTruncationMarksDiagnosticsIncomplete() {
+        val assigned = (1..33).map { "agent-$it" }
+        val expandedTask = task().copy(assignedAgentIds = assigned)
+        val reports = assigned.mapIndexed { index, agentId ->
+            TaskDiagnosticsReport.AgentReport(agentId, "provider", "model", index.toLong(), "REPORT-$index", 2)
+        }
+        val result = TaskDiagnosticsReport.build(expandedTask, queue(), handoffs(), reports, true, 100L)
+        assertFalse(result.isComplete)
+        assertTrue(result.missing.any { it.contains("pokazano ostatnie 32 z 33") })
+        assertFalse(result.text.contains("REPORT-0"))
+        assertTrue(result.text.contains("REPORT-32"))
     }
 }
