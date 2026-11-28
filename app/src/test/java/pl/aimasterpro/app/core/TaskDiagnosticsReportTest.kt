@@ -137,6 +137,44 @@ class TaskDiagnosticsReportTest {
         assertTrue(result.text.contains("REPORT-32"))
     }
 
+    @Test fun eventTimelineTruncationMarksDiagnosticsIncomplete() {
+        val events = (1..241).map { index ->
+            MasterTaskQueueStore.Event(
+                id = "event-$index", taskId = "task-diag-001", actor = "agent:lead-coordinator",
+                operation = "AGENT_RESULT", fromStatus = "RUNNING", toStatus = "COMPLETED",
+                detail = "event-$index", timestamp = index.toLong(), runId = 2
+            )
+        }
+        val reports = listOf(
+            TaskDiagnosticsReport.AgentReport("lead-coordinator", "groq", "model-a", 35L, "Raport A", 2),
+            TaskDiagnosticsReport.AgentReport("planning-lead", "openai", "model-b", 36L, "Raport B", 2)
+        )
+        val result = TaskDiagnosticsReport.build(task(), queue().copy(events = events), handoffs(), reports, true, 100L)
+        assertFalse(result.isComplete)
+        assertTrue(result.missing.any { it.contains("pokazano ostatnie 240 z 241") })
+        assertTrue(result.text.contains("Status kompletności: NIEKOMPLETNY"))
+    }
+
+    @Test fun handoffTimelineTruncationMarksDiagnosticsIncomplete() {
+        val messages = (1..81).map { index ->
+            val created = 10L + index
+            AgentHandoffStore.Handoff(
+                id = "handoff-$index", taskId = "task-diag-001", runId = 2,
+                senderAgentId = "lead-coordinator", recipientAgentId = "planning-lead",
+                payload = "payload-$index", state = AgentHandoffStore.State.ACKNOWLEDGED,
+                createdAt = created, updatedAt = created + 2L, claimedAt = created + 1L
+            )
+        }
+        val reports = listOf(
+            TaskDiagnosticsReport.AgentReport("lead-coordinator", "groq", "model-a", 35L, "Raport A", 2),
+            TaskDiagnosticsReport.AgentReport("planning-lead", "openai", "model-b", 36L, "Raport B", 2)
+        )
+        val result = TaskDiagnosticsReport.build(task(), queue(), handoffs().copy(messages = messages), reports, true, 100L)
+        assertFalse(result.isComplete)
+        assertTrue(result.missing.any { it.contains("pokazano ostatnie 80 z 81") })
+        assertTrue(result.text.contains("Status kompletności: NIEKOMPLETNY"))
+    }
+
     @Test fun overallReportTruncationCannotBeReportedAsComplete() {
         val assigned = (1..6).map { "large-agent-$it" }
         val expandedTask = task().copy(assignedAgentIds = assigned)
