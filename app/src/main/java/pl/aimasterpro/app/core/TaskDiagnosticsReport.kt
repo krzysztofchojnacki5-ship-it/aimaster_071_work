@@ -55,7 +55,13 @@ object TaskDiagnosticsReport {
                 .sortedBy { it.createdAt }
         } else emptyList()
 
-        if (events.size > MAX_EVENTS) {\n            missing += "ZDARZENIA: pokazano ostatnie $MAX_EVENTS z ${events.size}; starsze pominięto z powodu limitu."\n        }\n        if (taskHandoffs.size > MAX_HANDOFFS) {\n            missing += "PRZEKAZANIA: pokazano ostatnie $MAX_HANDOFFS z ${taskHandoffs.size}; starsze pominięto z powodu limitu."\n        }\n\n        if (task != null && reportArchiveReadable) {
+        if (events.size > MAX_EVENTS) {
+            missing += "ZDARZENIA: pokazano ostatnie $MAX_EVENTS z ${events.size}; starsze pominięto z powodu limitu."
+        }
+        if (taskHandoffs.size > MAX_HANDOFFS) {
+            missing += "PRZEKAZANIA: pokazano ostatnie $MAX_HANDOFFS z ${taskHandoffs.size}; starsze pominięto z powodu limitu."
+        }
+\n        if (task != null && reportArchiveReadable) {
             val present = taskReports.map { it.agentId }.toSet()
             task.assignedAgentIds.filter { it !in present }.forEach {
                 missing += "BRAK RAPORTU AGENTA: $it (przebieg #${task.runId})"
